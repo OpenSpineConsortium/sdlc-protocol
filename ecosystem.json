@@ -1,0 +1,49 @@
+{
+  "library": "OpenSpineConsortium/sdlc-protocol",
+  "about": "The claim protocol as one Python package with no dependencies: the labels, the claim, the board, the protocol check, team mode's clerk, the push guard and the merge gate.",
+  "package": "sdlc_protocol",
+  "always_copied": ["__init__.py", "vendoring.py"],
+  "consumers": [
+    {
+      "repository": "OpenSpineConsortium/sdlc-template",
+      "visibility": "internal",
+      "about": "The template a Claude project is made from, kept as files: its instructions, its memory, its board, and the workflows and hooks that run the protocol.",
+      "vendor_dir": "tools",
+      "modules": "all",
+      "check": "bash scripts/check.sh",
+      "auto_merge": true,
+      "uses": "the board, the protocol check, team mode's clerk and the push guard, through the shims tools/board.py, check_protocol.py, team.py and guard_push.py"
+    },
+    {
+      "repository": "OpenSpineConsortium/coordbench",
+      "visibility": "public",
+      "about": "The playground and benchmark that compares ways of coordinating Claude Code agents on CooperBench's task pairs, this protocol among them.",
+      "vendor_dir": "coordbench/vendor",
+      "modules": "all",
+      "check": "bash scripts/check.sh",
+      "auto_merge": true,
+      "uses": "the sdlc arm's merge gate and the bare-git world (sdlc_protocol.gate and sdlc_protocol.adapters.bare_git, in coordbench/arms/sdlc/arm.py)"
+    },
+    {
+      "repository": "OpenSpineConsortium/sdlc-marketplace",
+      "visibility": "public",
+      "about": "The Claude Code plugin marketplace whose one plugin, sdlc, brings the skills, /board and the hooks to a repository not made from the template.",
+      "vendor_dir": "plugins/sdlc/vendor",
+      "modules": ["guard.py"],
+      "check": "bash scripts/check.sh",
+      "auto_merge": true,
+      "uses": "the push guard in the plugin's PreToolUse hook (plugins/sdlc/scripts/guard.py)",
+      "version_file": "plugins/sdlc/.claude-plugin/plugin.json"
+    },
+    {
+      "repository": "OpenSpineConsortium/sdlc-app",
+      "visibility": "private",
+      "about": "The GitHub App OpenSpine SDLC: its installation token starts a new copy's first workflows, and its webhook server checks pull requests.",
+      "vendor_dir": "app/vendor",
+      "modules": ["claims.py", "protocol_check.py"],
+      "check": "bash scripts/check.sh",
+      "auto_merge": false,
+      "uses": "the protocol check, posted as the check run sdlc/protocol (app/handlers.py)"
+    }
+  ]
+}

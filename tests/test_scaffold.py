@@ -1,24 +1,28 @@
-"""The repository around the package: the vendoring script, the spec, the
-build file and the workflow.
+"""The repository around the package: the spec, the build file and the
+workflows.
 
-The template and the plugin take the package only through
-scripts/vendor.sh, so the copy it makes and the line it writes in
-tools/VENDORED are what those repositories trust; a vendoring that left a
-removed module behind, or named a commit the copy is not, would fail
-there, far from here. The spec reaches readers who never see the
-template, so a {{placeholder}} left in it is a hole in the protocol, and a
-policy field or world method it does not name is one nobody can learn
-about. pyproject.toml is what an install reads, so it must parse and agree
-with the package it builds. And the workflow's job must keep the name
-branch protection requires.
+The spec reaches readers who never see the template, so a {{placeholder}}
+left in it is a hole in the protocol, and a policy field or world method
+it does not name is one nobody can learn about. pyproject.toml is what an
+install reads, so it must parse and agree with the package it builds. The
+workflows are what carry a change to the consumers: the check job must
+keep the name branch protection requires, the downstream job must run a
+leg per consumer and skip the one it cannot read, the sync must run on a
+push to main that changes the package, never from another branch and
+never two at once, must take as its own only a pull request from its own
+repository, must arm auto-merge without ever merging, and must push only
+what the branch does not already hold. No workflow may put an expression
+inside a shell step, where a value would run as code, and every shell
+step must at least parse. The copy itself,
+scripts/vendor.py and its record, is tests/test_vendor.py's and
+tests/test_vendoring.py's.
 """
 
 import dataclasses
 import re
-import shutil
 import subprocess
 import sys
-import tempfile
+import textwrap
 import tomllib
 import unittest
 from pathlib import Path
@@ -30,35 +34,9 @@ import sdlc_protocol  # noqa: E402
 from sdlc_protocol import gate  # noqa: E402
 
 PACKAGE = ROOT / "sdlc_protocol"
-VENDOR = ROOT / "scripts" / "vendor.sh"
 SPEC = ROOT / "spec" / "PROTOCOL.md"
-MARKER = re.compile(r"sdlc-protocol (\S+) ([0-9a-f]{40}(?:-dirty)?|unknown)\n")
+WORKFLOWS = ROOT / ".github" / "workflows"
 PLACEHOLDER = re.compile(r"\{\{[^{}]*\}\}")
-
-
-def package_files(root):
-    """The package's files below root, as relative paths, without the
-    caches Python writes beside them."""
-    return sorted(path.relative_to(root).as_posix() for path in root.rglob("*")
-                  if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc")
-
-
-def caches(root):
-    return [path for path in root.rglob("*") if path.name == "__pycache__" or path.suffix == ".pyc"]
-
-
-def run_vendor(script, *args):
-    return subprocess.run(["bash", str(script), *map(str, args)], capture_output=True, text=True, timeout=60)
-
-
-def head_commit():
-    """This checkout's commit, or None outside a git checkout."""
-    try:
-        done = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "HEAD"], capture_output=True, text=True,
-                              timeout=10)
-    except OSError:
-        return None
-    return done.stdout.strip() if done.returncode == 0 else None
 
 
 def headings(markdown):
@@ -82,120 +60,6 @@ def world_methods():
     them."""
     return [name for name, value in vars(gate.World).items()
             if callable(value) and not name.startswith("_")]
-
-
-class TemporaryTarget(unittest.TestCase):
-    """A fresh directory to vendor into, removed after each test."""
-
-    def setUp(self):
-        self.scratch = Path(tempfile.mkdtemp()).resolve()
-        self.addCleanup(shutil.rmtree, self.scratch, True)
-        self.target = self.scratch / "target"
-        self.target.mkdir()
-        self.dest = self.target / "tools" / "sdlc_protocol"
-        self.marker = self.target / "tools" / "VENDORED"
-
-
-class VendorFromThisCheckout(TemporaryTarget):
-    """scripts/vendor.sh run as a consumer runs it, from this checkout."""
-
-    def vendor(self):
-        done = run_vendor(VENDOR, self.target)
-        self.assertEqual(done.returncode, 0, done.stderr)
-        return done
-
-    def test_copies_every_file_of_the_package_byte_for_byte(self):
-        self.vendor()
-        self.assertEqual(package_files(self.dest), package_files(PACKAGE))
-        for name in package_files(PACKAGE):
-            self.assertEqual((self.dest / name).read_bytes(), (PACKAGE / name).read_bytes(), name)
-
-    def test_the_copy_holds_no_python_cache(self):
-        self.vendor()
-        self.assertEqual(caches(self.dest), [])
-
-    def test_replaces_the_old_copy_and_leaves_the_rest_of_tools_alone(self):
-        removed = self.dest / "removed_module.py"
-        removed.parent.mkdir(parents=True)
-        removed.write_text("a module a later version dropped\n")
-        neighbour = self.target / "tools" / "check_docs.py"
-        neighbour.write_text("the target's own tool\n")
-        self.vendor()
-        self.assertFalse(removed.exists())
-        self.assertEqual(neighbour.read_text(), "the target's own tool\n")
-
-    def test_writes_the_version_and_the_commit(self):
-        self.vendor()
-        found = MARKER.fullmatch(self.marker.read_text())
-        self.assertIsNotNone(found, self.marker.read_text())
-        self.assertEqual(found.group(1), sdlc_protocol.__version__)
-        head = head_commit()
-        if head:
-            self.assertEqual(found.group(2).removesuffix("-dirty"), head)
-
-    def test_says_what_it_did(self):
-        done = self.vendor()
-        self.assertIn(str(self.dest), done.stdout)
-        self.assertIn(f"{self.marker}: {self.marker.read_text().strip()}", done.stdout)
-
-    def test_vendoring_twice_gives_the_same_copy(self):
-        self.vendor()
-        first = {name: (self.dest / name).read_bytes() for name in package_files(self.dest)}
-        self.vendor()
-        again = {name: (self.dest / name).read_bytes() for name in package_files(self.dest)}
-        self.assertEqual(again, first)
-
-
-class VendorFromACopy(TemporaryTarget):
-    """vendor.sh run from a copy of this repository's package and scripts
-    outside any git checkout, where a test may plant caches without
-    touching the real tree."""
-
-    def setUp(self):
-        super().setUp()
-        self.source = self.scratch / "source"
-        shutil.copytree(PACKAGE, self.source / "sdlc_protocol", ignore=shutil.ignore_patterns("__pycache__"))
-        (self.source / "scripts").mkdir()
-        self.script = self.source / "scripts" / "vendor.sh"
-        shutil.copy2(VENDOR, self.script)
-
-    def test_strips_the_caches_it_finds(self):
-        planted = self.source / "sdlc_protocol" / "__pycache__"
-        planted.mkdir()
-        (planted / "gate.cpython-312.pyc").write_bytes(b"\0")
-        (self.source / "sdlc_protocol" / "stray.pyc").write_bytes(b"\0")
-        done = run_vendor(self.script, self.target)
-        self.assertEqual(done.returncode, 0, done.stderr)
-        self.assertEqual(caches(self.dest), [])
-        self.assertEqual(package_files(self.dest), package_files(PACKAGE))
-
-    def test_names_the_commit_unknown_outside_git(self):
-        # A scratch directory inside a checkout would see that checkout's
-        # commit; the script must not claim it.
-        done = run_vendor(self.script, self.target)
-        self.assertEqual(done.returncode, 0, done.stderr)
-        self.assertEqual(self.marker.read_text(), f"sdlc-protocol {sdlc_protocol.__version__} unknown\n")
-
-    def test_refuses_to_vendor_into_its_own_repository(self):
-        done = run_vendor(self.script, self.source)
-        self.assertEqual(done.returncode, 1)
-        self.assertIn("this repository", done.stderr)
-        self.assertFalse((self.source / "tools").exists())
-
-
-class VendorRefusals(unittest.TestCase):
-    def test_no_target_is_a_usage_error(self):
-        done = run_vendor(VENDOR)
-        self.assertEqual(done.returncode, 2)
-        self.assertIn("usage: scripts/vendor.sh <target repository>", done.stderr)
-
-    def test_a_target_that_is_not_a_directory_is_refused(self):
-        with tempfile.TemporaryDirectory() as scratch:
-            missing = Path(scratch) / "nowhere"
-            done = run_vendor(VENDOR, missing)
-            self.assertEqual(done.returncode, 1)
-            self.assertIn("is not a directory", done.stderr)
-            self.assertFalse(missing.exists())
 
 
 class Spec(unittest.TestCase):
@@ -251,9 +115,48 @@ class Pyproject(unittest.TestCase):
             self.assertTrue((ROOT / name).is_file(), name)
 
 
+def workflow(name):
+    return (WORKFLOWS / name).read_text(encoding="ascii")
+
+
+def code_lines(text):
+    """The lines that are not comments, YAML's or the shell's."""
+    return [line for line in text.splitlines() if not line.lstrip().startswith("#")]
+
+
+def token_permissions(text):
+    """The permission-<name> inputs a workflow hands the App's token."""
+    return dict(re.findall(r"(?m)^\s+permission-([a-z-]+): (\w+)$", text))
+
+
+def shell_steps(text):
+    """The lines of each run: step, the key's own line with the block
+    under it, as (first line number, text)."""
+    lines, steps = text.splitlines(), []
+    for number, line in enumerate(lines):
+        key = re.match(r"^(\s*)(?:- )?run:", line)
+        if not key:
+            continue
+        indent, block = len(key.group(1)), [line]
+        for follower in lines[number + 1:]:
+            if follower.strip() and len(follower) - len(follower.lstrip()) <= indent:
+                break
+            block.append(follower)
+        steps.append((number + 1, "\n".join(block)))
+    return steps
+
+
+def shell_script(step):
+    """The script a run: step hands bash: the rest of the key's line, or
+    the block under it, dedented."""
+    key, *block = step.splitlines()
+    inline = key.split("run:", 1)[1].strip()
+    return textwrap.dedent("\n".join(block)) if inline.startswith("|") else inline
+
+
 class Workflow(unittest.TestCase):
     def setUp(self):
-        self.text = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="ascii")
+        self.text = workflow("ci.yml")
 
     def test_the_job_is_named_check(self):
         self.assertRegex(self.text, r"(?m)^jobs:\n  check:\n")
@@ -261,6 +164,125 @@ class Workflow(unittest.TestCase):
     def test_runs_the_checks_on_python_3_12(self):
         self.assertIn('python-version: "3.12"', self.text)
         self.assertIn("run: bash scripts/check.sh", self.text)
+
+    def test_the_downstream_job_runs_each_consumers_own_check(self):
+        self.assertIn("  downstream:\n    name: downstream (${{ matrix.name }})\n", self.text)
+        self.assertIn("matrix: ${{ fromJSON(needs.consumers.outputs.matrix) }}", self.text)
+        self.assertIn("fail-fast: false", self.text)
+        self.assertIn('run: python3 sdlc-protocol/scripts/vendor.py "$NAME" --consumer "$CONSUMER"', self.text)
+        self.assertIn('run: bash -c "$CHECK"', self.text)
+
+    def test_a_consumer_that_is_not_public_is_read_with_the_apps_token_unless_from_a_fork(self):
+        """A fork's run gets no secrets, though it gets the variables, so
+        without the fork guard the App's token step would fail on an empty
+        key and turn the leg red instead of skipping it."""
+        self.assertIn("FROM_FORK: ${{ github.event_name == 'pull_request' && "
+                      "github.event.pull_request.head.repo.full_name != github.repository }}", self.text)
+        self.assertIn('if [ "$VISIBILITY" = "public" ]; then', self.text)
+        self.assertIn('elif [ -n "$APP_ID" ] && [ "$FROM_FORK" != "true" ]; then', self.text)
+        self.assertIn("token: ${{ steps.app-token.outputs.token || github.token }}", self.text)
+
+    def test_the_downstream_token_only_reads(self):
+        self.assertEqual(token_permissions(self.text), {"contents": "read"})
+
+
+class SyncWorkflow(unittest.TestCase):
+    def setUp(self):
+        self.text = workflow("sync.yml")
+
+    def test_runs_on_a_push_to_main_that_changes_what_the_copies_are_made_of(self):
+        self.assertIn("  push:\n    branches: [main]\n    paths:\n", self.text)
+        for path in ("sdlc_protocol/**", "ecosystem.json", "scripts/vendor.py", "scripts/sync.py",
+                     "scripts/ecosystem.py"):
+            self.assertIn(f'      - "{path}"\n', self.text)
+
+    def test_runs_by_hand_and_weekly_off_the_hour(self):
+        self.assertIn("  workflow_dispatch:\n", self.text)
+        minute = re.search(r'- cron: "(\d+) ', self.text).group(1)
+        self.assertNotEqual(minute, "0")
+
+    def test_a_run_off_main_vendors_nothing_and_says_why(self):
+        """A run by hand can name any branch, and the sync would vendor
+        that branch, unreviewed, into every consumer. The ref is compared
+        by name: a scheduled run's event carries no repository to read the
+        default branch from."""
+        self.assertIn("REF: ${{ github.ref }}", self.text)
+        self.assertRegex(self.text, r'if \[ "\$REF" != "refs/heads/main" \]; then\n'
+                                    r'\s+echo "enabled=false" >> "\$GITHUB_OUTPUT"\n'
+                                    r'\s+python3 scripts/sync.py off-main --ref "\$REF"')
+
+    def test_one_sync_at_a_time_and_a_newer_push_waits(self):
+        self.assertIn("concurrency:\n  group: sync\n  cancel-in-progress: false\n", self.text)
+
+    def test_reads_with_its_own_token_and_writes_with_the_apps(self):
+        self.assertIn("permissions:\n  contents: read\n", self.text)
+        self.assertIn("uses: actions/create-github-app-token@v1", self.text)
+        self.assertIn("repositories: ${{ matrix.name }}", self.text)
+        self.assertIn("if: needs.plan.outputs.enabled == 'true'", self.text)
+
+    def test_the_token_holds_only_what_the_job_uses(self):
+        self.assertEqual(token_permissions(self.text), {"contents": "write", "pull-requests": "write"})
+
+    def test_pushes_only_its_own_branch(self):
+        pushes = [line.strip() for line in code_lines(self.text) if "git push" in line]
+        self.assertEqual(pushes, ['git push --force origin "HEAD:refs/heads/$BRANCH"'])
+        self.assertIn("BRANCH: sdlc-protocol/sync", self.text)
+
+    def test_pushes_only_a_copy_the_branch_does_not_already_hold(self):
+        self.assertIn("""[ "$(git rev-parse 'FETCH_HEAD^{tree}')" = "$(git write-tree)" ]""", self.text)
+        self.assertIn("""[ "$(git rev-parse 'FETCH_HEAD^')" = "$(git rev-parse HEAD)" ]""", self.text)
+        guard = self.text.index("if ! already_pushed; then")
+        self.assertLess(guard, self.text.index('git push --force origin "HEAD:refs/heads/$BRANCH"'))
+
+    def test_takes_as_its_own_only_a_pull_request_from_its_own_repository(self):
+        """gh's --head matches the branch's name in any repository, so a
+        fork's pull request from a branch of the same name is listed too."""
+        listings = [line for line in code_lines(self.text) if "gh pr list" in line]
+        self.assertEqual(len(listings), 1)
+        self.assertIn("--json url,isCrossRepository", listings[0])
+        self.assertIn("""--jq '[.[] | select(.isCrossRepository | not)][0].url // ""'""", self.text)
+
+    def test_arms_auto_merge_and_never_merges(self):
+        """gh pr merge --auto merges at once a pull request GitHub does not
+        count as blocked; the mutation only arms auto-merge, by a merge
+        commit."""
+        self.assertEqual([line for line in code_lines(self.text) if "gh pr merge" in line], [])
+        self.assertIn("enablePullRequestAutoMerge(input: {pullRequestId: $id, mergeMethod: MERGE})", self.text)
+        self.assertIn('if [ "$AUTO_MERGE" = "true" ]; then', self.text)
+
+    def test_a_consumer_up_to_date_is_reported_and_its_stale_pull_request_closed(self):
+        start = self.text.index('if [ -z "$(git status --porcelain)" ]; then')
+        block = self.text[start:self.text.index("exit 0", start)]
+        self.assertIn('gh pr close "$url" --comment "$($sync closing --consumer "$CONSUMER")"', block)
+        self.assertIn("report --state closed --url \"$url\"", block)
+        self.assertIn('report --state "up to date"', block)
+        self.assertLess(self.text.index('url="$(own_pull)"'), start)
+
+
+class EveryWorkflow(unittest.TestCase):
+    def test_no_expression_inside_a_shell_step(self):
+        """A value reaches a shell only through env:, so nothing it holds
+        is pasted into the script GitHub runs."""
+        for path in sorted(WORKFLOWS.glob("*.yml")):
+            for number, step in shell_steps(path.read_text(encoding="ascii")):
+                with self.subTest(workflow=path.name, line=number):
+                    self.assertNotIn("${{", step)
+
+    def test_every_shell_step_parses(self):
+        for path in sorted(WORKFLOWS.glob("*.yml")):
+            for number, step in shell_steps(path.read_text(encoding="ascii")):
+                with self.subTest(workflow=path.name, line=number):
+                    done = subprocess.run(["bash", "-n"], input=shell_script(step), capture_output=True,
+                                          text=True, timeout=30)
+                    self.assertEqual(done.returncode, 0, done.stderr)
+
+    def test_every_action_is_pinned_to_a_major_tag_and_the_same_one_everywhere(self):
+        seen = {}
+        for path in sorted(WORKFLOWS.glob("*.yml")):
+            for action, tag in re.findall(r"uses: ([\w./-]+)@(\S+)", path.read_text(encoding="ascii")):
+                with self.subTest(workflow=path.name, action=action):
+                    self.assertRegex(tag, r"^v[0-9]+$")
+                    self.assertEqual(seen.setdefault(action, tag), tag)
 
 
 class Version(unittest.TestCase):

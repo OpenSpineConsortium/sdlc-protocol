@@ -1,14 +1,28 @@
 name: Checks
 
 # The library's checks on every pull request and every push to main: bash
-# scripts/check.sh, which holds every file to ASCII with LF endings and then
-# runs the whole suite with python3 -m unittest discover -s tests. The job is
-# named "check", the name branch protection requires, as it is in the
+# scripts/check.sh, which holds every file to ASCII with LF endings, holds
+# ECOSYSTEM.md to what scripts/architecture.py writes and then runs the
+# whole suite with python3 -m unittest discover -s tests. The job is named
+# "check", the name branch protection requires, as it is in the
 # repositories that vendor this package. Python is pinned to 3.12, the
 # oldest the package supports and the one the template's CI runs, so a call
 # to a newer API fails here before it reaches a consumer. A newer push to
 # the same branch cancels the run still going, so nobody waits on a result
 # that is already stale.
+#
+# The job downstream runs one leg per consumer ecosystem.json lists: it
+# vendors this checkout into a checkout of the consumer's main with
+# scripts/vendor.py and runs the consumer's own check there, so a change
+# that would break a consumer is red here before it merges, not in the
+# consumer's sync pull request after. The two checkouts sit side by side,
+# as the clones do on a developer's machine, where the consumers' tests
+# look for the library beside them. A public consumer is read with this
+# run's own token, which reaches no other repository that is not public;
+# an internal or private one (the template is internal, the App private)
+# only with the App's token, minted to read that one repository, when
+# SDLC_APP_ID is set and the pull request is not from a fork, whose runs
+# get no secrets; otherwise its leg says it skipped and passes.
 
 on:
   pull_request:
@@ -34,3 +48,83 @@ jobs:
 
       - name: Run the checks
         run: bash scripts/check.sh
+
+  consumers:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.list.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: List the consumers
+        id: list
+        run: echo "matrix=$(python3 scripts/sync.py matrix)" >> "$GITHUB_OUTPUT"
+
+  downstream:
+    name: downstream (${{ matrix.name }})
+    needs: consumers
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.consumers.outputs.matrix) }}
+    env:
+      CONSUMER: ${{ matrix.repository }}
+      NAME: ${{ matrix.name }}
+      CHECK: ${{ matrix.check }}
+    steps:
+      - name: Can this leg read the consumer?
+        id: reach
+        env:
+          VISIBILITY: ${{ matrix.visibility }}
+          APP_ID: ${{ vars.SDLC_APP_ID }}
+          FROM_FORK: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+        run: |
+          if [ "$VISIBILITY" = "public" ]; then
+            echo "reach=public" >> "$GITHUB_OUTPUT"
+          elif [ -n "$APP_ID" ] && [ "$FROM_FORK" != "true" ]; then
+            echo "reach=app" >> "$GITHUB_OUTPUT"
+          else
+            echo "reach=none" >> "$GITHUB_OUTPUT"
+            echo "downstream ($NAME): skipped, since $CONSUMER is not public and this run has no App token for it (SDLC_APP_ID unset, or a pull request from a fork)" | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - uses: actions/checkout@v7
+        if: steps.reach.outputs.reach != 'none'
+        with:
+          path: sdlc-protocol
+
+      - uses: actions/create-github-app-token@v1
+        id: app-token
+        if: steps.reach.outputs.reach == 'app'
+        with:
+          app-id: ${{ vars.SDLC_APP_ID }}
+          private-key: ${{ secrets.SDLC_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ matrix.name }}
+          permission-contents: read
+
+      - uses: actions/checkout@v7
+        if: steps.reach.outputs.reach != 'none'
+        with:
+          repository: ${{ matrix.repository }}
+          token: ${{ steps.app-token.outputs.token || github.token }}
+          path: ${{ matrix.name }}
+          persist-credentials: false
+
+      - uses: actions/setup-python@v6
+        if: steps.reach.outputs.reach != 'none'
+        with:
+          python-version: "3.12"
+
+      - name: Vendor this checkout into the consumer
+        if: steps.reach.outputs.reach != 'none'
+        run: python3 sdlc-protocol/scripts/vendor.py "$NAME" --consumer "$CONSUMER"
+
+      - name: Run the consumer's own check
+        if: steps.reach.outputs.reach != 'none'
+        working-directory: ${{ matrix.name }}
+        run: bash -c "$CHECK"

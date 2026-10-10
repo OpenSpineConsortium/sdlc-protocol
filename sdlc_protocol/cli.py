@@ -1,4 +1,4 @@
-"""The command line: python3 -m sdlc_protocol <board|check|team|guard>.
+"""The command line: python3 -m sdlc_protocol <board|check|team|guard|verify-vendored>.
 
 Each subcommand is a thin shell over the modules and takes exactly the
 arguments the template's tool for the same job took, so a workflow line
@@ -12,6 +12,10 @@ sdlc_protocol board ...":
   team   [--repo OWNER/NAME] seed, route or next, team mode's clerk
   guard  the PreToolUse hook: the tool call's JSON on stdin, and exit 2
          with the reason on stderr to refuse a push
+  verify-vendored VENDOR_DIR
+         hold a vendored copy, VENDOR_DIR/sdlc_protocol, to the record
+         VENDOR_DIR/VENDORED beside it (vendoring.py, which a copy also
+         runs as a script of its own)
 
 The exit codes are the old tools' too: 0 when done, 1 for a failure told
 in one line on stderr (or, for check, the problems on stdout), 2 for a
@@ -29,10 +33,10 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import board, claims, guard, protocol_check, team
+from . import board, claims, guard, protocol_check, team, vendoring
 
 PROG = "python3 -m sdlc_protocol"
-USAGE = f"usage: {PROG} {{board,check,team,guard}} [arguments]; {PROG} <command> -h says more"
+USAGE = f"usage: {PROG} {{board,check,team,guard,verify-vendored}} [arguments]; {PROG} <command> -h says more"
 
 
 class CommandError(Exception):
@@ -220,7 +224,20 @@ def run_guard(argv, stdin=None):
     return code
 
 
-COMMANDS = {"board": run_board, "check": run_check, "team": run_team, "guard": run_guard}
+# --- verify-vendored ----------------------------------------------------------
+
+def run_verify_vendored(argv):
+    """vendoring.py's check under the package's own command line, for a
+    consumer that would rather name the module than the file."""
+    parser = argparse.ArgumentParser(
+        prog=f"{PROG} verify-vendored",
+        description="Hold VENDOR_DIR/sdlc_protocol to the record VENDOR_DIR/VENDORED: exit 1 on any difference.")
+    parser.add_argument("vendor_dir", metavar="VENDOR_DIR", help="the directory that holds sdlc_protocol/ and VENDORED")
+    return vendoring.verify(parser.parse_args(argv).vendor_dir)
+
+
+COMMANDS = {"board": run_board, "check": run_check, "team": run_team, "guard": run_guard,
+            "verify-vendored": run_verify_vendored}
 
 
 def main(argv=None):

@@ -1,0 +1,235 @@
+name: Sync
+
+# One push to main that changes the package reaches every repository that
+# runs a copy of it. For each consumer ecosystem.json lists, the job sync
+# vendors main into a checkout of that consumer with scripts/vendor.py and,
+# when anything changed, pushes the result to the branch
+# sdlc-protocol/sync there and opens the pull request from it, or updates
+# the one already open; where ecosystem.json gives the consumer auto_merge
+# it then arms auto-merge, so the consumer's own required check is the
+# last word. The commits and pull requests are the GitHub App OpenSpine
+# SDLC's, with a token scoped to the one consumer and to the two
+# permissions the job uses: a push made with GITHUB_TOKEN starts no
+# workflow in the consumer, and the App's does, so the consumer's CI runs
+# on it. The branch belongs to this workflow alone, which is why it is
+# force-pushed; it is pushed only when the copy differs from what the
+# branch already holds, so a run with nothing new never restarts the
+# consumer's CI. When the consumer's main already holds the copy, a sync
+# pull request still open there is stale, and the job closes it.
+#
+# The sync vendors main and nothing else. A run started by hand from
+# another branch says so in its summary and stops, so a branch nobody
+# reviewed never reaches a consumer. Where the variable SDLC_APP_ID is
+# not set, the plan says in the run's summary what the owner sets up
+# (README.md, "The owner's one-time setup for the sync") and the sync is
+# skipped, so the run stays green. Values reach a shell only through env:,
+# never through an expression inside run:, so nothing a value holds runs
+# as code. One sync runs at a time and a newer push waits for it rather
+# than cancelling it, so a consumer's pull request is never left half
+# made. The weekly run catches a push whose sync failed, or a consumer
+# that moved its copy by hand.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "sdlc_protocol/**"
+      - "ecosystem.json"
+      - "scripts/vendor.py"
+      - "scripts/sync.py"
+      - "scripts/ecosystem.py"
+  workflow_dispatch:
+  schedule:
+    - cron: "17 6 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      enabled: ${{ steps.plan.outputs.enabled }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      # The schedule runs on the default branch, main, as a push here
+      # does; only a run by hand can name another ref, and that one stops.
+      - name: List the consumers, and whether the sync may run
+        id: plan
+        env:
+          APP_ID: ${{ vars.SDLC_APP_ID }}
+          REF: ${{ github.ref }}
+        run: |
+          echo "matrix=$(python3 scripts/sync.py matrix)" >> "$GITHUB_OUTPUT"
+          if [ "$REF" != "refs/heads/main" ]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            python3 scripts/sync.py off-main --ref "$REF" >> "$GITHUB_STEP_SUMMARY"
+          elif [ -n "$APP_ID" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            python3 scripts/sync.py setup >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  sync:
+    name: sync (${{ matrix.name }})
+    needs: plan
+    if: needs.plan.outputs.enabled == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    env:
+      CONSUMER: ${{ matrix.repository }}
+      AUTO_MERGE: ${{ matrix.auto_merge }}
+      BRANCH: sdlc-protocol/sync
+    steps:
+      # The whole history, so the pull request's body can list the
+      # library's commits since the one the consumer's copy names.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      # Contents to push the branch, pull requests to open, edit, close
+      # and arm one; the installation's other permissions stay out.
+      - uses: actions/create-github-app-token@v1
+        id: app-token
+        with:
+          app-id: ${{ vars.SDLC_APP_ID }}
+          private-key: ${{ secrets.SDLC_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ matrix.name }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - uses: actions/checkout@v7
+        with:
+          repository: ${{ matrix.repository }}
+          token: ${{ steps.app-token.outputs.token }}
+          path: consumer
+
+      - name: Vendor main into the consumer
+        run: python3 scripts/vendor.py consumer --consumer "$CONSUMER"
+
+      # The App's bot is the author, as GitHub shows the App's own pushes.
+      - name: Who the App commits as
+        id: bot
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          SLUG: ${{ steps.app-token.outputs.app-slug }}
+        run: |
+          id="$(gh api "/users/${SLUG}[bot]" --jq .id)"
+          echo "name=${SLUG}[bot]" >> "$GITHUB_OUTPUT"
+          echo "email=${id}+${SLUG}[bot]@users.noreply.github.com" >> "$GITHUB_OUTPUT"
+
+      - name: Open, update or close the consumer's pull request
+        working-directory: consumer
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          BOT_NAME: ${{ steps.bot.outputs.name }}
+          BOT_EMAIL: ${{ steps.bot.outputs.email }}
+        run: |
+          sync="python3 $GITHUB_WORKSPACE/scripts/sync.py"
+          report() { $sync summary --consumer "$CONSUMER" "$@" >> "$GITHUB_STEP_SUMMARY"; }
+
+          # The sync's own open pull request. gh's --head matches the
+          # branch's name alone, whatever repository the head is in, so a
+          # pull request from a fork whose branch has the same name is
+          # listed too: that one is someone else's, and is left alone.
+          own_pull() {
+            gh pr list --repo "$CONSUMER" --head "$BRANCH" --state open --json url,isCrossRepository \
+              --jq '[.[] | select(.isCrossRepository | not)][0].url // ""'
+          }
+
+          # Whether the branch already holds this very tree on this very
+          # base, when a push would only restart the consumer's CI on the
+          # same files.
+          already_pushed() {
+            git fetch -q --depth=2 origin "refs/heads/$BRANCH" 2> /dev/null || return 1
+            [ "$(git rev-parse 'FETCH_HEAD^{tree}')" = "$(git write-tree)" ] &&
+              [ "$(git rev-parse 'FETCH_HEAD^')" = "$(git rev-parse HEAD)" ]
+          }
+
+          # Whether the open pull request already reads as this run would
+          # write it, when an edit would only restart a CI that runs on
+          # edits.
+          reads_the_same() {
+            [ "$(gh pr view "$1" --json title,body --jq '.title + "\n" + .body')" = \
+              "$(printf '%s\n' "$title"; cat "$RUNNER_TEMP/body.md")" ]
+          }
+
+          # Arm auto-merge and never merge. gh pr merge --auto merges at once
+          # a pull request GitHub does not count as blocked, which on a
+          # consumer whose main requires no check would land the copy
+          # before its check has run; this mutation only arms it, and
+          # GitHub refuses it where nothing is left to wait for.
+          arm_auto_merge() {
+            local pull id armed
+            pull="$(gh pr view "$1" --json id,autoMergeRequest --jq '"\(.id) \(.autoMergeRequest != null)"')" || return 1
+            read -r id armed <<< "$pull"
+            [ "$armed" = "true" ] && return 0
+            gh api graphql -f id="$id" -f query='mutation($id: ID!) {
+              enablePullRequestAutoMerge(input: {pullRequestId: $id, mergeMethod: MERGE}) { clientMutationId } }' > /dev/null
+          }
+
+          url="$(own_pull)"
+          if [ -z "$(git status --porcelain)" ]; then
+            # main here already holds this copy, so a sync pull request
+            # still open has nothing left to land.
+            if [ -n "$url" ]; then
+              gh pr close "$url" --comment "$($sync closing --consumer "$CONSUMER")"
+              report --state closed --url "$url"
+            else
+              report --state "up to date"
+            fi
+            exit 0
+          fi
+
+          base="$(git rev-parse --abbrev-ref HEAD)"
+          $sync body . --consumer "$CONSUMER" > "$RUNNER_TEMP/body.md"
+          $sync message . --consumer "$CONSUMER" > "$RUNNER_TEMP/message.txt"
+          title="$($sync title . --consumer "$CONSUMER")"
+          git checkout -q -B "$BRANCH"
+          git add -A
+          pushed="no"
+          if ! already_pushed; then
+            git -c user.name="$BOT_NAME" -c user.email="$BOT_EMAIL" commit -q -F "$RUNNER_TEMP/message.txt"
+            git push --force origin "HEAD:refs/heads/$BRANCH"
+            pushed="yes"
+          fi
+
+          if [ -z "$url" ]; then
+            url="$(gh pr create --repo "$CONSUMER" --base "$base" --head "$BRANCH" --title "$title" --body-file "$RUNNER_TEMP/body.md")"
+            state="opened"
+          elif [ "$pushed" = "no" ] && reads_the_same "$url"; then
+            state="unchanged"
+          else
+            gh pr edit "$url" --title "$title" --body-file "$RUNNER_TEMP/body.md"
+            state="updated"
+          fi
+
+          merge=""
+          reason=""
+          if [ "$AUTO_MERGE" = "true" ]; then
+            if arm_auto_merge "$url" 2> "$RUNNER_TEMP/auto-merge.txt"; then
+              merge="on"
+            else
+              merge="refused"
+              reason="$(head -c 400 "$RUNNER_TEMP/auto-merge.txt")"
+            fi
+          fi
+          report --state "$state" --url "$url" --auto-merge "$merge" --reason "$reason"
