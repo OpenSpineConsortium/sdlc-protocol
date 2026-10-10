@@ -7,8 +7,11 @@ both: the whole package or exactly the modules ecosystem.json names, the
 consumer found by its remote, the record's commit by the rule that keeps
 the sync from churning (the last commit that changed sdlc_protocol/, which
 a merge commit on main does not move), "-dirty" and "unknown" where the
-copy is no commit, and a second run that changes nothing. A copy whose
-modules could not import each other, and a copy into this repository
+copy is no commit, and a second run that changes nothing. The plugin
+marketplace's version file moves with the copy's files and only with
+them, since Claude Code keeps an installed plugin at the version its
+manifest names. A copy whose modules could not import each other, a
+version file that cannot be raised, and a copy into this repository
 itself, are refused before anything is written."""
 
 import json
@@ -32,6 +35,7 @@ PACKAGE = ROOT / "sdlc_protocol"
 TEMPLATE = "OpenSpineConsortium/sdlc-template"
 MARKETPLACE = "OpenSpineConsortium/sdlc-marketplace"
 APP = "OpenSpineConsortium/sdlc-app"
+MANIFEST = "plugins/sdlc/.claude-plugin/plugin.json"
 
 
 def quiet_environment():
@@ -53,6 +57,14 @@ def commit_all(folder, message):
     git(folder, "add", "-A")
     git(folder, "commit", "-q", "-m", message)
     return git(folder, "rev-parse", "HEAD")
+
+
+def manifest(version):
+    """A plugin manifest shaped as the marketplace's is, with a nested
+    object and a list, stating version."""
+    return json.dumps({"name": "sdlc", "version": version, "description": "The board protocol.",
+                       "author": {"name": "OpenSpineConsortium"}, "keywords": ["sdlc", "push-guard"]},
+                      indent=2) + "\n"
 
 
 def copy_library(destination):
@@ -87,6 +99,14 @@ class Repositories(unittest.TestCase):
             git(folder, "remote", "add", "origin", remote)
         return folder
 
+    def marketplace(self, remote=None, name="consumer", version="0.1.0"):
+        """A consumer with the plugin manifest the marketplace's version
+        file names, as the marketplace's own tree has it."""
+        folder = self.consumer(remote, name)
+        (folder / MANIFEST).parent.mkdir(parents=True)
+        (folder / MANIFEST).write_text(manifest(version), encoding="ascii")
+        return folder
+
     def vendor(self, target, *args, script="vendor.py"):
         runner = [sys.executable, "-B"] if script.endswith(".py") else ["bash"]
         return subprocess.run([*runner, str(self.library / "scripts" / script), str(target), *args],
@@ -112,7 +132,7 @@ class WholeAndPartialCopies(Repositories):
         self.assertEqual(vendoring.problems(target / "tools"), [])
 
     def test_the_plugin_takes_the_guard_and_what_every_copy_takes(self):
-        target = self.consumer()
+        target = self.marketplace()
         readme = target / "plugins" / "sdlc" / "vendor" / "README.md"
         readme.parent.mkdir(parents=True)
         readme.write_text("the plugin's own note\n", encoding="ascii")
@@ -167,7 +187,7 @@ class WholeAndPartialCopies(Repositories):
         self.assertEqual([p for p in copy.rglob("*") if p.name == "__pycache__" or p.suffix == ".pyc"], [])
 
     def test_says_what_it_did(self):
-        target = self.consumer()
+        target = self.marketplace()
         done = self.vendored(target, "--consumer", MARKETPLACE)
         self.assertIn(f"{MARKETPLACE} takes __init__.py, guard.py, vendoring.py (3 files)", done.stdout)
         self.assertIn(f"sdlc-protocol {sdlc_protocol.__version__} {self.package_commit}, 3 file hashes",
@@ -182,12 +202,12 @@ class FindingTheConsumer(Repositories):
         self.assertTrue((target / "app" / "vendor" / "VENDORED").is_file())
 
     def test_by_an_ssh_remote_whatever_the_case(self):
-        target = self.consumer("git@github.com:openspineconsortium/SDLC-Marketplace.git")
+        target = self.marketplace("git@github.com:openspineconsortium/SDLC-Marketplace.git")
         self.vendored(target)
         self.assertTrue((target / "plugins" / "sdlc" / "vendor" / "VENDORED").is_file())
 
     def test_consumer_wins_over_the_remote(self):
-        target = self.consumer(f"https://github.com/{APP}.git")
+        target = self.marketplace(f"https://github.com/{APP}.git")
         self.vendored(target, "--consumer", MARKETPLACE)
         self.assertFalse((target / "app").exists())
         self.assertTrue((target / "plugins" / "sdlc" / "vendor" / "VENDORED").is_file())
@@ -226,7 +246,7 @@ class FindingTheConsumer(Repositories):
 
 class TheCommitRule(Repositories):
     def commit_recorded(self, name="consumer"):
-        target = self.consumer(name=name)
+        target = self.marketplace(name=name)
         self.vendored(target, "--consumer", MARKETPLACE)
         return self.record_of(target / "plugins" / "sdlc" / "vendor")[1]
 
@@ -267,7 +287,7 @@ class TheCommitRule(Repositories):
         loose = self.scratch / "loose"
         loose.mkdir()
         copy_library(loose)
-        target = self.consumer()
+        target = self.marketplace()
         done = subprocess.run([sys.executable, "-B", str(loose / "scripts" / "vendor.py"), str(target),
                                "--consumer", MARKETPLACE], capture_output=True, text=True, timeout=60,
                               env=quiet_environment())
@@ -283,6 +303,98 @@ class RunningTwice(Repositories):
         again = self.vendored(target)
         self.assertIn("nothing changed", again.stdout)
         self.assertEqual(git(target, "status", "--porcelain"), "")
+
+
+class TheRelease(Repositories):
+    """The marketplace's version file. Claude Code keeps an installed
+    plugin on its cached copy until the version in the plugin's manifest
+    changes, so a new copy of the guard with no new version would land in
+    the repository and reach no session. The version moves in the same run
+    as the copy's files, and only when they move."""
+
+    def version_in(self, target):
+        return json.loads((target / MANIFEST).read_text(encoding="utf-8"))["version"]
+
+    def vendored_and_committed(self, target):
+        done = self.vendored(target, "--consumer", MARKETPLACE)
+        commit_all(target, "vendor")
+        return done
+
+    def changed_files(self, target):
+        """The paths the run changed since the last commit, new files too."""
+        git(target, "add", "-A")
+        return git(target, "diff", "--cached", "--name-only").splitlines()
+
+    def change_and_commit(self, module):
+        path = self.library / "sdlc_protocol" / module
+        path.write_text(path.read_text(encoding="ascii") + "# changed\n", encoding="ascii")
+        return commit_all(self.library, f"change {module}")
+
+    def test_a_new_copy_raises_the_patch_version_and_nothing_else(self):
+        target = self.marketplace(version="1.4.9")
+        done = self.vendored(target, "--consumer", MARKETPLACE)
+        self.assertEqual((target / MANIFEST).read_text(encoding="ascii"), manifest("1.4.10"))
+        self.assertIn(f"{MANIFEST} goes from 1.4.9 to 1.4.10", done.stdout)
+
+    def test_a_change_to_a_module_the_copy_takes_is_a_new_release(self):
+        target = self.marketplace()
+        self.vendored_and_committed(target)
+        self.change_and_commit("guard.py")
+        self.vendored(target, "--consumer", MARKETPLACE)
+        self.assertEqual(self.version_in(target), "0.1.2")
+        self.assertEqual(self.changed_files(target), [MANIFEST, "plugins/sdlc/vendor/VENDORED",
+                                                      "plugins/sdlc/vendor/sdlc_protocol/guard.py"])
+
+    def test_a_change_to_a_module_the_copy_leaves_out_is_no_release(self):
+        """The record names the new commit, but the files the plugin runs
+        are what they were: nothing new for an install to take."""
+        target = self.marketplace()
+        self.vendored_and_committed(target)
+        changed = self.change_and_commit("board.py")
+        done = self.vendored(target, "--consumer", MARKETPLACE)
+        self.assertEqual(self.record_of(target / "plugins" / "sdlc" / "vendor")[1], changed)
+        self.assertEqual(self.version_in(target), "0.1.1")
+        self.assertIn(f"{MANIFEST} stays at 0.1.1", done.stdout)
+        self.assertEqual(self.changed_files(target), ["plugins/sdlc/vendor/VENDORED"])
+
+    def test_a_second_run_leaves_the_version_alone(self):
+        target = self.marketplace()
+        self.vendored_and_committed(target)
+        again = self.vendored(target, "--consumer", MARKETPLACE)
+        self.assertIn("nothing changed", again.stdout)
+        self.assertEqual(self.version_in(target), "0.1.1")
+        self.assertEqual(git(target, "status", "--porcelain"), "")
+
+    def test_a_consumer_without_a_version_file_makes_no_release(self):
+        done = self.vendored(self.consumer(), "--consumer", TEMPLATE)
+        self.assertNotIn("goes from", done.stdout)
+        self.assertNotIn("stays at", done.stdout)
+
+    def test_a_missing_version_file_is_refused_before_anything_is_written(self):
+        target = self.consumer()
+        done = self.vendor(target, "--consumer", MARKETPLACE)
+        self.assertEqual(done.returncode, 1)
+        self.assertIn(f"{MANIFEST} is not there", done.stderr)
+        self.assertFalse((target / "plugins").exists())
+
+    def test_a_version_it_cannot_raise_is_refused_before_anything_is_written(self):
+        cases = {
+            '{"name": "sdlc"}\n': "states no version of the form MAJOR.MINOR.PATCH",
+            '{"version": "1.0"}\n': "states no version of the form MAJOR.MINOR.PATCH",
+            '{"version": "1.0.0-beta"}\n': "states no version of the form MAJOR.MINOR.PATCH",
+            '["1.0.0"]\n': "states no version of the form MAJOR.MINOR.PATCH",
+            "not json\n": "is not JSON",
+            '{"version": "1.0.0", "x": {"version": "1.0.0"}}\n': "cannot be told apart",
+        }
+        for number, (text, words) in enumerate(cases.items()):
+            with self.subTest(text=text):
+                target = self.marketplace(name=f"broken{number}")
+                (target / MANIFEST).write_text(text, encoding="ascii")
+                done = self.vendor(target, "--consumer", MARKETPLACE)
+                self.assertEqual(done.returncode, 1)
+                self.assertIn(words, done.stderr)
+                self.assertFalse((target / "plugins" / "sdlc" / "vendor").exists())
+                self.assertEqual((target / MANIFEST).read_text(encoding="ascii"), text)
 
 
 class Refusals(Repositories):

@@ -18,7 +18,9 @@ consumer's pull request, built from the consumer's record before and after
 scripts/vendor.py ran in its checkout. The body is written for the person
 who reviews the pull request there: what changed in the library since the
 commit the copy named before, which files of the copy moved, what the
-consumer uses the library for, and that the consumer's own check decides.
+consumer uses the library for, the release it makes where the consumer
+names a version file (the plugin's version, which scripts/vendor.py raised
+in the same checkout), and that the consumer's own check decides.
 """
 
 import argparse
@@ -80,13 +82,25 @@ def title(version, commit):
     return f"Vendor sdlc-protocol {version} ({vendoring.short_commit(commit)})"
 
 
-def message(eco, consumer, version, commit):
+def message(eco, consumer, version, commit, release=None):
     """The sync's commit message in the consumer: the title, then why."""
-    return (f"{title(version, commit)}\n\n"
+    text = (f"{title(version, commit)}\n\n"
             f"Made by {eco['library']}'s sync workflow, which copies the library into\n"
             f"{consumer['vendor_dir']}/sdlc_protocol as ecosystem.json says and records the copy in\n"
             f"{consumer['vendor_dir']}/VENDORED. The copy is never edited here; a change to it\n"
             "is made in the library and comes back by the next sync.\n")
+    if is_new_release(release):
+        old, new = release
+        text += (f"\nIt raises the version in {consumer['version_file']} from {old or 'none'}\n"
+                 f"to {new}: the copy's files changed, and that version is how the installs\n"
+                 "that run the copy learn there is a new one.\n")
+    return text
+
+
+def is_new_release(release):
+    """Whether the version file's version moved: release is (before, after),
+    or None for a consumer that names no version file."""
+    return release is not None and release[0] != release[1]
 
 
 # --- the pull request's body ----------------------------------------------------------
@@ -144,15 +158,33 @@ def files_section(added, changed, removed):
     return f"- Added: {listed(added)}\n- Changed: {listed(changed)}\n- Removed: {listed(removed)}"
 
 
+def release_section(consumer, release):
+    """What the pull request does to the consumer's version file, for a
+    consumer that names one; [] for the others."""
+    if release is None:
+        return []
+    old, new = release
+    path = consumer["version_file"]
+    if not is_new_release(release):
+        text = (f"`{path}` stays at {new}: the copy's files are what they were, so the installs that run "
+                "the copy have nothing new to take.")
+    else:
+        text = (f"`{path}` goes from {old or 'no version'} to {new} in this same pull request, because the "
+                "copy's files changed: that version is how the installs that run the copy learn there is a new "
+                "one, and they take it at their next update.")
+    return ["## The release", "", text, ""]
+
+
 def landing_sentence(consumer):
     if consumer["auto_merge"]:
         return "Auto-merge, when this repository allows it, merges it once that check is green."
     return "Its owner merges it: GitHub Free offers auto-merge only on public repositories."
 
 
-def body(eco, consumer, version, commit, old, log, changes):
+def body(eco, consumer, version, commit, old, log, changes, release=None):
     """The consumer's pull request body. log is the library's one-line log
-    from old to commit, or None when old is no commit the library has."""
+    from old to commit, or None when old is no commit the library has;
+    release is the version file's (before, after), or None."""
     vendor_dir = consumer["vendor_dir"]
     sha = commit.partition("-")[0]
     link = f"https://github.com/{eco['library']}/commit/{sha}" if SHA.fullmatch(sha) else eco["library"]
@@ -169,6 +201,7 @@ def body(eco, consumer, version, commit, old, log, changes):
         "",
         files_section(*changes),
         "",
+        *release_section(consumer, release),
         "## How it lands",
         "",
         "Nothing in the copy is edited here: a change to it is made in the library, and the next sync "
@@ -212,6 +245,19 @@ def records(target, consumer):
     return before, (Path(target) / path).read_text(encoding="ascii")
 
 
+def release_of(target, consumer):
+    """The version file's version as the consumer's last commit has it
+    (None when that commit has no such file) and as scripts/vendor.py left
+    it, or None for a consumer that names no version file."""
+    if "version_file" not in consumer:
+        return None
+    path = consumer["version_file"]
+    before = git(target, "show", f"HEAD:{path}")
+    after = (Path(target) / path).read_text(encoding="utf-8")
+    old = None if before is None else ecosystem.stated_version(before, path)
+    return old, ecosystem.stated_version(after, path)
+
+
 def body_for(eco, consumer, target, library=LIBRARY):
     before, after = records(target, consumer)
     version, commit, _ = vendoring.parse_record(after)
@@ -220,7 +266,8 @@ def body_for(eco, consumer, target, library=LIBRARY):
     copy_prefix = f"{consumer['vendor_dir']}/{vendoring.PACKAGE}/"
     porcelain = git(target, "status", "--porcelain", "--untracked-files=all", "--no-renames", "--",
                     copy_prefix) or ""
-    return body(eco, consumer, version, commit, old, log, file_changes(porcelain, copy_prefix))
+    return body(eco, consumer, version, commit, old, log, file_changes(porcelain, copy_prefix),
+                release_of(target, consumer))
 
 
 def version_and_commit(target, consumer):
@@ -260,7 +307,9 @@ def answer(args, eco):
     if args.command == "body":
         return body_for(eco, consumer, args.target)
     version, commit = version_and_commit(args.target, consumer)
-    return title(version, commit) + "\n" if args.command == "title" else message(eco, consumer, version, commit)
+    if args.command == "title":
+        return title(version, commit) + "\n"
+    return message(eco, consumer, version, commit, release_of(args.target, consumer))
 
 
 def main(argv=None):

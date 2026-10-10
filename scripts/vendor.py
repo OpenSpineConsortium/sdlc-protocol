@@ -19,6 +19,17 @@ carries "-dirty" when the package has changes not yet committed, so the
 record never names a commit the copy does not match, and is "unknown"
 outside a git checkout. Nothing in the target is committed: that is the
 target's own pull request, which the sync workflow opens.
+
+A consumer that ships its copy on to users of its own names a version
+file in ecosystem.json, as the plugin marketplace names its plugin.json:
+Claude Code keeps an installed plugin on its cached copy until the version
+in the plugin's manifest changes, so a new guard that landed there without
+a new version would never reach a session. Whenever the copy's files
+change, this raises that file's patch number in the same run, and so in
+the sync's same commit; a run that leaves the files as they were leaves
+the version alone, so a second run still changes nothing. A version file
+that is missing, or states no MAJOR.MINOR.PATCH version, is refused before
+anything is written.
 """
 
 import argparse
@@ -108,6 +119,35 @@ def state_of(vendor_dir):
     return recorded, (vendoring.digests_of(copy) if copy.is_dir() else None)
 
 
+def read_version_file(target, consumer):
+    """The consumer's version file as (path, its version, its text with the
+    next patch version), or None when ecosystem.json names none for it.
+    Read before anything is written, so a file that cannot be raised
+    refuses the whole run instead of leaving a copy with no release."""
+    if "version_file" not in consumer:
+        return None
+    path = target / consumer["version_file"]
+    if not path.is_file():
+        raise EcosystemError(f"{path} is not there, and ecosystem.json names it as "
+                             f"{consumer['repository']}'s version file")
+    text = path.read_bytes().decode("utf-8")
+    version = ecosystem.stated_version(text, path)
+    return path, version, ecosystem.with_version(text, ecosystem.next_patch(version), path)
+
+
+def release(version_file, copy_changed):
+    """Raise the version file when the copy's files changed, and return the
+    line that says what happened to it."""
+    if version_file is None:
+        return []
+    path, version, raised = version_file
+    if not copy_changed:
+        return [f"vendor: the copy's files are unchanged, so {path} stays at {version}"]
+    path.write_bytes(raised.encode("utf-8"))
+    return [f"vendor: the copy's files changed, so {path} goes from {version} to "
+            f"{ecosystem.stated_version(raised, path)}, the release that takes the new copy to its users"]
+
+
 def replace_copy(library, files, copy):
     shutil.rmtree(copy, ignore_errors=True)
     for name in files:
@@ -127,11 +167,14 @@ def vendor(target, named=None, library=LIBRARY):
     version, commit = version_of(library), commit_of(library)
     vendor_dir = target / consumer["vendor_dir"]
     copy, record = vendor_dir / vendoring.PACKAGE, vendor_dir / vendoring.RECORD
+    version_file = read_version_file(target, consumer)
     before = state_of(vendor_dir)
     replace_copy(library, files, copy)
     record.write_text(vendoring.record_text(version, commit, vendoring.digests_of(copy)), encoding="ascii",
                       newline="\n")
-    return report(consumer, files, copy, record, version, commit, before == state_of(vendor_dir))
+    after = state_of(vendor_dir)
+    released = release(version_file, copy_changed=before[1] != after[1])
+    return report(consumer, files, copy, record, version, commit, before == after) + released
 
 
 def report(consumer, files, copy, record, version, commit, unchanged):

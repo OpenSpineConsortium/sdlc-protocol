@@ -23,6 +23,10 @@ Every copy also takes `__init__.py` and `vendoring.py`: the package's version, a
 | sdlc-marketplace | `plugins/sdlc/vendor/sdlc_protocol` | `guard.py` | the push guard in the plugin's PreToolUse hook (plugins/sdlc/scripts/guard.py) | auto-merge, once its check is green |
 | sdlc-app | `app/vendor/sdlc_protocol` | `claims.py`, `protocol_check.py` | the protocol check, posted as the check run sdlc/protocol (app/handlers.py) | its owner (private: no auto-merge) |
 
+A consumer that ships its copy on to users of its own names a version file in ecosystem.json. Whenever the copy's files change, `scripts/vendor.py` raises that file's patch version in the same run, so the sync's commit is also the release that takes the new copy to those users: Claude Code, for one, keeps an installed plugin on its cached copy until the version in the plugin's manifest changes.
+
+- sdlc-marketplace: `plugins/sdlc/.claude-plugin/plugin.json`
+
 ## The modules and who takes them
 
 A solid arrow is an import, from the module that imports to the module it needs; a dotted arrow is a repository taking the whole package or the modules it names. The rules are plain functions over what they are handed; only the modules under `adapters/` call GitHub or change a git repository, and `cli` is the shell around them.
@@ -105,12 +109,14 @@ flowchart LR
   merge --> pulls["sync: the pull request sdlc-protocol/sync in each consumer"]
   pulls --> theirs["the consumer's own check"]
   theirs --> lands["auto-merge, or the owner where it is private"]
+  lands --> users["its users' installs, where it names a version file"]
 ```
 
 1. A pull request here runs the check named `check`, the library's own suite, and one `downstream (<consumer>)` job per consumer: the change vendored into a checkout of that consumer and the consumer's own check run on it, so a change that would break one is red before it merges.
 2. The owner merges it to main.
-3. The sync workflow (`.github/workflows/sync.yml`) vendors the new main into each consumer (sdlc-template, coordbench, sdlc-marketplace, sdlc-app) and opens the pull request `sdlc-protocol/sync` there, or updates the one already open, with the GitHub App's token, so the consumer's own CI runs on it.
+3. The sync workflow (`.github/workflows/sync.yml`) vendors the new main into each consumer (sdlc-template, coordbench, sdlc-marketplace, sdlc-app) and opens the pull request `sdlc-protocol/sync` there, or updates the one already open, with the GitHub App's token, so the consumer's own CI runs on it. Where a consumer names a version file (sdlc-marketplace's `plugins/sdlc/.claude-plugin/plugin.json`), the same commit raises its patch version whenever the copy's files change.
 4. The consumer's own check runs on that pull request; part of it is `vendoring.py verify`, which holds the copy to its record.
 5. A public consumer's pull request lands by auto-merge once that check is green; the private App's waits for its owner.
+6. Where the consumer names a version file, that merge is also its release: the installs that run its copy see the new version and take the new copy at their next update.
 
 A consumer never edits its copy: the change is made here and comes back by the next sync. To vendor by hand, `python3 scripts/vendor.py <consumer checkout>` from a clone of this repository.

@@ -4,8 +4,9 @@ The workflows only run git, gh and this script, so what they decide is
 tested here: the matrix they run a leg per consumer from, what the run's
 summary tells the owner when the App is not set up, and what a consumer's
 reviewer reads in the sync's pull request (the title, the commit message,
-the body with the library's log since the commit the copy named before and
-the files of the copy that moved). The body's library log sits in a fenced
+the body with the library's log since the commit the copy named before,
+the files of the copy that moved and, for the plugin marketplace, the
+release the raised version in its plugin.json makes). The body's library log sits in a fenced
 block, where GitHub neither links "#12" to the consumer's own #12 nor reads
 "Closes #12" as closing anything."""
 
@@ -30,6 +31,8 @@ from ecosystem import vendoring  # noqa: E402
 ECO = ecosystem.load()
 TEMPLATE = ecosystem.consumer_named(ECO, "OpenSpineConsortium/sdlc-template")
 APP = ecosystem.consumer_named(ECO, "OpenSpineConsortium/sdlc-app")
+MARKETPLACE = ecosystem.consumer_named(ECO, "OpenSpineConsortium/sdlc-marketplace")
+MANIFEST = MARKETPLACE["version_file"]
 OLD = "1111111111111111111111111111111111111111"
 NEW = "2222222222222222222222222222222222222222"
 NO_CHANGES = ([], [], [])
@@ -86,6 +89,16 @@ class TitleAndMessage(unittest.TestCase):
         self.assertEqual(lines[:2], ["Vendor sdlc-protocol 0.2.0 (2222222)", ""])
         self.assertIn("tools/VENDORED", " ".join(lines))
         self.assertTrue(all(len(line) <= 90 for line in lines))
+
+    def test_the_message_names_the_release_it_makes(self):
+        text = sync.message(ECO, MARKETPLACE, "0.2.0", NEW, ("0.1.0", "0.1.1"))
+        self.assertIn(f"It raises the version in {MANIFEST} from 0.1.0\nto 0.1.1:", text)
+        self.assertTrue(all(len(line) <= 90 for line in text.splitlines()))
+
+    def test_no_release_no_word_of_one(self):
+        for consumer, release in ((MARKETPLACE, ("0.1.1", "0.1.1")), (TEMPLATE, None)):
+            with self.subTest(consumer=consumer["repository"]):
+                self.assertNotIn("It raises", sync.message(ECO, consumer, "0.2.0", NEW, release))
 
 
 class ReadingTheRecords(unittest.TestCase):
@@ -154,6 +167,18 @@ class TheBody(unittest.TestCase):
         self.assertIn("`bash scripts/check.sh`", text)
         self.assertIn("`vendoring.py verify`", text)
         self.assertIn("`tools/VENDORED`", text)
+
+    def test_a_raised_version_is_the_release_this_pull_request_makes(self):
+        text = sync.body(ECO, MARKETPLACE, "0.2.0", NEW, OLD, [], NO_CHANGES, ("0.1.0", "0.1.1"))
+        self.assertIn(f"## The release\n\n`{MANIFEST}` goes from 0.1.0 to 0.1.1 in this same pull request", text)
+        self.assertLess(text.index("## The release"), text.index("## How it lands"))
+
+    def test_an_unchanged_version_says_there_is_nothing_new_to_take(self):
+        text = sync.body(ECO, MARKETPLACE, "0.2.0", NEW, OLD, [], NO_CHANGES, ("0.1.1", "0.1.1"))
+        self.assertIn(f"`{MANIFEST}` stays at 0.1.1", text)
+
+    def test_a_consumer_with_no_version_file_has_no_release_section(self):
+        self.assertNotIn("## The release", self.body())
 
     def test_auto_merge_on_a_public_consumer_and_the_owner_on_the_private_app(self):
         self.assertIn("Auto-merge", self.body(TEMPLATE))
@@ -260,6 +285,41 @@ class TheBodyFromGit(unittest.TestCase):
         text = sync.body_for(ECO, TEMPLATE, fresh, self.library)
         self.assertIn("had no record of the commit", text)
         self.assertIn("- Added: `guard.py`, `vendoring.py`", text)
+
+
+class TheReleaseFromGit(unittest.TestCase):
+    """The marketplace's checkout as the sync leaves it: its last commit
+    holds the plugin at 0.1.0, and scripts/vendor.py raised it to 0.1.1
+    beside a new copy of the guard."""
+
+    def setUp(self):
+        self.scratch = Path(tempfile.mkdtemp()).resolve()
+        self.addCleanup(shutil.rmtree, self.scratch, True)
+        self.target = self.scratch / "marketplace"
+        self.write("guard.py", "first\n", version="0.1.0")
+        git(self.target, "init", "-q")
+        commit(self.target, "The plugin at 0.1.0")
+        self.write("guard.py", "second\n", version="0.1.1")
+
+    def write(self, name, text, version):
+        copy = self.target / MARKETPLACE["vendor_dir"] / "sdlc_protocol"
+        copy.mkdir(parents=True, exist_ok=True)
+        (copy / name).write_text(text, encoding="ascii")
+        record = vendoring.record_text("0.2.0", NEW, vendoring.digests_of(copy))
+        (copy.parent / "VENDORED").write_text(record, encoding="ascii")
+        (self.target / MANIFEST).parent.mkdir(parents=True, exist_ok=True)
+        (self.target / MANIFEST).write_text(json.dumps({"name": "sdlc", "version": version}) + "\n",
+                                            encoding="ascii")
+
+    def test_reads_the_version_before_and_after(self):
+        self.assertEqual(sync.release_of(self.target, MARKETPLACE), ("0.1.0", "0.1.1"))
+        self.assertIsNone(sync.release_of(self.target, TEMPLATE))
+
+    def test_the_body_and_the_message_name_the_release(self):
+        self.assertIn(f"`{MANIFEST}` goes from 0.1.0 to 0.1.1", sync.body_for(ECO, MARKETPLACE, self.target))
+        code, out = run("message", str(self.target), "--consumer", MARKETPLACE["repository"])
+        self.assertEqual(code, 0)
+        self.assertIn(f"It raises the version in {MANIFEST} from 0.1.0\nto 0.1.1:", out)
 
 
 if __name__ == "__main__":

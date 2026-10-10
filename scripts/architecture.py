@@ -99,7 +99,25 @@ def consumers_table(eco):
         merges = "auto-merge, once its check is green" if c["auto_merge"] else "its owner (private: no auto-merge)"
         lines.append(f"| {ecosystem.short_name(c['repository'])} | `{c['vendor_dir']}/{eco['package']}` | "
                      f"{taken(eco, c)} | {cell(c['uses'])} | {merges} |")
-    return lines
+    return lines + version_files(eco)
+
+
+def with_version_file(eco):
+    return [c for c in eco["consumers"] if "version_file" in c]
+
+
+def version_files(eco):
+    named = with_version_file(eco)
+    if not named:
+        return []
+    lines = ["",
+             "A consumer that ships its copy on to users of its own names a version file in ecosystem.json. "
+             "Whenever the copy's files change, `scripts/vendor.py` raises that file's patch version in the "
+             "same run, so the sync's commit is also the release that takes the new copy to those users: "
+             "Claude Code, for one, keeps an installed plugin on its cached copy until the version in the "
+             "plugin's manifest changes.",
+             ""]
+    return lines + [f"- {ecosystem.short_name(c['repository'])}: `{c['version_file']}`" for c in named]
 
 
 def module_graph(eco, modules):
@@ -129,10 +147,8 @@ def module_summaries(modules):
     return lines + [f"- `{ecosystem.module_name(m)}`: {code_spans(summary_of(m))}" for m in modules]
 
 
-def travel(eco):
-    names = ", ".join(ecosystem.short_name(c["repository"]) for c in eco["consumers"])
-    return [
-        "", "## How a change travels", "",
+def travel_chart(eco):
+    lines = [
         "```mermaid",
         "flowchart LR",
         "  pr[\"pull request on sdlc-protocol\"] --> checks[\"check, and downstream for each consumer\"]",
@@ -140,7 +156,31 @@ def travel(eco):
         f"  merge --> pulls[\"sync: the pull request {sync.BRANCH} in each consumer\"]",
         "  pulls --> theirs[\"the consumer's own check\"]",
         "  theirs --> lands[\"auto-merge, or the owner where it is private\"]",
-        "```",
+    ]
+    if with_version_file(eco):
+        lines.append("  lands --> users[\"its users' installs, where it names a version file\"]")
+    return lines + ["```"]
+
+
+def release_steps(eco):
+    """The steps of a change's journey that a version file adds, or none."""
+    named = with_version_file(eco)
+    if not named:
+        return [], []
+    files = ", ".join(f"{ecosystem.short_name(c['repository'])}'s `{c['version_file']}`" for c in named)
+    raising = (f" Where a consumer names a version file ({files}), the same commit raises its patch version "
+               "whenever the copy's files change.")
+    reaching = ("6. Where the consumer names a version file, that merge is also its release: the installs "
+                "that run its copy see the new version and take the new copy at their next update.")
+    return [raising], [reaching]
+
+
+def travel(eco):
+    names = ", ".join(ecosystem.short_name(c["repository"]) for c in eco["consumers"])
+    raising, reaching = release_steps(eco)
+    return [
+        "", "## How a change travels", "",
+        *travel_chart(eco),
         "",
         "1. A pull request here runs the check named `check`, the library's own suite, and one "
         "`downstream (<consumer>)` job per consumer: the change vendored into a checkout of that "
@@ -149,11 +189,12 @@ def travel(eco):
         "2. The owner merges it to main.",
         f"3. The sync workflow (`.github/workflows/sync.yml`) vendors the new main into each consumer "
         f"({names}) and opens the pull request `{sync.BRANCH}` there, or updates the one already open, "
-        "with the GitHub App's token, so the consumer's own CI runs on it.",
+        "with the GitHub App's token, so the consumer's own CI runs on it." + "".join(raising),
         "4. The consumer's own check runs on that pull request; part of it is `vendoring.py verify`, "
         "which holds the copy to its record.",
         "5. A public consumer's pull request lands by auto-merge once that check is green; the private "
         "App's waits for its owner.",
+        *reaching,
         "",
         "A consumer never edits its copy: the change is made here and comes back by the next sync. To "
         "vendor by hand, `python3 scripts/vendor.py <consumer checkout>` from a clone of this repository.",

@@ -72,6 +72,16 @@ class ThePage(unittest.TestCase):
         self.assertIn("  r_sdlc_app -.-> m_claims", self.text)
         self.assertIn("  r_sdlc_app -.-> m_protocol_check", self.text)
 
+    def test_names_each_version_file_and_the_release_it_makes(self):
+        """The plugin's release is part of the sync, and the map says so."""
+        for consumer in ECO["consumers"]:
+            if "version_file" in consumer:
+                with self.subTest(consumer=consumer["repository"]):
+                    self.assertIn(f"- {ecosystem.short_name(consumer['repository'])}: `{consumer['version_file']}`",
+                                  self.text)
+        self.assertIn("the same commit raises its patch version whenever the copy's files change", self.text)
+        self.assertIn("6. Where the consumer names a version file, that merge is also its release", self.text)
+
     def test_says_how_a_change_travels(self):
         self.assertIn("## How a change travels", self.text)
         for words in ("downstream (<consumer>)", "sdlc-protocol/sync", "auto-merge", "vendoring.py verify"):

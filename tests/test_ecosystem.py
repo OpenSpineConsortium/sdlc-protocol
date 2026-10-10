@@ -4,8 +4,10 @@ which every script that acts on it reads it through.
 The file decides what four repositories receive on every sync, so it is
 held to its shape here before any workflow acts on it: every consumer
 names a repository, a visibility, a place for its copy inside its tree,
-modules the package has, the check it runs, and no auto-merge where GitHub
-Free has none. Above all, a consumer that takes only some modules must get
+modules the package has, the check it runs, no auto-merge where GitHub
+Free has none, and, for the plugin marketplace, the manifest whose version
+the sync raises with each new copy, without which no installed plugin
+would ever take one. Above all, a consumer that takes only some modules must get
 every module those import: a copy of protocol_check.py without claims.py
 would pass the sync and fail in the App at its first pull request. The
 imports are read with ast from the package's source, so the rule holds for
@@ -51,6 +53,12 @@ class TheFile(unittest.TestCase):
         for consumer in ECO["consumers"]:
             with self.subTest(consumer=consumer["repository"]):
                 self.assertEqual(consumer["auto_merge"], consumer["visibility"] == "public")
+
+    def test_the_marketplace_names_its_plugin_manifest_as_its_version_file(self):
+        """Claude Code keeps an installed plugin at the version its manifest
+        names, so the marketplace's copy reaches no session without it."""
+        named = {c["repository"]: c["version_file"] for c in ECO["consumers"] if "version_file" in c}
+        self.assertEqual(named, {"OpenSpineConsortium/sdlc-marketplace": "plugins/sdlc/.claude-plugin/plugin.json"})
 
     def test_every_named_module_exists(self):
         for consumer in ECO["consumers"]:
@@ -155,8 +163,50 @@ class TheShape(unittest.TestCase):
         self.assertProblem(lambda eco: eco["consumers"].append(copy.deepcopy(eco["consumers"][0])),
                            "is listed more than once")
 
+    def test_a_version_file_is_optional_and_read(self):
+        self.assertNotIn("version_file", consumer_of(ECO, "sdlc-template"))
+        self.assertFalse(any("version_file" in problem for problem in ecosystem.problems(ECO)))
+
+    def test_a_version_file_outside_the_repository_or_not_json(self):
+        for path in ("../plugin.json", "/plugin.json", "plugin.toml", 3):
+            with self.subTest(path=path):
+                self.assertProblem(lambda eco: consumer_of(eco, "sdlc-marketplace").update(version_file=path),
+                                   "version_file is not a relative path to a .json file inside the repository")
+
+    def test_a_version_file_inside_the_copy(self):
+        self.assertProblem(lambda eco: consumer_of(eco, "sdlc-marketplace").update(
+            version_file="plugins/sdlc/vendor/sdlc_protocol/plugin.json"), "version_file lies inside the copy")
+
     def test_an_empty_sentence(self):
         self.assertProblem(lambda eco: consumer_of(eco, "coordbench").update(uses=" "), "uses is not a sentence")
+
+
+class TheVersionFile(unittest.TestCase):
+    """Reading and raising the version a consumer's version file states."""
+
+    def test_reads_the_version(self):
+        self.assertEqual(ecosystem.stated_version('{"name": "sdlc", "version": "0.1.0"}', "plugin.json"), "0.1.0")
+
+    def test_refuses_what_is_no_version_it_can_raise(self):
+        for text in ("not json", "[]", "{}", '{"version": 1}', '{"version": "1.0"}', '{"version": "v1.0.0"}',
+                     '{"version": "1.0.0-rc.1"}'):
+            with self.subTest(text=text):
+                with self.assertRaises(ecosystem.EcosystemError) as caught:
+                    ecosystem.stated_version(text, "plugin.json")
+                self.assertIn("plugin.json", str(caught.exception))
+
+    def test_the_next_patch_version(self):
+        self.assertEqual([ecosystem.next_patch(v) for v in ("0.1.0", "0.1.9", "2.0.41")], ["0.1.1", "0.1.10", "2.0.42"])
+
+    def test_raising_changes_the_version_and_no_other_byte(self):
+        text = '{\n  "name": "sdlc",\n  "version":   "0.1.0",\r\n  "keywords": ["0.1.0"]\n}'
+        self.assertEqual(ecosystem.with_version(text, "0.1.1", "plugin.json"),
+                         '{\n  "name": "sdlc",\n  "version":   "0.1.1",\r\n  "keywords": ["0.1.0"]\n}')
+
+    def test_a_version_it_cannot_tell_apart_is_refused(self):
+        with self.assertRaises(ecosystem.EcosystemError) as caught:
+            ecosystem.with_version('{"version": "0.1.0", "engine": {"version": "0.1.0"}}', "0.1.1", "plugin.json")
+        self.assertIn("raise it by hand", str(caught.exception))
 
 
 class FindingAndCopying(unittest.TestCase):

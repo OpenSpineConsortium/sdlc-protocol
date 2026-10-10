@@ -32,7 +32,8 @@
       "modules": ["guard.py"],
       "check": "bash scripts/check.sh",
       "auto_merge": true,
-      "uses": "the push guard in the plugin's PreToolUse hook (plugins/sdlc/scripts/guard.py)"
+      "uses": "the push guard in the plugin's PreToolUse hook (plugins/sdlc/scripts/guard.py)",
+      "version_file": "plugins/sdlc/.claude-plugin/plugin.json"
     },
     {
       "repository": "OpenSpineConsortium/sdlc-app",

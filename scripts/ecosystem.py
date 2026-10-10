@@ -2,13 +2,16 @@
 
 ecosystem.json at the repository's root is the one place that says which
 repositories take this package, where each keeps its copy, which modules
-it takes, what it uses them for and how it checks itself. scripts/vendor.py
-copies by it, scripts/sync.py plans the sync's pull requests by it, the
-workflows' downstream and sync jobs run a leg per consumer from it, and
+it takes, what it uses them for and how it checks itself, and, for a
+consumer that ships its copy to users of its own, the file whose version
+tells them there is a new one. scripts/vendor.py copies by it,
+scripts/sync.py plans the sync's pull requests by it, the workflows'
+downstream and sync jobs run a leg per consumer from it, and
 scripts/architecture.py draws ECOSYSTEM.md from it. This module is what
 they share: reading the file and holding it to its shape, finding a
-consumer, the files a consumer's copy holds, and the imports between the
-package's modules, which decide whether a copy of a few of them can run.
+consumer, the files a consumer's copy holds, the imports between the
+package's modules, which decide whether a copy of a few of them can run,
+and reading and raising the version a consumer's version file states.
 """
 
 import ast
@@ -40,7 +43,9 @@ VISIBILITIES = ("public", "private")
 REPOSITORY = re.compile(r"[A-Za-z0-9-]+/[A-Za-z0-9._-]+")
 TOP_KEYS = {"library", "about", "package", "always_copied", "consumers"}
 CONSUMER_KEYS = {"repository", "visibility", "about", "vendor_dir", "modules", "check", "auto_merge", "uses"}
+OPTIONAL_CONSUMER_KEYS = {"version_file"}
 TEXT_KEYS = ("about", "check", "uses")
+VERSION = re.compile(r"(\d+)\.(\d+)\.(\d+)")
 
 
 class EcosystemError(Exception):
@@ -188,6 +193,46 @@ def missing_imports(files, package_dir=PACKAGE_DIR):
     return missing
 
 
+# --- a consumer's version file ---------------------------------------------------------
+#
+# A consumer that ships its copy on to users of its own names the file
+# whose "version" tells their installs that something new is there: the
+# plugin marketplace's plugins/sdlc/.claude-plugin/plugin.json, since
+# Claude Code keeps an installed plugin on its cached copy until the
+# version in its manifest changes. scripts/vendor.py raises that version's
+# patch number whenever the copy's files change, so the release is part of
+# the sync's own commit and not a step someone has to remember.
+
+def stated_version(text, where):
+    """The MAJOR.MINOR.PATCH version a version file's JSON states."""
+    try:
+        data = json.loads(text)
+    except ValueError as problem:
+        raise EcosystemError(f"{where} is not JSON: {problem}") from None
+    version = data.get("version") if isinstance(data, dict) else None
+    if not isinstance(version, str) or not VERSION.fullmatch(version):
+        raise EcosystemError(f"{where} states no version of the form MAJOR.MINOR.PATCH")
+    return version
+
+
+def next_patch(version):
+    """The version a release of a new copy takes: the patch number plus one."""
+    major, minor, patch = VERSION.fullmatch(version).groups()
+    return f"{major}.{minor}.{int(patch) + 1}"
+
+
+def with_version(text, version, where):
+    """The version file's text with its version raised to version and every
+    other byte left as it was, so the sync's diff there is one line."""
+    old = stated_version(text, where)
+    pattern = re.compile(r'("version"\s*:\s*")' + re.escape(old) + '"')
+    raised, count = pattern.subn(lambda found: f'{found.group(1)}{version}"', text)
+    if count != 1 or stated_version(raised, where) != version:
+        raise EcosystemError(f"{where}: its version {old} cannot be told apart from the rest of the file; "
+                             "raise it by hand")
+    return raised
+
+
 # --- the file's shape ----------------------------------------------------------------
 
 def problems(ecosystem, package_dir=PACKAGE_DIR):
@@ -211,9 +256,9 @@ def problems(ecosystem, package_dir=PACKAGE_DIR):
     return found
 
 
-def key_problems(where, value, keys):
+def key_problems(where, value, keys, optional=frozenset()):
     found = [f"{where} lacks {key}" for key in sorted(keys - set(value))]
-    return found + [f"{where} has {key}, which nothing reads" for key in sorted(set(value) - keys)]
+    return found + [f"{where} has {key}, which nothing reads" for key in sorted(set(value) - keys - optional)]
 
 
 def module_list_problems(where, modules, package_dir):
@@ -228,7 +273,7 @@ def consumer_problems(ecosystem, consumer, package_dir):
     if not isinstance(consumer, dict):
         return ["a consumer is not a JSON object"]
     where = str(consumer.get("repository", "a consumer"))
-    found = key_problems(where, consumer, CONSUMER_KEYS)
+    found = key_problems(where, consumer, CONSUMER_KEYS, OPTIONAL_CONSUMER_KEYS)
     if not REPOSITORY.fullmatch(where):
         found.append(f"{where}: repository is not OWNER/NAME")
     found += [f"{where}: {key} is not a sentence" for key in TEXT_KEYS
@@ -237,8 +282,23 @@ def consumer_problems(ecosystem, consumer, package_dir):
     vendor_dir = consumer.get("vendor_dir")
     if not isinstance(vendor_dir, str) or not vendoring.is_inside_the_copy(vendor_dir):
         found.append(f"{where}: vendor_dir is not a relative path inside the repository")
+    found += version_file_problems(where, consumer)
     found += copy_problems(ecosystem, where, consumer.get("modules"), package_dir)
     return found
+
+
+def version_file_problems(where, consumer):
+    """Whether a consumer's version file, when it names one, is a JSON file
+    of its own tree that the copy, which the sync replaces, does not hold."""
+    if "version_file" not in consumer:
+        return []
+    path = consumer["version_file"]
+    if not isinstance(path, str) or not vendoring.is_inside_the_copy(path) or not path.endswith(".json"):
+        return [f"{where}: version_file is not a relative path to a .json file inside the repository"]
+    copy = f"{consumer.get('vendor_dir')}/{vendoring.PACKAGE}/"
+    if path.startswith(copy):
+        return [f"{where}: version_file lies inside the copy, which the sync replaces"]
+    return []
 
 
 def visibility_problems(where, consumer):
