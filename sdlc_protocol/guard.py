@@ -214,6 +214,24 @@ def branches(cwd):
     return current, default
 
 
+def command_of(payload):
+    """The shell command a hook payload carries, or "" when the payload is
+    not the shape Claude Code sends (an object whose tool_input is an
+    object with a string command): a payload the guard cannot read passes,
+    since branch protection still stands behind it."""
+    tool_input = payload.get("tool_input") if isinstance(payload, dict) else None
+    command = tool_input.get("command") if isinstance(tool_input, dict) else None
+    return command if isinstance(command, str) else ""
+
+
+def where_to_ask(payload, cwd):
+    """The directory git is asked in: the session's own, from the payload,
+    else the caller's, else here. A payload cwd that is not text is passed
+    over, since git cannot be run in it."""
+    session = payload.get("cwd") if isinstance(payload, dict) else None
+    return (session if isinstance(session, str) and session else None) or cwd or "."
+
+
 def run(payload, cwd=None):
     """The hook's answer to one tool call: the exit code and the reason,
     which is empty when the call passes. The payload is the hook's JSON
@@ -222,16 +240,14 @@ def run(payload, cwd=None):
     asked in the payload's own cwd, else in cwd, else here, and only once
     the command holds a push, so a session that never pushes never waits
     on it."""
-    if not isinstance(payload, dict):
-        return PASS, ""
-    command = (payload.get("tool_input") or {}).get("command") or ""
+    command = command_of(payload)
     if "push" not in command:
         return PASS, ""
     pushes = [args for argv in simple_commands(command)
               if (args := push_arguments(argv)) is not None]
     if not pushes:
         return PASS, ""
-    current, default = branches(payload.get("cwd") or cwd or ".")
+    current, default = branches(where_to_ask(payload, cwd))
     for args in pushes:
         reason = refusal(args, current, default)
         if reason:

@@ -28,27 +28,30 @@ LIST_ITEM = re.compile(r"^\s*[-*]\s+(.+?)\s*$")
 UNNAMED = "unnamed"
 
 
-def branch_of(number):
-    """The claim branch for an issue: claude/<number>."""
-    return f"{PREFIX}{number}"
+def branch_of(number, prefix=PREFIX):
+    """The claim branch for an issue: claude/<number>. The prefix is an
+    argument so a gate policy that names another one uses the same rule."""
+    return f"{prefix}{number}"
 
 
-def is_claim_branch(branch):
-    return branch.startswith(PREFIX)
+def is_claim_branch(branch, prefix=PREFIX):
+    return branch.startswith(prefix)
 
 
-def key_of(branch):
+def key_of(branch, prefix=PREFIX):
     """What follows claude/ in a claim branch: the issue number by protocol,
     kept as text because a hand-made branch may put something else there
     and the board still shows it. None for a branch that is no claim."""
-    return branch[len(PREFIX):] if is_claim_branch(branch) else None
+    return branch[len(prefix):] if is_claim_branch(branch, prefix) else None
 
 
-def number_of(branch):
+def number_of(branch, prefix=PREFIX):
     """The issue number a claim branch names, or None when the branch is no
-    claim or what follows claude/ is not a number."""
-    key = key_of(branch)
-    return int(key) if key is not None and key.isdigit() else None
+    claim or what follows claude/ is not a number. Decimal digits only, as
+    the template's check matched them with \\d: a superscript passes
+    isdigit() but not int(), and a branch name must never raise."""
+    key = key_of(branch, prefix)
+    return int(key) if key is not None and key.isdecimal() else None
 
 
 def claim_path(number):
@@ -115,10 +118,17 @@ def is_idle(last_change, now, idle_after=IDLE_AFTER):
 
 def release_due(claims, now, idle_after=IDLE_AFTER):
     """The claims the coordinator releases: those whose branch has had no
-    commit for more than idle_after. The claims are a mapping from the
-    claim's key (its branch, or the issue number as text) to the time of
+    commit for more than idle_after. The claims are a mapping, or pairs,
+    from the claim's key (its branch, or the issue number) to the time of
     the branch's last commit, as a datetime or as GitHub writes it; the
     answer is the keys due, in issue order, so the comments the coordinator
     posts come out the same for the same state."""
-    due = [key for key, last_commit in claims.items() if is_idle(last_commit, now, idle_after)]
-    return sorted(due, key=lambda key: by_number(key_of(str(key)) if is_claim_branch(str(key)) else key))
+    pairs = claims.items() if hasattr(claims, "items") else claims
+    due = [key for key, last_commit in pairs if is_idle(last_commit, now, idle_after)]
+    return sorted(due, key=issue_order)
+
+
+def issue_order(key):
+    """A sort key for a claim given as its branch or as its issue number."""
+    text = str(key)
+    return by_number(key_of(text) if is_claim_branch(text) else text)

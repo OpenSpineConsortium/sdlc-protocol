@@ -1,0 +1,64 @@
+{
+  "sha": "fedcba9876543210fedcba9876543210fedcba98",
+  "default_branch": "trunk",
+  "issues": [
+    {"number": 100, "title": "A hundred, to sort after nine", "labels": [{"name": "todo"}]},
+    {"number": 9, "title": "Nine \u2014 with a dash", "labels": ["todo", "account:main"]},
+    {"number": 21, "title": "Claimed by label", "labels": [{"name": "todo"}, {"name": "claimed"}]},
+    {"number": 22, "title": "Claimed by branch", "labels": [{"name": "todo"}]},
+    {"number": 23, "title": "An epic", "labels": [{"name": "epic"}, {"name": "todo"}]},
+    {"number": 24, "title": "A member's task", "labels": [{"name": "agent:w1"}, {"name": "todo"}]},
+    {"number": 25, "title": "Blocks everyone | twice\nover", "labels": [{"name": "blocker"}, {"name": "todo"}]},
+    {"number": 26, "title": "A blocker someone holds", "labels": ["blocker", "claimed", "account:second"]},
+    {"number": 27, "title": "Waiting in review", "labels": ["in-review"]}
+  ],
+  "pulls": [
+    {"number": 61, "title": "Conflicts with trunk", "head": {"ref": "claude/22", "sha": "1111111"}, "mergeable_state": "dirty", "updated_at": "2026-09-22T09:00:00Z", "files": ["z.md", "a.md"]},
+    {"number": 60, "title": "Hooks only", "head": {"ref": "claude/30", "sha": "2222222"}, "mergeable_state": "has_hooks", "updated_at": "2026-09-23T09:00:00Z", "files": []},
+    {"number": 62, "title": "Unstable checks", "head": {"ref": "feature/x", "sha": "3333333"}, "mergeable_state": "unstable", "updated_at": "2026-09-23T10:00:00Z", "files": ["src/x.py"]},
+    {"number": 63, "title": "Blocked by review", "head": {"ref": "claude/31", "sha": "4444444"}, "mergeable_state": "blocked", "updated_at": "2026-09-21T10:00:00Z", "files": ["docs/b.md"]},
+    {"number": 64, "title": "Not computed yet", "head": {"ref": "claude/32", "sha": "5555555"}, "mergeable_state": null, "updated_at": "2026-09-23T11:00:00Z", "files": ["caf\u00e9.md"]},
+    {"number": 65, "title": "A draft", "head": {"ref": "claude/33", "sha": "6666666"}, "mergeable_state": "draft", "updated_at": "2026-09-23T11:30:00Z", "files": []},
+    {"number": 66, "title": "Behind trunk", "head": {"ref": "claude/34", "sha": "7777777"}, "mergeable_state": "behind", "updated_at": "2026-09-23T11:45:00Z", "files": ["b.md", "a.md", "c.md"]}
+  ],
+  "branches": [
+    {"name": "trunk"},
+    {"name": "claude/22"},
+    "claude/30",
+    "claude/31",
+    "claude/32",
+    "claude/33",
+    "claude/34",
+    "claude/5",
+    "claude/6",
+    "claude/7",
+    "claude/8",
+    "claude/x-notes",
+    "feature/x"
+  ],
+  "claims": {
+    "22": "# Claim: #22\n\n- **Account:** `second` (the label account:second)\n\n## Files to touch\n\n- ignored.md\n",
+    "30": "- Account: main\n",
+    "31": null,
+    "32": "",
+    "33": "Plan: nothing named\n",
+    "34": "**Account**: w\u00fcrth\n",
+    "5": "# Claim: #5\n\n- Account: main\n\n## Plan\n\nTwo sentences.\n\n## Files to touch\n\n- docs/b.md\n- `docs/a.md`\n* tools/x.py\n\n## Notes\n\n- not a file\n",
+    "6": "# Claim: #6\n\n- Account: third\n\n## Plan\n\nNo files named.\n",
+    "7": null,
+    "x-notes": "- Account: main\n## Files to touch\n- notes.md\n"
+  },
+  "claim_issues": {
+    "6": {"state": "closed", "labels": [{"name": "account:third"}]},
+    "7": {"state": "closed", "labels": ["account:main", "claimed", "todo"]},
+    "8": {"state": "closed", "labels": []},
+    "31": {"state": "open", "labels": [{"name": "claimed"}, {"name": "account:second"}]},
+    "32": {"state": "open", "labels": []},
+    "999": {"state": "closed", "labels": ["account:ghost"]}
+  },
+  "merged": [
+    {"number": 50, "title": "Older", "head": {"ref": "claude/50"}, "merged_at": "2026-09-20T10:00:00Z"},
+    {"number": 52, "title": "Newest", "head": {"ref": "claude/52"}, "merged_at": "2026-09-22T10:00:00Z"},
+    {"number": 51, "title": "Middle \u201cquoted\u201d", "head": {"ref": "claude/51"}, "merged_at": "2026-09-21T10:00:00Z"}
+  ]
+}

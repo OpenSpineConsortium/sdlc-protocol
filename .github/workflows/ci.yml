@@ -1,0 +1,36 @@
+name: Checks
+
+# The library's checks on every pull request and every push to main: bash
+# scripts/check.sh, which holds every file to ASCII with LF endings and then
+# runs the whole suite with python3 -m unittest discover -s tests. The job is
+# named "check", the name branch protection requires, as it is in the
+# repositories that vendor this package. Python is pinned to 3.12, the
+# oldest the package supports and the one the template's CI runs, so a call
+# to a newer API fails here before it reaches a consumer. A newer push to
+# the same branch cancels the run still going, so nobody waits on a result
+# that is already stale.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Run the checks
+        run: bash scripts/check.sh

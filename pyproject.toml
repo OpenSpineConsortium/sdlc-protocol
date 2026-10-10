@@ -1,0 +1,38 @@
+# The package has no dependencies; setuptools is only what builds a wheel
+# or an sdist from it. Version 77 is the first to read the license as an
+# SPDX expression, the form older table-shaped licenses are deprecated for.
+
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sdlc-protocol"
+# Kept equal to sdlc_protocol.__version__; tests/test_scaffold.py checks it.
+version = "0.1.0"
+description = "The claim protocol for pull-request-gated Claude agents: claims, the board, the protocol check, team mode, the push guard and the merge gate."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
+dependencies = []
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: OS Independent",
+]
+
+[project.urls]
+Repository = "https://github.com/OpenSpineConsortium/sdlc-protocol"
+
+# spec/ sits at the repository's root, where a reader finds it, and ships
+# inside the package as sdlc_protocol/spec/PROTOCOL.md, so an installed
+# copy carries the prose of the protocol its code implements.
+[tool.setuptools]
+packages = ["sdlc_protocol", "sdlc_protocol.adapters", "sdlc_protocol.spec"]
+
+[tool.setuptools.package-dir]
+"sdlc_protocol.spec" = "spec"
+
+[tool.setuptools.package-data]
+"sdlc_protocol.spec" = ["*.md"]

@@ -24,6 +24,9 @@ from .claims import (
 )
 
 RECENT_MERGED = 5
+# Where a workflow writes the board when nothing else is named: a file in
+# the current directory, since the workflow checks out the branch "board".
+STATE_PATH = Path("STATE.md")
 NO_CLAIM_FILE = "no claim file yet"
 # A claim branch that outlived its issue: the row stays, and says what to do.
 ISSUE_CLOSED = "issue closed"
@@ -107,7 +110,7 @@ class Pull:
             head_sha=head.get("sha") or "",
             mergeable_state=data.get("mergeable_state"),
             updated_at=data.get("updated_at") or "",
-            files=list(data.get("files") or []),
+            files=[file_name(f) for f in data.get("files") or []],
         )
 
     def to_dict(self):
@@ -187,7 +190,7 @@ class Snapshot:
             issues=[Issue.from_dict(i) for i in data.get("issues") or []],
             pulls=[Pull.from_dict(p) for p in data.get("pulls") or []],
             branches=[branch_name(b) for b in data.get("branches") or []],
-            claims=dict(data.get("claims") or {}),
+            claims={str(k): v for k, v in (data.get("claims") or {}).items()},
             claim_issues={str(k): ClaimIssue.from_dict(v or {}) for k, v in (data.get("claim_issues") or {}).items()},
             merged=[Merged.from_dict(m) for m in data.get("merged") or []],
         )
@@ -215,6 +218,12 @@ class Snapshot:
 def branch_name(branch):
     """A branch as a name, whether the API's object or a fixture's string."""
     return branch if isinstance(branch, str) else branch["name"]
+
+
+def file_name(changed):
+    """A changed file as a path, whether the API's object from the pull
+    request's files or a fixture's string."""
+    return changed if isinstance(changed, str) else changed["filename"]
 
 
 def as_snapshot(value):
@@ -272,7 +281,14 @@ def pulls_behind_main(pulls):
 
 def idle_pulls(pulls, now, idle_after=IDLE_AFTER):
     """The pull requests with no change for more than a day."""
-    return [p for p in pulls if is_idle(as_pull(p).updated_at, now, idle_after)]
+    return [p for p in pulls if pull_is_idle(as_pull(p), now, idle_after)]
+
+
+def pull_is_idle(pull, now, idle_after=IDLE_AFTER):
+    """Whether one pull request has waited too long. One with no update
+    time is not idle rather than failing the run: there is nothing to
+    measure, and GitHub always gives one."""
+    return bool(pull.updated_at) and is_idle(pull.updated_at, now, idle_after)
 
 
 def main_moved_text(state, default_branch, sha7):
@@ -302,7 +318,8 @@ def comments_due(snapshot, event_name, ref_name, now, idle_after=IDLE_AFTER):
     conflict with it hears so, once per commit of the default branch (the
     marker carries the short sha); a pull request nobody touched for a day
     is asked once whether it is parked. Main-moved comments come first,
-    then idle ones, each list in pull request order."""
+    then idle ones, each in the order the snapshot lists the pull requests,
+    as the template's board posted them."""
     snap = as_snapshot(snapshot)
     due = []
     if event_name == "push" and ref_name == snap.default_branch:

@@ -26,15 +26,14 @@ import json
 import re
 from typing import Protocol, runtime_checkable
 
-EPIC_LABEL = "epic"
-TODO_LABEL = "todo"
-BLOCKER_LABEL = "blocker"
-BLOCKED_LABEL = "blocked"
-# A team member names itself with agent:<name>; any other account, and the
+from .claims import PREFIX as CLAIM_PREFIX, number_of
+# The label names and the two prefixes are spelled once, in labels.py: a
+# team member names itself with agent:<name>; any other account, and the
 # plain worker that runs as the main account, with account:<name>.
-AGENT_PREFIX = "agent:"
-ACCOUNT_PREFIX = "account:"
-CLAIM_PREFIX = "claude/"
+from .labels import (ACCOUNT_PREFIX, AGENT_PREFIX, BLOCKED as BLOCKED_LABEL,
+                     BLOCKER as BLOCKER_LABEL, EPIC as EPIC_LABEL, TODO as TODO_LABEL,
+                     agent_label as agent_of, holders, label_names)
+
 # The one check the ruleset requires and a member can fix; the board's own
 # job and Claude's runs also leave check runs, which no member can mend.
 REQUIRED_CHECK = "check"
@@ -105,22 +104,9 @@ class Client(Protocol):
 
 
 # --- label rules --------------------------------------------------------------
-
-def label_names(issue):
-    return {label["name"] for label in issue.get("labels", [])}
-
-
-def agent_of(issue):
-    """The member an issue is assigned to, by its agent:<name> label."""
-    names = [n[len(AGENT_PREFIX):] for n in label_names(issue) if n.startswith(AGENT_PREFIX)]
-    return names[0] if names else None
-
-
-def holders(issue):
-    """Everyone an issue's labels name, member or account."""
-    return {n.split(":", 1)[1] for n in label_names(issue)
-            if n.startswith(AGENT_PREFIX) or n.startswith(ACCOUNT_PREFIX)}
-
+# label_names, agent_of (labels.agent_label) and holders come from labels.py
+# and are re-exported here, so a reader of the clerk finds them by the names
+# the clerk uses them under.
 
 def is_mine(issue, agent):
     """An issue this member was given or claimed, and nobody else holds:
@@ -149,9 +135,8 @@ def open_issues(client):
 
 def claim_branches(client):
     """The issue numbers that have a claude/<number> branch on the remote."""
-    names = client.branch_names()
-    return {int(n[len(CLAIM_PREFIX):]) for n in names
-            if n.startswith(CLAIM_PREFIX) and n[len(CLAIM_PREFIX):].isdigit()}
+    numbers = (number_of(name) for name in client.branch_names())
+    return {number for number in numbers if number is not None}
 
 
 # --- route ------------------------------------------------------------------

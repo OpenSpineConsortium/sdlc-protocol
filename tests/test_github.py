@@ -1,0 +1,438 @@
+"""The GitHub adapter makes the same REST calls the template's board and
+clerk made, and reads them into the board's Snapshot, the clerk's Client
+and the gate's World. No network: a fake opener stands in for urllib,
+answers by method, path and query, and remembers every request."""
+
+import base64
+import io
+import json
+import os
+import sys
+import unittest
+import urllib.error
+from datetime import datetime, timezone
+from pathlib import Path
+from unittest import mock
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from sdlc_protocol import board, gate, team  # noqa: E402
+from sdlc_protocol.adapters import github  # noqa: E402
+
+FIXTURES = ROOT / "tests" / "fixtures"
+
+
+class FakeAnswer:
+    def __init__(self, body, headers=None):
+        self.body = json.dumps(body).encode()
+        self.headers = headers or {}
+
+    def read(self):
+        return self.body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        return False
+
+
+class Refusal:
+    """An HTTP error GitHub would answer, with its JSON body."""
+
+    def __init__(self, code, body=None):
+        self.code, self.body = code, body
+
+    def raised(self, url):
+        raw = json.dumps(self.body).encode() if self.body is not None else b""
+        return urllib.error.HTTPError(url, self.code, "refused", {}, io.BytesIO(raw))
+
+
+class FakeOpener:
+    """Answers by path and query for GET and by "METHOD path" otherwise, 404
+    for anything it was not given, and remembers every request."""
+
+    def __init__(self, answers):
+        self.answers = answers
+        self.calls = []
+
+    def open(self, call, timeout=None):
+        self.calls.append(call)
+        path = call.full_url.replace(github.API, "")
+        method = call.get_method()
+        answer = self.answers.get(path if method == "GET" else f"{method} {path}")
+        if answer is None:
+            raise urllib.error.HTTPError(call.full_url, 404, "Not Found", {}, io.BytesIO(b""))
+        if isinstance(answer, Refusal):
+            raise answer.raised(call.full_url)
+        return answer
+
+    def sent(self, method):
+        """The decoded bodies of the requests made with this method."""
+        return [json.loads(c.data) for c in self.calls if c.get_method() == method]
+
+
+def client(answers, waits=None):
+    opener = FakeOpener(answers)
+    sleep = waits.append if waits is not None else (lambda seconds: None)
+    return github.GitHub("t", "o/r", opener=opener, sleep=sleep), opener
+
+
+def closed_pull(number, updated_at, merged_at):
+    return {"number": number, "title": f"PR {number}", "head": {"ref": f"claude/{number}"}, "updated_at": updated_at, "merged_at": merged_at}
+
+
+CLOSED_FIRST = "/repos/o/r/pulls?state=closed&sort=updated&direction=desc&per_page=100"
+CLOSED_SECOND = CLOSED_FIRST + "&page=2"
+
+
+class Client(unittest.TestCase):
+    """The template's client tests, against the adapter."""
+
+    def test_pages_by_the_link_header_and_sends_the_headers(self):
+        first = "/repos/o/r/issues?state=open&per_page=100"
+        second = "/repos/o/r/issues?state=open&per_page=100&page=2"
+        opener = FakeOpener({
+            first: FakeAnswer([{"number": 1}], {"Link": f'<{github.API}{second}>; rel="next"'}),
+            second: FakeAnswer([{"number": 2}]),
+        })
+        api = github.GitHub("secret-token", "o/r", opener=opener, sleep=lambda s: None)
+        items = api.get_all("/repos/o/r/issues", {"state": "open"})
+        self.assertEqual([i["number"] for i in items], [1, 2])
+        self.assertEqual(len(opener.calls), 2)
+        sent = opener.calls[0]
+        self.assertEqual(sent.get_header("Authorization"), "Bearer secret-token")
+        self.assertEqual(sent.get_header("Accept"), "application/vnd.github+json")
+        self.assertEqual(sent.get_header("X-github-api-version"), "2022-11-28")
+        self.assertEqual(sent.get_header("User-agent"), "sdlc-board")
+
+    def test_a_missing_claim_file_is_none_and_an_error_never_names_the_token(self):
+        api = github.GitHub("secret-token", "o/r", opener=FakeOpener({}), sleep=lambda s: None)
+        self.assertIsNone(github.claim_text(api, "claude/12"))
+        with self.assertRaises(github.GitHubError) as caught:
+            api.get("/repos/o/r/pulls/1")
+        self.assertEqual(str(caught.exception), "GET /repos/o/r/pulls/1: HTTP 404")
+        self.assertNotIn("secret-token", str(caught.exception))
+
+    def test_mergeable_is_asked_once_more_then_unknown(self):
+        detail = "/repos/o/r/pulls/7"
+        waits = []
+        api, _ = client({
+            detail: FakeAnswer({"number": 7, "mergeable": None, "mergeable_state": "unknown", "head": {"ref": "claude/7"}}),
+            detail + "/files?per_page=100": FakeAnswer([{"filename": "a.md"}]),
+        }, waits)
+        pull = github.pull_with_detail(api, 7)
+        self.assertEqual(waits, [github.MERGEABLE_RETRY_SECONDS])
+        self.assertEqual(pull["mergeable_state"], "unknown")
+        self.assertEqual(pull["files"], ["a.md"])
+
+    def test_comment_once_posts_only_without_the_marker(self):
+        comments = "/repos/o/r/issues/40/comments?per_page=100"
+        api, opener = client({comments: FakeAnswer([{"body": board.IDLE_MARKER + "\nidle"}])})
+        self.assertFalse(github.comment_once(api, 40, board.IDLE_MARKER, board.IDLE_TEXT))
+        self.assertEqual(len(opener.calls), 1)
+
+    def test_recent_merged_takes_the_five_merged_last_from_the_first_page(self):
+        page = [closed_pull(n, "2026-09-22T10:00:00Z", f"2026-09-{n:02d}T10:00:00Z") for n in range(1, 9)]
+        page.append(closed_pull(9, "2026-09-23T10:00:00Z", None))
+        api, opener = client({
+            CLOSED_FIRST: FakeAnswer(page, {"Link": f'<{github.API}{CLOSED_SECOND}>; rel="next"'}),
+        })
+        merged = github.recent_merged(api)
+        self.assertEqual([p["number"] for p in merged], [8, 7, 6, 5, 4])
+        self.assertEqual(len(opener.calls), 1)
+
+    def test_recent_merged_is_the_same_list_each_time_it_is_asked(self):
+        # A merge fires two runs; the list depends on the repository alone, so
+        # the second run reports the same merge the first did.
+        page = [closed_pull(50, "2026-09-22T10:00:00Z", "2026-09-22T10:00:00Z")]
+        api, _ = client({CLOSED_FIRST: FakeAnswer(page)})
+        self.assertEqual(github.recent_merged(api), github.recent_merged(api))
+        self.assertEqual([p["number"] for p in github.recent_merged(api)], [50])
+
+    def test_recent_merged_with_no_closed_pull_requests_is_empty(self):
+        api, _ = client({CLOSED_FIRST: FakeAnswer([])})
+        self.assertEqual(github.recent_merged(api), [])
+
+    def test_claim_issues_reads_only_the_issues_the_open_list_lacks(self):
+        api, opener = client({
+            "/repos/o/r/issues/3": FakeAnswer({"number": 3, "state": "closed", "labels": [{"name": "account:main"}, {"name": "todo"}]}),
+        })
+        open_issues = [{"number": 14, "state": "open", "labels": [{"name": "todo"}]}]
+        found = github.claim_issues(api, ["main", "claude/3", "claude/14", "claude/x"], open_issues)
+        self.assertEqual(found, {
+            "3": {"state": "closed", "labels": ["account:main", "todo"]},
+            "14": {"state": "open", "labels": ["todo"]},
+        })
+        self.assertEqual(len(opener.calls), 1)
+
+    def test_next_link(self):
+        headers = {"Link": '<https://api.github.com/repos/o/r/issues?page=2>; rel="next", <https://api.github.com/repos/o/r/issues?page=3>; rel="last"'}
+        self.assertEqual(github.next_link(headers), "https://api.github.com/repos/o/r/issues?page=2")
+        self.assertIsNone(github.next_link({"Link": '<https://x/>; rel="last"'}))
+        self.assertIsNone(github.next_link({}))
+        self.assertIsNone(github.next_link(None))
+
+
+class Token(unittest.TestCase):
+    def test_the_token_comes_from_the_argument_else_github_token(self):
+        with mock.patch.dict(os.environ, {"GITHUB_TOKEN": "from-env"}):
+            self.assertEqual(github.GitHub(None, "o/r").token, "from-env")
+            self.assertEqual(github.GitHub("given", "o/r").token, "given")
+
+    def test_no_token_is_no_client(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            with self.assertRaises(github.GitHubError):
+                github.GitHub(None, "o/r")
+
+    def test_a_refusal_keeps_githubs_words_apart_from_the_message(self):
+        api, _ = client({"/repos/o/r": Refusal(401, {"message": "Bad credentials"})})
+        with self.assertRaises(github.GitHubError) as caught:
+            api.get("/repos/o/r")
+        self.assertEqual(str(caught.exception), "GET /repos/o/r: HTTP 401")
+        self.assertEqual((caught.exception.status, caught.exception.detail), (401, "Bad credentials"))
+
+    def test_an_error_is_a_client_error_the_clerk_can_tolerate(self):
+        self.assertTrue(issubclass(github.GitHubError, team.ClientError))
+
+
+def fixture_answers(name="board.json"):
+    """The REST answers that describe the repository a board fixture holds."""
+    snap = json.loads((FIXTURES / name).read_text(encoding="utf-8"))
+    issues = snap["issues"] + [{"number": 99, "pull_request": {"url": "x"}}]
+    answers = {
+        "/repos/o/r/issues?state=open&per_page=100": FakeAnswer(issues),
+        "/repos/o/r/pulls?state=open&per_page=100": FakeAnswer([{"number": p["number"]} for p in snap["pulls"]]),
+        "/repos/o/r/branches?per_page=100": FakeAnswer([{"name": b} for b in snap["branches"]]),
+        CLOSED_FIRST: FakeAnswer(snap["merged"]),
+    }
+    for pull in snap["pulls"]:
+        detail = {k: v for k, v in pull.items() if k != "files"}
+        answers[f"/repos/o/r/pulls/{pull['number']}"] = FakeAnswer(detail)
+        answers[f"/repos/o/r/pulls/{pull['number']}/files?per_page=100"] = FakeAnswer([{"filename": f} for f in pull["files"]])
+    for key, text in snap["claims"].items():
+        if text is not None:
+            content = base64.b64encode(text.encode()).decode()
+            answers[f"/repos/o/r/contents/docs/agents/claims/{key}.md?ref=claude%2F{key}"] = FakeAnswer({"content": content})
+    return snap, answers
+
+
+class Collect(unittest.TestCase):
+    def test_a_live_snapshot_renders_the_page_the_fixture_does(self):
+        snap, answers = fixture_answers()
+        api, _ = client(answers)
+        live = github.snapshot(api, snap["sha"], snap["default_branch"])
+        self.assertIsInstance(live, board.Snapshot)
+        self.assertEqual(board.render(live).encode("ascii"), (FIXTURES / "board-STATE.md").read_bytes())
+
+    def test_collect_leaves_pull_requests_out_of_the_issues_and_keeps_only_claim_branches(self):
+        snap, answers = fixture_answers()
+        api, _ = client(answers)
+        found = github.collect(api, "abc", "main")
+        self.assertEqual([i["number"] for i in found["issues"]], [14, 15])
+        self.assertEqual(found["branches"], ["claude/12", "claude/13"])
+        self.assertEqual(found["claims"]["12"], snap["claims"]["12"])
+        self.assertIsNone(found["claims"]["13"])
+        self.assertEqual((found["sha"], found["default_branch"]), ("abc", "main"))
+
+    def test_post_comments_posts_each_due_comment_once_and_says_so(self):
+        api, opener = client({
+            "/repos/o/r/issues/40/comments?per_page=100": FakeAnswer([]),
+            "/repos/o/r/issues/41/comments?per_page=100": FakeAnswer([{"body": board.IDLE_MARKER}]),
+            "POST /repos/o/r/issues/40/comments": FakeAnswer({}),
+        })
+        due = [board.DueComment(40, "<!-- sdlc-board: main-moved 0123abc -->", "main moved: x"),
+               (41, board.IDLE_MARKER, board.IDLE_TEXT)]
+        self.assertEqual(github.post_comments(api, due), ["PR #40: main-moved comment posted"])
+        self.assertEqual(opener.sent("POST"), [{"body": "<!-- sdlc-board: main-moved 0123abc -->\nmain moved: x"}])
+
+
+PULL_LIST = "/repos/o/r/pulls?state=open&head=o%3Aclaude%2F7"
+
+
+def pull_answers(state="clean", mergeable=True, sha="sha7", draft=False):
+    """The open pull request #507 from claude/7, as GitHub details it."""
+    return {
+        PULL_LIST: FakeAnswer([{"number": 507}]),
+        "/repos/o/r/pulls/507": FakeAnswer({"number": 507, "draft": draft, "mergeable": mergeable,
+                                            "mergeable_state": state, "head": {"ref": "claude/7", "sha": sha},
+                                            "base": {"ref": "main"}}),
+    }
+
+
+class TeamClient(unittest.TestCase):
+    """The methods team.Client lists, as REST calls."""
+
+    def test_the_adapter_is_a_client(self):
+        self.assertIsInstance(client({})[0], team.Client)
+
+    def test_open_pull_asks_by_head_and_returns_the_detail(self):
+        api, _ = client(pull_answers(state="behind"))
+        self.assertEqual(api.open_pull("claude/7")["mergeable_state"], "behind")
+        api, _ = client({PULL_LIST: FakeAnswer([])})
+        self.assertIsNone(api.open_pull("claude/7"))
+
+    def test_check_runs_reads_every_page(self):
+        first = "/repos/o/r/commits/sha7/check-runs?per_page=100"
+        api, _ = client({
+            first: FakeAnswer({"check_runs": [{"name": "lint"}]}, {"Link": f'<{github.API}{first}&page=2>; rel="next"'}),
+            first + "&page=2": FakeAnswer({"check_runs": [{"name": "check"}]}),
+        })
+        self.assertEqual([r["name"] for r in api.check_runs("sha7")], ["lint", "check"])
+
+    def test_create_label_lets_an_existing_label_be(self):
+        api, opener = client({"POST /repos/o/r/labels": Refusal(422, {"message": "already_exists"})})
+        api.create_label("agent:w1", "c5def5")
+        self.assertEqual(opener.sent("POST"), [{"name": "agent:w1", "color": "c5def5"}])
+        api, _ = client({"POST /repos/o/r/labels": Refusal(403)})
+        with self.assertRaises(github.GitHubError):
+            api.create_label("agent:w1", "c5def5")
+
+    def test_the_writes_go_where_the_clerk_wrote_them(self):
+        api, opener = client({
+            "POST /repos/o/r/issues": FakeAnswer({"number": 101, "id": 9101}),
+            "POST /repos/o/r/issues/1/sub_issues": FakeAnswer({}),
+            "PATCH /repos/o/r/issues/1": FakeAnswer({}),
+        })
+        self.assertEqual(api.create_issue("Parser", "Epic: #1", ["todo", "agent:w1"])["number"], 101)
+        api.add_sub_issue(1, 9101)
+        api.set_body(1, "new body")
+        api.remove_label(1, "todo")
+        self.assertEqual([(c.get_method(), c.full_url.replace(github.API, "")) for c in opener.calls], [
+            ("POST", "/repos/o/r/issues"), ("POST", "/repos/o/r/issues/1/sub_issues"),
+            ("PATCH", "/repos/o/r/issues/1"), ("DELETE", "/repos/o/r/issues/1/labels/todo"),
+        ])
+        self.assertEqual(opener.sent("POST")[0], {"title": "Parser", "body": "Epic: #1", "labels": ["todo", "agent:w1"]})
+        self.assertEqual(opener.sent("POST")[1], {"sub_issue_id": 9101})
+        self.assertEqual(opener.sent("PATCH"), [{"body": "new body"}])
+
+    def test_the_clerk_answers_over_rest(self):
+        api, _ = client({
+            "/repos/o/r/issues?state=open&per_page=100": FakeAnswer([
+                {"number": 4, "state": "open", "labels": [{"name": "todo"}]},
+                {"number": 5, "state": "open", "labels": [{"name": "todo"}], "pull_request": {}},
+            ]),
+            "/repos/o/r/branches?per_page=100": FakeAnswer([{"name": "main"}]),
+        })
+        self.assertEqual(team.next_for(api, "w1"), "take 4")
+
+
+def world(answers, who_merges=gate.GATE, waits=None):
+    api, opener = client(answers, waits)
+    clock = lambda: datetime(2026, 10, 10, tzinfo=timezone.utc)  # noqa: E731
+    return github.GitHubWorld(api, gate.Policy(who_merges=who_merges), clock=clock), opener
+
+
+REF = "/repos/o/r/git/ref/heads/"
+COMPARE = "/repos/o/r/compare/main...sha7"
+
+
+class World(unittest.TestCase):
+    def test_the_adapter_is_a_world(self):
+        self.assertIsInstance(world({})[0], gate.World)
+
+    def test_shas_come_from_the_refs_and_a_missing_branch_is_empty(self):
+        place, _ = world({REF + "main": FakeAnswer({"object": {"sha": "m0"}}),
+                          REF + "claude/7": FakeAnswer({"object": {"sha": "sha7"}})})
+        self.assertEqual((place.main_sha(), place.branch_sha("claude/7"), place.branch_sha("claude/8")),
+                         ("m0", "sha7", ""))
+
+    def test_the_default_branch_is_the_policys_unless_named(self):
+        api, _ = client({})
+        self.assertEqual(github.GitHubWorld(api, gate.Policy(default_branch="trunk")).default_branch, "trunk")
+        self.assertEqual(github.GitHubWorld(api, gate.Policy(), "dev").default_branch, "dev")
+
+    def test_standing_reads_mergeable_state_as_the_board_does(self):
+        for state, word in (("clean", "clean"), ("has_hooks", "clean"), ("unstable", "clean"),
+                            ("behind", "behind"), ("dirty", "conflicting"), ("unknown", "unknown")):
+            place, _ = world(pull_answers(state=state))
+            self.assertEqual(place.standing("claude/7"), word, state)
+
+    def test_a_blocked_or_draft_pull_is_read_from_the_comparison(self):
+        for state in ("blocked", "draft"):
+            for behind_by, word in ((0, "clean"), (2, "behind")):
+                place, _ = world({**pull_answers(state=state), COMPARE: FakeAnswer({"behind_by": behind_by})})
+                self.assertEqual(place.standing("claude/7"), word, (state, behind_by))
+            place, opener = world(pull_answers(state=state, mergeable=False))
+            self.assertEqual(place.standing("claude/7"), "conflicting")
+            self.assertNotIn(COMPARE, [c.full_url.replace(github.API, "") for c in opener.calls])
+
+    def test_standing_without_a_pull_or_a_settled_mergeable_is_unknown(self):
+        place, _ = world({PULL_LIST: FakeAnswer([])})
+        self.assertEqual(place.standing("claude/7"), "unknown")
+        waits = []
+        place, _ = world(pull_answers(state="blocked", mergeable=None), waits=waits)
+        self.assertEqual(place.standing("claude/7"), "unknown")
+        self.assertEqual(waits, [github.MERGEABLE_RETRY_SECONDS])
+
+    def test_check_reads_the_required_check_on_the_head(self):
+        runs = "/repos/o/r/commits/sha7/check-runs?per_page=100"
+        cases = (
+            ([], "none"),
+            ([{"name": "lint", "status": "completed", "conclusion": "failure"}], "none"),
+            ([{"name": "check", "status": "in_progress", "conclusion": None}], "pending"),
+            ([{"name": "check", "status": "completed", "conclusion": "success"}], "green"),
+            ([{"name": "check", "status": "completed", "conclusion": "skipped"}], "green"),
+            ([{"name": "check", "status": "completed", "conclusion": "cancelled"}], "red"),
+            ([{"name": "check", "status": "queued", "conclusion": None},
+              {"name": "check", "status": "completed", "conclusion": "timed_out"}], "red"),
+        )
+        for found, word in cases:
+            place, _ = world({REF + "claude/7": FakeAnswer({"object": {"sha": "sha7"}}),
+                              runs: FakeAnswer({"total_count": len(found), "check_runs": found})})
+            self.assertEqual(place.check("claude/7"), word, found)
+        place, _ = world({})
+        self.assertEqual(place.check("claude/7"), "none")
+
+    def test_merge_goes_through_the_merge_api_with_the_head_it_saw(self):
+        place, opener = world({**pull_answers(), "PUT /repos/o/r/pulls/507/merge": FakeAnswer({"sha": "m1", "merged": True})})
+        self.assertEqual(place.merge("claude/7"), gate.MergeResult("m1"))
+        self.assertEqual(opener.sent("PUT"), [{"sha": "sha7", "merge_method": "merge"}])
+
+    def test_merge_is_not_the_worlds_where_the_owner_or_auto_merge_merges(self):
+        for who in (gate.OWNER, gate.AUTO_MERGE):
+            place, opener = world(pull_answers(), who_merges=who)
+            with self.assertRaises(gate.NotAllowed):
+                place.merge("claude/7")
+            self.assertEqual(opener.calls, [])
+
+    def test_a_refused_merge_is_main_moved_when_the_branch_no_longer_fits(self):
+        put = "PUT /repos/o/r/pulls/507/merge"
+        place, _ = world({**pull_answers(state="behind"), put: Refusal(405, {"message": "Base branch was modified"})})
+        with self.assertRaises(gate.MainMoved) as caught:
+            place.merge("claude/7")
+        self.assertIn("Base branch was modified", caught.exception.reason)
+        place, _ = world({**pull_answers(state="clean"), put: Refusal(405, {"message": "Review required"})})
+        with self.assertRaises(gate.MergeRefused) as refused:
+            place.merge("claude/7")
+        self.assertIn("Review required", refused.exception.reason)
+        place, _ = world({**pull_answers(), put: Refusal(500)})
+        with self.assertRaises(gate.GateFailed):
+            place.merge("claude/7")
+        place, _ = world({PULL_LIST: FakeAnswer([])})
+        with self.assertRaises(gate.MergeRefused):
+            place.merge("claude/7")
+
+    def test_now_is_the_worlds_clock(self):
+        self.assertEqual(world({})[0].now(), datetime(2026, 10, 10, tzinfo=timezone.utc))
+
+    def test_the_gate_lands_a_ready_pull_request_over_github(self):
+        place, opener = world({
+            **pull_answers(),
+            REF + "main": FakeAnswer({"object": {"sha": "m0"}}),
+            REF + "claude/7": FakeAnswer({"object": {"sha": "sha7"}}),
+            "/repos/o/r/commits/sha7/check-runs?per_page=100": FakeAnswer(
+                {"check_runs": [{"name": "check", "status": "completed", "conclusion": "success"}]}),
+            "PUT /repos/o/r/pulls/507/merge": FakeAnswer({"sha": "m1", "merged": True}),
+        })
+        policy, queue = place.policy, gate.Queue({7: "w1"})
+        gate.claim(policy, queue, 7, "w1")
+        gate.open_pull(policy, place, queue, 7, "w1")
+        outcome = gate.mark_ready(policy, place, queue, 7, "w1")
+        self.assertEqual((outcome.result, outcome.main, outcome.exit_code), (gate.MERGED, "m1", gate.EXIT_DONE))
+        self.assertEqual(len(opener.sent("PUT")), 1)
+
+
+if __name__ == "__main__":
+    unittest.main()

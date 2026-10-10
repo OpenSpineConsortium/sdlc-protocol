@@ -175,6 +175,28 @@ class RunTest(unittest.TestCase):
         for payload in (None, "not json", [], {}, {"tool_input": None}, {"tool_input": {}}):
             self.assertEqual(guard.run(payload), (0, ""), repr(payload))
 
+    def test_a_payload_of_the_wrong_shape_passes_without_git(self):
+        """The old main() crashed on these, which Claude Code reads as a
+        hook error and lets the call run; run() says so without raising."""
+        shapes = ({"tool_input": "git push origin main"},
+                  {"tool_input": ["git push origin main"]},
+                  {"tool_input": {"command": ["git", "push", "origin", "main"]}},
+                  {"tool_input": {"command": 7}})
+        with mock.patch.object(guard, "branches", side_effect=AssertionError("git was asked")):
+            for payload in shapes:
+                self.assertEqual(guard.run(payload), (0, ""), repr(payload))
+
+    def test_a_payload_cwd_that_is_not_text_is_passed_over(self):
+        asked = []
+
+        def remember(cwd):
+            asked.append(cwd)
+            return "claude/7", "main"
+        with mock.patch.object(guard, "branches", side_effect=remember):
+            for where in (7, "", None, ["/x"]):
+                guard.run({"tool_input": {"command": "git push"}, "cwd": where}, "/hook")
+        self.assertEqual(asked, ["/hook"] * 4)
+
 
 if __name__ == "__main__":
     unittest.main()

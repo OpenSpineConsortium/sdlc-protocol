@@ -11,7 +11,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from sdlc_protocol import team  # noqa: E402
+from sdlc_protocol import labels, team  # noqa: E402
 
 
 class FakeClient:
@@ -72,6 +72,14 @@ class ClientTest(unittest.TestCase):
         """The fake has every method the Protocol names, so a rule the
         tests pin is one the REST adapter can also be asked for."""
         self.assertIsInstance(FakeClient(), team.Client)
+
+    def test_the_clerk_reads_the_labels_the_package_spells(self):
+        """One spelling of the queue's labels and the holder prefixes, so
+        the board and the clerk can never disagree on them."""
+        self.assertEqual((team.TODO_LABEL, team.EPIC_LABEL, team.BLOCKER_LABEL, team.BLOCKED_LABEL),
+                         (labels.TODO, labels.EPIC, labels.BLOCKER, labels.BLOCKED))
+        self.assertEqual((team.AGENT_PREFIX, team.ACCOUNT_PREFIX), ("agent:", "account:"))
+        self.assertEqual(team.CLAIM_PREFIX, "claude/")
 
 
 class RouteTest(unittest.TestCase):
@@ -255,7 +263,7 @@ class SeedTest(unittest.TestCase):
         api = FakeClient()
         api.add_issue(1, ["epic", "todo"])
         team.seed(api, 1, self.PLAN, ["w1", "w2"])
-        self.assertEqual(team.label_names(api.issues[1]), {"epic"})
+        self.assertEqual(team.label_names(api.issues[1]), ["epic"])
 
     def test_seed_makes_each_members_label(self):
         api = FakeClient()

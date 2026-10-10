@@ -1,0 +1,20 @@
+# Python caches
+__pycache__/
+*.pyc
+
+# What building a wheel or an sdist leaves behind
+build/
+dist/
+*.egg-info/
+
+# Environment files: never a secret in the repository
+.env
+.env.*
+
+# One person's own Claude Code settings and notes
+.claude/settings.local.json
+*.local.md
+
+# Operating system clutter
+.DS_Store
+Thumbs.db

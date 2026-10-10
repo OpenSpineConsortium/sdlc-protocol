@@ -1,0 +1,83 @@
+{
+  "about": "What tools/board.py's post_comments posted for board-wide.json, recorded from the template so comments_due can be held to it.",
+  "cases": [
+    {
+      "event_name": "push",
+      "ref_name": "trunk",
+      "now": "2026-09-23T12:00:00Z",
+      "comments": [
+        [
+          61,
+          "<!-- sdlc-board: main-moved fedcba9 -->",
+          "main moved: this branch is conflicting with trunk at fedcba9; rebase or merge trunk before the next push."
+        ],
+        [
+          66,
+          "<!-- sdlc-board: main-moved fedcba9 -->",
+          "main moved: this branch is behind trunk at fedcba9; rebase or merge trunk before the next push."
+        ],
+        [
+          61,
+          "<!-- sdlc-board: idle -->",
+          "idle: no change for more than a day; if this work is parked, say so here, or the coordinator may release the claim."
+        ],
+        [
+          63,
+          "<!-- sdlc-board: idle -->",
+          "idle: no change for more than a day; if this work is parked, say so here, or the coordinator may release the claim."
+        ]
+      ]
+    },
+    {
+      "event_name": "push",
+      "ref_name": "main",
+      "now": "2026-09-23T12:00:00Z",
+      "comments": [
+        [
+          61,
+          "<!-- sdlc-board: idle -->",
+          "idle: no change for more than a day; if this work is parked, say so here, or the coordinator may release the claim."
+        ],
+        [
+          63,
+          "<!-- sdlc-board: idle -->",
+          "idle: no change for more than a day; if this work is parked, say so here, or the coordinator may release the claim."
+        ]
+      ]
+    },
+    {
+      "event_name": "pull_request",
+      "ref_name": "trunk",
+      "now": "2026-09-23T12:00:00Z",
+      "comments": [
+        [
+          61,
+          "<!-- sdlc-board: idle -->",
+          "idle: no change for more than a day; if this work is parked, say so here, or the coordinator may release the claim."
+        ],
+        [
+          63,
+          "<!-- sdlc-board: idle -->",
+          "idle: no change for more than a day; if this work is parked, say so here, or the coordinator may release the claim."
+        ]
+      ]
+    },
+    {
+      "event_name": "schedule",
+      "ref_name": "",
+      "now": "2026-09-23T12:00:00Z",
+      "comments": [
+        [
+          61,
+          "<!-- sdlc-board: idle -->",
+          "idle: no change for more than a day; if this work is parked, say so here, or the coordinator may release the claim."
+        ],
+        [
+          63,
+          "<!-- sdlc-board: idle -->",
+          "idle: no change for more than a day; if this work is parked, say so here, or the coordinator may release the claim."
+        ]
+      ]
+    }
+  ]
+}
