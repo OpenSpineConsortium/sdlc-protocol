@@ -18,18 +18,22 @@ api.github.com, and the two runs are compared by their writes as well as
 their answers. The template is read where SDLC_TEMPLATE points, by default
 a clone named sdlc-template beside this repository, and only read: its
 tools are loaded from their source text, so no bytecode cache is written
-into it, and its commands run with -B. Every test here skips when the
-template is not there.
+into it, and its commands run with -B. Since the template vendored this
+library, its tools are shims over the copy, so they are read from its git
+as they stood before that commit. Every test here skips when the template,
+or that history, is not there.
 
 The differences the extraction declared on purpose are pinned at the end,
 so a change on either side shows."""
 
+import atexit
 import base64
 import copy
 import functools
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -49,7 +53,44 @@ from sdlc_protocol.adapters import github  # noqa: E402
 # A clone of the template beside this one, as /home/user/sdlc-template is
 # beside /home/user/sdlc-protocol, unless SDLC_TEMPLATE names another.
 TEMPLATE = Path(os.environ.get("SDLC_TEMPLATE") or ROOT.parent / "sdlc-template")
-TOOLS = TEMPLATE / "tools"
+TOOL_NAMES = ("board", "check_protocol", "team")
+
+
+def tools_before_the_shims():
+    """The template's tools as they stood before it vendored this library,
+    read from its git into a directory of their own: the parent of the
+    commit that added tools/VENDORED. None when git or that history is not
+    there."""
+    def shown(*args):
+        env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+        try:
+            done = subprocess.run(["git", "-C", str(TEMPLATE), *args], capture_output=True, env=env, timeout=60)
+        except OSError:
+            return None
+        return done.stdout if done.returncode == 0 else None
+    added = (shown("log", "--diff-filter=A", "--format=%H", "--", "tools/VENDORED") or b"").split()
+    if not added:
+        return None
+    folder = Path(tempfile.mkdtemp(prefix="template-tools-"))
+    atexit.register(shutil.rmtree, folder, True)
+    for name in TOOL_NAMES:
+        source = shown("show", f"{added[-1].decode()}^:tools/{name}.py")
+        if source is None:
+            return None
+        (folder / f"{name}.py").write_bytes(source)
+    return folder
+
+
+def template_tools():
+    """The template's own board, check and team tools. Once the template
+    vendored this library they became shims over its copy, and holding the
+    library to a shim over itself would prove nothing, so the tools are
+    then the ones from before the shims."""
+    tools = TEMPLATE / "tools"
+    return tools_before_the_shims() if (tools / "sdlc_protocol").is_dir() else tools
+
+
+TOOLS = template_tools()
 GUARD_SOURCE = "origin/claude/11:tools/guard_push.py"
 FIXTURES = ROOT / "tests" / "fixtures"
 FIXTURE = FIXTURES / "board.json"
@@ -57,8 +98,8 @@ WIDE = FIXTURES / "board-wide.json"
 REPO = "octo/widgets"
 PREFIX = f"/repos/{REPO}/"
 
-TEMPLATE_PRESENT = all((TOOLS / f"{name}.py").is_file() for name in ("board", "check_protocol", "team"))
-needs_template = unittest.skipUnless(TEMPLATE_PRESENT, f"the template is not at {TEMPLATE}")
+TEMPLATE_PRESENT = TOOLS is not None and all((TOOLS / f"{name}.py").is_file() for name in TOOL_NAMES)
+needs_template = unittest.skipUnless(TEMPLATE_PRESENT, f"the template's own tools are not at {TEMPLATE}")
 
 
 # --- the template's tools, loaded without touching the template -----------------
