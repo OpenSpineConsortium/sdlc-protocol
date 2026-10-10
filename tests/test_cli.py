@@ -19,7 +19,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from sdlc_protocol import board, cli, guard  # noqa: E402
+from sdlc_protocol import board, cli, guard, vendoring  # noqa: E402
 from sdlc_protocol.adapters import github  # noqa: E402
 
 FIXTURES = ROOT / "tests" / "fixtures"
@@ -399,6 +399,40 @@ class Guard(unittest.TestCase):
             self.assertEqual(empty.tell(), 0)
         self.assertEqual(code, 0)
         self.assertIn("PreToolUse", out)
+
+
+class VerifyVendored(unittest.TestCase):
+    """The record's check under the package's own command line; the script
+    form a consumer's check runs is tests/test_vendoring.py's."""
+
+    def vendor_dir(self, folder, edit=False):
+        vendor = Path(folder)
+        (vendor / "sdlc_protocol").mkdir()
+        (vendor / "sdlc_protocol" / "guard.py").write_text("rules\n", encoding="ascii")
+        digests = vendoring.digests_of(vendor / "sdlc_protocol")
+        (vendor / "VENDORED").write_text(vendoring.record_text("0.2.0", "unknown", digests), encoding="ascii")
+        if edit:
+            (vendor / "sdlc_protocol" / "guard.py").write_text("rules, edited\n", encoding="ascii")
+        return vendor
+
+    def test_a_matching_copy_exits_0(self):
+        with tempfile.TemporaryDirectory() as folder:
+            code, out, _ = run(["verify-vendored", str(self.vendor_dir(folder))])
+        self.assertEqual((code, out), (0, "vendored sdlc-protocol 0.2.0 at unknown: 1 files match VENDORED\n"))
+
+    def test_an_edited_copy_exits_1_naming_the_file(self):
+        with tempfile.TemporaryDirectory() as folder:
+            code, out, _ = run(["verify-vendored", str(self.vendor_dir(folder, edit=True))])
+        self.assertEqual(code, 1)
+        self.assertIn("guard.py was edited by hand", out)
+
+    def test_no_vendor_dir_is_a_usage_error(self):
+        with self.assertRaises(SystemExit) as caught, redirect_stderr(io.StringIO()):
+            cli.main(["verify-vendored"])
+        self.assertEqual(caught.exception.code, 2)
+
+    def test_the_usage_names_it(self):
+        self.assertIn("verify-vendored", run(["-h"])[1])
 
 
 class Module(unittest.TestCase):
