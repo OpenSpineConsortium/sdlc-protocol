@@ -28,7 +28,7 @@ The GitHub App, sdlc-app, imports the gate with `sdlc_protocol.adapters.github`:
 
 ## The policy
 
-`gate.Policy` is how the protocol behaves where it runs, and nothing else changes from one place to another. `claim_prefix` is what a claim branch starts with (`claude/`). `required_check` is the check that must be green before the gate merges (`check`, or empty where merging cleanly is the whole check). `bring_main_in` is how a branch takes in a default branch that has moved: `rebase`, an account's way, with the one `--force-with-lease` the protocol allows, or `merge`, a team member's, so nobody force-pushes. `who_merges` is who moves the default branch: `owner` by hand, `gate` when a pull request is marked ready, or `auto-merge` once the required check is green. `idle_after` is how long a claim may go without a commit before it is released (24 hours). `remote` and `default_branch` are only the names the gate's answers use. `gate.ACCOUNT_POLICY` (rebase, the owner merges) and `gate.TEAM_POLICY` (merge, auto-merge) are the two ways of working the spec describes.
+`gate.Policy` is how the protocol behaves where it runs, and the world, below, is where it runs; the rules themselves are the same everywhere. `claim_prefix` is what a claim branch starts with (`claude/`). `required_check` is the check that must be green before the gate merges (`check`, or empty where merging cleanly is the whole check). `bring_main_in` is how a branch takes in a default branch that has moved: `rebase`, an account's way, with the one `--force-with-lease` the protocol allows, or `merge`, a team member's, so nobody force-pushes. `who_merges` is who moves the default branch: `owner` by hand, `gate` when a pull request is marked ready, or `auto-merge` once the required check is green. `idle_after` is how long a claim may go without a commit before it is released (24 hours). `remote` and `default_branch` are only the names the gate's answers use. `gate.ACCOUNT_POLICY` (rebase, the owner merges) and `gate.TEAM_POLICY` (merge, auto-merge) are the two ways of working the spec describes.
 
 ## The world
 
@@ -59,6 +59,8 @@ python3.12 -m unittest tests.test_gate -v       # one module's tests
 bash scripts/check.sh                           # what CI runs
 ```
 
+`tests/test_parity.py` holds the package to the template's own tools, byte for byte, on the inputs the template's tests use; it reads a clone of sdlc-template beside this repository, or the one `SDLC_TEMPLATE` names, and skips when there is none, as on CI.
+
 `scripts/check.sh` first holds every file to ASCII with LF endings and a final newline, since the package is vendored into repositories whose own checks demand that, then runs the whole suite. CI (`.github/workflows/ci.yml`) runs it on Python 3.12 as the job named `check`.
 
 ## Vendoring
@@ -67,7 +69,11 @@ bash scripts/check.sh                           # what CI runs
 scripts/vendor.sh <target repository>
 ```
 
-The script copies `sdlc_protocol/` to `<target>/tools/sdlc_protocol/`, replacing whatever was there and leaving Python's caches behind, writes `<target>/tools/VENDORED` with the line `sdlc-protocol <version> <commit>`, and prints what it did. The commit ends in `-dirty` when the package had changes not yet committed, and is `unknown` outside a git checkout, so the line never names a commit the copy does not match; check out a release tag before vendoring, and the line names the tag's commit. Nothing in the target is committed: review the change there and land it by that repository's own pull request. A target can test its copy by comparing the version in `tools/VENDORED` with `__version__` in `tools/sdlc_protocol/__init__.py`.
+The script copies `sdlc_protocol/` to `<target>/tools/sdlc_protocol/`, replacing whatever was there, without Python's caches, writes `<target>/tools/VENDORED` with the line `sdlc-protocol <version> <commit>`, and prints what it did. The commit ends in `-dirty` when the package had changes not yet committed, and is `unknown` outside a git checkout, so the line never names a commit the copy does not match; check out a release tag before vendoring, and the line names the tag's commit. Nothing in the target is committed: review the change there and land it by that repository's own pull request. A target can test its copy by comparing the version in `tools/VENDORED` with `__version__` in `tools/sdlc_protocol/__init__.py`.
+
+## Installing
+
+A consumer that would rather install than vendor can: `pip install "sdlc-protocol @ git+https://github.com/OpenSpineConsortium/sdlc-protocol@<tag>"` builds the package from a release tag, with no dependencies to fetch. The wheel carries the spec as `sdlc_protocol/spec/PROTOCOL.md`, read with `importlib.resources.files("sdlc_protocol") / "spec" / "PROTOCOL.md"`; a vendored copy does not, since the repository it lands in keeps its own copy of the protocol.
 
 ## License
 
