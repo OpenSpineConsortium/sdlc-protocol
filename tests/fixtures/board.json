@@ -1,0 +1,52 @@
+{
+  "sha": "0123abcdef0123abcdef0123abcdef0123abcdef",
+  "default_branch": "main",
+  "issues": [
+    {
+      "number": 14,
+      "title": "Write the release notes",
+      "labels": [{"name": "todo"}],
+      "updated_at": "2026-09-20T09:00:00Z"
+    },
+    {
+      "number": 15,
+      "title": "CI is red on every branch",
+      "labels": [{"name": "blocker"}],
+      "updated_at": "2026-09-21T15:30:00Z"
+    }
+  ],
+  "pulls": [
+    {
+      "number": 40,
+      "title": "Describe the board | its tables",
+      "head": {"ref": "claude/12", "sha": "aaaaaaa1111111"},
+      "mergeable": true,
+      "mergeable_state": "behind",
+      "updated_at": "2026-09-18T12:00:00Z",
+      "files": ["docs/agents/README.md", "docs/agents/STATE.md"]
+    },
+    {
+      "number": 41,
+      "title": "Add the remember skill",
+      "head": {"ref": "claude/13", "sha": "bbbbbbb2222222"},
+      "mergeable": true,
+      "mergeable_state": "clean",
+      "updated_at": "2026-09-22T08:00:00Z",
+      "files": [".claude/skills/remember/SKILL.md"]
+    }
+  ],
+  "branches": ["main", "claude/12", "claude/13"],
+  "claims": {
+    "12": "# Claim: #12\n\n- Issue: https://github.com/octo/widgets/issues/12\n- Account: main\n- Branch: claude/12\n\n## Plan\n\nDescribe the board in docs/agents/README.md: what each section holds and where the file is rewritten.\n\n## Files to touch\n\n- docs/agents/README.md\n",
+    "13": null
+  },
+  "merged": [
+    {
+      "number": 39,
+      "title": "Seed the memory index",
+      "head": {"ref": "claude/11"},
+      "merged_at": "2026-09-17T16:45:00Z",
+      "updated_at": "2026-09-17T16:45:00Z"
+    }
+  ]
+}
