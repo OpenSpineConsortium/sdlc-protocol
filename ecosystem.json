@@ -6,7 +6,7 @@
   "consumers": [
     {
       "repository": "OpenSpineConsortium/sdlc-template",
-      "visibility": "public",
+      "visibility": "internal",
       "about": "The template a Claude project is made from, kept as files: its instructions, its memory, its board, and the workflows and hooks that run the protocol.",
       "vendor_dir": "tools",
       "modules": "all",

@@ -7,7 +7,7 @@ The claim protocol's rules live once, in the package `sdlc_protocol` of OpenSpin
 ## The repositories
 
 - **OpenSpineConsortium/sdlc-protocol** (public, this repository): The claim protocol as one Python package with no dependencies: the labels, the claim, the board, the protocol check, team mode's clerk, the push guard and the merge gate.
-- **OpenSpineConsortium/sdlc-template** (public): The template a Claude project is made from, kept as files: its instructions, its memory, its board, and the workflows and hooks that run the protocol.
+- **OpenSpineConsortium/sdlc-template** (internal): The template a Claude project is made from, kept as files: its instructions, its memory, its board, and the workflows and hooks that run the protocol.
 - **OpenSpineConsortium/coordbench** (public): The playground and benchmark that compares ways of coordinating Claude Code agents on CooperBench's task pairs, this protocol among them.
 - **OpenSpineConsortium/sdlc-marketplace** (public): The Claude Code plugin marketplace whose one plugin, sdlc, brings the skills, /board and the hooks to a repository not made from the template.
 - **OpenSpineConsortium/sdlc-app** (private): The GitHub App OpenSpine SDLC: its installation token starts a new copy's first workflows, and its webhook server checks pull requests.
@@ -108,15 +108,17 @@ flowchart LR
   checks --> merge["merge to main"]
   merge --> pulls["sync: the pull request sdlc-protocol/sync in each consumer"]
   pulls --> theirs["the consumer's own check"]
-  theirs --> lands["auto-merge, or the owner where it is private"]
+  theirs --> lands["auto-merge, or the owner where there is none"]
   lands --> users["its users' installs, where it names a version file"]
 ```
 
 1. A pull request here runs the check named `check`, the library's own suite, and one `downstream (<consumer>)` job per consumer: the change vendored into a checkout of that consumer and the consumer's own check run on it, so a change that would break one is red before it merges.
 2. The owner merges it to main.
-3. The sync workflow (`.github/workflows/sync.yml`) vendors the new main into each consumer (sdlc-template, coordbench, sdlc-marketplace, sdlc-app) and opens the pull request `sdlc-protocol/sync` there, or updates the one already open, with the GitHub App's token, so the consumer's own CI runs on it. Where a consumer names a version file (sdlc-marketplace's `plugins/sdlc/.claude-plugin/plugin.json`), the same commit raises its patch version whenever the copy's files change.
+3. The sync workflow (`.github/workflows/sync.yml`) vendors the new main into each consumer (sdlc-template, coordbench, sdlc-marketplace, sdlc-app) and opens the pull request `sdlc-protocol/sync` there, or updates the one already open, with the GitHub App's token, so the consumer's own CI runs on it; where the consumer's main already holds the copy, it closes a sync pull request still open there. Where a consumer names a version file (sdlc-marketplace's `plugins/sdlc/.claude-plugin/plugin.json`), the same commit raises its patch version whenever the copy's files change.
 4. The consumer's own check runs on that pull request; part of it is `vendoring.py verify`, which holds the copy to its record.
-5. A public consumer's pull request lands by auto-merge once that check is green; the private App's waits for its owner.
+5. Where ecosystem.json gives a consumer auto_merge, its pull request lands by auto-merge once that check is green; the others wait for their owner.
 6. Where the consumer names a version file, that merge is also its release: the installs that run its copy see the new version and take the new copy at their next update.
 
 A consumer never edits its copy: the change is made here and comes back by the next sync. To vendor by hand, `python3 scripts/vendor.py <consumer checkout>` from a clone of this repository.
+
+A change a consumer must answer, such as a rendered string its test pins or a function it calls differently, turns that consumer's `downstream (<consumer>)` job red, and the sync cannot carry it: it rebuilds `sdlc-protocol/sync` from the consumer's main on every run, so a fix pushed there is lost. The consumer goes first: a pull request of its own vendors this repository's branch and answers the change, and merges; the downstream job here then turns green, this pull request merges, and the sync finds that consumer up to date. README.md, "How a change reaches the other repositories", has the steps.

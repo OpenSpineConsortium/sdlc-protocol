@@ -96,7 +96,7 @@ def consumers_table(eco):
              "| Repository | Copy in | Modules | Uses it for | The sync's pull request merges by |",
              "| --- | --- | --- | --- | --- |"]
     for c in eco["consumers"]:
-        merges = "auto-merge, once its check is green" if c["auto_merge"] else "its owner (private: no auto-merge)"
+        merges = "auto-merge, once its check is green" if c["auto_merge"] else f"its owner ({c['visibility']}: no auto-merge)"
         lines.append(f"| {ecosystem.short_name(c['repository'])} | `{c['vendor_dir']}/{eco['package']}` | "
                      f"{taken(eco, c)} | {cell(c['uses'])} | {merges} |")
     return lines + version_files(eco)
@@ -155,7 +155,7 @@ def travel_chart(eco):
         "  checks --> merge[\"merge to main\"]",
         f"  merge --> pulls[\"sync: the pull request {sync.BRANCH} in each consumer\"]",
         "  pulls --> theirs[\"the consumer's own check\"]",
-        "  theirs --> lands[\"auto-merge, or the owner where it is private\"]",
+        "  theirs --> lands[\"auto-merge, or the owner where there is none\"]",
     ]
     if with_version_file(eco):
         lines.append("  lands --> users[\"its users' installs, where it names a version file\"]")
@@ -189,15 +189,24 @@ def travel(eco):
         "2. The owner merges it to main.",
         f"3. The sync workflow (`.github/workflows/sync.yml`) vendors the new main into each consumer "
         f"({names}) and opens the pull request `{sync.BRANCH}` there, or updates the one already open, "
-        "with the GitHub App's token, so the consumer's own CI runs on it." + "".join(raising),
+        "with the GitHub App's token, so the consumer's own CI runs on it; where the consumer's main "
+        "already holds the copy, it closes a sync pull request still open there." + "".join(raising),
         "4. The consumer's own check runs on that pull request; part of it is `vendoring.py verify`, "
         "which holds the copy to its record.",
-        "5. A public consumer's pull request lands by auto-merge once that check is green; the private "
-        "App's waits for its owner.",
+        "5. Where ecosystem.json gives a consumer auto_merge, its pull request lands by auto-merge once "
+        "that check is green; the others wait for their owner.",
         *reaching,
         "",
         "A consumer never edits its copy: the change is made here and comes back by the next sync. To "
         "vendor by hand, `python3 scripts/vendor.py <consumer checkout>` from a clone of this repository.",
+        "",
+        "A change a consumer must answer, such as a rendered string its test pins or a function it calls "
+        "differently, turns that consumer's `downstream (<consumer>)` job red, and the sync cannot carry "
+        f"it: it rebuilds `{sync.BRANCH}` from the consumer's main on every run, so a fix pushed there is "
+        "lost. The consumer goes first: a pull request of its own vendors this repository's branch and "
+        "answers the change, and merges; the downstream job here then turns green, this pull request "
+        "merges, and the sync finds that consumer up to date. README.md, \"How a change reaches the "
+        "other repositories\", has the steps.",
     ]
 
 

@@ -18,7 +18,9 @@ name: Checks
 # consumer's sync pull request after. The two checkouts sit side by side,
 # as the clones do on a developer's machine, where the consumers' tests
 # look for the library beside them. A public consumer is read with this
-# run's own token; the private App only with the App's token, when
+# run's own token, which reaches no other repository that is not public;
+# an internal or private one (the template is internal, the App private)
+# only with the App's token, minted to read that one repository, when
 # SDLC_APP_ID is set and the pull request is not from a fork, whose runs
 # get no secrets; otherwise its leg says it skipped and passes.
 
@@ -87,7 +89,7 @@ jobs:
             echo "reach=app" >> "$GITHUB_OUTPUT"
           else
             echo "reach=none" >> "$GITHUB_OUTPUT"
-            echo "downstream ($NAME): skipped, since $CONSUMER is private and this run has no App token for it (SDLC_APP_ID unset, or a pull request from a fork)" | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "downstream ($NAME): skipped, since $CONSUMER is not public and this run has no App token for it (SDLC_APP_ID unset, or a pull request from a fork)" | tee -a "$GITHUB_STEP_SUMMARY"
           fi
 
       - uses: actions/checkout@v7
@@ -103,6 +105,7 @@ jobs:
           private-key: ${{ secrets.SDLC_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
           repositories: ${{ matrix.name }}
+          permission-contents: read
 
       - uses: actions/checkout@v7
         if: steps.reach.outputs.reach != 'none'

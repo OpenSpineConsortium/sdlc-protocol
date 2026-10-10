@@ -428,7 +428,8 @@ class Refusals(Repositories):
 
 
 class TheWrapper(Repositories):
-    """scripts/vendor.sh, the name the consumers' documents give."""
+    """scripts/vendor.sh, kept for old checkouts and for hands that still
+    type it."""
 
     def test_no_target_is_a_usage_error(self):
         done = subprocess.run(["bash", str(self.library / "scripts" / "vendor.sh")], capture_output=True,

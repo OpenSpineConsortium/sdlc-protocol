@@ -5,9 +5,10 @@
 #   usage: scripts/vendor.sh <target repository> [--consumer OWNER/NAME]
 #
 # A wrapper over scripts/vendor.py, which does the work by ecosystem.json
-# and says what it did; this name stays because the consumers' documents
-# and people's hands run it. Nothing in the target is committed: that is
-# the target's own pull request, which the sync workflow opens.
+# and says what it did; this name stays for old checkouts and for hands
+# that still type it, while the consumers' documents name vendor.py.
+# Nothing in the target is committed: that is the target's own pull
+# request, which the sync workflow opens.
 set -eu
 
 usage="usage: scripts/vendor.sh <target repository> [--consumer OWNER/NAME]"

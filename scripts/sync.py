@@ -2,10 +2,13 @@
 
   python3 scripts/sync.py matrix [--public-only]
   python3 scripts/sync.py setup
+  python3 scripts/sync.py off-main --ref REF
   python3 scripts/sync.py title   <consumer checkout> --consumer OWNER/NAME
   python3 scripts/sync.py message <consumer checkout> --consumer OWNER/NAME
   python3 scripts/sync.py body    <consumer checkout> --consumer OWNER/NAME
-  python3 scripts/sync.py summary --consumer OWNER/NAME --state STATE [--url URL] [--auto-merge on|unavailable]
+  python3 scripts/sync.py closing --consumer OWNER/NAME
+  python3 scripts/sync.py summary --consumer OWNER/NAME --state STATE [--url URL]
+                                  [--auto-merge on|refused] [--reason TEXT]
 
 A push to main that changes the package makes sync.yml vendor it into
 every consumer ecosystem.json lists and open, or update, the pull request
@@ -13,14 +16,17 @@ sdlc-protocol/sync there; ci.yml's downstream job runs each consumer's
 own check on a pull request's copy before it merges here. The workflows
 only run git, gh and these commands, so what they decide is here, where
 it is tested: the matrix of consumers, what the owner must set up when
-the sync cannot run, and the commit message, the title and the body of a
-consumer's pull request, built from the consumer's record before and after
-scripts/vendor.py ran in its checkout. The body is written for the person
-who reviews the pull request there: what changed in the library since the
-commit the copy named before, which files of the copy moved, what the
-consumer uses the library for, the release it makes where the consumer
-names a version file (the plugin's version, which scripts/vendor.py raised
-in the same checkout), and that the consumer's own check decides.
+the sync cannot run, why a run off main vendors nothing, the commit
+message, the title and the body of a consumer's pull request, built from
+the consumer's record before and after scripts/vendor.py ran in its
+checkout, the comment that closes a sync pull request main has made
+stale, and each consumer's row in the run's summary. The body is written
+for the person who reviews the pull request there: what changed in the
+library since the commit the copy named before, which files of the copy
+moved, what the consumer uses the library for, the release it makes
+where the consumer names a version file (the plugin's version, which
+scripts/vendor.py raised in the same checkout), and that the consumer's
+own check decides.
 """
 
 import argparse
@@ -36,10 +42,19 @@ from ecosystem import vendoring  # the package's vendoring.py, loaded by its pat
 LIBRARY = ecosystem.ROOT
 BRANCH = "sdlc-protocol/sync"
 SHA = re.compile(r"[0-9a-f]{40}")
-AUTO_MERGE_STATES = {
-    "on": "on: it merges once the required check is green",
-    "unavailable": "not enabled here: allow auto-merge in the repository's settings",
+APP_REPOSITORY = "OpenSpineConsortium/sdlc-app"
+
+# What became of a consumer's pull request in one run, as its row in the
+# summary says it: {url} is the pull request's.
+PULL_STATES = {
+    "up to date": "up to date",
+    "closed": "up to date; closed the stale {url}",
+    "opened": "opened: {url}",
+    "updated": "updated: {url}",
+    "unchanged": "open, and already this copy: {url}",
 }
+AUTO_MERGE_STATES = ("on", "refused")
+REASON_LENGTH = 200
 
 
 # --- what the workflows read ------------------------------------------------------------
@@ -57,8 +72,8 @@ def setup_text(eco):
     """What the owner sets once before the sync can open pull requests,
     for the run's summary when the App's id is not set."""
     library = eco["library"]
-    public = [c["repository"] for c in eco["consumers"] if c["auto_merge"]]
-    allow = "\n".join(f"   gh api -X PATCH repos/{name} -F allow_auto_merge=true" for name in public)
+    merging = [c["repository"] for c in eco["consumers"] if c["auto_merge"]]
+    allow = "\n".join(f"   gh api -X PATCH repos/{name} -F allow_auto_merge=true" for name in merging)
     return (
         "## The sync is not set up\n\n"
         "The sync opens its pull requests with the token of the GitHub App OpenSpine SDLC, and this "
@@ -66,16 +81,30 @@ def setup_text(eco):
         "The owner sets it up once (README.md, \"The owner's one-time setup for the sync\"):\n\n"
         f"1. Install the App on {library} and on every consumer: "
         f"{', '.join(c['repository'] for c in eco['consumers'])}.\n"
-        "2. On this repository, set the App's id and its private key, as on sdlc-template:\n\n"
+        "2. On this repository, set the App's id and its private key, as on sdlc-template. Run these "
+        f"from a clone of {APP_REPOSITORY}, whose .sdlc-app.env scripts/register.py wrote, so the key "
+        "goes through a pipe and never onto the screen:\n\n"
         "   ```\n"
         f"   gh variable set SDLC_APP_ID --repo {library} --body <the App's id>\n"
-        f"   gh secret set SDLC_APP_PRIVATE_KEY --repo {library} < <the App's private key file>\n"
+        f"   python3 scripts/register.py --print-key | gh secret set SDLC_APP_PRIVATE_KEY --repo {library}\n"
         "   ```\n\n"
-        "3. Allow auto-merge on the public consumers:\n\n"
+        "3. Allow auto-merge on the consumers ecosystem.json gives auto_merge:\n\n"
         "   ```\n"
         f"{allow}\n"
         "   ```\n\n"
-        "4. Require the check named check on each consumer's main, so auto-merge waits for it.\n")
+        "4. Require the check named check on each consumer's main with a ruleset, so auto-merge waits "
+        "for it: the sync only arms auto-merge, and GitHub refuses to arm it where nothing is left to "
+        "wait for.\n")
+
+
+def off_main_text(ref):
+    """Why a run started from a ref other than main vendored nothing, for
+    the run's summary."""
+    return (
+        "## The sync did not run\n\n"
+        f"The sync vendors only the library's main, and this run was started from `{ref}`, so it changed "
+        "nothing in any consumer. A branch's change reaches the consumers through its pull request: the "
+        "downstream jobs run each consumer's check on it, and the sync carries it once it merges.\n")
 
 
 def title(version, commit):
@@ -178,7 +207,10 @@ def release_section(consumer, release):
 def landing_sentence(consumer):
     if consumer["auto_merge"]:
         return "Auto-merge, when this repository allows it, merges it once that check is green."
-    return "Its owner merges it: GitHub Free offers auto-merge only on public repositories."
+    if consumer["visibility"] == "private":
+        return ("Its owner merges it: GitHub Free offers auto-merge only on public repositories, and this "
+                "ecosystem relies on no paid plan.")
+    return "Its owner merges it, since ecosystem.json gives this repository no auto-merge."
 
 
 def body(eco, consumer, version, commit, old, log, changes, release=None):
@@ -211,11 +243,39 @@ def body(eco, consumer, version, commit, old, log, changes, release=None):
     ])
 
 
-def summary(repository, state, url="", auto_merge=""):
+def closing_comment(eco):
+    """Why the sync closes its own pull request: the consumer's main came
+    to hold the copy by another way, a consumer's own pull request that
+    vendored the library's branch, and nothing is left to land."""
+    return (f"Closed by {eco['library']}'s sync workflow: this repository's main already holds the copy "
+            "this pull request would bring, so it has nothing left to land. The next change to the library "
+            "opens a new one.\n")
+
+
+def one_line(text, limit=REASON_LENGTH):
+    """GitHub's words on one line of a table cell: whitespace folded, a
+    pipe escaped, and cut at limit."""
+    folded = " ".join(text.split()).replace("|", "\\|")
+    return folded if len(folded) <= limit else folded[:limit - 3].rstrip() + "..."
+
+
+def auto_merge_cell(state, auto_merge, reason):
+    if state in ("up to date", "closed"):
+        return "-"
+    if auto_merge == "on":
+        return "on: it merges once the required check is green"
+    if auto_merge == "refused":
+        said = f'GitHub said "{one_line(reason)}"' if reason.strip() else "GitHub gave no reason"
+        return (f"not armed: {said}; it needs auto-merge allowed in the repository's settings and a check "
+                "its main requires (README.md, the owner's setup, steps 3 and 4)")
+    return "off: the owner merges"
+
+
+def summary(repository, state, url="", auto_merge="", reason=""):
     """One leg's line in the run's summary, under its own header, since
     each leg of the matrix writes a summary of its own."""
-    pull = f"{state}: {url}" if url else state
-    merge = AUTO_MERGE_STATES.get(auto_merge, "off: the owner merges" if url else "-")
+    pull = PULL_STATES[state].format(url=url)
+    merge = auto_merge_cell(state, auto_merge, reason)
     return f"| Consumer | Pull request | Auto-merge |\n| --- | --- | --- |\n| {repository} | {pull} | {merge} |\n"
 
 
@@ -284,15 +344,20 @@ def arguments(argv):
     planning = sub.add_parser("matrix", help="the consumers as a matrix, as JSON on one line")
     planning.add_argument("--public-only", action="store_true")
     sub.add_parser("setup", help="what the owner sets up before the sync can run")
+    elsewhere = sub.add_parser("off-main", help="why a run off main vendored nothing")
+    elsewhere.add_argument("--ref", required=True)
     for name in ("title", "message", "body"):
         pull = sub.add_parser(name, help=f"the consumer's pull request {name}")
         pull.add_argument("target", help="the consumer's checkout, after scripts/vendor.py ran in it")
         pull.add_argument("--consumer", required=True, metavar="OWNER/NAME")
+    closing = sub.add_parser("closing", help="the comment that closes a stale sync pull request")
+    closing.add_argument("--consumer", required=True, metavar="OWNER/NAME")
     row = sub.add_parser("summary", help="one consumer's row in the run's summary")
     row.add_argument("--consumer", required=True, metavar="OWNER/NAME")
-    row.add_argument("--state", required=True, help="up to date, opened or updated")
+    row.add_argument("--state", required=True, choices=list(PULL_STATES))
     row.add_argument("--url", default="")
     row.add_argument("--auto-merge", default="", choices=["", *AUTO_MERGE_STATES])
+    row.add_argument("--reason", default="", help="what GitHub said when it refused to arm auto-merge")
     return parser.parse_args(argv)
 
 
@@ -301,9 +366,13 @@ def answer(args, eco):
         return json.dumps(matrix(eco, args.public_only)) + "\n"
     if args.command == "setup":
         return setup_text(eco)
+    if args.command == "off-main":
+        return off_main_text(args.ref)
     consumer = ecosystem.consumer_named(eco, args.consumer)
+    if args.command == "closing":
+        return closing_comment(eco)
     if args.command == "summary":
-        return summary(consumer["repository"], args.state, args.url, args.auto_merge)
+        return summary(consumer["repository"], args.state, args.url, args.auto_merge, args.reason)
     if args.command == "body":
         return body_for(eco, consumer, args.target)
     version, commit = version_and_commit(args.target, consumer)

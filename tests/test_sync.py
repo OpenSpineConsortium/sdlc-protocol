@@ -2,23 +2,27 @@
 
 The workflows only run git, gh and this script, so what they decide is
 tested here: the matrix they run a leg per consumer from, what the run's
-summary tells the owner when the App is not set up, and what a consumer's
-reviewer reads in the sync's pull request (the title, the commit message,
-the body with the library's log since the commit the copy named before,
-the files of the copy that moved and, for the plugin marketplace, the
-release the raised version in its plugin.json makes). The body's library log sits in a fenced
+summary tells the owner when the App is not set up or the run was started
+off main, what a consumer's reviewer reads in the sync's pull request (the
+title, the commit message, the body with the library's log of the package
+since the commit the copy named before, the files of the copy that moved
+and, for the plugin marketplace, the release the raised version in its
+plugin.json makes), the comment that closes a stale one, and each
+consumer's row in the summary, which gives GitHub's own reason when it
+refuses to arm auto-merge. The body's library log sits in a fenced
 block, where GitHub neither links "#12" to the consumer's own #12 nor reads
 "Closes #12" as closing anything."""
 
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -33,6 +37,7 @@ TEMPLATE = ecosystem.consumer_named(ECO, "OpenSpineConsortium/sdlc-template")
 APP = ecosystem.consumer_named(ECO, "OpenSpineConsortium/sdlc-app")
 MARKETPLACE = ecosystem.consumer_named(ECO, "OpenSpineConsortium/sdlc-marketplace")
 MANIFEST = MARKETPLACE["version_file"]
+COORDBENCH = ecosystem.consumer_named(ECO, "OpenSpineConsortium/coordbench")
 OLD = "1111111111111111111111111111111111111111"
 NEW = "2222222222222222222222222222222222222222"
 NO_CHANGES = ([], [], [])
@@ -53,10 +58,11 @@ class TheMatrix(unittest.TestCase):
             self.assertEqual(set(leg), {"repository", "name", "visibility", "vendor_dir", "check", "auto_merge"})
             self.assertEqual(leg["name"], leg["repository"].split("/")[1])
 
-    def test_public_only_leaves_the_private_app_out(self):
+    def test_public_only_leaves_out_what_is_not_public(self):
         names = [leg["name"] for leg in sync.matrix(ECO, public_only=True)["include"]]
         self.assertNotIn("sdlc-app", names)
-        self.assertIn("sdlc-template", names)
+        self.assertNotIn("sdlc-template", names)
+        self.assertIn("coordbench", names)
 
     def test_the_command_prints_one_line_of_json_for_github_output(self):
         code, out = run("matrix")
@@ -66,7 +72,7 @@ class TheMatrix(unittest.TestCase):
 
 
 class TheOwnersSetup(unittest.TestCase):
-    def test_names_the_variable_the_secret_and_auto_merge_for_each_public_consumer(self):
+    def test_names_the_variable_the_secret_and_auto_merge_for_each_consumer_that_takes_it(self):
         text = sync.setup_text(ECO)
         self.assertIn("SDLC_APP_ID", text)
         self.assertIn("SDLC_APP_PRIVATE_KEY", text)
@@ -74,8 +80,35 @@ class TheOwnersSetup(unittest.TestCase):
             line = f"repos/{consumer['repository']} -F allow_auto_merge=true"
             (self.assertIn if consumer["auto_merge"] else self.assertNotIn)(line, text)
 
+    def test_the_key_goes_through_register_pys_pipe_as_the_template_checklist_says(self):
+        """register.py keeps the key only inside .sdlc-app.env, so there is
+        no key file to redirect from; --print-key turns it back into PEM."""
+        text = sync.setup_text(ECO)
+        self.assertIn("from a clone of OpenSpineConsortium/sdlc-app", text)
+        self.assertIn("python3 scripts/register.py --print-key | gh secret set SDLC_APP_PRIVATE_KEY --repo "
+                      f"{ECO['library']}", text)
+        self.assertNotIn("key file>", text)
+
+    def test_the_readme_gives_the_same_pipe(self):
+        readme = (ROOT / "README.md").read_text(encoding="ascii")
+        self.assertIn("python3 scripts/register.py --print-key | gh secret set SDLC_APP_PRIVATE_KEY --repo "
+                      f"{ECO['library']}", readme)
+
     def test_is_ascii(self):
         sync.setup_text(ECO).encode("ascii")
+
+
+class OffMain(unittest.TestCase):
+    def test_says_the_sync_vendors_only_main_and_names_the_ref(self):
+        text = sync.off_main_text("refs/heads/claude/7")
+        self.assertIn("vendors only the library's main", text)
+        self.assertIn("`refs/heads/claude/7`", text)
+        self.assertIn("changed nothing in any consumer", text)
+
+    def test_the_command_prints_it(self):
+        code, out = run("off-main", "--ref", "refs/heads/claude/7")
+        self.assertEqual(code, 0)
+        self.assertEqual(out, sync.off_main_text("refs/heads/claude/7"))
 
 
 class TitleAndMessage(unittest.TestCase):
@@ -180,33 +213,81 @@ class TheBody(unittest.TestCase):
     def test_a_consumer_with_no_version_file_has_no_release_section(self):
         self.assertNotIn("## The release", self.body())
 
-    def test_auto_merge_on_a_public_consumer_and_the_owner_on_the_private_app(self):
+    def test_auto_merge_where_ecosystem_json_gives_it_and_the_owner_on_the_private_app(self):
         self.assertIn("Auto-merge", self.body(TEMPLATE))
-        self.assertIn("Its owner merges it", self.body(APP))
+        self.assertIn("Its owner merges it: GitHub Free offers auto-merge only on public", self.body(APP))
         self.assertNotIn("Auto-merge,", self.body(APP))
+
+    def test_a_public_consumer_without_auto_merge_is_not_called_private(self):
+        text = self.body(dict(COORDBENCH, auto_merge=False))
+        self.assertIn("ecosystem.json gives this repository no auto-merge", text)
+        self.assertNotIn("GitHub Free", text)
 
     def test_is_ascii(self):
         self.body().encode("ascii")
 
 
+class TheClosingComment(unittest.TestCase):
+    def test_says_main_already_holds_the_copy(self):
+        text = sync.closing_comment(ECO)
+        self.assertIn(f"Closed by {ECO['library']}'s sync workflow", text)
+        self.assertIn("main already holds the copy", text)
+
+    def test_the_command_prints_it(self):
+        code, out = run("closing", "--consumer", "OpenSpineConsortium/coordbench")
+        self.assertEqual(code, 0)
+        self.assertEqual(out, sync.closing_comment(ECO))
+
+
 class TheSummary(unittest.TestCase):
-    def rows(self, *args):
-        return sync.summary(*args).splitlines()
+    PULL = "https://github.com/o/a/pull/1"
+
+    def row(self, *args, **kwargs):
+        return sync.summary(*args, **kwargs).splitlines()[2]
 
     def test_each_leg_writes_a_table_of_its_own_row(self):
-        lines = self.rows("OpenSpineConsortium/coordbench", "up to date")
+        lines = sync.summary("OpenSpineConsortium/coordbench", "up to date").splitlines()
         self.assertEqual(lines[:2], ["| Consumer | Pull request | Auto-merge |", "| --- | --- | --- |"])
         self.assertEqual(lines[2], "| OpenSpineConsortium/coordbench | up to date | - |")
 
-    def test_a_pull_request_with_auto_merge_on_or_not_allowed(self):
-        on = self.rows("o/a", "opened", "https://github.com/o/a/pull/1", "on")[2]
-        self.assertEqual(on, "| o/a | opened: https://github.com/o/a/pull/1 | on: it merges once the required "
-                             "check is green |")
-        refused = self.rows("o/a", "updated", "https://github.com/o/a/pull/1", "unavailable")[2]
-        self.assertIn("allow auto-merge in the repository's settings", refused)
+    def test_every_state_the_workflow_reports(self):
+        self.assertEqual(set(sync.PULL_STATES), {"up to date", "closed", "opened", "updated", "unchanged"})
+        self.assertEqual(self.row("o/a", "closed", self.PULL), f"| o/a | up to date; closed the stale {self.PULL} | - |")
+        self.assertIn(f"opened: {self.PULL}", self.row("o/a", "opened", self.PULL, "on"))
+        self.assertIn(f"updated: {self.PULL}", self.row("o/a", "updated", self.PULL, "on"))
+        self.assertIn(f"already this copy: {self.PULL}", self.row("o/a", "unchanged", self.PULL, "on"))
+
+    def test_auto_merge_armed(self):
+        self.assertEqual(self.row("o/a", "opened", self.PULL, "on"),
+                         f"| o/a | opened: {self.PULL} | on: it merges once the required check is green |")
+
+    def test_auto_merge_refused_gives_githubs_own_reason(self):
+        said = "GraphQL: Pull request is in clean status (enablePullRequestAutoMerge)"
+        row = self.row("o/a", "updated", self.PULL, "refused", reason=f"{said}\n")
+        self.assertIn(f'not armed: GitHub said "{said}"', row)
+        self.assertIn("a check its main requires", row)
+        self.assertIn("GitHub gave no reason", self.row("o/a", "updated", self.PULL, "refused"))
+
+    def test_the_reason_stays_inside_its_cell(self):
+        row = self.row("o/a", "opened", self.PULL, "refused", reason="a | b\n\n  c" + " d" * 200)
+        self.assertEqual(len(re.findall(r"(?<!\\)\|", row)), 4)
+        self.assertIn("a \\| b c d", row)
+        self.assertLessEqual(len(sync.one_line("x" * 500)), sync.REASON_LENGTH)
+        self.assertTrue(sync.one_line("x" * 500).endswith("..."))
 
     def test_a_private_consumers_pull_request_waits_for_its_owner(self):
-        self.assertIn("off: the owner merges", self.rows("o/app", "opened", "https://github.com/o/app/pull/2")[2])
+        self.assertIn("off: the owner merges", self.row("o/app", "opened", "https://github.com/o/app/pull/2"))
+
+    def test_an_unknown_state_is_a_usage_error(self):
+        with self.assertRaises(SystemExit) as caught, redirect_stderr(io.StringIO()):
+            run("summary", "--consumer", "OpenSpineConsortium/coordbench", "--state", "merged")
+        self.assertEqual(caught.exception.code, 2)
+
+    def test_the_command_passes_the_reason_on(self):
+        code, out = run("summary", "--consumer", "OpenSpineConsortium/coordbench", "--state", "opened", "--url",
+                        self.PULL, "--auto-merge", "refused", "--reason", "Auto merge is not allowed")
+        self.assertEqual(code, 0)
+        self.assertIn('GitHub said "Auto merge is not allowed"', out)
 
     def test_the_command_finds_the_consumer_whatever_the_case(self):
         code, out = run("summary", "--consumer", "openspineconsortium/SDLC-APP", "--state", "up to date")
@@ -236,9 +317,11 @@ def commit(folder, message):
 
 
 class TheBodyFromGit(unittest.TestCase):
-    """A library with two commits to the package and a consumer whose last
-    commit holds a copy of the first, with the second vendored on top, as
-    the sync's checkout of it stands when the body is written."""
+    """A library with two commits to the package, and one between them
+    that changes only its README, and a consumer whose last commit holds a
+    copy of the first, with the second vendored on top, as the sync's
+    checkout of it stands when the body is written. The README's commit
+    brings the consumer nothing, so the body's log leaves it out."""
 
     def setUp(self):
         self.scratch = Path(tempfile.mkdtemp()).resolve()
@@ -249,6 +332,8 @@ class TheBodyFromGit(unittest.TestCase):
         (package / "guard.py").write_text("first\n", encoding="ascii")
         git(self.library, "init", "-q")
         self.first = commit(self.library, "The first guard")
+        (self.library / "README.md").write_text("the library\n", encoding="ascii")
+        commit(self.library, "Say what the library is")
         (package / "guard.py").write_text("second\n", encoding="ascii")
         (package / "vendoring.py").write_text("record\n", encoding="ascii")
         self.second = commit(self.library, "The second guard (#12)")
@@ -270,6 +355,7 @@ class TheBodyFromGit(unittest.TestCase):
         text = sync.body_for(ECO, TEMPLATE, self.target, self.library)
         self.assertIn(f"Since {self.first[:7]}", text)
         self.assertIn(f"```text\n{self.second[:7]} The second guard (#12)\n```", text)
+        self.assertNotIn("Say what the library is", text)
         self.assertIn("- Added: `vendoring.py`\n- Changed: `guard.py`\n- Removed: `old.py`", text)
 
     def test_title_and_message_read_the_new_record(self):

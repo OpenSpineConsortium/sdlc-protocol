@@ -39,7 +39,11 @@ def load_vendoring(package_dir=PACKAGE_DIR):
 vendoring = load_vendoring()
 
 ALL = "all"
-VISIBILITIES = ("public", "private")
+# What GitHub says a repository is. An internal one is seen only inside its
+# enterprise, which exists only on GitHub Enterprise Cloud, where auto-merge
+# is there too; only a public one can be read by another repository's run
+# with that run's own token.
+VISIBILITIES = ("public", "internal", "private")
 REPOSITORY = re.compile(r"[A-Za-z0-9-]+/[A-Za-z0-9._-]+")
 TOP_KEYS = {"library", "about", "package", "always_copied", "consumers"}
 CONSUMER_KEYS = {"repository", "visibility", "about", "vendor_dir", "modules", "check", "auto_merge", "uses"}
@@ -308,7 +312,8 @@ def visibility_problems(where, consumer):
     if not isinstance(auto_merge, bool):
         return [f"{where}: auto_merge is not true or false"]
     if visibility == "private" and auto_merge:
-        return [f"{where}: auto_merge is true on a private repository, where GitHub Free offers no auto-merge"]
+        return [f"{where}: auto_merge is true on a private repository, where GitHub Free offers no auto-merge "
+                "and this ecosystem relies on no paid plan"]
     return []
 
 

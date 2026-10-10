@@ -3,11 +3,12 @@ which every script that acts on it reads it through.
 
 The file decides what four repositories receive on every sync, so it is
 held to its shape here before any workflow acts on it: every consumer
-names a repository, a visibility, a place for its copy inside its tree,
-modules the package has, the check it runs, no auto-merge where GitHub
-Free has none, and, for the plugin marketplace, the manifest whose version
-the sync raises with each new copy, without which no installed plugin
-would ever take one. Above all, a consumer that takes only some modules must get
+names a repository, the visibility GitHub gives it, a place for its copy
+inside its tree, modules the package has, the check it runs, no
+auto-merge on a private repository, where GitHub Free has none, and, for
+the plugin marketplace, the manifest whose version the sync raises with
+each new copy, without which no installed plugin would ever take one.
+Above all, a consumer that takes only some modules must get
 every module those import: a copy of protocol_check.py without claims.py
 would pass the sync and fail in the App at its first pull request. The
 imports are read with ast from the package's source, so the rule holds for
@@ -49,10 +50,16 @@ class TheFile(unittest.TestCase):
     def test_every_copy_takes_the_version_and_its_own_check(self):
         self.assertEqual(ECO["always_copied"], ["__init__.py", "vendoring.py"])
 
-    def test_the_private_app_merges_by_hand_and_the_public_consumers_by_auto_merge(self):
+    def test_the_private_app_merges_by_hand_and_the_others_by_auto_merge(self):
         for consumer in ECO["consumers"]:
             with self.subTest(consumer=consumer["repository"]):
-                self.assertEqual(consumer["auto_merge"], consumer["visibility"] == "public")
+                self.assertEqual(consumer["auto_merge"], consumer["visibility"] != "private")
+
+    def test_the_template_is_internal_as_github_has_it(self):
+        """GitHub has the template internal, so another repository's run
+        reads it only with the App's token, as the downstream job does for
+        every consumer that is not public."""
+        self.assertEqual(consumer_of(ECO, "sdlc-template")["visibility"], "internal")
 
     def test_the_marketplace_names_its_plugin_manifest_as_its_version_file(self):
         """Claude Code keeps an installed plugin at the version its manifest
@@ -136,12 +143,18 @@ class TheShape(unittest.TestCase):
                            "repository is not OWNER/NAME")
 
     def test_a_visibility_github_does_not_have(self):
-        self.assertProblem(lambda eco: consumer_of(eco, "coordbench").update(visibility="internal"),
-                           "visibility is not one of public, private")
+        self.assertProblem(lambda eco: consumer_of(eco, "coordbench").update(visibility="secret"),
+                           "visibility is not one of public, internal, private")
 
     def test_auto_merge_on_a_private_repository(self):
         self.assertProblem(lambda eco: consumer_of(eco, "sdlc-app").update(auto_merge=True),
                            "GitHub Free offers no auto-merge")
+
+    def test_auto_merge_on_an_internal_repository_is_no_problem(self):
+        """Only GitHub Enterprise Cloud has internal repositories, and it has
+        auto-merge on them."""
+        eco = changed(lambda eco: consumer_of(eco, "coordbench").update(visibility="internal"))
+        self.assertEqual(ecosystem.problems(eco), [])
 
     def test_a_vendor_dir_outside_the_repository(self):
         for vendor_dir in ("../tools", "/tools", ""):
@@ -178,7 +191,13 @@ class TheShape(unittest.TestCase):
             version_file="plugins/sdlc/vendor/sdlc_protocol/plugin.json"), "version_file lies inside the copy")
 
     def test_an_empty_sentence(self):
-        self.assertProblem(lambda eco: consumer_of(eco, "coordbench").update(uses=" "), "uses is not a sentence")
+        """A blank check above all: the downstream job would run bash -c "",
+        which passes without checking anything."""
+        for key in ("about", "check", "uses"):
+            for blank in (" ", ""):
+                with self.subTest(key=key, value=blank):
+                    self.assertProblem(lambda eco: consumer_of(eco, "coordbench").update({key: blank}),
+                                       f"coordbench: {key} is not a sentence")
 
 
 class TheVersionFile(unittest.TestCase):
