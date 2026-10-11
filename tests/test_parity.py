@@ -16,7 +16,7 @@ Both sides talk to one GitHub held in memory and served as a urllib
 opener, so each runs through its own REST client as it would against
 api.github.com, and the two runs are compared by their writes as well as
 their answers. The template is read where SDLC_TEMPLATE points, by default
-a clone named sdlc-template beside this repository, and only read: its
+a clone named symphony-template beside this repository, and only read: its
 tools are loaded from their source text, so no bytecode cache is written
 into it, and its commands run with -B. Since the template vendored this
 library, its tools are shims over the copy, so they are read from its git
@@ -50,9 +50,23 @@ sys.path.insert(0, str(ROOT))
 from sdlc_protocol import board, claims, cli, protocol_check, team  # noqa: E402
 from sdlc_protocol.adapters import github  # noqa: E402
 
-# A clone of the template beside this one, as /home/user/sdlc-template is
-# beside /home/user/sdlc-protocol, unless SDLC_TEMPLATE names another.
-TEMPLATE = Path(os.environ.get("SDLC_TEMPLATE") or ROOT.parent / "sdlc-template")
+# A clone of the template beside this one, by the name the rename gives
+# it or, for a clone made before, the old one, unless SDLC_TEMPLATE names
+# another.
+TEMPLATE_NAMES = ("symphony-template", "sdlc-template")
+
+
+def template_beside(parent=ROOT.parent):
+    """The template's clone beside this one, by its new name or the old,
+    or the new name when neither is there, so the skip message says
+    where it was looked for."""
+    for name in TEMPLATE_NAMES:
+        if (parent / name).is_dir():
+            return parent / name
+    return parent / TEMPLATE_NAMES[0]
+
+
+TEMPLATE = Path(os.environ.get("SDLC_TEMPLATE") or template_beside())
 TOOL_NAMES = ("board", "check_protocol", "team")
 
 

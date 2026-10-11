@@ -33,9 +33,9 @@ import sync  # noqa: E402
 from ecosystem import vendoring  # noqa: E402
 
 ECO = ecosystem.load()
-TEMPLATE = ecosystem.consumer_named(ECO, "OpenSpineConsortium/sdlc-template")
-APP = ecosystem.consumer_named(ECO, "OpenSpineConsortium/sdlc-app")
-MARKETPLACE = ecosystem.consumer_named(ECO, "OpenSpineConsortium/sdlc-marketplace")
+TEMPLATE = ecosystem.consumer_named(ECO, "OpenSpineConsortium/symphony-template")
+APP = ecosystem.consumer_named(ECO, "OpenSpineConsortium/symphony-app")
+MARKETPLACE = ecosystem.consumer_named(ECO, "OpenSpineConsortium/symphony-marketplace")
 MANIFEST = MARKETPLACE["version_file"]
 COORDBENCH = ecosystem.consumer_named(ECO, "OpenSpineConsortium/coordbench")
 OLD = "1111111111111111111111111111111111111111"
@@ -60,8 +60,8 @@ class TheMatrix(unittest.TestCase):
 
     def test_public_only_leaves_out_what_is_not_public(self):
         names = [leg["name"] for leg in sync.matrix(ECO, public_only=True)["include"]]
-        self.assertNotIn("sdlc-app", names)
-        self.assertNotIn("sdlc-template", names)
+        self.assertNotIn("symphony-app", names)
+        self.assertNotIn("symphony-template", names)
         self.assertIn("coordbench", names)
 
     def test_the_command_prints_one_line_of_json_for_github_output(self):
@@ -84,7 +84,7 @@ class TheOwnersSetup(unittest.TestCase):
         """register.py keeps the key only inside .sdlc-app.env, so there is
         no key file to redirect from; --print-key turns it back into PEM."""
         text = sync.setup_text(ECO)
-        self.assertIn("from a clone of OpenSpineConsortium/sdlc-app", text)
+        self.assertIn("from a clone of OpenSpineConsortium/symphony-app", text)
         self.assertIn("python3 scripts/register.py --print-key | gh secret set SDLC_APP_PRIVATE_KEY --repo "
                       f"{ECO['library']}", text)
         self.assertNotIn("key file>", text)
@@ -113,13 +113,13 @@ class OffMain(unittest.TestCase):
 
 class TitleAndMessage(unittest.TestCase):
     def test_the_title_names_the_version_and_the_short_commit(self):
-        self.assertEqual(sync.title("0.2.0", NEW), "Vendor sdlc-protocol 0.2.0 (2222222)")
-        self.assertEqual(sync.title("0.2.0", f"{NEW}-dirty"), "Vendor sdlc-protocol 0.2.0 (2222222-dirty)")
-        self.assertEqual(sync.title("0.2.0", "unknown"), "Vendor sdlc-protocol 0.2.0 (unknown)")
+        self.assertEqual(sync.title("0.2.0", NEW), "Vendor symphony-protocol 0.2.0 (2222222)")
+        self.assertEqual(sync.title("0.2.0", f"{NEW}-dirty"), "Vendor symphony-protocol 0.2.0 (2222222-dirty)")
+        self.assertEqual(sync.title("0.2.0", "unknown"), "Vendor symphony-protocol 0.2.0 (unknown)")
 
     def test_the_message_is_the_title_then_why(self):
         lines = sync.message(ECO, TEMPLATE, "0.2.0", NEW).splitlines()
-        self.assertEqual(lines[:2], ["Vendor sdlc-protocol 0.2.0 (2222222)", ""])
+        self.assertEqual(lines[:2], ["Vendor symphony-protocol 0.2.0 (2222222)", ""])
         self.assertIn("tools/VENDORED", " ".join(lines))
         self.assertTrue(all(len(line) <= 90 for line in lines))
 
@@ -167,7 +167,7 @@ class TheBody(unittest.TestCase):
 
     def test_says_what_comes_in_where_and_what_it_is_used_for(self):
         text = self.body()
-        self.assertIn("sdlc-protocol 0.2.0 at 2222222", text)
+        self.assertIn("symphony-protocol 0.2.0 at 2222222", text)
         self.assertIn(f"https://github.com/{ECO['library']}/commit/{NEW}", text)
         self.assertIn("`tools/sdlc_protocol`", text)
         self.assertIn(TEMPLATE["uses"], text)
@@ -290,9 +290,9 @@ class TheSummary(unittest.TestCase):
         self.assertIn('GitHub said "Auto merge is not allowed"', out)
 
     def test_the_command_finds_the_consumer_whatever_the_case(self):
-        code, out = run("summary", "--consumer", "openspineconsortium/SDLC-APP", "--state", "up to date")
+        code, out = run("summary", "--consumer", "openspineconsortium/SYMPHONY-APP", "--state", "up to date")
         self.assertEqual(code, 0)
-        self.assertIn("| OpenSpineConsortium/sdlc-app | up to date | - |", out)
+        self.assertIn("| OpenSpineConsortium/symphony-app | up to date | - |", out)
 
 
 # --- the body from real repositories ----------------------------------------------------

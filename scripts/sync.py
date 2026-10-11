@@ -12,7 +12,7 @@
 
 A push to main that changes the package makes sync.yml vendor it into
 every consumer ecosystem.json lists and open, or update, the pull request
-sdlc-protocol/sync there; ci.yml's downstream job runs each consumer's
+symphony-protocol/sync there; ci.yml's downstream job runs each consumer's
 own check on a pull request's copy before it merges here. The workflows
 only run git, gh and these commands, so what they decide is here, where
 it is tested: the matrix of consumers, what the owner must set up when
@@ -40,9 +40,9 @@ import ecosystem
 from ecosystem import vendoring  # the package's vendoring.py, loaded by its path alone
 
 LIBRARY = ecosystem.ROOT
-BRANCH = "sdlc-protocol/sync"
+BRANCH = "symphony-protocol/sync"
 SHA = re.compile(r"[0-9a-f]{40}")
-APP_REPOSITORY = "OpenSpineConsortium/sdlc-app"
+APP_REPOSITORY = "OpenSpineConsortium/symphony-app"
 
 # What became of a consumer's pull request in one run, as its row in the
 # summary says it: {url} is the pull request's.
@@ -76,12 +76,12 @@ def setup_text(eco):
     allow = "\n".join(f"   gh api -X PATCH repos/{name} -F allow_auto_merge=true" for name in merging)
     return (
         "## The sync is not set up\n\n"
-        "The sync opens its pull requests with the token of the GitHub App OpenSpine Symphony, and this "
+        "The sync opens its pull requests with the token of the GitHub App Symphony, and this "
         "repository has no variable SDLC_APP_ID, so the sync was skipped and the run stays green. "
         "The owner sets it up once (README.md, \"The owner's one-time setup for the sync\"):\n\n"
         f"1. Install the App on {library} and on every consumer: "
         f"{', '.join(c['repository'] for c in eco['consumers'])}.\n"
-        "2. On this repository, set the App's id and its private key, as on sdlc-template. Run these "
+        "2. On this repository, set the App's id and its private key, as on symphony-template. Run these "
         f"from a clone of {APP_REPOSITORY}, whose .sdlc-app.env scripts/register.py wrote, so the key "
         "goes through a pipe and never onto the screen:\n\n"
         "   ```\n"
@@ -108,14 +108,14 @@ def off_main_text(ref):
 
 
 def title(version, commit):
-    return f"Vendor sdlc-protocol {version} ({vendoring.short_commit(commit)})"
+    return f"Vendor symphony-protocol {version} ({vendoring.short_commit(commit)})"
 
 
 def message(eco, consumer, version, commit, release=None):
     """The sync's commit message in the consumer: the title, then why."""
     text = (f"{title(version, commit)}\n\n"
-            f"Made by {eco['library']}'s sync workflow, which copies the library into\n"
-            f"{consumer['vendor_dir']}/sdlc_protocol as ecosystem.json says and records the copy in\n"
+            f"Made by {eco['library']}'s sync workflow, which copies the library\n"
+            f"into {consumer['vendor_dir']}/sdlc_protocol as ecosystem.json says and records the copy in\n"
             f"{consumer['vendor_dir']}/VENDORED. The copy is never edited here; a change to it\n"
             "is made in the library and comes back by the next sync.\n")
     if is_new_release(release):
@@ -221,7 +221,7 @@ def body(eco, consumer, version, commit, old, log, changes, release=None):
     sha = commit.partition("-")[0]
     link = f"https://github.com/{eco['library']}/commit/{sha}" if SHA.fullmatch(sha) else eco["library"]
     return "\n".join([
-        f"This pull request brings sdlc-protocol {version} at {vendoring.short_commit(commit)} ({link}) "
+        f"This pull request brings symphony-protocol {version} at {vendoring.short_commit(commit)} ({link}) "
         f"into `{vendor_dir}/sdlc_protocol`, as {eco['library']}'s sync workflow made it from the library's "
         f"main. This repository uses it for {consumer['uses']}.",
         "",
