@@ -121,7 +121,7 @@ Some changes are meant to change what a consumer sees: a rendered string that a 
 
 Until the variable `SDLC_APP_ID` is set here, the sync skips itself, stays green and says in the run's summary what is missing. To set it up, once:
 
-1. Install the GitHub App OpenSpine SDLC (OpenSpineConsortium/sdlc-app) on all five repositories, or on all of the organization's repositories.
+1. Install the GitHub App OpenSpine Symphony (OpenSpineConsortium/sdlc-app) on all five repositories, or on all of the organization's repositories.
 2. On this repository, set the App's id as the variable `SDLC_APP_ID` and its private key as the secret `SDLC_APP_PRIVATE_KEY`, the same values sdlc-template has. Run these from a clone of OpenSpineConsortium/sdlc-app, whose .sdlc-app.env `scripts/register.py` wrote, so the key goes through a pipe and never onto the screen:
 
    ```
