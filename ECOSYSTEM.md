@@ -10,7 +10,7 @@ The claim protocol's rules live once, in the package `sdlc_protocol` of OpenSpin
 - **OpenSpineConsortium/sdlc-template** (internal): The template a Claude project is made from, kept as files: its instructions, its memory, its board, and the workflows and hooks that run the protocol.
 - **OpenSpineConsortium/coordbench** (public): The playground and benchmark that compares ways of coordinating Claude Code agents on CooperBench's task pairs, this protocol among them.
 - **OpenSpineConsortium/sdlc-marketplace** (public): The Claude Code plugin marketplace whose one plugin, sdlc, brings the skills, /board and the hooks to a repository not made from the template.
-- **OpenSpineConsortium/sdlc-app** (private): The GitHub App OpenSpine SDLC: its installation token starts a new copy's first workflows, and its webhook server checks pull requests.
+- **OpenSpineConsortium/sdlc-app** (private): The GitHub App OpenSpine Symphony: its installation token starts a new copy's first workflows, and its webhook server checks pull requests.
 
 ## Who takes what
 
