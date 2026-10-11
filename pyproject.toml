@@ -23,7 +23,7 @@ classifiers = [
 ]
 
 [project.urls]
-Repository = "https://github.com/OpenSpineConsortium/sdlc-protocol"
+Repository = "https://github.com/OpenSpineConsortium/symphony-protocol"
 
 # spec/ sits at the repository's root, where a reader finds it, and ships
 # inside the package as sdlc_protocol/spec/PROTOCOL.md, so an installed

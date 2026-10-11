@@ -95,7 +95,7 @@ jobs:
       - uses: actions/checkout@v7
         if: steps.reach.outputs.reach != 'none'
         with:
-          path: sdlc-protocol
+          path: symphony-protocol
 
       - uses: actions/create-github-app-token@v1
         id: app-token
@@ -122,9 +122,15 @@ jobs:
 
       - name: Vendor this checkout into the consumer
         if: steps.reach.outputs.reach != 'none'
-        run: python3 sdlc-protocol/scripts/vendor.py "$NAME" --consumer "$CONSUMER"
+        run: python3 symphony-protocol/scripts/vendor.py "$NAME" --consumer "$CONSUMER"
 
       - name: Run the consumer's own check
         if: steps.reach.outputs.reach != 'none'
         working-directory: ${{ matrix.name }}
+        # Named, not found by name: a consumer looks for the library beside
+        # itself under its own idea of the folder's name, and skips the
+        # comparison with the library when there is none; the variable makes
+        # a missing or mismatched clone a failure instead.
+        env:
+          SDLC_PROTOCOL: ${{ github.workspace }}/symphony-protocol
         run: bash -c "$CHECK"

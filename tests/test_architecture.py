@@ -67,10 +67,10 @@ class ThePage(unittest.TestCase):
                 self.assertIn(edge, self.text)
 
     def test_draws_what_each_consumer_takes(self):
-        self.assertIn("  r_sdlc_template -. all .-> library", self.text)
-        self.assertIn("  r_sdlc_marketplace -.-> m_guard", self.text)
-        self.assertIn("  r_sdlc_app -.-> m_claims", self.text)
-        self.assertIn("  r_sdlc_app -.-> m_protocol_check", self.text)
+        self.assertIn("  r_symphony_template -. all .-> library", self.text)
+        self.assertIn("  r_symphony_marketplace -.-> m_guard", self.text)
+        self.assertIn("  r_symphony_app -.-> m_claims", self.text)
+        self.assertIn("  r_symphony_app -.-> m_protocol_check", self.text)
 
     def test_names_each_version_file_and_the_release_it_makes(self):
         """The plugin's release is part of the sync, and the map says so."""
@@ -84,7 +84,7 @@ class ThePage(unittest.TestCase):
 
     def test_says_how_a_change_travels(self):
         self.assertIn("## How a change travels", self.text)
-        for words in ("downstream (<consumer>)", "sdlc-protocol/sync", "auto-merge", "vendoring.py verify"):
+        for words in ("downstream (<consumer>)", "symphony-protocol/sync", "auto-merge", "vendoring.py verify"):
             self.assertIn(words, self.text)
 
 

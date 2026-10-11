@@ -169,7 +169,7 @@ class Workflow(unittest.TestCase):
         self.assertIn("  downstream:\n    name: downstream (${{ matrix.name }})\n", self.text)
         self.assertIn("matrix: ${{ fromJSON(needs.consumers.outputs.matrix) }}", self.text)
         self.assertIn("fail-fast: false", self.text)
-        self.assertIn('run: python3 sdlc-protocol/scripts/vendor.py "$NAME" --consumer "$CONSUMER"', self.text)
+        self.assertIn('run: python3 symphony-protocol/scripts/vendor.py "$NAME" --consumer "$CONSUMER"', self.text)
         self.assertIn('run: bash -c "$CHECK"', self.text)
 
     def test_a_consumer_that_is_not_public_is_read_with_the_apps_token_unless_from_a_fork(self):
@@ -226,7 +226,7 @@ class SyncWorkflow(unittest.TestCase):
     def test_pushes_only_its_own_branch(self):
         pushes = [line.strip() for line in code_lines(self.text) if "git push" in line]
         self.assertEqual(pushes, ['git push --force origin "HEAD:refs/heads/$BRANCH"'])
-        self.assertIn("BRANCH: sdlc-protocol/sync", self.text)
+        self.assertIn("BRANCH: symphony-protocol/sync", self.text)
 
     def test_pushes_only_a_copy_the_branch_does_not_already_hold(self):
         self.assertIn("""[ "$(git rev-parse 'FETCH_HEAD^{tree}')" = "$(git write-tree)" ]""", self.text)

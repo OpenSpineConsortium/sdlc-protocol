@@ -4,11 +4,11 @@ name: Sync
 # runs a copy of it. For each consumer ecosystem.json lists, the job sync
 # vendors main into a checkout of that consumer with scripts/vendor.py and,
 # when anything changed, pushes the result to the branch
-# sdlc-protocol/sync there and opens the pull request from it, or updates
+# symphony-protocol/sync there and opens the pull request from it, or updates
 # the one already open; where ecosystem.json gives the consumer auto_merge
 # it then arms auto-merge, so the consumer's own required check is the
 # last word. The commits and pull requests are the GitHub App OpenSpine
-# SDLC's, with a token scoped to the one consumer and to the two
+# Symphony's, with a token scoped to the one consumer and to the two
 # permissions the job uses: a push made with GITHUB_TOKEN starts no
 # workflow in the consumer, and the App's does, so the consumer's CI runs
 # on it. The branch belongs to this workflow alone, which is why it is
@@ -92,7 +92,7 @@ jobs:
     env:
       CONSUMER: ${{ matrix.repository }}
       AUTO_MERGE: ${{ matrix.auto_merge }}
-      BRANCH: sdlc-protocol/sync
+      BRANCH: symphony-protocol/sync
     steps:
       # The whole history, so the pull request's body can list the
       # library's commits since the one the consumer's copy names.

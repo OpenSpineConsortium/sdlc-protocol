@@ -32,9 +32,9 @@ import vendor  # noqa: E402
 from sdlc_protocol import vendoring  # noqa: E402
 
 PACKAGE = ROOT / "sdlc_protocol"
-TEMPLATE = "OpenSpineConsortium/sdlc-template"
-MARKETPLACE = "OpenSpineConsortium/sdlc-marketplace"
-APP = "OpenSpineConsortium/sdlc-app"
+TEMPLATE = "OpenSpineConsortium/symphony-template"
+MARKETPLACE = "OpenSpineConsortium/symphony-marketplace"
+APP = "OpenSpineConsortium/symphony-app"
 MANIFEST = "plugins/sdlc/.claude-plugin/plugin.json"
 
 
@@ -85,7 +85,7 @@ class Repositories(unittest.TestCase):
     def setUp(self):
         self.scratch = Path(tempfile.mkdtemp()).resolve()
         self.addCleanup(shutil.rmtree, self.scratch, True)
-        self.library = self.scratch / "sdlc-protocol"
+        self.library = self.scratch / "symphony-protocol"
         self.library.mkdir()
         copy_library(self.library)
         git(self.library, "init", "-q")
@@ -202,7 +202,7 @@ class FindingTheConsumer(Repositories):
         self.assertTrue((target / "app" / "vendor" / "VENDORED").is_file())
 
     def test_by_an_ssh_remote_whatever_the_case(self):
-        target = self.marketplace("git@github.com:openspineconsortium/SDLC-Marketplace.git")
+        target = self.marketplace("git@github.com:openspineconsortium/SYMPHONY-Marketplace.git")
         self.vendored(target)
         self.assertTrue((target / "plugins" / "sdlc" / "vendor" / "VENDORED").is_file())
 
@@ -231,13 +231,13 @@ class FindingTheConsumer(Repositories):
 
     def test_remote_urls(self):
         cases = {
-            "https://github.com/OpenSpineConsortium/sdlc-app.git": "OpenSpineConsortium/sdlc-app",
-            "https://github.com/OpenSpineConsortium/sdlc-app": "OpenSpineConsortium/sdlc-app",
-            "https://x-access-token:abc@github.com/OpenSpineConsortium/sdlc-app.git": "OpenSpineConsortium/sdlc-app",
+            "https://github.com/OpenSpineConsortium/symphony-app.git": "OpenSpineConsortium/symphony-app",
+            "https://github.com/OpenSpineConsortium/symphony-app": "OpenSpineConsortium/symphony-app",
+            "https://x-access-token:abc@github.com/OpenSpineConsortium/symphony-app.git": "OpenSpineConsortium/symphony-app",
             "git@github.com:OpenSpineConsortium/sdlc.marketplace.git": "OpenSpineConsortium/sdlc.marketplace",
             "ssh://git@github.com/OpenSpineConsortium/coordbench.git": "OpenSpineConsortium/coordbench",
-            "https://gitlab.com/OpenSpineConsortium/sdlc-app.git": None,
-            "/srv/git/sdlc-app.git": None,
+            "https://gitlab.com/OpenSpineConsortium/symphony-app.git": None,
+            "/srv/git/symphony-app.git": None,
         }
         for url, expected in cases.items():
             with self.subTest(url=url):
