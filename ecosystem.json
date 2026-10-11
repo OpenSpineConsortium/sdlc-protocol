@@ -38,7 +38,7 @@
     {
       "repository": "OpenSpineConsortium/symphony-app",
       "visibility": "private",
-      "about": "The GitHub App OpenSpine Symphony: its installation token starts a new copy's first workflows, and its webhook server checks pull requests.",
+      "about": "The GitHub App Symphony: its installation token starts a new copy's first workflows, and its webhook server checks pull requests.",
       "vendor_dir": "app/vendor",
       "modules": ["claims.py", "protocol_check.py"],
       "check": "bash scripts/check.sh",

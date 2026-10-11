@@ -76,7 +76,7 @@ def setup_text(eco):
     allow = "\n".join(f"   gh api -X PATCH repos/{name} -F allow_auto_merge=true" for name in merging)
     return (
         "## The sync is not set up\n\n"
-        "The sync opens its pull requests with the token of the GitHub App OpenSpine Symphony, and this "
+        "The sync opens its pull requests with the token of the GitHub App Symphony, and this "
         "repository has no variable SDLC_APP_ID, so the sync was skipped and the run stays green. "
         "The owner sets it up once (README.md, \"The owner's one-time setup for the sync\"):\n\n"
         f"1. Install the App on {library} and on every consumer: "
