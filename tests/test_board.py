@@ -2,9 +2,14 @@
 the pull requests the rules name. No network: the fixture stands in for the
 API, and comments_due says what an adapter would post without posting it.
 The rendering and rule tests are the template's, ported as they were, so
-the page this module renders is byte for byte the page tools/board.py did."""
+the page this module renders is byte for byte the page tools/board.py did.
+A released claim leaves the page and its issue returns to the queue; the
+last class shows it end to end over a real git remote, where another
+account then claims the issue by the protocol's own steps."""
 
 import json
+import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -14,8 +19,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from sdlc_protocol import board  # noqa: E402
-from sdlc_protocol.board import DueComment, Issue, Merged, Pull, Snapshot  # noqa: E402
+from sdlc_protocol import board, claims  # noqa: E402
+from sdlc_protocol.board import DueComment, Issue, Merged, Pull, Release, Snapshot  # noqa: E402
 
 FIXTURES = ROOT / "tests" / "fixtures"
 FIXTURE = FIXTURES / "board.json"
@@ -389,6 +394,242 @@ class Writing(unittest.TestCase):
             self.assertEqual(out.read_bytes(), text.encode("ascii"))
             self.assertFalse(board.write_if_changed(str(out), text))
             self.assertTrue(board.write_if_changed(out, text + "\n"))
+
+
+# The fixture's claude/12 (pull request #40, head aaaaaaa1111111, last
+# committed on 2026-09-18 at noon), released by the coordinator two days
+# later: the release comment on its issue, and the labels claimed and
+# account:main taken off, leaving todo.
+RELEASED_AT = "2026-09-20T09:00:00Z"
+LAST_COMMIT = "2026-09-18T12:00:00Z"
+HEAD_12 = "aaaaaaa1111111"
+
+
+def released_snapshot(**release):
+    snap = snapshot()
+    snap["issues"].append({"number": 12, "title": "Describe the board", "labels": [{"name": "todo"}]})
+    snap["claim_issues"] = {"12": {"state": "open", "labels": ["todo"]}}
+    snap["releases"] = {"12": {"released_at": RELEASED_AT, "sha": HEAD_12, "committed_at": LAST_COMMIT, **release}}
+    return snap
+
+
+def section(text, heading, next_heading):
+    return text.split(heading)[1].split(next_heading)[0]
+
+
+class Releases(unittest.TestCase):
+    """A claim the coordinator released is gone from the board, and its issue
+    is back in the queue, the moment the snapshot shows the release."""
+
+    def test_a_released_claim_leaves_the_page_and_its_issue_returns_to_the_queue(self):
+        text = board.render(released_snapshot())
+        claims_section = section(text, board.CLAIM_HEADING, board.PULL_HEADING)
+        self.assertNotIn("claude/12", claims_section)
+        self.assertIn("| #13 | claude/13 | no claim file yet | #41 |", claims_section)
+        self.assertNotIn("| #40 |", section(text, board.PULL_HEADING, board.QUEUE_HEADING))
+        queue = section(text, board.QUEUE_HEADING, board.BLOCKER_HEADING)
+        self.assertIn("| #12 | Describe the board | todo |", queue)
+        self.assertIn("| #14 | Write the release notes | todo |", queue)
+        self.assertEqual(board.released_keys(released_snapshot()), {"12"})
+        self.assertEqual(board.released_branches(Snapshot.from_dict(released_snapshot())), {"claude/12"})
+
+    def test_it_takes_the_comment_and_the_label_off_both(self):
+        still_claimed = released_snapshot()
+        still_claimed["claim_issues"]["12"]["labels"] = ["claimed", "todo"]
+        no_comment = released_snapshot()
+        del no_comment["releases"]["12"]
+        closed = released_snapshot()
+        closed["claim_issues"]["12"]["state"] = "closed"
+        no_issue = released_snapshot()
+        del no_issue["claim_issues"]["12"]
+        for name, snap in (("still claimed", still_claimed), ("no release comment", no_comment),
+                           ("issue closed", closed), ("issue unknown", no_issue)):
+            self.assertEqual(board.released_keys(snap), set(), name)
+            self.assertNotIn("| #12 | Describe the board |", section(board.render(snap), board.QUEUE_HEADING,
+                                                                      board.BLOCKER_HEADING), name)
+
+    def test_a_release_too_soon_or_a_commit_since_frees_nothing(self):
+        cases = (
+            ("released within a day of the last commit", released_snapshot(released_at="2026-09-19T11:00:00Z")),
+            ("committed after the release", released_snapshot(committed_at="2026-09-20T10:00:00Z")),
+            ("head commit unknown", released_snapshot(sha="")),
+            ("commit time unknown", released_snapshot(committed_at="")),
+        )
+        for name, snap in cases:
+            self.assertEqual(board.released_keys(snap), set(), name)
+            self.assertIn("| #12 | claude/12 | main | #40 |", board.render(snap), name)
+
+    def test_the_wait_can_be_set(self):
+        snap = released_snapshot(released_at="2026-09-18T14:00:00Z")
+        self.assertEqual(board.released_keys(snap), set())
+        self.assertEqual(board.released_keys(snap, timedelta(hours=1)), {"12"})
+
+    def test_the_page_is_the_same_before_the_rename_and_after_it(self):
+        # The adapter renames claude/12 to released/12-aaaaaaa, which closes
+        # #40; a board drawn after that reads as the one drawn before, so a
+        # release rewrites the board once.
+        after = released_snapshot()
+        after["branches"] = ["main", claims.released_branch("12", HEAD_12), "claude/13"]
+        after["pulls"] = [p for p in after["pulls"] if p["number"] != 40]
+        del after["claims"]["12"], after["claim_issues"]["12"], after["releases"]["12"]
+        self.assertEqual(board.render(after), board.render(released_snapshot()))
+
+    def test_a_released_claims_pull_request_hears_nothing(self):
+        now = datetime(2026, 9, 23, 12, 0, tzinfo=timezone.utc)
+        due = board.comments_due(released_snapshot(), "push", "main", now)
+        self.assertEqual([(c.number, c.kind) for c in due], [(41, "idle")])
+
+    def test_a_new_claim_after_the_release_holds_the_issue(self):
+        snap = released_snapshot(sha="ccccccc3333333", committed_at="2026-09-20T10:00:00Z")
+        snap["claims"]["12"] = snap["claims"]["12"].replace("- Account: main", "- Account: second")
+        snap["pulls"] = [p for p in snap["pulls"] if p["number"] != 40]
+        text = board.render(snap)
+        self.assertIn("| #12 | claude/12 | second | (no pull request yet) | docs/agents/README.md |", text)
+        self.assertNotIn("| #12 | Describe the board |", section(text, board.QUEUE_HEADING, board.BLOCKER_HEADING))
+
+    def test_releases_round_trip_through_json(self):
+        snap = Snapshot.from_dict(released_snapshot())
+        self.assertEqual(snap.releases, {"12": Release(RELEASED_AT, HEAD_12, LAST_COMMIT)})
+        self.assertEqual(Snapshot.from_json(snap.to_json()), snap)
+        self.assertEqual(Snapshot.from_dict({"releases": {12: None}}).releases, {"12": Release()})
+
+    def test_what_the_board_says_once_it_renamed_the_branch(self):
+        self.assertEqual(board.RELEASED_MARKER.format(branch="released/12-aaaaaaa"),
+                         "<!-- sdlc-board: released released/12-aaaaaaa -->")
+        text = board.released_text("claude/12", "released/12-aaaaaaa")
+        self.assertIn("claude/12 is now released/12-aaaaaaa", text)
+        self.assertIn("back in the queue", text)
+        text.encode("ascii")
+
+
+ACCOUNT_ENV = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "LC_ALL": "C"}
+ISSUE = 5
+
+
+def run_git(cwd, *args, when=None):
+    """git as an account runs it, with an identity of its own so the host's
+    configuration does not matter, and the commit dated `when` if given."""
+    env = dict(ACCOUNT_ENV, **({"GIT_AUTHOR_DATE": when, "GIT_COMMITTER_DATE": when} if when else {}))
+    return subprocess.run(["git", "-c", "user.name=account", "-c", "user.email=account@example.invalid",
+                           "-c", "commit.gpgsign=false", "-c", f"core.hooksPath={os.devnull}", *args],
+                          cwd=cwd, capture_output=True, text=True, timeout=60, env=env)
+
+
+def git(cwd, *args, when=None):
+    result = run_git(cwd, *args, when=when)
+    if result.returncode != 0:
+        raise AssertionError(f"git {' '.join(args)} failed: {result.stderr}")
+    return result.stdout.strip()
+
+
+class ReleasedClaimReturns(unittest.TestCase):
+    """The defect this rule answers, end to end over a real git remote: once
+    the coordinator has released a claim, the board shows its issue in the
+    queue, and another account claims the issue by the protocol's steps,
+    the first push of claude/<issue> from the default branch, which git
+    refuses, as GitHub does, while the name is taken. The rename is made
+    with git here; on GitHub the board's adapter makes it through the
+    branch rename API (test_github)."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory(prefix="sdlc-release-test-")
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        self.remote = self.root / "origin.git"
+        git(self.root, "init", "--quiet", "--bare", "--initial-branch=main", str(self.remote))
+        seed = self.root / "seed"
+        seed.mkdir()
+        git(seed, "init", "--quiet", "--initial-branch=main")
+        (seed / "README.md").write_text("A project.\n", encoding="ascii")
+        git(seed, "add", "README.md")
+        git(seed, "commit", "--quiet", "-m", "Start", when="2026-09-01T09:00:00Z")
+        git(seed, "push", "--quiet", str(self.remote), "HEAD:refs/heads/main")
+
+    def claim(self, account, when):
+        """The protocol's Claim: a new branch claude/<issue> from the default
+        branch, whose first commit adds the claim file and nothing else,
+        pushed without force; True when the push was taken. A refused push
+        means another account has the issue, and the local branch goes."""
+        clone = self.root / account
+        if not clone.exists():
+            git(self.root, "clone", "--quiet", str(self.remote), str(clone))
+        git(clone, "fetch", "--quiet", "origin")
+        branch = claims.branch_of(ISSUE)
+        git(clone, "switch", "--quiet", "-c", branch, "origin/main")
+        path = clone / claims.claim_path(ISSUE)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"# Claim: #{ISSUE}\n\n- Account: {account}\n- Branch: {branch}\n\n## Files to touch\n\n"
+                        f"- src/{account}.py\n", encoding="ascii")
+        git(clone, "add", claims.claim_path(ISSUE))
+        git(clone, "commit", "--quiet", "-m", f"Claim #{ISSUE}", when=when)
+        push = run_git(clone, "push", "--quiet", "origin", branch)
+        if push.returncode == 0:
+            return True
+        self.assertIn("[rejected]", push.stderr, "refused because the name is taken, and for nothing else")
+        git(clone, "switch", "--quiet", "--detach", "origin/main")
+        git(clone, "branch", "--quiet", "-D", branch)
+        return False
+
+    def remote_git(self, *args):
+        return git(self.remote, *args)
+
+    def snapshot(self, issue_labels, released_at=""):
+        """The board's snapshot of the remote, as the GitHub adapter collects
+        it: the issue with these labels, every branch, the claim file on the
+        claim branch, and the release facts when the issue has a release
+        comment, the labels claimed is off and the claim branch exists."""
+        branches = self.remote_git("for-each-ref", "--format=%(refname:short)", "refs/heads").splitlines()
+        branch, key = claims.branch_of(ISSUE), str(ISSUE)
+        snap = {
+            "sha": self.remote_git("rev-parse", "main"),
+            "issues": [{"number": ISSUE, "title": "Fix the parser", "labels": issue_labels}],
+            "branches": branches,
+            "claims": {},
+            "claim_issues": {},
+            "releases": {},
+        }
+        if branch in branches:
+            snap["claims"][key] = self.remote_git("show", f"{branch}:{claims.claim_path(ISSUE)}")
+            snap["claim_issues"][key] = {"state": "open", "labels": issue_labels}
+            if released_at and "claimed" not in issue_labels:
+                snap["releases"][key] = {"released_at": released_at, "sha": self.remote_git("rev-parse", branch),
+                                         "committed_at": self.remote_git("show", "-s", "--format=%cI", branch)}
+        return snap
+
+    def test_a_released_claim_returns_to_the_queue_and_another_account_claims_it(self):
+        held = ["account:alice", "claimed", "todo"]
+        self.assertTrue(self.claim("alice", "2026-09-18T12:00:00Z"))
+        self.assertFalse(self.claim("bob", "2026-09-19T08:00:00Z"), "the name is taken while alice holds it")
+        page = board.render(self.snapshot(held))
+        self.assertIn("| #5 | claude/5 | alice | (no pull request yet) | src/alice.py |", page)
+        self.assertNotIn("| #5 |", section(page, board.QUEUE_HEADING, board.BLOCKER_HEADING))
+
+        # The coordinator releases the idle claim: the release comment, then
+        # claimed and alice's label off. The board shows the issue free.
+        released_at = "2026-09-20T09:00:00Z"
+        before_rename = self.snapshot(["todo"], released_at)
+        self.assertEqual(board.released_keys(before_rename), {"5"})
+        page = board.render(before_rename)
+        self.assertNotIn("claude/5", page)
+        self.assertIn("| #5 | Fix the parser | todo |", section(page, board.QUEUE_HEADING, board.BLOCKER_HEADING))
+
+        # The board frees the name as the adapter does, and the page stays.
+        head = self.remote_git("rev-parse", "claude/5")
+        kept = claims.released_branch(ISSUE, head)
+        self.remote_git("branch", "-m", "claude/5", kept)
+        self.assertEqual(board.render(self.snapshot(["todo"], released_at)), page)
+
+        # Bob claims by the protocol's steps, and the lock holds again.
+        self.assertTrue(self.claim("bob", "2026-09-20T10:00:00Z"))
+        self.assertFalse(self.claim("carol", "2026-09-20T10:05:00Z"), "the new claim is a lock like the first")
+        for labels_now in (["todo"], ["account:bob", "claimed", "todo"]):
+            page = board.render(self.snapshot(labels_now, released_at))
+            self.assertIn("| #5 | claude/5 | bob | (no pull request yet) | src/bob.py |", page)
+            self.assertNotIn("| #5 |", section(page, board.QUEUE_HEADING, board.BLOCKER_HEADING))
+
+        # Alice's work is still there, under the released name.
+        self.assertIn("- Account: alice", self.remote_git("show", f"{kept}:{claims.claim_path(ISSUE)}"))
+        self.assertEqual(self.remote_git("rev-parse", kept), head)
 
 
 if __name__ == "__main__":

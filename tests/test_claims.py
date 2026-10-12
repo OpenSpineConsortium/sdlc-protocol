@@ -145,6 +145,85 @@ class Release(unittest.TestCase):
         self.assertEqual(claims.release_due(last_commits, self.NOW, timedelta(hours=1)), ["claude/1"])
         self.assertEqual(claims.release_due({}, self.NOW), [])
 
+    def test_a_claim_already_released_is_not_due_again(self):
+        # The coordinator runs every hour; a claim it released yesterday is
+        # still idle today, and releasing it again would count it twice.
+        last_commits = {"claude/5": "2026-09-20T10:00:00Z", "claude/6": "2026-09-20T10:00:00Z"}
+        released = {"claude/5": "2026-09-21T11:00:00Z"}
+        self.assertEqual(claims.release_due(last_commits, self.NOW, released=released), ["claude/6"])
+
+    def test_a_claim_taken_up_again_after_its_release_is_due_once_it_idles_again(self):
+        # Its holder came back after the release and went quiet again: the
+        # old release no longer speaks for the branch.
+        last_commits = {"claude/5": "2026-09-21T12:00:00Z"}
+        released = {"claude/5": "2026-09-21T11:00:00Z"}
+        self.assertEqual(claims.release_due(last_commits, self.NOW, released=released), ["claude/5"])
+
+
+def comment(body, association="OWNER", created_at="2026-09-21T11:00:00Z"):
+    """An issue comment as the REST API lists it."""
+    return {"body": body, "author_association": association, "created_at": created_at}
+
+
+class ReleaseComments(unittest.TestCase):
+    RELEASE = claims.RELEASE_MARKER + "\nReleased: no commit on claude/5 for a day."
+
+    def test_the_marker_is_the_coordinators(self):
+        self.assertEqual(claims.RELEASE_MARKER, "<!-- sdlc-coordinator: claim-released -->")
+
+    def test_a_release_starts_with_the_marker_and_comes_from_the_repository(self):
+        for association in ("OWNER", "MEMBER", "COLLABORATOR"):
+            self.assertTrue(claims.is_release_comment(comment(self.RELEASE, association)), association)
+        self.assertTrue(claims.is_release_comment(comment("\n  " + self.RELEASE)))
+        self.assertTrue(claims.is_release_comment(comment(claims.RELEASE_MARKER)))
+
+    def test_a_stranger_or_a_quote_releases_nothing(self):
+        for association in ("CONTRIBUTOR", "FIRST_TIME_CONTRIBUTOR", "FIRST_TIMER", "NONE", None):
+            self.assertFalse(claims.is_release_comment(comment(self.RELEASE, association)), association)
+        self.assertFalse(claims.is_release_comment(comment("> " + self.RELEASE)))
+        self.assertFalse(claims.is_release_comment(comment("Why was this released?\n" + self.RELEASE)))
+        self.assertFalse(claims.is_release_comment(comment(claims.RELEASE_MARKER + " and more on the line")))
+        self.assertFalse(claims.is_release_comment(comment(None)))
+        self.assertFalse(claims.is_release_comment({}))
+        self.assertFalse(claims.is_release_comment(None))
+
+    def test_the_latest_release_is_the_newest_release_comment(self):
+        comments = [
+            comment(self.RELEASE, created_at="2026-09-21T11:00:00Z"),
+            comment(self.RELEASE, created_at="2026-09-22T09:00:00+02:00"),
+            comment("Still on it.", created_at="2026-09-23T08:00:00Z"),
+            comment(self.RELEASE, "NONE", created_at="2026-09-23T09:00:00Z"),
+        ]
+        self.assertEqual(claims.latest_release(comments), "2026-09-22T09:00:00+02:00")
+        self.assertEqual(claims.latest_release(comments[2:]), "")
+        self.assertEqual(claims.latest_release([]), "")
+        self.assertEqual(claims.latest_release([comment(self.RELEASE, created_at=None)]), "")
+
+
+class Released(unittest.TestCase):
+    LAST_COMMIT = "2026-09-20T10:00:00Z"
+
+    def test_a_release_frees_a_claim_that_was_idle_when_it_came(self):
+        self.assertTrue(claims.was_released("2026-09-21T10:00:01Z", self.LAST_COMMIT))
+        self.assertTrue(claims.was_released(datetime(2026, 9, 25, tzinfo=timezone.utc), self.LAST_COMMIT))
+
+    def test_a_release_made_too_soon_frees_nothing(self):
+        self.assertFalse(claims.was_released("2026-09-21T10:00:00Z", self.LAST_COMMIT))
+        self.assertFalse(claims.was_released("2026-09-20T12:00:00Z", self.LAST_COMMIT))
+        self.assertTrue(claims.was_released("2026-09-20T12:00:00Z", self.LAST_COMMIT, timedelta(hours=1)))
+
+    def test_a_commit_after_the_release_ends_it(self):
+        self.assertFalse(claims.was_released("2026-09-21T11:00:00Z", "2026-09-21T11:30:00Z"))
+
+    def test_with_either_time_unknown_nothing_is_released(self):
+        self.assertFalse(claims.was_released("", self.LAST_COMMIT))
+        self.assertFalse(claims.was_released("2026-09-25T10:00:00Z", ""))
+
+    def test_the_released_branch_keeps_the_issue_and_names_the_head(self):
+        self.assertEqual(claims.released_branch("5", "abcdef0123456789"), "released/5-abcdef0")
+        self.assertEqual(claims.released_branch(12, "0123abc"), "released/12-0123abc")
+        self.assertFalse(claims.is_claim_branch(claims.released_branch("5", "abcdef0")))
+
 
 if __name__ == "__main__":
     unittest.main()

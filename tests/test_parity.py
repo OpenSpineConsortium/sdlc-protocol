@@ -5,7 +5,8 @@ output, byte for byte.
 Four tools moved here, and each is held to its old self on the inputs the
 template's own tests use. The board renders the same STATE.md for every
 snapshot the template's tests/test_board.py renders, collects the same
-snapshot from the same GitHub, and posts the same comments. The protocol
+snapshot from the same GitHub, apart from the releases it reads since,
+and posts the same comments. The protocol
 check names the same problems for the template's events, as a function and
 as a command. The push guard, the version on the template's branch
 claude/11, gives the same exit code and the same reason for each hook
@@ -473,6 +474,9 @@ class BoardParity(unittest.TestCase):
             old = template_board().collect(template_client(old_repo, old_sleep), sha, trunk)
             new = github.collect(library_client(new_repo, new_sleep), sha, trunk)
             with self.subTest(name):
+                # The template read no releases (DeclaredDifferences); none of
+                # these repositories holds one, and the rest is the same.
+                self.assertEqual(new.pop("releases"), {})
                 self.assertEqual(new, old)
                 self.assertEqual(new_sleep.calls, old_sleep.calls)
                 self.assertEqual(board.render(github.snapshot(library_client(new_repo), sha, trunk)),
@@ -1107,6 +1111,21 @@ class DeclaredDifferences(unittest.TestCase):
         snap = fixture()
         self.assertEqual(board.render(snap, None), template_board().render(snap))
         self.assertIn("on trunk.", board.render(snap, "trunk"))
+
+    def test_a_released_claim_returns_to_the_queue_where_the_template_kept_it_out(self):
+        # The template's board never read a release, so a released claim
+        # kept its row and its issue stayed out of the queue for good; the
+        # library collects the releases and frees the issue.
+        snap = fixture()
+        snap["issues"].append({"number": 12, "title": "Released", "labels": [{"name": "todo"}]})
+        snap["claim_issues"] = {"12": {"state": "open", "labels": ["todo"]}}
+        snap["releases"] = {"12": {"released_at": "2026-09-20T09:00:00Z", "sha": "aaaaaaa1111111",
+                                   "committed_at": "2026-09-18T12:00:00Z"}}
+        old, new = template_board().render(copy.deepcopy(snap)), board.render(snap)
+        self.assertIn("| #12 | claude/12 |", old)
+        self.assertNotIn("| #12 | Released | todo |", old)
+        self.assertNotIn("| #12 | claude/12 |", new)
+        self.assertIn("| #12 | Released | todo |", new.split(board.QUEUE_HEADING)[1])
 
     def test_a_check_event_that_is_not_an_object_passes_instead_of_crashing(self):
         with tempfile.TemporaryDirectory() as folder:

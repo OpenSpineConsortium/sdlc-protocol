@@ -1,12 +1,13 @@
 """The protocol over GitHub's REST API, through urllib.
 
 Three parts of the package read GitHub, and they read it the same way, so
-the calls live once, here. The board collects a Snapshot and posts the
-comments board.comments_due names; the team clerk calls the few methods
-team.Client lists; and the merge gate asks GitHubWorld, gate.World over one
-repository, how a branch stands, whether its required check passed, and
-for the merge itself, which goes through GitHub's merge API and only when
-the policy says the gate merges.
+the calls live once, here. The board collects a Snapshot, posts the
+comments board.comments_due names and renames the branch of each claim
+board.released_keys counts as released; the team clerk calls the few
+methods team.Client lists; and the merge gate asks GitHubWorld, gate.World
+over one repository, how a branch stands, whether its required check
+passed, and for the merge itself, which goes through GitHub's merge API
+and only when the policy says the gate merges.
 
 The token is an argument or GITHUB_TOKEN: a workflow's own token and an
 App installation token are both sent as a bearer token. It travels once
@@ -291,13 +292,49 @@ def claim_issues(api, branches, open_issues):
     return found
 
 
+def claim_heads(listed):
+    """The head commit of each claim branch, by branch, from the branch
+    list as the API gives it; a branch given by name alone has none."""
+    return {branch["name"]: (branch.get("commit") or {}).get("sha") or ""
+            for branch in listed if isinstance(branch, dict) and claims.is_claim_branch(branch.get("name") or "")}
+
+
+def may_be_released(issue):
+    """Whether a claim on this issue can have been released: the issue is
+    open and the coordinator has taken the label claimed off it."""
+    return issue is not None and issue.get("state") == "open" and labels.CLAIMED not in issue.get("labels", [])
+
+
+def releases(api, heads, found_issues):
+    """What board.released_keys reads about each claim a release can have
+    freed, by key: the time of the latest release comment on its issue, and
+    the branch's head commit with the time it was committed. A claim whose
+    issue still carries the label claimed costs no call; any other costs
+    one for its issue's comments and, when one of them is a release, one
+    more for the head commit, so the board pays only where a release can
+    have happened."""
+    found = {}
+    for branch, sha in sorted(heads.items()):
+        key = claims.key_of(branch)
+        if not sha or not may_be_released(found_issues.get(key)):
+            continue
+        released_at = claims.latest_release(api.get_all(f"/repos/{api.repo}/issues/{key}/comments"))
+        if released_at:
+            commit = api.get(f"/repos/{api.repo}/git/commits/{sha}", missing_ok=True) or {}
+            found[key] = {"released_at": released_at, "sha": sha,
+                          "committed_at": (commit.get("committer") or {}).get("date") or ""}
+    return found
+
+
 def collect(api, sha, default_branch):
     """Everything the board renders, in the shape a --dry-run fixture has,
     so a live run's answers can be saved and rendered again offline."""
     repo = api.repo
     issues = [i for i in api.get_all(f"/repos/{repo}/issues", {"state": "open"}) if "pull_request" not in i]
     pulls = [pull_with_detail(api, p["number"]) for p in api.get_all(f"/repos/{repo}/pulls", {"state": "open"})]
-    branches = board.claim_branches(api.get_all(f"/repos/{repo}/branches"))
+    listed = api.get_all(f"/repos/{repo}/branches")
+    branches = board.claim_branches(listed)
+    found_issues = claim_issues(api, branches, issues)
     return {
         "sha": sha,
         "default_branch": default_branch,
@@ -305,8 +342,9 @@ def collect(api, sha, default_branch):
         "pulls": pulls,
         "branches": branches,
         "claims": {claims.key_of(b): claim_text(api, b) for b in branches},
-        "claim_issues": claim_issues(api, branches, issues),
+        "claim_issues": found_issues,
         "merged": recent_merged(api),
+        "releases": releases(api, claim_heads(listed), found_issues),
     }
 
 
@@ -333,6 +371,42 @@ def post_comments(api, due):
         if comment_once(api, number, marker, text):
             posted.append(f"PR #{number}: {kind} comment posted")
     return posted
+
+
+def branch_sha(api, branch):
+    """The branch's commit, or "" when the repository has no such branch."""
+    found = api.get(f"/repos/{api.repo}/git/ref/heads/{quoted(branch)}", missing_ok=True)
+    return ((found or {}).get("object") or {}).get("sha") or ""
+
+
+def release_claims(api, snapshot):
+    """Rename the branch of every claim board.released_keys counts as
+    released, so its name is free for the next claim, and say so once on
+    its issue; the lines say what was done, one per claim, for the
+    workflow's log. GitHub closes a pull request whose branch is renamed,
+    and keeps the commits under the new name."""
+    snap = board.as_snapshot(snapshot)
+    return [release_claim(api, key, snap.releases[key])
+            for key in sorted(board.released_keys(snap), key=claims.by_number)]
+
+
+def release_claim(api, key, release):
+    """Rename one released claim's branch. The branch is read again first
+    and left as it is when it moved since the snapshot, since a commit
+    after the release means its holder came back. A rename GitHub refuses
+    (a rule on the branch, a name already taken) is said and left for the
+    next run, never raised: the board is written before this runs, and a
+    refusal that stopped the run would stop every board after it."""
+    old, new = claims.branch_of(key), claims.released_branch(key, release.sha)
+    if branch_sha(api, old) != release.sha:
+        return f"{old}: no longer at {release.sha[:7]}, so it keeps its name"
+    try:
+        api.post(f"/repos/{api.repo}/branches/{urllib.parse.quote(old, safe='')}/rename", {"new_name": new})
+    except GitHubError as problem:
+        said = f": {problem.detail}" if problem.detail else ""
+        return f"{old}: not renamed to {new}: {problem}{said}"
+    comment_once(api, key, board.RELEASED_MARKER.format(branch=new), board.released_text(old, new))
+    return f"#{key}: claim released; {old} renamed to {new}"
 
 
 # --- the gate's world ---------------------------------------------------------
@@ -389,8 +463,7 @@ class GitHubWorld:
 
     def branch_sha(self, branch):
         """The branch's commit, or "" when the repository has no such branch."""
-        found = self.api.get(f"/repos/{self.api.repo}/git/ref/heads/{quoted(branch)}", missing_ok=True)
-        return ((found or {}).get("object") or {}).get("sha") or ""
+        return branch_sha(self.api, branch)
 
     def pull_of(self, branch):
         """The branch's open pull request, settled, or None."""

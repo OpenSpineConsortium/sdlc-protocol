@@ -7,8 +7,8 @@ The claim protocol for pull-request-gated Claude agents, as one Python package w
 | Module | What it holds |
 | --- | --- |
 | `sdlc_protocol.labels` | The labels the protocol reads and writes, with their colours, and the prefixes `account:` and `agent:`. |
-| `sdlc_protocol.claims` | The claim branch's name, the claim file `docs/agents/claims/<n>.md` and how to read it, and which claims are due for release. |
-| `sdlc_protocol.board` | The board, STATE.md, rendered from a Snapshot of the repository, and the comments it is due to post ("main moved", idle). |
+| `sdlc_protocol.claims` | The claim branch's name, the claim file `docs/agents/claims/<n>.md` and how to read it, which claims are due for release, what a release comment is, and the name `released/<n>-<sha>` a released claim's branch takes. |
+| `sdlc_protocol.board` | The board, STATE.md, rendered from a Snapshot of the repository, the comments it is due to post ("main moved", idle), and which claims the coordinator released, whose issues go back to the queue. |
 | `sdlc_protocol.protocol_check` | The problems a `claude/<issue>` pull request has against the protocol, for CI to fail on. |
 | `sdlc_protocol.team` | Team mode's clerk: seeding an epic's tasks, routing the lead, telling each member what to do next. |
 | `sdlc_protocol.guard` | The push guard's rules: which `git push` commands a session may not run. |
@@ -54,7 +54,7 @@ python3 -m sdlc_protocol team next --agent "$AGENT" --label "$LABEL"
 python3 -m sdlc_protocol guard < payload.json
 ```
 
-`board` and `team` call GitHub with `GITHUB_TOKEN` on the repository in `GITHUB_REPOSITORY` (`team --repo OWNER/NAME` names another), and `board` also posts the comments that are due unless given `--render-only`; `board --dry-run tests/fixtures/board.json` renders a saved snapshot with no network at all. `check` reads the pull request from the event in `GITHUB_EVENT_PATH`. `team` takes the members from `CLAUDE_TEAM`, a JSON list such as `["w1","w2"]`. `guard` reads the hook's JSON on stdin and exits 2, with the reason on stderr, to refuse a push. `verify-vendored VENDOR_DIR` holds the copy `VENDOR_DIR/sdlc_protocol` to its record `VENDOR_DIR/VENDORED`, as `vendoring.py verify` does (below). A vendored copy is not installed, so it runs by its path, as in `python3 tools/sdlc_protocol verify-vendored tools` from the template's root, or with its directory on the path, `PYTHONPATH=tools python3 -m sdlc_protocol verify-vendored tools`; a bare `python3 -m sdlc_protocol` there finds no module.
+`board` and `team` call GitHub with `GITHUB_TOKEN` on the repository in `GITHUB_REPOSITORY` (`team --repo OWNER/NAME` names another), and `board` also renames the branch of each released claim to `released/<n>-<sha>`, which takes a token that may write the repository's contents, and posts the comments that are due, unless given `--render-only`; `board --dry-run tests/fixtures/board.json` renders a saved snapshot with no network at all. `check` reads the pull request from the event in `GITHUB_EVENT_PATH`. `team` takes the members from `CLAUDE_TEAM`, a JSON list such as `["w1","w2"]`. `guard` reads the hook's JSON on stdin and exits 2, with the reason on stderr, to refuse a push. `verify-vendored VENDOR_DIR` holds the copy `VENDOR_DIR/sdlc_protocol` to its record `VENDOR_DIR/VENDORED`, as `vendoring.py verify` does (below). A vendored copy is not installed, so it runs by its path, as in `python3 tools/sdlc_protocol verify-vendored tools` from the template's root, or with its directory on the path, `PYTHONPATH=tools python3 -m sdlc_protocol verify-vendored tools`; a bare `python3 -m sdlc_protocol` there finds no module.
 
 ## Running the tests
 
@@ -140,7 +140,7 @@ Until the variable `SDLC_APP_ID` is set here, the sync skips itself, stays green
    ```
 
 4. Require the check `check` on each consumer's main, with a ruleset, so auto-merge waits for it to be green; the sync only arms auto-merge, and GitHub refuses to arm it on a pull request with nothing left to wait for, which the run's summary then reports. On this repository require `check` and, if you like, the `downstream (<consumer>)` jobs.
-5. Tag each release after its pull request merges, so a consumer that installs can name it; for this one, `git tag v0.2.0 <merge commit> && git push origin v0.2.0`.
+5. Tag each release after its pull request merges, so a consumer that installs can name it; for this one, `git tag v0.3.0 <merge commit> && git push origin v0.3.0`.
 
 ## Installing
 

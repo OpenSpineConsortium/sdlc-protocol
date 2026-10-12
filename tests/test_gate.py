@@ -599,6 +599,15 @@ class ReleaseTest(unittest.TestCase):
         self.assertEqual(gate.due_for_release(quick, world, {"claude/3": world.now() - timedelta(hours=2)}),
                          ["claude/3"])
 
+    def test_a_claim_released_already_is_not_due_again(self):
+        world = MemoryWorld()
+        last_commits = {"claude/2": world.now()}
+        world.advance(hours=25)
+        released = {"claude/2": world.now()}
+        world.advance(hours=1)
+        self.assertEqual(gate.due_for_release(ARM, world, last_commits, released), [])
+        self.assertEqual(gate.due_for_release(ARM, world, last_commits), ["claude/2"])
+
 
 if __name__ == "__main__":
     unittest.main()
