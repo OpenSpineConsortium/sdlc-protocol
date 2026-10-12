@@ -1,9 +1,11 @@
 """The board: what a repository's open work looks like, as one page.
 
 The board is the file STATE.md on the branch "board": the open claims, the
-open pull requests and how each stands to the default branch, the queue of
-unclaimed issues, the blockers and the pull requests merged last, so every
-session and every account reads the same page instead of asking the API.
+open pull requests and how each stands to the default branch, the files
+that more than one piece of open work changes and the order that work
+should land in, the queue of unclaimed issues, the issues given to
+workers, the blockers and the pull requests merged last, so every session
+and every worker reads the same page instead of asking the API.
 This module is the pure part. A Snapshot holds what GitHub knows, filled by
 an adapter or read back from JSON; render turns it into the page, with no
 wall-clock value and every row sorted, so the same state gives the same
@@ -23,8 +25,8 @@ from typing import NamedTuple
 
 from . import labels
 from .claims import (
-    IDLE_AFTER, PREFIX, RELEASED_PREFIX, branch_of, by_number, claim_account, claim_files, is_claim_branch,
-    is_idle, key_of, was_released,
+    CLAIM_DIR, IDLE_AFTER, PREFIX, RELEASED_PREFIX, branch_of, by_number, claim_files, claim_worker,
+    is_claim_branch, is_idle, key_of, was_released,
 )
 
 RECENT_MERGED = 5
@@ -39,9 +41,12 @@ NO_PULL_YET = "(no pull request yet)"
 
 MAIN_MOVED_MARKER = "<!-- sdlc-board: main-moved {sha} -->"
 IDLE_MARKER = "<!-- sdlc-board: idle -->"
+# The coordinator releases a draft's claim in the same run the board would
+# call it idle, so the comment reaches a pull request marked ready, which
+# waits however long its review takes, or one from a branch that is no claim.
 IDLE_TEXT = (
-    "idle: no change for more than a day; if this work is parked, say so "
-    "here, or the coordinator may release the claim."
+    "idle: no change for more than a day. A pull request marked ready waits for its review and merge, "
+    "however long that takes; a draft whose branch goes a day without a commit is released by the coordinator."
 )
 # What the board says on an issue once it has renamed a released claim's
 # branch; the marker names the new branch, so each release is told once.
@@ -52,11 +57,16 @@ RELEASED_MARKER = "<!-- sdlc-board: released {branch} -->"
 RENAME_REFUSED_MARKER = "<!-- sdlc-board: rename-refused {branch} -->"
 
 CLAIM_HEADING = "## Claims (open claude/<issue> branches and docs/agents/claims/<issue>.md)"
-CLAIM_COLUMNS = ("Issue", "Branch", "Account", "PR", "Files it touches")
+CLAIM_COLUMNS = ("Issue", "Branch", "Worker", "PR", "Files it touches")
 PULL_HEADING = "## Open pull requests"
 PULL_COLUMNS = ("PR", "Title", "Branch", "State (clean, behind, conflicting, blocked, unknown)", "Last update")
-QUEUE_HEADING = "## Queue (open issues labelled todo, unclaimed)"
+OVERLAP_HEADING = ("## Overlaps (files that more than one piece of open work changes; land the work in this "
+                   "order: a blocker first, then work marked ready, then the oldest)")
+OVERLAP_COLUMNS = ("File", "Open work, in the order it should land")
+QUEUE_HEADING = "## Queue (open issues labelled todo, unclaimed and given to no worker)"
 ISSUE_COLUMNS = ("Issue", "Title", "Labels")
+GIVEN_HEADING = "## Given to workers (open issues labelled todo that a worker's label names, not yet claimed)"
+GIVEN_COLUMNS = ("Issue", "Title", "Worker")
 BLOCKER_HEADING = "## Blockers (open issues labelled blocker)"
 MERGED_HEADING = f"## Recently merged (the last {RECENT_MERGED})"
 MERGED_COLUMNS = ("PR", "Title", "Branch", "Merged")
@@ -485,7 +495,7 @@ def table(columns, rows):
 
 
 def claim_row(key, branch, text, pull, issue):
-    """One claim as the board shows it. The account is the claim file's, or
+    """One claim as the board shows it. The worker is the claim file's, or
     the issue's label once the finishing pull request has deleted the file.
     A branch whose issue is closed is a leftover: the row says so in place
     of the pull request and asks for the branch to go in place of the files."""
@@ -507,10 +517,10 @@ def claim_row(key, branch, text, pull, issue):
     else:
         files_cell = "-"
     if text:
-        account = claim_account(text)
+        worker = claim_worker(text)
     else:
-        account = labels.account_label({"labels": issue.labels} if issue else None) or NO_CLAIM_FILE
-    return [issue_ref(key), branch, account, pull_cell, files_cell]
+        worker = labels.worker_of({"labels": issue.labels} if issue else None) or NO_CLAIM_FILE
+    return [issue_ref(key), branch, worker, pull_cell, files_cell]
 
 
 def claim_rows(snap):
@@ -539,17 +549,105 @@ def pull_rows(snap):
 def issue_rows(snap, label, unclaimed_only):
     """The issues carrying a label, in number order; the queue leaves out
     an issue with the label claimed, a claim branch that is not released,
-    or team mode's labels."""
+    an epic, or a worker's label, which gives the issue to that worker."""
     claimed = claimed_numbers(snap.branches, released_keys(snap))
     rows = []
     for issue in sorted(snap.issues, key=lambda i: i.number):
         names = sorted(issue.labels)
         if label not in names:
             continue
-        if unclaimed_only and (labels.CLAIMED in names or issue.number in claimed or labels.reserved_for_team(names)):
+        if unclaimed_only and (labels.CLAIMED in names or issue.number in claimed or labels.reserved(names)):
             continue
         rows.append([f"#{issue.number}", issue.title, ", ".join(names)])
     return rows
+
+
+def given_rows(snap):
+    """The open issues labelled todo that a worker's label gives to that
+    worker and that nobody has claimed yet, in number order: the queue
+    leaves them out, since only that worker takes them, and this is where
+    the worker and everyone else see them. An epic is the coordinator's
+    to plan, not a worker's to take, so it is left out with its labels."""
+    claimed = claimed_numbers(snap.branches, released_keys(snap))
+    rows = []
+    for issue in sorted(snap.issues, key=lambda i: i.number):
+        names = sorted(issue.labels)
+        workers = labels.holder_names(names)
+        if labels.TODO not in names or labels.CLAIMED in names or labels.EPIC in names or not workers:
+            continue
+        if issue.number not in claimed:
+            rows.append([f"#{issue.number}", issue.title, ", ".join(workers)])
+    return rows
+
+
+class Work(NamedTuple):
+    """One piece of open work, as the overlaps read it: its number, the pull
+    request's or, for a claim with no pull request yet, the issue's; the
+    files it changes or, before it changes any, the files its claim says it
+    will touch; whether it is marked ready and whether its issue is a
+    blocker; and whether it is a pull request at all."""
+
+    number: int
+    files: tuple
+    ready: bool = False
+    blocker: bool = False
+    is_pull: bool = True
+
+
+def landing_key(work):
+    """The order open work that meets in a file should land in: a blocker
+    first, since it stops everyone; then work marked ready, which is done
+    and waits only for its merge; then the oldest, which started first."""
+    return (not work.blocker, not work.ready, work.number)
+
+
+def own_files(files):
+    """The files a piece of work changes, without claim files: each claim
+    has its own, so they never meet."""
+    return tuple(sorted(f for f in files if not f.startswith(CLAIM_DIR + "/")))
+
+
+def is_blocker(snap, key):
+    issue = snap.claim_issues.get(key)
+    return bool(issue) and labels.BLOCKER in issue.labels
+
+
+def open_work(snapshot):
+    """Every piece of open work, in number order: each open pull request but
+    a released claim's, with the files it changes, or the files its claim
+    file lists while it changes nothing but that file; and each claim with
+    no pull request yet, with the files its claim file lists."""
+    snap = as_snapshot(snapshot)
+    released = released_keys(snap)
+    pulls = {p.branch: p for p in snap.pulls}
+    work = []
+    for pull in snap.pulls:
+        key = key_of(pull.branch) if is_claim_branch(pull.branch) else None
+        if key in released:
+            continue
+        files = own_files(pull.files) or (own_files(claim_files(snap.claims.get(key) or "")) if key else ())
+        work.append(Work(pull.number, files, not pull.draft, bool(key) and is_blocker(snap, key)))
+    for branch in claim_branches(snap.branches):
+        key = key_of(branch)
+        if branch in pulls or key in released or not key.isdigit():
+            continue
+        files = own_files(claim_files(snap.claims.get(key) or ""))
+        work.append(Work(int(key), files, False, is_blocker(snap, key), False))
+    return sorted(work, key=lambda w: w.number)
+
+
+def overlaps(snapshot):
+    """The files that more than one piece of open work changes, each with
+    that work in the order it should land (landing_key), in file order."""
+    meeting = {}
+    for work in open_work(snapshot):
+        for path in work.files:
+            meeting.setdefault(path, []).append(work)
+    return {path: sorted(works, key=landing_key) for path, works in sorted(meeting.items()) if len(works) > 1}
+
+
+def overlap_rows(snap):
+    return [[path, ", ".join(f"#{w.number}" for w in works)] for path, works in overlaps(snap).items()]
 
 
 def merged_rows(snap):
@@ -574,7 +672,9 @@ def render(snapshot, default_branch=None):
     sections = (
         (CLAIM_HEADING, CLAIM_COLUMNS, claim_rows(snap)),
         (PULL_HEADING, PULL_COLUMNS, pull_rows(snap)),
+        (OVERLAP_HEADING, OVERLAP_COLUMNS, overlap_rows(snap)),
         (QUEUE_HEADING, ISSUE_COLUMNS, issue_rows(snap, labels.TODO, True)),
+        (GIVEN_HEADING, GIVEN_COLUMNS, given_rows(snap)),
         (BLOCKER_HEADING, ISSUE_COLUMNS, issue_rows(snap, labels.BLOCKER, False)),
         (MERGED_HEADING, MERGED_COLUMNS, merged_rows(snap)),
     )

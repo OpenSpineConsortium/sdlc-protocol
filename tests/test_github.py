@@ -315,12 +315,31 @@ class Releases(unittest.TestCase):
         self.assertNotIn("| #12 | claude/12 |", page)
         self.assertIn("| #12 | Describe the board | todo |", page.split(board.QUEUE_HEADING)[1])
 
-    def test_an_issue_with_no_release_comment_costs_no_commit_call(self):
+    def test_an_untrusted_release_comment_leaves_the_claim_due_but_unreleased(self):
         _, answers = released_answers()
         answers[COMMENTS_12] = FakeAnswer([dict(RELEASE_COMMENT, author_association="NONE")])
         api, opener = client(answers)
-        self.assertEqual(github.collect(api, "abc", "main")["releases"], {})
-        self.assertFalse(any("/git/commits/" in c.full_url for c in opener.calls))
+        self.assertEqual(github.collect(api, "abc", "main")["releases"],
+                         {"12": {"released_at": "", "sha": HEAD_12, "committed_at": "2026-09-18T12:00:00Z"}})
+
+    def test_a_claim_committed_to_within_a_day_costs_its_commit_and_no_comment_call(self):
+        _, answers = released_answers()
+        api, opener = client(answers)
+        found = github.collect(api, "abc", "main", now=datetime(2026, 9, 19, 9, 0, tzinfo=timezone.utc))
+        self.assertEqual(found["releases"], {})
+        asked = [c.full_url.replace(github.API, "") for c in opener.calls]
+        self.assertIn(f"/repos/o/r/git/commits/{HEAD_12}", asked)
+        self.assertNotIn(COMMENTS_12, asked)
+
+    def test_a_claim_still_labelled_claimed_is_read_too_since_the_coordinator_may_release_it(self):
+        _, answers = released_answers()
+        answers["/repos/o/r/issues?state=open&per_page=100"] = FakeAnswer([
+            {"number": 12, "title": "Describe the board", "state": "open",
+             "labels": [{"name": "claimed"}, {"name": "todo"}, {"name": "worker:main"}]}])
+        answers[COMMENTS_12] = FakeAnswer([])
+        api, _ = client(answers)
+        self.assertEqual(github.collect(api, "abc", "main")["releases"],
+                         {"12": {"released_at": "", "sha": HEAD_12, "committed_at": "2026-09-18T12:00:00Z"}})
 
     def test_an_author_github_does_not_vouch_for_counts_with_write_permission(self):
         # GitHub may show a private member of the organization to the
@@ -336,7 +355,8 @@ class Releases(unittest.TestCase):
             answers[COMMENTS_12] = FakeAnswer([private, private])
             answers[asking] = answer
             api, opener = client(answers)
-            self.assertEqual("12" in github.collect(api, "abc", "main")["releases"], counts, answer)
+            released_at = github.collect(api, "abc", "main")["releases"]["12"]["released_at"]
+            self.assertEqual(bool(released_at), counts, answer)
             self.assertEqual(sum(c.full_url.endswith(asking) for c in opener.calls), 1, "asked once per login")
 
     def test_a_finished_claim_costs_no_call(self):
@@ -505,6 +525,128 @@ class Releases(unittest.TestCase):
         snap, answers = fixture_answers()
         api, opener = client(answers)
         self.assertEqual(github.release_claims(api, snap), [])
+        self.assertEqual(opener.calls, [])
+
+
+IDLE_CLAIM = ("# Claim: #12\n\n- Worker: nightly\n- Branch: claude/12\n\n## Plan\n\nDescribe the board.\n\n"
+              "## Files to touch\n\n- docs/agents/README.md\n")
+NOW = datetime(2026, 9, 20, 12, 0, tzinfo=timezone.utc)
+
+
+def idle_snapshot():
+    """Issue 12, claimed by nightly, whose branch has had no commit for two
+    days, with a draft pull request #40."""
+    return board.Snapshot.from_dict({
+        "default_branch": "main",
+        "issues": [{"number": 12, "title": "Describe the board", "labels": ["claimed", "todo", "worker:nightly"]}],
+        "pulls": [{"number": 40, "title": "Describe the board", "head": {"ref": "claude/12", "sha": HEAD_12},
+                   "mergeable_state": "clean", "updated_at": "2026-09-18T12:00:00Z", "draft": True,
+                   "files": ["docs/agents/README.md"]}],
+        "branches": ["claude/12"],
+        "claims": {"12": IDLE_CLAIM},
+        "claim_issues": {"12": {"state": "open", "labels": ["claimed", "todo", "worker:nightly"]}},
+        "releases": {"12": {"released_at": "", "sha": HEAD_12, "committed_at": "2026-09-18T12:00:00Z"}},
+    })
+
+
+COMPARE_12 = f"/repos/o/r/compare/main...{HEAD_12}"
+LABEL_CLAIMED_12 = "DELETE /repos/o/r/issues/12/labels/claimed"
+LABEL_WORKER_12 = "DELETE /repos/o/r/issues/12/labels/worker%3Anightly"
+
+
+def release_answers():
+    return {
+        COMPARE_12: FakeAnswer({"ahead_by": 2, "commits": [{"commit": {"message": "Claim #12"}},
+                                                           {"commit": {"message": "Describe the tables\n\nWhy."}}],
+                                "files": [{"filename": "docs/agents/README.md"},
+                                          {"filename": "docs/agents/claims/12.md"}]}),
+        "POST /repos/o/r/issues/12/comments": FakeAnswer({"id": 1, "created_at": "2026-09-20T12:00:05Z"}),
+        LABEL_CLAIMED_12: FakeAnswer(None),
+        LABEL_WORKER_12: FakeAnswer(None),
+    }
+
+
+class Coordinate(unittest.TestCase):
+    """The coordinator's calls in the board's run: a release, then the
+    overlaps."""
+
+    def test_a_due_claim_is_released_comment_first_and_the_board_sees_it_in_the_same_run(self):
+        snap = idle_snapshot()
+        api, opener = client(release_answers())
+        self.assertEqual(github.coordinate(api, snap, NOW), ["#12: claim released, idle since 2026-09-18T12:00:00Z"])
+        self.assertEqual([c.get_method() for c in opener.calls], ["GET", "POST", "DELETE", "DELETE"])
+        body = opener.sent("POST")[0]["body"]
+        self.assertTrue(body.startswith(claims.RELEASE_MARKER + "\nreleased: the claim on this issue, held by nightly,"))
+        self.assertIn('2 commits ahead of main, the newest "Describe the tables"; it changes `docs/agents/README.md`.',
+                      body)
+        self.assertEqual(board.released_keys(snap), {"12"})
+        self.assertEqual(snap.releases["12"].released_at, "2026-09-20T12:00:05Z")
+        self.assertIn("| #12 | Describe the board | todo |", board.render(snap).split(board.QUEUE_HEADING)[1])
+
+    def test_a_comment_github_refuses_takes_no_label_off(self):
+        answers = release_answers()
+        answers["POST /repos/o/r/issues/12/comments"] = Refusal(403, {"message": "Resource not accessible"})
+        snap = idle_snapshot()
+        api, opener = client(answers)
+        self.assertEqual(github.coordinate(api, snap, NOW), [
+            "#12: not released, the comment failed: POST /repos/o/r/issues/12/comments: HTTP 403: "
+            "Resource not accessible"])
+        self.assertNotIn("DELETE", [c.get_method() for c in opener.calls])
+        self.assertEqual(board.released_keys(snap), set())
+
+    def test_a_label_github_refuses_is_a_line_and_the_snapshot_stays(self):
+        answers = release_answers()
+        answers[LABEL_CLAIMED_12] = Refusal(502)
+        snap = idle_snapshot()
+        api, _ = client(answers)
+        line, = github.coordinate(api, snap, NOW)
+        self.assertEqual(line, "#12: release comment posted, but taking the labels off failed: "
+                               "DELETE /repos/o/r/issues/12/labels/claimed: HTTP 502")
+        self.assertEqual(board.released_keys(snap), set())
+
+    def test_a_comparison_github_refuses_still_releases(self):
+        answers = release_answers()
+        answers[COMPARE_12] = Refusal(500)
+        api, opener = client(answers)
+        self.assertEqual(len(github.coordinate(api, idle_snapshot(), NOW)), 1)
+        self.assertIn("GitHub would not compare the branch", opener.sent("POST")[0]["body"])
+
+    def overlapping(self):
+        snap = idle_snapshot()
+        snap.releases = {}
+        snap.pulls.append(board.Pull(41, "Reword", "claude/13", "bbbb", "clean", "2026-09-20T09:00:00Z",
+                                     ["docs/agents/README.md"], False))
+        return snap
+
+    def test_overlapping_work_is_told_once_and_again_only_of_new_work(self):
+        answers = {
+            "/repos/o/r/issues/40/comments?per_page=100": FakeAnswer([]),
+            "/repos/o/r/issues/41/comments?per_page=100": FakeAnswer(
+                [{"body": "<!-- sdlc-coordinator: overlap 40 -->\noverlap: told before"}]),
+            "POST /repos/o/r/issues/40/comments": FakeAnswer({}),
+        }
+        api, opener = client(answers)
+        self.assertEqual(github.coordinate(api, self.overlapping(), NOW), ["#40: overlap comment posted"])
+        body = opener.sent("POST")[0]["body"]
+        self.assertTrue(body.startswith("<!-- sdlc-coordinator: overlap 41 -->\noverlap: other open work"), body)
+        self.assertIn("- #41, a pull request marked ready: `docs/agents/README.md`", body)
+
+    def test_work_whose_comments_github_will_not_give_is_told_nothing(self):
+        answers = {
+            "/repos/o/r/issues/40/comments?per_page=100": Refusal(502),
+            "/repos/o/r/issues/41/comments?per_page=100": FakeAnswer([]),
+            "POST /repos/o/r/issues/41/comments": Refusal(403, {"message": "Locked"}),
+        }
+        api, opener = client(answers)
+        self.assertEqual(github.coordinate(api, self.overlapping(), NOW), [
+            "#40: overlaps not told, its comments were not read: GET /repos/o/r/issues/40/comments: HTTP 502",
+            "#41: overlap comment failed: POST /repos/o/r/issues/41/comments: HTTP 403: Locked"])
+        self.assertEqual(len(opener.sent("POST")), 1)
+
+    def test_nothing_due_asks_nothing(self):
+        snap, answers = fixture_answers()
+        api, opener = client(answers)
+        self.assertEqual(github.coordinate(api, board.Snapshot.from_dict(snap), NOW), [])
         self.assertEqual(opener.calls, [])
 
 

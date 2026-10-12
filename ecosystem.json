@@ -1,6 +1,6 @@
 {
   "library": "OpenSpineConsortium/symphony-protocol",
-  "about": "The claim protocol as one Python package with no dependencies: the labels, the claim, the board, the protocol check, team mode's clerk, the push guard and the merge gate.",
+  "about": "The claim protocol as one Python package with no dependencies: the labels, the claim, the board, the coordinator, the registry of workers, the protocol check, the clerk, the push guard and the merge gate.",
   "package": "sdlc_protocol",
   "always_copied": ["__init__.py", "vendoring.py"],
   "consumers": [
@@ -12,7 +12,7 @@
       "modules": "all",
       "check": "bash scripts/check.sh",
       "auto_merge": true,
-      "uses": "the board, the protocol check, team mode's clerk and the push guard, through the shims tools/board.py, check_protocol.py, team.py and guard_push.py"
+      "uses": "the board with the coordinator's releases and overlaps, the protocol check, the clerk, the registry of workers and the push guard, through the shims tools/board.py, check_protocol.py, team.py, workers.py and guard_push.py"
     },
     {
       "repository": "OpenSpineConsortium/coordbench",

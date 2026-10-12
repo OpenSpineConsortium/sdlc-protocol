@@ -66,15 +66,18 @@ class Rendering(unittest.TestCase):
         lines = self.text.splitlines()
         self.assertEqual(lines[0], "# Board")
         self.assertEqual(lines[2], "As of commit 0123abc on main. Rewritten by .github/workflows/board.yml; do not edit by hand.")
-        for heading in (board.CLAIM_HEADING, board.PULL_HEADING, board.QUEUE_HEADING, board.BLOCKER_HEADING, board.MERGED_HEADING):
-            self.assertIn(heading, lines)
-        self.assertIn("| Issue | Branch | Account | PR | Files it touches |", lines)
+        headings = (board.CLAIM_HEADING, board.PULL_HEADING, board.OVERLAP_HEADING, board.QUEUE_HEADING,
+                    board.GIVEN_HEADING, board.BLOCKER_HEADING, board.MERGED_HEADING)
+        self.assertEqual([line for line in lines if line.startswith("## ")], list(headings))
+        self.assertIn("| Issue | Branch | Worker | PR | Files it touches |", lines)
         self.assertIn("| PR | Title | Branch | State (clean, behind, conflicting, blocked, unknown) | Last update |", lines)
+        self.assertIn("| File | Open work, in the order it should land |", lines)
         self.assertIn("| Issue | Title | Labels |", lines)
+        self.assertIn("| Issue | Title | Worker |", lines)
         self.assertTrue(self.text.endswith("|\n"))
         self.assertNotIn("\n\n\n", self.text)
 
-    def test_claims_name_the_account_or_the_missing_file(self):
+    def test_claims_name_the_worker_or_the_missing_file(self):
         self.assertIn("| #12 | claude/12 | main | #40 | docs/agents/README.md, docs/agents/STATE.md |", self.text)
         self.assertIn("| #13 | claude/13 | no claim file yet | #41 | .claude/skills/remember/SKILL.md |", self.text)
         self.assertNotIn("| main |", self.text.split(board.PULL_HEADING)[0].split("| #12")[0])
@@ -85,10 +88,17 @@ class Rendering(unittest.TestCase):
         snap["claim_issues"] = {"3": {"state": "closed", "labels": ["account:main", "claimed", "todo"]}}
         self.assertIn("| #3 | claude/3 | main | issue closed | delete the branch |", board.render(snap))
 
-    def test_a_released_claim_file_takes_the_account_from_the_issue_label(self):
+    def test_a_released_claim_file_takes_the_worker_from_the_issue_label(self):
         snap = snapshot()
         snap["claim_issues"] = {"13": {"state": "open", "labels": ["account:second", "claimed"]}}
         self.assertIn("| #13 | claude/13 | second | #41 | .claude/skills/remember/SKILL.md |", board.render(snap))
+        snap["claim_issues"] = {"13": {"state": "open", "labels": ["agent:w2", "claimed", "worker:nightly"]}}
+        self.assertIn("| #13 | claude/13 | nightly | #41 |", board.render(snap))
+
+    def test_a_claim_file_names_its_worker_on_a_worker_line(self):
+        snap = snapshot()
+        snap["claims"]["12"] = snap["claims"]["12"].replace("- Account: main", "- Worker: nightly")
+        self.assertIn("| #12 | claude/12 | nightly | #40 |", board.render(snap))
 
     def test_merged_rows_come_newest_first(self):
         snap = snapshot()
@@ -135,7 +145,7 @@ class Rendering(unittest.TestCase):
     def test_an_empty_snapshot_keeps_every_table(self):
         text = board.render({"sha": "", "default_branch": "main", "issues": [], "pulls": [], "branches": [], "claims": {}, "merged": []})
         self.assertIn("As of commit unknown on main.", text)
-        self.assertEqual(text.count("| (none) |"), 5)
+        self.assertEqual(text.count("| (none) |"), 7)
 
     def test_the_intro_line_is_folded_to_ascii_too(self):
         snap = snapshot()
@@ -165,18 +175,87 @@ class Rendering(unittest.TestCase):
         self.assertNotIn("#16", queue)
         self.assertIn("#14", queue)
 
-    def test_team_work_stays_off_the_queue(self):
+    def test_work_given_to_a_worker_stays_off_the_queue_and_shows_as_given(self):
         snap = snapshot()
         snap["issues"].append({"number": 20, "title": "An epic", "labels": [{"name": "todo"}, {"name": "epic"}]})
         snap["issues"].append({"number": 21, "title": "A member's task", "labels": [{"name": "todo"}, {"name": "agent:w1"}]})
-        queue = board.render(snap).split(board.QUEUE_HEADING)[1].split(board.BLOCKER_HEADING)[0]
-        self.assertNotIn("#20", queue)
-        self.assertNotIn("#21", queue)
+        snap["issues"].append({"number": 22, "title": "For nightly", "labels": ["todo", "worker:nightly"]})
+        snap["issues"].append({"number": 23, "title": "For main", "labels": ["account:main", "todo"]})
+        snap["issues"].append({"number": 24, "title": "Taken", "labels": ["claimed", "todo", "worker:nightly"]})
+        snap["issues"].append({"number": 25, "title": "Not queued", "labels": ["worker:nightly"]})
+        page = board.render(snap)
+        queue = page.split(board.QUEUE_HEADING)[1].split(board.GIVEN_HEADING)[0]
+        given = page.split(board.GIVEN_HEADING)[1].split(board.BLOCKER_HEADING)[0]
+        for number in ("#20", "#21", "#22", "#23", "#24", "#25"):
+            self.assertNotIn(number, queue)
         self.assertIn("#14", queue)
+        self.assertIn("| #21 | A member's task | w1 |", given)
+        self.assertIn("| #22 | For nightly | nightly |", given)
+        self.assertIn("| #23 | For main | main |", given)
+        for number in ("#20", "#24", "#25", "#14"):
+            self.assertNotIn(number, given)
+
+    def test_work_given_to_a_worker_leaves_the_given_rows_once_claimed_by_branch(self):
+        snap = snapshot()
+        snap["issues"].append({"number": 12, "title": "Given and claimed", "labels": ["todo", "worker:main"]})
+        given = board.render(snap).split(board.GIVEN_HEADING)[1].split(board.BLOCKER_HEADING)[0]
+        self.assertNotIn("#12", given)
 
     def test_the_default_branch_argument_wins_over_the_snapshots(self):
         self.assertIn("As of commit 0123abc on trunk.", board.render(snapshot(), "trunk"))
         self.assertIn("As of commit 0123abc on main.", board.render(snapshot(), None))
+
+
+class Overlaps(unittest.TestCase):
+    """The files more than one piece of open work changes, and the order
+    that work should land in."""
+
+    def overlapping(self):
+        """The fixture with a third pull request that meets #40 in STATE.md
+        and a claim with no pull request that plans to touch README.md."""
+        snap = snapshot()
+        snap["pulls"].append({"number": 42, "title": "Reword the board", "head": {"ref": "claude/16"},
+                              "mergeable_state": "clean", "updated_at": "2026-09-22T09:00:00Z", "draft": True,
+                              "files": ["docs/agents/STATE.md", "docs/agents/claims/16.md"]})
+        snap["branches"] += ["claude/16", "claude/17"]
+        snap["claims"]["17"] = CLAIM_TEXT.replace("- docs/b.md\n- `docs/a.md`", "- docs/agents/README.md")
+        return snap
+
+    def test_open_work_is_every_pull_request_and_every_claim_without_one(self):
+        work = board.open_work(self.overlapping())
+        self.assertEqual([(w.number, w.files, w.ready, w.is_pull) for w in work], [
+            (17, ("docs/agents/README.md",), False, False),
+            (40, ("docs/agents/README.md", "docs/agents/STATE.md"), True, True),
+            (41, (".claude/skills/remember/SKILL.md",), True, True),
+            (42, ("docs/agents/STATE.md",), False, True),
+        ])
+
+    def test_a_pull_request_that_changes_only_its_claim_file_counts_the_files_its_claim_plans(self):
+        snap = snapshot()
+        snap["pulls"][0]["files"] = ["docs/agents/claims/12.md"]
+        self.assertEqual(board.open_work(snap)[0].files, ("docs/agents/README.md",))
+
+    def test_each_file_lists_its_work_blocker_first_then_ready_then_oldest(self):
+        found = board.overlaps(self.overlapping())
+        self.assertEqual({path: [w.number for w in works] for path, works in found.items()},
+                         {"docs/agents/README.md": [40, 17], "docs/agents/STATE.md": [40, 42]})
+        snap = self.overlapping()
+        snap["claim_issues"] = {"17": {"state": "open", "labels": ["blocker", "claimed"]}}
+        self.assertEqual([w.number for w in board.overlaps(snap)["docs/agents/README.md"]], [17, 40])
+
+    def test_the_page_shows_each_file_with_its_work_in_landing_order(self):
+        section = board.render(self.overlapping()).split(board.OVERLAP_HEADING)[1].split(board.QUEUE_HEADING)[0]
+        self.assertIn("| docs/agents/README.md | #40, #17 |", section)
+        self.assertIn("| docs/agents/STATE.md | #40, #42 |", section)
+        self.assertNotIn("claims/16.md", section)
+
+    def test_a_released_claims_pull_request_meets_nothing(self):
+        snap = self.overlapping()
+        snap["pulls"][2]["draft"] = True
+        snap["claim_issues"] = {"16": {"state": "open", "labels": ["todo"]}}
+        snap["releases"] = {"16": {"released_at": "2026-09-20T09:00:00Z", "sha": "ccccccc3333333",
+                                   "committed_at": "2026-09-18T12:00:00Z"}}
+        self.assertNotIn("docs/agents/STATE.md", board.overlaps(snap))
 
 
 class SnapshotShape(unittest.TestCase):
@@ -339,8 +418,16 @@ def golden(name):
     return (FIXTURES / name).read_bytes()
 
 
+# The idle comment as the template's board posted it, which the recorded
+# comments hold; the library's words since are board.IDLE_TEXT.
+TEMPLATE_IDLE_TEXT = ("idle: no change for more than a day; if this work is parked, say so here, or the "
+                      "coordinator may release the claim.")
+
+
 class Parity(unittest.TestCase):
-    """The page and the comments are the template's, byte for byte."""
+    """The page is the one the template's tests compare with, byte for byte,
+    and the comments are what the template's board posted, in the idle
+    comment's words since."""
 
     def test_the_templates_fixture_renders_the_templates_page(self):
         self.assertEqual(board.render(fixture(FIXTURE)).encode("ascii"), golden("board-STATE.md"))
@@ -359,7 +446,8 @@ class Parity(unittest.TestCase):
         for case in recorded:
             now = datetime.fromisoformat(case["now"].replace("Z", "+00:00"))
             due = board.comments_due(fixture(WIDE), case["event_name"], case["ref_name"], now)
-            self.assertEqual([list(c) for c in due], case["comments"], case["event_name"])
+            expected = [[n, m, board.IDLE_TEXT if t == TEMPLATE_IDLE_TEXT else t] for n, m, t in case["comments"]]
+            self.assertEqual([list(c) for c in due], expected, case["event_name"])
 
 
 class Leniency(unittest.TestCase):
