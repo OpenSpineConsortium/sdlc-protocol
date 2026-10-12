@@ -251,6 +251,9 @@ class Collect(unittest.TestCase):
 HEAD_12 = "aaaaaaa1111111"
 RENAME_12 = "POST /repos/o/r/branches/claude%2F12/rename"
 COMMENTS_12 = "/repos/o/r/issues/12/comments?per_page=100"
+RULES_12 = "/repos/o/r/rules/branches/claude%2F12?per_page=100"
+RULES_RELEASED_12 = "/repos/o/r/rules/branches/released%2F12-aaaaaaa?per_page=100"
+REFUSED_12 = "<!-- sdlc-board: rename-refused released/12-aaaaaaa -->"
 RELEASE_COMMENT = {"body": claims.RELEASE_MARKER + "\nReleased: no commit on claude/12 for two days.",
                    "author_association": "OWNER", "created_at": "2026-09-20T09:00:00Z"}
 
@@ -377,11 +380,83 @@ class Releases(unittest.TestCase):
             REF + "claude/12": FakeAnswer({"object": {"sha": HEAD_12}}),
             RENAME_12: Refusal(422, {"message": "Reference already exists"}),
             REF + "released/12-aaaaaaa": FakeAnswer({"object": {"sha": "eeeeeee5555555"}}),
+            RULES_12: FakeAnswer([]),
+            RULES_RELEASED_12: FakeAnswer([]),
+            COMMENTS_12: FakeAnswer([RELEASE_COMMENT]),
+            "POST /repos/o/r/issues/12/comments": FakeAnswer({}),
         })
         self.assertEqual(github.release_claims(api, released()), [
             "claude/12: not renamed to released/12-aaaaaaa: POST /repos/o/r/branches/claude%2F12/rename: "
-            "HTTP 422: Reference already exists"])
-        self.assertEqual(len(opener.sent("POST")), 1)
+            "HTTP 422: Reference already exists; said so on #12"])
+        self.assertEqual(opener.sent("POST")[1:], [{"body": REFUSED_12 + "\n" + board.rename_refused_text(
+            "claude/12", "released/12-aaaaaaa", [], "HTTP 422: Reference already exists")}])
+
+    def test_a_rename_rulesets_refuse_names_them_on_the_issue_once(self):
+        # A ruleset over claude/** makes the rename an administrator's, and
+        # GitHub's own refusal does not say which one; the rules endpoint
+        # does, for a branch name whether or not the branch exists.
+        rule = {"ruleset_source_type": "Repository", "ruleset_source": "o/r", "ruleset_id": 7}
+        answers = {
+            REF + "claude/12": FakeAnswer({"object": {"sha": HEAD_12}}),
+            RENAME_12: Refusal(422, {"message": "Repository rule violations found\n\nCannot update this ref."}),
+            REF + "released/12-aaaaaaa": FakeAnswer(None),
+            RULES_12: FakeAnswer([dict(rule, type="update"), dict(rule, type="deletion")]),
+            RULES_RELEASED_12: FakeAnswer([{"ruleset_source_type": "Organization", "ruleset_source": "o",
+                                            "ruleset_id": 9, "type": "creation"}]),
+            "/repos/o/r/rulesets/7": FakeAnswer({"id": 7, "name": "claims"}),
+            COMMENTS_12: FakeAnswer([RELEASE_COMMENT]),
+            "POST /repos/o/r/issues/12/comments": FakeAnswer({}),
+        }
+        api, opener = client(answers)
+        line, = github.release_claims(api, released())
+        self.assertTrue(line.endswith("Cannot update this ref.; said so on #12"), line)
+        body = opener.sent("POST")[1]["body"]
+        self.assertTrue(body.startswith(REFUSED_12 + "\nrename refused: "))
+        self.assertIn("(HTTP 422: Repository rule violations found Cannot update this ref.)", body)
+        self.assertIn("- [claims](https://github.com/o/r/settings/rules/7): deletion, update\n", body)
+        self.assertIn("- [ruleset 9](https://github.com/organizations/o/settings/rules/9): creation\n", body)
+        self.assertIn("Take `claude/**` and `released/**` out of their targets", body)
+        answers[COMMENTS_12] = FakeAnswer([RELEASE_COMMENT, {"body": REFUSED_12 + "\nrename refused: earlier"}])
+        api, opener = client(answers)
+        line, = github.release_claims(api, released())
+        self.assertTrue(line.endswith("Cannot update this ref."), line)
+        self.assertEqual(len(opener.sent("POST")), 1, "only the rename is tried again")
+
+    def test_rules_github_will_not_show_are_said_to_be_unread(self):
+        api, opener = client({
+            REF + "claude/12": FakeAnswer({"object": {"sha": HEAD_12}}),
+            RENAME_12: Refusal(403, {"message": "Resource not accessible by integration"}),
+            RULES_12: Refusal(403, {"message": "Resource not accessible by integration"}),
+            COMMENTS_12: FakeAnswer([]),
+            "POST /repos/o/r/issues/12/comments": FakeAnswer({}),
+        })
+        line, = github.release_claims(api, released())
+        self.assertTrue(line.endswith("; said so on #12"), line)
+        self.assertIn("The board could not read which rulesets apply to the two names.",
+                      opener.sent("POST")[1]["body"])
+
+    def test_a_rename_github_could_not_answer_is_left_for_the_next_run_unsaid(self):
+        api, opener = client({
+            REF + "claude/12": FakeAnswer({"object": {"sha": HEAD_12}}),
+            RENAME_12: Refusal(502),
+        })
+        self.assertEqual(github.release_claims(api, released()), [
+            "claude/12: not renamed to released/12-aaaaaaa: POST /repos/o/r/branches/claude%2F12/rename: HTTP 502"])
+        asked = [c.full_url.replace(github.API, "") for c in opener.calls]
+        self.assertFalse(any("/rules/" in path or "/comments" in path for path in asked), asked)
+
+    def test_a_comment_github_refuses_after_a_refused_rename_is_a_line(self):
+        api, _ = client({
+            REF + "claude/12": FakeAnswer({"object": {"sha": HEAD_12}}),
+            RENAME_12: Refusal(422, {"message": "Repository rule violations found"}),
+            REF + "released/12-aaaaaaa": FakeAnswer(None),
+            RULES_12: FakeAnswer([]),
+            RULES_RELEASED_12: FakeAnswer([]),
+            COMMENTS_12: Refusal(403, {"message": "Resource not accessible by integration"}),
+        })
+        line, = github.release_claims(api, released())
+        self.assertTrue(line.endswith("; saying so on #12 failed: GET /repos/o/r/issues/12/comments: HTTP 403: "
+                                      "Resource not accessible by integration"), line)
 
     def test_no_call_github_refuses_stops_the_run(self):
         # A server error while the branch is read again, and a comment

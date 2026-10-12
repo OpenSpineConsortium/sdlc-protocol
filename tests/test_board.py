@@ -521,6 +521,29 @@ class Releases(unittest.TestCase):
         self.assertIn("put the label claimed back", text)
         text.encode("ascii")
 
+    def test_what_the_board_says_when_github_refused_the_rename(self):
+        self.assertEqual(board.RENAME_REFUSED_MARKER.format(branch="released/12-aaaaaaa"),
+                         "<!-- sdlc-board: rename-refused released/12-aaaaaaa -->")
+        rulesets = [board.Ruleset("claims", "https://github.com/o/r/settings/rules/7", ("deletion", "update")),
+                    board.Ruleset("ruleset 9", "", ("creation",))]
+        named = board.rename_refused_text("claude/12", "released/12-aaaaaaa", rulesets,
+                                          "HTTP 422: Repository rule violations found\n\nCannot update this ref.")
+        unread = board.rename_refused_text("claude/12", "released/12-aaaaaaa", None, "HTTP 422")
+        none = board.rename_refused_text("claude/12", "released/12-aaaaaaa", [], "HTTP 403")
+        for text in (named, unread, none):
+            self.assertTrue(text.startswith("rename refused: "), text)
+            self.assertIn("the name claude/12 is still taken and nobody can claim the issue yet", text)
+            self.assertIn("Every board run tries the rename again.", text)
+            text.encode("ascii")
+        self.assertIn("(HTTP 422: Repository rule violations found Cannot update this ref.)", named)
+        self.assertIn("\n- [claims](https://github.com/o/r/settings/rules/7): deletion, update\n- ruleset 9: creation\n",
+                      named)
+        self.assertIn("Take `claude/**` and `released/**` out of their targets", named)
+        self.assertIn("could not read which rulesets apply", unread)
+        self.assertIn("`claude/**` or `released/**`", unread)
+        self.assertIn("No ruleset applies to the two names", none)
+        self.assertIn("contents: write", none)
+
 
 ACCOUNT_ENV = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "LC_ALL": "C"}
 ISSUE = 5

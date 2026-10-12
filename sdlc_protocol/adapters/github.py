@@ -29,6 +29,9 @@ from .. import board, claims, gate, labels, team
 from ..gate import GateFailed, MainMoved, MergeRefused, MergeResult, NotAllowed
 
 API = "https://api.github.com"
+# Where an owner changes a ruleset, for the board's comment on a rename a
+# ruleset refused.
+WEB = "https://github.com"
 API_VERSION = "2022-11-28"
 USER_AGENT = "sdlc-board"
 TIMEOUT = 60
@@ -432,12 +435,15 @@ def release_claim(api, key, release):
     here raises: a call GitHub refuses (a rule on the branch, a server
     error) is said in the line and left for the next run, since the board
     is written before this runs, and a failure that stopped the run would
-    stop every board after it, and the comments it still owes."""
+    stop every board after it, and the comments it still owes. A rename
+    GitHub refused for good is also said once on the issue, with the
+    rulesets in its way, since nobody reads the workflow's log."""
     old, new = claims.branch_of(key), claims.released_branch(key, release.sha)
     try:
         done = free_name(api, old, new, release.sha)
     except GitHubError as problem:
-        return f"{old}: not renamed to {new}: {problem}{github_words(problem)}"
+        return f"{old}: not renamed to {new}: {problem}{github_words(problem)}" + \
+            explain_refusal(api, key, old, new, problem)
     if done is None:
         return f"{old}: no longer at {release.sha[:7]}, so it keeps its name"
     try:
@@ -464,6 +470,61 @@ def free_name(api, old, new, sha):
             raise
     api.delete(f"/repos/{api.repo}/git/refs/heads/{quoted(old)}")
     return f"claim released; {new} already keeps {sha[:7]}, so {old} was deleted"
+
+
+def explain_refusal(api, key, old, new, problem):
+    """Say once on the issue why its released claim's name is not free,
+    when GitHub refused the rename for good, as a 4xx answer says: a
+    ruleset over the claim branches, or a token without the right. A
+    server error, or no answer at all, is for the moment, and the next run
+    tries again without a word. What was said, for the log line, or ""."""
+    if problem.status is None or not 400 <= problem.status < 500:
+        return ""
+    words = f"HTTP {problem.status}{github_words(problem)}"
+    text = board.rename_refused_text(old, new, rulesets_on(api, (old, new)), words)
+    try:
+        posted = comment_once(api, key, board.RENAME_REFUSED_MARKER.format(branch=new), text)
+    except GitHubError as failure:
+        return f"; saying so on #{key} failed: {failure}{github_words(failure)}"
+    return f"; said so on #{key}" if posted else ""
+
+
+def rulesets_on(api, branches):
+    """The rulesets whose rules apply to any of the branches, each once,
+    with the types of the rules it applies, as board.Ruleset holds them;
+    None when GitHub would not say, which the comment then says instead."""
+    applied = {}
+    try:
+        for branch in branches:
+            for rule in api.get_all(f"/repos/{api.repo}/rules/branches/{urllib.parse.quote(branch, safe='')}"):
+                source = (rule.get("ruleset_source_type") or "", rule.get("ruleset_source") or "",
+                          rule.get("ruleset_id"))
+                applied.setdefault(source, set()).add(rule.get("type") or "unnamed")
+    except GitHubError:
+        return None
+    return [ruleset(api, source, types) for source, types in sorted(applied.items(), key=lambda item: str(item[0]))]
+
+
+def ruleset(api, source, types):
+    """One ruleset as the comment names it: its own name where the token
+    may read the ruleset, else its number, and the page that changes it."""
+    source_type, owner, number = source
+    try:
+        found = api.get(f"/repos/{api.repo}/rulesets/{number}", missing_ok=True) or {}
+    except GitHubError:
+        found = {}
+    return board.Ruleset(found.get("name") or f"ruleset {number}", ruleset_link(source_type, owner, number),
+                         tuple(sorted(types)))
+
+
+def ruleset_link(source_type, owner, number):
+    """The settings page of a repository's or an organization's ruleset,
+    or "" for a source the board cannot link, such as an enterprise's."""
+    if source_type == "Repository" and owner:
+        return f"{WEB}/{owner}/settings/rules/{number}"
+    if source_type == "Organization" and owner:
+        return f"{WEB}/organizations/{owner}/settings/rules/{number}"
+    return ""
 
 
 def github_words(problem):

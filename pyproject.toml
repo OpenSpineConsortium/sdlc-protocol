@@ -9,7 +9,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "sdlc-protocol"
 # Kept equal to sdlc_protocol.__version__; tests/test_scaffold.py checks it.
-version = "0.3.0"
+version = "0.3.1"
 description = "The claim protocol for pull-request-gated Claude agents: claims, the board, the protocol check, team mode, the push guard and the merge gate."
 readme = "README.md"
 requires-python = ">=3.12"
