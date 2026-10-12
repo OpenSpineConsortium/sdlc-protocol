@@ -134,9 +134,14 @@ class BoardLiveRun(unittest.TestCase):
             calls["due"] = list(due)
             return [f"PR #{number}: posted" for number, _, _ in due]
 
+        def release_claims(api, snap):
+            calls["released"] = snap
+            return ["#12: claim released"]
+
         with mock.patch.object(github, "GitHub", FakeBoardApi), \
              mock.patch.object(github, "snapshot", snapshot), \
-             mock.patch.object(github, "post_comments", post_comments):
+             mock.patch.object(github, "post_comments", post_comments), \
+             mock.patch.object(github, "release_claims", release_claims):
             result = run(["board"] + argv, environ=environ or self.ENVIRON)
         return result, calls
 
@@ -152,8 +157,12 @@ class BoardLiveRun(unittest.TestCase):
             self.assertEqual([(n, m) for n, m, _ in calls["due"]],
                              [(40, "<!-- sdlc-board: main-moved 0123abc -->"),
                               (40, board.IDLE_MARKER), (41, board.IDLE_MARKER)])
+            # The released claims' branches are renamed after the board is
+            # written and before the comments, each said on a line of its own.
+            self.assertIsInstance(calls["released"], board.Snapshot)
             self.assertEqual(printed.splitlines(),
-                             [f"{out.as_posix()}: rewritten", "PR #40: posted", "PR #40: posted", "PR #41: posted"])
+                             [f"{out.as_posix()}: rewritten", "#12: claim released", "PR #40: posted",
+                              "PR #40: posted", "PR #41: posted"])
             (code, printed, _), _ = self.live(["--render-only", "--out", str(out)])
             self.assertEqual(printed.splitlines(), [f"{out.as_posix()}: unchanged"])
 
@@ -162,6 +171,7 @@ class BoardLiveRun(unittest.TestCase):
             (code, _, _), calls = self.live(["--render-only", "--out", str(Path(folder) / "STATE.md")])
         self.assertEqual(code, 0)
         self.assertNotIn("due", calls)
+        self.assertNotIn("released", calls)
         self.assertEqual(calls["snapshot"][2], "fromenv")
 
     def test_a_refused_call_is_one_line_and_exit_1(self):

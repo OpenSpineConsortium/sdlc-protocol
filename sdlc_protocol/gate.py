@@ -621,12 +621,14 @@ def main_moved_text(policy, merge):
 
 # --- release ----------------------------------------------------------------
 
-def due_for_release(policy, world, last_commits):
+def due_for_release(policy, world, last_commits, released=None):
     """The claims to release, by the world's clock: those whose branch has
     had no commit for longer than the policy's idle_after. last_commits maps
     a claim's branch, or its issue number as text, to its last commit's
-    time."""
-    return claims.release_due(last_commits, world.now(), policy.idle_after)
+    time; released maps the same keys to the time of the latest release
+    comment on each claim's issue, so a claim already released is not due
+    again (claims.release_due)."""
+    return claims.release_due(last_commits, world.now(), policy.idle_after, released)
 
 
 # --- status and board -------------------------------------------------------

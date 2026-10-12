@@ -6,8 +6,9 @@ changes only from "python3 tools/board.py ..." to "python3 -m
 sdlc_protocol board ...":
 
   board  render STATE.md from GitHub (--default-branch, --sha, --out,
-         --render-only) and comment on the pull requests that wait, or
-         render a JSON snapshot with --dry-run FIXTURE and no network
+         --render-only), rename the branches of released claims and
+         comment on the pull requests that wait, or render a JSON
+         snapshot with --dry-run FIXTURE and no network
   check  hold the pull request in GITHUB_EVENT_PATH to the claim protocol
   team   [--repo OWNER/NAME] seed, route or next, team mode's clerk
   guard  the PreToolUse hook: the tool call's JSON on stdin, and exit 2
@@ -64,9 +65,11 @@ def environment(given):
 def board_arguments(argv):
     parser = argparse.ArgumentParser(
         prog=f"{PROG} board",
-        description="Render the board (STATE.md) and comment on waiting pull requests.")
+        description="Render the board (STATE.md), rename released claims' branches and comment on waiting "
+                    "pull requests.")
     parser.add_argument("--dry-run", metavar="FIXTURE", help="render this JSON snapshot instead of asking GitHub")
-    parser.add_argument("--render-only", action="store_true", help="write the board and post no comment")
+    parser.add_argument("--render-only", action="store_true",
+                        help="write the board, and rename no branch and post no comment")
     parser.add_argument("--out", help=f"where to write the board (default: {board.STATE_PATH} in the current "
                                       "directory; stdout with --dry-run)")
     parser.add_argument("--default-branch", default="main", help="the default branch's name (default: main)")
@@ -96,6 +99,8 @@ def board_live_run(args, environ):
     changed = board.write_if_changed(out, board.render(snap))
     print(f"{out.as_posix()}: {'rewritten' if changed else 'unchanged'}")
     if not args.render_only:
+        for line in github.release_claims(api, snap):
+            print(line)
         due = board.comments_due(snap, environ.get("GITHUB_EVENT_NAME", ""), environ.get("GITHUB_REF_NAME", ""),
                                  datetime.now(timezone.utc))
         for line in github.post_comments(api, due):

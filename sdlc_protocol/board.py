@@ -9,7 +9,10 @@ an adapter or read back from JSON; render turns it into the page, with no
 wall-clock value and every row sorted, so the same state gives the same
 bytes and a workflow writes the branch only when something moved; and
 comments_due says which pull requests the board would speak to, and what
-it would say, for the adapter to post once each. Nothing here calls GitHub.
+it would say, for the adapter to post once each. A claim the coordinator
+released (released_keys) leaves the page as soon as the snapshot shows
+the release, its issue back in the queue, and the adapter renames its
+branch so the name is free for the next claim. Nothing here calls GitHub.
 """
 
 import json
@@ -20,7 +23,8 @@ from typing import NamedTuple
 
 from . import labels
 from .claims import (
-    IDLE_AFTER, by_number, claim_account, claim_files, is_claim_branch, is_idle, key_of,
+    IDLE_AFTER, branch_of, by_number, claim_account, claim_files, is_claim_branch, is_idle, key_of,
+    was_released,
 )
 
 RECENT_MERGED = 5
@@ -39,6 +43,9 @@ IDLE_TEXT = (
     "idle: no change for more than a day; if this work is parked, say so "
     "here, or the coordinator may release the claim."
 )
+# What the board says on an issue once it has renamed a released claim's
+# branch; the marker names the new branch, so each release is told once.
+RELEASED_MARKER = "<!-- sdlc-board: released {branch} -->"
 
 CLAIM_HEADING = "## Claims (open claude/<issue> branches and docs/agents/claims/<issue>.md)"
 CLAIM_COLUMNS = ("Issue", "Branch", "Account", "PR", "Files it touches")
@@ -83,9 +90,12 @@ class Issue:
 @dataclass
 class Pull:
     """An open pull request with its head branch, GitHub's word for how it
-    stands to the default branch (mergeable_state, as the API gives it) and
-    the paths it changes. The dict shape is the API's, head and all, so a
-    pull request detail from GitHub is a fixture as it is."""
+    stands to the default branch (mergeable_state, as the API gives it),
+    the paths it changes, and whether it is still a draft: one marked ready
+    waits for review however long it takes, so its claim is never released,
+    and a pull request whose draft state is not given counts as ready. The
+    dict shape is the API's, head and all, so a pull request detail from
+    GitHub is a fixture as it is."""
 
     number: int
     title: str = ""
@@ -94,6 +104,7 @@ class Pull:
     mergeable_state: str | None = None
     updated_at: str = ""
     files: list = field(default_factory=list)
+    draft: bool = False
 
     @property
     def state(self):
@@ -111,6 +122,7 @@ class Pull:
             mergeable_state=data.get("mergeable_state"),
             updated_at=data.get("updated_at") or "",
             files=[file_name(f) for f in data.get("files") or []],
+            draft=bool(data.get("draft")),
         )
 
     def to_dict(self):
@@ -121,6 +133,7 @@ class Pull:
             "mergeable_state": self.mergeable_state,
             "updated_at": self.updated_at,
             "files": list(self.files),
+            "draft": self.draft,
         }
 
 
@@ -164,12 +177,34 @@ class ClaimIssue:
 
 
 @dataclass
+class Release:
+    """What the release rule reads about one claim: when the latest release
+    comment on its issue was made (claims.latest_release), and the head of
+    its branch, the commit and when it was committed. An adapter fills it
+    only for a claim whose issue is open, no longer labelled claimed and
+    holds a release comment, the only claims a release can have freed."""
+
+    released_at: str = ""
+    sha: str = ""
+    committed_at: str = ""
+
+    @classmethod
+    def from_dict(cls, data):
+        return cls(released_at=data.get("released_at") or "", sha=data.get("sha") or "",
+                   committed_at=data.get("committed_at") or "")
+
+    def to_dict(self):
+        return {"released_at": self.released_at, "sha": self.sha, "committed_at": self.committed_at}
+
+
+@dataclass
 class Snapshot:
     """Everything the board renders, in the shape a --dry-run fixture has:
     the default branch's commit and name, the open issues (pull requests
     left out), the open pull requests with their standing and files, the
     branch names, the claim files by issue key (None for a branch with no
-    file yet), the issue behind each claim branch, and the merges last."""
+    file yet), the issue behind each claim branch, what a release reads
+    about a claim by issue key, and the merges last."""
 
     sha: str = ""
     default_branch: str = "main"
@@ -179,6 +214,7 @@ class Snapshot:
     claims: dict = field(default_factory=dict)
     claim_issues: dict = field(default_factory=dict)
     merged: list = field(default_factory=list)
+    releases: dict = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, data):
@@ -193,6 +229,7 @@ class Snapshot:
             claims={str(k): v for k, v in (data.get("claims") or {}).items()},
             claim_issues={str(k): ClaimIssue.from_dict(v or {}) for k, v in (data.get("claim_issues") or {}).items()},
             merged=[Merged.from_dict(m) for m in data.get("merged") or []],
+            releases={str(k): Release.from_dict(v or {}) for k, v in (data.get("releases") or {}).items()},
         )
 
     def to_dict(self):
@@ -205,6 +242,7 @@ class Snapshot:
             "claims": dict(self.claims),
             "claim_issues": {k: v.to_dict() for k, v in self.claim_issues.items()},
             "merged": [m.to_dict() for m in self.merged],
+            "releases": {k: v.to_dict() for k, v in self.releases.items()},
         }
 
     @classmethod
@@ -268,9 +306,61 @@ def claim_branches(branches):
     return [branch_name(b) for b in branches if is_claim_branch(branch_name(b))]
 
 
-def claimed_numbers(branches):
-    """The issue numbers that have a claim branch."""
-    return {int(key_of(b)) for b in claim_branches(branches) if key_of(b).isdigit()}
+def claimed_numbers(branches, released=()):
+    """The issue numbers that have a claim branch, leaving out the claims
+    named in released, by key, since a released claim holds nothing."""
+    return {int(key_of(b)) for b in claim_branches(branches) if key_of(b).isdigit() and key_of(b) not in released}
+
+
+def released_keys(snapshot, idle_after=IDLE_AFTER):
+    """The claims the coordinator released, by issue key: a claim branch
+    whose issue is open and no longer labelled claimed, whose latest
+    release comment came after the branch had gone without a commit for
+    more than idle_after, and which nothing has been committed to since
+    (claims.was_released). It takes both of the coordinator's acts, the
+    comment and the label it takes off, so a stray comment frees nothing;
+    a commit after the release, its holder's or a new claim's, ends it;
+    and putting the label claimed back undoes it. A finished claim is never
+    released, however long it waits for review: one whose issue is labelled
+    in-review or whose pull request is marked ready. The board leaves a
+    released claim off the page and puts its issue back in the queue, and
+    the GitHub adapter renames its branch, so the name is free for the next
+    claim; the page reads the same before the rename and after it, so one
+    release rewrites the board once."""
+    snap = as_snapshot(snapshot)
+    return {key_of(b) for b in claim_branches(snap.branches) if is_released(snap, key_of(b), idle_after)}
+
+
+def is_released(snap, key, idle_after=IDLE_AFTER):
+    """Whether the coordinator released the claim with this key, by
+    released_keys' rule; a claim with no head commit known is not, since
+    its branch could not be renamed."""
+    release, issue = snap.releases.get(key), snap.claim_issues.get(key)
+    if release is None or issue is None or not release.sha:
+        return False
+    if issue.state != "open" or labels.CLAIMED in issue.labels or labels.IN_REVIEW in issue.labels:
+        return False
+    if any(p.branch == branch_of(key) and not p.draft for p in snap.pulls):
+        return False
+    return was_released(release.released_at, release.committed_at, idle_after)
+
+
+def released_branches(snap):
+    """The claim branches of the released claims, whose pull requests the
+    board no longer lists or speaks to: renaming the branch closes them."""
+    return {branch_of(key) for key in released_keys(snap)}
+
+
+def released_text(old, new):
+    """What the board says on an issue once it has renamed the branch of
+    its released claim."""
+    return (
+        f"released: the claim on this issue was released, so its branch {old} is now {new}, "
+        f"which keeps its work; GitHub closes a pull request from the branch with the rename. "
+        f"The issue is back in the queue, and the next claim pushes {old} anew from the default branch. "
+        f"To undo the release, put the label claimed back on the issue first, then rename the branch "
+        f"back and reopen its pull request."
+    )
 
 
 def pulls_behind_main(pulls):
@@ -319,15 +409,18 @@ def comments_due(snapshot, event_name, ref_name, now, idle_after=IDLE_AFTER):
     marker carries the short sha); a pull request nobody touched for a day
     is asked once whether it is parked. Main-moved comments come first,
     then idle ones, each in the order the snapshot lists the pull requests,
-    as the template's board posted them."""
+    as the template's board posted them. A released claim's pull request
+    hears nothing: renaming its branch closes it."""
     snap = as_snapshot(snapshot)
+    released = released_branches(snap)
+    pulls = [p for p in snap.pulls if p.branch not in released]
     due = []
     if event_name == "push" and ref_name == snap.default_branch:
         sha7 = short_sha(snap.sha)
         marker = MAIN_MOVED_MARKER.format(sha=sha7)
-        for pull in pulls_behind_main(snap.pulls):
+        for pull in pulls_behind_main(pulls):
             due.append(DueComment(pull.number, marker, main_moved_text(pull.state, snap.default_branch, sha7)))
-    for pull in idle_pulls(snap.pulls, now, idle_after):
+    for pull in idle_pulls(pulls, now, idle_after):
         due.append(DueComment(pull.number, IDLE_MARKER, IDLE_TEXT))
     return due
 
@@ -380,25 +473,33 @@ def claim_row(key, branch, text, pull, issue):
 
 
 def claim_rows(snap):
+    """A row per claim branch, in issue order, but a released claim's."""
     pulls_by_branch = {p.branch: p for p in snap.pulls}
+    released = released_keys(snap)
     rows = []
     for branch in sorted(claim_branches(snap.branches), key=lambda b: by_number(key_of(b))):
         key = key_of(branch)
+        if key in released:
+            continue
         rows.append(claim_row(key, branch, snap.claims.get(key), pulls_by_branch.get(branch), snap.claim_issues.get(key)))
     return rows
 
 
 def pull_rows(snap):
+    """A row per open pull request, in number order, but one from a
+    released claim's branch, which the rename of that branch closes."""
+    released = released_branches(snap)
     return [
         [f"#{p.number}", p.title, p.branch, p.state, p.updated_at]
-        for p in sorted(snap.pulls, key=lambda p: p.number)
+        for p in sorted(snap.pulls, key=lambda p: p.number) if p.branch not in released
     ]
 
 
 def issue_rows(snap, label, unclaimed_only):
     """The issues carrying a label, in number order; the queue leaves out
-    an issue with the label claimed, a claim branch, or team mode's labels."""
-    claimed = claimed_numbers(snap.branches)
+    an issue with the label claimed, a claim branch that is not released,
+    or team mode's labels."""
+    claimed = claimed_numbers(snap.branches, released_keys(snap))
     rows = []
     for issue in sorted(snap.issues, key=lambda i: i.number):
         names = sorted(issue.labels)

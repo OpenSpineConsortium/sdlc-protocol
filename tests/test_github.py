@@ -17,7 +17,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from sdlc_protocol import board, gate, team  # noqa: E402
+from sdlc_protocol import board, claims, gate, team  # noqa: E402
 from sdlc_protocol.adapters import github  # noqa: E402
 
 FIXTURES = ROOT / "tests" / "fixtures"
@@ -246,6 +246,186 @@ class Collect(unittest.TestCase):
                (41, board.IDLE_MARKER, board.IDLE_TEXT)]
         self.assertEqual(github.post_comments(api, due), ["PR #40: main-moved comment posted"])
         self.assertEqual(opener.sent("POST"), [{"body": "<!-- sdlc-board: main-moved 0123abc -->\nmain moved: x"}])
+
+
+HEAD_12 = "aaaaaaa1111111"
+RENAME_12 = "POST /repos/o/r/branches/claude%2F12/rename"
+COMMENTS_12 = "/repos/o/r/issues/12/comments?per_page=100"
+RELEASE_COMMENT = {"body": claims.RELEASE_MARKER + "\nReleased: no commit on claude/12 for two days.",
+                   "author_association": "OWNER", "created_at": "2026-09-20T09:00:00Z"}
+
+
+def released_answers():
+    """The fixture's repository once the coordinator released claude/12: the
+    branch list with each head, issue 12 open with only todo left, its
+    comments ending with the release, and the head commit; issue 13 still
+    labelled claimed, whose comments must cost no call."""
+    snap, answers = fixture_answers()
+    answers["/repos/o/r/branches?per_page=100"] = FakeAnswer([
+        {"name": "main", "commit": {"sha": "0123abc"}},
+        {"name": "claude/12", "commit": {"sha": HEAD_12}},
+        {"name": "claude/13", "commit": {"sha": "bbbbbbb2222222"}},
+    ])
+    answers["/repos/o/r/issues?state=open&per_page=100"] = FakeAnswer(snap["issues"] + [
+        {"number": 12, "title": "Describe the board", "state": "open", "labels": [{"name": "todo"}]},
+        {"number": 13, "title": "Add the remember skill", "state": "open", "labels": [{"name": "claimed"}]},
+    ])
+    answers[COMMENTS_12] = FakeAnswer([
+        {"body": "Taking this one.", "author_association": "OWNER", "created_at": "2026-09-18T11:00:00Z"},
+        RELEASE_COMMENT,
+    ])
+    answers[f"/repos/o/r/git/commits/{HEAD_12}"] = FakeAnswer({"sha": HEAD_12,
+                                                               "committer": {"date": "2026-09-18T12:00:00Z"}})
+    draft = {k: v for k, v in snap["pulls"][0].items() if k != "files"}
+    answers["/repos/o/r/pulls/40"] = FakeAnswer(dict(draft, draft=True))
+    return snap, answers
+
+
+def released(head=HEAD_12):
+    """A snapshot in which the coordinator released claude/12 at that head."""
+    return board.Snapshot.from_dict({
+        "branches": ["claude/12"],
+        "claim_issues": {"12": {"state": "open", "labels": ["todo"]}},
+        "releases": {"12": {"released_at": "2026-09-20T09:00:00Z", "sha": head,
+                            "committed_at": "2026-09-18T12:00:00Z"}},
+    })
+
+
+class Releases(unittest.TestCase):
+    """The board reads a release where one can have happened, and frees the
+    released claim's name by renaming its branch."""
+
+    def test_collect_reads_a_release_only_where_the_label_claimed_is_off(self):
+        _, answers = released_answers()
+        api, opener = client(answers)
+        found = github.collect(api, "abc", "main")
+        self.assertEqual(found["releases"], {"12": {"released_at": "2026-09-20T09:00:00Z", "sha": HEAD_12,
+                                                    "committed_at": "2026-09-18T12:00:00Z"}})
+        asked = [c.full_url.replace(github.API, "") for c in opener.calls]
+        self.assertIn(COMMENTS_12, asked)
+        self.assertNotIn("/repos/o/r/issues/13/comments?per_page=100", asked)
+
+    def test_a_live_snapshot_puts_the_released_issue_back_in_the_queue(self):
+        _, answers = released_answers()
+        api, _ = client(answers)
+        page = board.render(github.snapshot(api, "abc", "main"))
+        self.assertNotIn("| #12 | claude/12 |", page)
+        self.assertIn("| #12 | Describe the board | todo |", page.split(board.QUEUE_HEADING)[1])
+
+    def test_an_issue_with_no_release_comment_costs_no_commit_call(self):
+        _, answers = released_answers()
+        answers[COMMENTS_12] = FakeAnswer([dict(RELEASE_COMMENT, author_association="NONE")])
+        api, opener = client(answers)
+        self.assertEqual(github.collect(api, "abc", "main")["releases"], {})
+        self.assertFalse(any("/git/commits/" in c.full_url for c in opener.calls))
+
+    def test_an_author_github_does_not_vouch_for_counts_with_write_permission(self):
+        # GitHub may show a private member of the organization to the
+        # workflow's token as a contributor; their permission decides.
+        private = dict(RELEASE_COMMENT, author_association="CONTRIBUTOR", user={"login": "private-member"})
+        asking = "/repos/o/r/collaborators/private-member/permission"
+        cases = ((FakeAnswer({"permission": "admin", "role_name": "admin"}), True),
+                 (FakeAnswer({"permission": "write", "role_name": "maintain"}), True),
+                 (FakeAnswer({"permission": "read", "role_name": "triage"}), False),
+                 (Refusal(403, {"message": "Must have push access"}), False))
+        for answer, counts in cases:
+            _, answers = released_answers()
+            answers[COMMENTS_12] = FakeAnswer([private, private])
+            answers[asking] = answer
+            api, opener = client(answers)
+            self.assertEqual("12" in github.collect(api, "abc", "main")["releases"], counts, answer)
+            self.assertEqual(sum(c.full_url.endswith(asking) for c in opener.calls), 1, "asked once per login")
+
+    def test_a_finished_claim_costs_no_call(self):
+        ready, answers = released_answers()
+        answers["/repos/o/r/pulls/40"] = FakeAnswer({k: v for k, v in ready["pulls"][0].items() if k != "files"})
+        in_review, review_answers = released_answers()
+        review_answers["/repos/o/r/issues?state=open&per_page=100"] = FakeAnswer(in_review["issues"] + [
+            {"number": 12, "title": "Describe the board", "state": "open",
+             "labels": [{"name": "in-review"}, {"name": "todo"}]}])
+        for name, given in (("marked ready", answers), ("labelled in-review", review_answers)):
+            api, opener = client(given)
+            self.assertEqual(github.collect(api, "abc", "main")["releases"], {}, name)
+            self.assertNotIn(COMMENTS_12, [c.full_url.replace(github.API, "") for c in opener.calls], name)
+
+    def test_the_released_branch_is_renamed_and_the_issue_told_once(self):
+        api, opener = client({
+            REF + "claude/12": FakeAnswer({"object": {"sha": HEAD_12}}),
+            RENAME_12: FakeAnswer({"name": "released/12-aaaaaaa"}),
+            COMMENTS_12: FakeAnswer([RELEASE_COMMENT]),
+            "POST /repos/o/r/issues/12/comments": FakeAnswer({}),
+        })
+        self.assertEqual(github.release_claims(api, released()),
+                         ["#12: claim released; claude/12 renamed to released/12-aaaaaaa"])
+        self.assertEqual(opener.sent("POST"), [
+            {"new_name": "released/12-aaaaaaa"},
+            {"body": "<!-- sdlc-board: released released/12-aaaaaaa -->\n"
+                     + board.released_text("claude/12", "released/12-aaaaaaa")},
+        ])
+
+    def test_a_branch_that_moved_since_the_snapshot_keeps_its_name(self):
+        api, opener = client({REF + "claude/12": FakeAnswer({"object": {"sha": "ddddddd4444444"}})})
+        self.assertEqual(github.release_claims(api, released()),
+                         ["claude/12: no longer at aaaaaaa, so it keeps its name"])
+        api, opener = client({})
+        self.assertEqual(github.release_claims(api, released()),
+                         ["claude/12: no longer at aaaaaaa, so it keeps its name"])
+        self.assertEqual(opener.sent("POST"), [])
+
+    def test_a_refused_rename_is_said_not_raised(self):
+        api, opener = client({
+            REF + "claude/12": FakeAnswer({"object": {"sha": HEAD_12}}),
+            RENAME_12: Refusal(422, {"message": "Reference already exists"}),
+            REF + "released/12-aaaaaaa": FakeAnswer({"object": {"sha": "eeeeeee5555555"}}),
+        })
+        self.assertEqual(github.release_claims(api, released()), [
+            "claude/12: not renamed to released/12-aaaaaaa: POST /repos/o/r/branches/claude%2F12/rename: "
+            "HTTP 422: Reference already exists"])
+        self.assertEqual(len(opener.sent("POST")), 1)
+
+    def test_no_call_github_refuses_stops_the_run(self):
+        # A server error while the branch is read again, and a comment
+        # refused after the rename: each is a line, and the next claim is
+        # still released.
+        snap = board.Snapshot.from_dict({
+            "branches": ["claude/12", "claude/13"],
+            "claim_issues": {k: {"state": "open", "labels": ["todo"]} for k in ("12", "13")},
+            "releases": {"12": {"released_at": "2026-09-20T09:00:00Z", "sha": HEAD_12,
+                                "committed_at": "2026-09-18T12:00:00Z"},
+                         "13": {"released_at": "2026-09-20T09:00:00Z", "sha": "bbbbbbb2222222",
+                                "committed_at": "2026-09-18T12:00:00Z"}},
+        })
+        api, opener = client({
+            REF + "claude/12": Refusal(502),
+            REF + "claude/13": FakeAnswer({"object": {"sha": "bbbbbbb2222222"}}),
+            "POST /repos/o/r/branches/claude%2F13/rename": FakeAnswer({"name": "released/13-bbbbbbb"}),
+            "/repos/o/r/issues/13/comments?per_page=100": Refusal(403, {"message": "Resource not accessible"}),
+        })
+        self.assertEqual(github.release_claims(api, snap), [
+            "claude/12: not renamed to released/12-aaaaaaa: GET /repos/o/r/git/ref/heads/claude/12: HTTP 502",
+            "#13: claim released; claude/13 renamed to released/13-bbbbbbb, but the comment on the issue failed: "
+            "GET /repos/o/r/issues/13/comments: HTTP 403: Resource not accessible"])
+
+    def test_a_claim_pushed_again_at_the_released_head_is_deleted(self):
+        # released/12-aaaaaaa already keeps that commit, so GitHub refuses
+        # the rename for good; deleting claude/12 frees the name and loses
+        # nothing, and the issue was told at the first release.
+        api, opener = client({
+            REF + "claude/12": FakeAnswer({"object": {"sha": HEAD_12}}),
+            RENAME_12: Refusal(422, {"message": "Reference already exists"}),
+            REF + "released/12-aaaaaaa": FakeAnswer({"object": {"sha": HEAD_12}}),
+            "DELETE /repos/o/r/git/refs/heads/claude/12": FakeAnswer(None),
+            COMMENTS_12: FakeAnswer([{"body": board.RELEASED_MARKER.format(branch="released/12-aaaaaaa") + "\nx"}]),
+        })
+        self.assertEqual(github.release_claims(api, released()), [
+            "#12: claim released; released/12-aaaaaaa already keeps aaaaaaa, so claude/12 was deleted"])
+        self.assertEqual([c.get_method() for c in opener.calls if c.get_method() != "GET"], ["POST", "DELETE"])
+
+    def test_nothing_released_asks_nothing(self):
+        snap, answers = fixture_answers()
+        api, opener = client(answers)
+        self.assertEqual(github.release_claims(api, snap), [])
+        self.assertEqual(opener.calls, [])
 
 
 PULL_LIST = "/repos/o/r/pulls?state=open&head=o%3Aclaude%2F7"
