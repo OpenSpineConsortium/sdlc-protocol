@@ -12,10 +12,11 @@ sdlc_protocol board ...":
          comment on the pull requests that wait, or render a JSON
          snapshot with --dry-run FIXTURE and no network
   check  hold the pull request in GITHUB_EVENT_PATH to the claim protocol
-  team   [--repo OWNER/NAME] seed, route or next, the clerk; seed and
-         next read the workers from the registry with --registry DIR
-  workers check, list, get or from-form: the registry of workers,
-         .github/symphony/workers/<name>.json, read offline
+  team   [--repo OWNER/NAME] seed, route, next or schema, the clerk; seed,
+         next and schema read the workers from the registry with
+         --registry DIR
+  workers check, list, describe, get or from-form: the registry of
+         workers, .github/symphony/workers/<name>.json, read offline
   guard  the PreToolUse hook: the tool call's JSON on stdin, and exit 2
          with the reason on stderr to refuse a push
   verify-vendored VENDOR_DIR
@@ -188,6 +189,8 @@ def team_arguments(argv, environ=None):
                                             "Actions, each by its area")
     nexting.add_argument("--label", default=None,
                          help="the worker's label, made before a take so the session can add it")
+    schema = sub.add_parser("schema", help="the JSON schema of the coordinator's plan, on one line")
+    schema.add_argument("--registry", help="the registry whose workers a task may go to")
     return parser.parse_args(argv)
 
 
@@ -209,9 +212,23 @@ def team_answer(client, args):
     return team.next_move(client, args.agent, [w.name for w in in_actions], args.label, areas)
 
 
+def team_schema(args):
+    """The plan's schema, which needs no GitHub: the registry's names, or
+    none, for the owners."""
+    names = [w.name for w in workers.load(args.registry)] if args.registry else []
+    print(json.dumps(team.plan_schema(names), separators=(",", ":")))
+    return 0
+
+
 def run_team(argv, environ=None):
     environ = environment(environ)
     args = team_arguments(argv, environ)
+    if args.command == "schema":
+        try:
+            return team_schema(args)
+        except workers.WorkerError as problem:
+            print(f"team: {problem}", file=sys.stderr)
+            return 1
     token = environ.get("GITHUB_TOKEN") or environ.get("GH_TOKEN")
     if not token or not args.repo:
         print("GITHUB_TOKEN and --repo (or GITHUB_REPOSITORY) are needed", file=sys.stderr)
@@ -235,6 +252,7 @@ def workers_arguments(argv):
     sub.add_parser("check", help="hold every worker's file to the registry's rules; exit 1 on any problem")
     listing = sub.add_parser("list", help="the workers' names as a JSON list, as a workflow's matrix reads it")
     listing.add_argument("--runs", choices=workers.RUNS, help="only the workers that run this way")
+    sub.add_parser("describe", help="one line per worker: its name, where it runs, its area, what it is for")
     getting = sub.add_parser("get", help="one setting of one worker")
     getting.add_argument("name")
     getting.add_argument("setting", choices=workers.KEYS + ("label",))
@@ -253,6 +271,12 @@ def workers_check(args):
 def workers_list(args):
     found = workers.load(args.dir)
     print(json.dumps([w.name for w in found if not args.runs or w.runs == args.runs]))
+    return 0
+
+
+def workers_describe(args):
+    found = workers.load(args.dir)
+    print("\n".join(workers.describe(w) for w in found) if found else "(no worker is registered)")
     return 0
 
 
@@ -284,7 +308,7 @@ def workers_from_form(args, stdin):
 
 def run_workers(argv, stdin=None):
     args = workers_arguments(argv)
-    commands = {"check": workers_check, "list": workers_list, "get": workers_get,
+    commands = {"check": workers_check, "list": workers_list, "describe": workers_describe, "get": workers_get,
                 "from-form": lambda given: workers_from_form(given, stdin)}
     try:
         return commands[args.command](args)

@@ -343,6 +343,22 @@ class SeedTest(unittest.TestCase):
         self.assertEqual(claims.issue_files(team.task_body(7, {"files": ["b.py", "a.py"]})), ["a.py", "b.py"])
 
 
+class PlanSchemaTest(unittest.TestCase):
+    def test_a_task_goes_to_a_registered_worker_or_with_none_to_anyone(self):
+        given = team.plan_schema(["alice", "nightly"])
+        task = given["properties"]["tasks"]["items"]
+        self.assertEqual(task["properties"]["owner"], {"type": "string", "enum": ["alice", "nightly"]})
+        self.assertEqual(task["required"], ["title", "owner", "files", "body"])
+        self.assertEqual(given["required"], ["plan", "tasks"])
+        self.assertEqual(team.plan_schema([])["properties"]["tasks"]["items"]["properties"]["owner"], {"type": "string"})
+
+    def test_a_plan_the_schema_admits_is_one_seed_reads(self):
+        api = FakeClient()
+        api.add_issue(1, ["epic"])
+        plan = {"plan": "p", "tasks": [{"title": "T", "owner": "alice", "files": ["a.py"], "body": "b"}]}
+        self.assertEqual(team.seed(api, 1, plan, ["alice"]), "seeded 101")
+
+
 class MembersTest(unittest.TestCase):
     def test_team_members_reads_the_variable(self):
         self.assertEqual(team.team_members('["w1", "w2"]'), ["w1", "w2"])

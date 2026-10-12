@@ -296,6 +296,23 @@ def next_move(client, agent, team=None, label=None, areas=None):
 
 # --- seed -------------------------------------------------------------------
 
+def plan_schema(owners):
+    """The JSON schema the coordinator's plan answers to, as Claude Code's
+    --json-schema takes it, and as seed reads the plan: one or two
+    paragraphs, then the tasks, each with a title, the worker it goes to,
+    the files it owns and its body. With workers registered, a task's owner
+    is one of them; with none, any text, which seed leaves out, so every
+    task goes to the open queue."""
+    owner = {"type": "string", "enum": list(owners)} if owners else {"type": "string"}
+    task = {"type": "object",
+            "properties": {"title": {"type": "string"}, "owner": owner,
+                           "files": {"type": "array", "items": {"type": "string"}}, "body": {"type": "string"}},
+            "required": ["title", "owner", "files", "body"]}
+    return {"type": "object",
+            "properties": {"plan": {"type": "string"}, "tasks": {"type": "array", "minItems": 1, "items": task}},
+            "required": ["plan", "tasks"]}
+
+
 def owners_for(tasks, agents):
     """Each task's owner: the one the plan named when it is a worker here;
     a task whose owner is not goes first to a worker no task names yet, so

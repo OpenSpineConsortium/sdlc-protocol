@@ -71,6 +71,13 @@ class Settings(unittest.TestCase):
         self.assertTrue(str(caught.exception).startswith("not JSON:"))
 
 
+class Describing(unittest.TestCase):
+    def test_one_line_names_where_it_runs_its_area_and_what_it_is_for(self):
+        self.assertEqual(workers.describe(workers.Worker("api", "actions", "API fixes", ("api/", "docs/api/"))),
+                         "api (actions): area api/, docs/api/; API fixes")
+        self.assertEqual(workers.describe(workers.Worker("alice", "session")), "alice (session): area anywhere")
+
+
 class Registry(unittest.TestCase):
     def setUp(self):
         self.folder = Path(tempfile.mkdtemp())

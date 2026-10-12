@@ -359,6 +359,16 @@ class TeamWithTheRegistry(unittest.TestCase):
         self.assertEqual([labels["name"] for labels in api.issues[101]["labels"]], ["todo", "worker:nightly"])
         self.assertEqual([labels["name"] for labels in api.issues[102]["labels"]], ["todo", "worker:alice"])
 
+    def test_schema_needs_no_token_and_names_the_registered_workers(self):
+        with tempfile.TemporaryDirectory() as folder:
+            where = registry(folder, {"name": "nightly", "runs": "actions"}, {"name": "alice", "runs": "session"})
+            code, out, err = run(["team", "schema", "--registry", where], environ={})
+        self.assertEqual((code, err), (0, ""))
+        owner = json.loads(out)["properties"]["tasks"]["items"]["properties"]["owner"]
+        self.assertEqual(owner["enum"], ["alice", "nightly"])
+        code, out, _ = run(["team", "schema"], environ={})
+        self.assertEqual(json.loads(out)["properties"]["tasks"]["items"]["properties"]["owner"], {"type": "string"})
+
     def test_a_broken_registry_is_one_line_and_exit_1(self):
         with tempfile.TemporaryDirectory() as folder:
             where = registry(folder, {"name": "Bad Name", "runs": "actions"})
@@ -424,6 +434,14 @@ class Workers(unittest.TestCase):
             self.assertEqual(self.run_workers(["--dir", where, "get", "nightly", "label"]), (0, "worker:nightly\n", ""))
             self.assertEqual(self.run_workers(["--dir", where, "get", "ghost", "runs"]),
                              (1, "", f"workers: no worker named ghost in {where}\n"))
+
+    def test_describe_gives_a_line_per_worker(self):
+        with tempfile.TemporaryDirectory() as folder:
+            where = registry(folder, {"name": "nightly", "runs": "actions", "area": ["docs/"], "about": "Docs."})
+            self.assertEqual(self.run_workers(["--dir", where, "describe"]),
+                             (0, "nightly (actions): area docs/; Docs.\n", ""))
+            self.assertEqual(self.run_workers(["--dir", str(Path(folder) / "none"), "describe"]),
+                             (0, "(no worker is registered)\n", ""))
 
     def test_no_registry_is_no_workers(self):
         with tempfile.TemporaryDirectory() as folder:

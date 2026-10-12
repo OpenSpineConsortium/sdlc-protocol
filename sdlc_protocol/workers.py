@@ -182,6 +182,14 @@ def load(directory=REGISTRY):
     return workers
 
 
+def describe(worker):
+    """One line on a worker, for the coordinator planning work for it: its
+    name, where it runs, its area and what it is for."""
+    area = ", ".join(worker.area) or "anywhere"
+    about = f"; {worker.about}" if worker.about else ""
+    return f"{worker.name} ({worker.runs}): area {area}{about}"
+
+
 def in_actions(workers):
     """The workers that run in GitHub Actions, in name order."""
     return [worker for worker in workers if worker.runs == "actions"]
