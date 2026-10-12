@@ -254,6 +254,7 @@ COMMENTS_12 = "/repos/o/r/issues/12/comments?per_page=100"
 RULES_12 = "/repos/o/r/rules/branches/claude%2F12?per_page=100"
 RULES_RELEASED_12 = "/repos/o/r/rules/branches/released%2F12-aaaaaaa?per_page=100"
 REFUSED_12 = "<!-- sdlc-board: rename-refused released/12-aaaaaaa -->"
+DRAFT_COMMENTS_40 = "/repos/o/r/issues/40/comments?per_page=100"
 RELEASE_COMMENT = {"body": claims.RELEASE_MARKER + "\nReleased: no commit on claude/12 for two days.",
                    "author_association": "OWNER", "created_at": "2026-09-20T09:00:00Z"}
 
@@ -280,7 +281,8 @@ def released_answers():
     answers[f"/repos/o/r/git/commits/{HEAD_12}"] = FakeAnswer({"sha": HEAD_12,
                                                                "committer": {"date": "2026-09-18T12:00:00Z"}})
     draft = {k: v for k, v in snap["pulls"][0].items() if k != "files"}
-    answers["/repos/o/r/pulls/40"] = FakeAnswer(dict(draft, draft=True))
+    answers["/repos/o/r/pulls/40"] = FakeAnswer(dict(draft, draft=True, user={"login": "alice"}))
+    answers[DRAFT_COMMENTS_40] = FakeAnswer([])
     return snap, answers
 
 
@@ -358,6 +360,21 @@ class Releases(unittest.TestCase):
             released_at = github.collect(api, "abc", "main")["releases"]["12"]["released_at"]
             self.assertEqual(bool(released_at), counts, answer)
             self.assertEqual(sum(c.full_url.endswith(asking) for c in opener.calls), 1, "asked once per login")
+
+    def test_a_draft_its_author_said_is_finished_is_never_released(self):
+        # A cloud session whose gh pr calls are refused cannot mark its pull
+        # request ready, and says so on the draft for a maintainer instead.
+        said = {"user": {"login": "alice"}, "body": "finished; ready to mark", "created_at": "2026-09-18T13:00:00Z"}
+        later = {"user": {"login": "bob"}, "body": "Thanks!", "created_at": "2026-09-18T14:00:00Z"}
+        _, answers = released_answers()
+        answers[DRAFT_COMMENTS_40] = FakeAnswer([said, later])
+        api, opener = client(answers)
+        self.assertEqual(github.collect(api, "abc", "main")["releases"], {})
+        self.assertNotIn(COMMENTS_12, [c.full_url.replace(github.API, "") for c in opener.calls])
+        taken_back = {"user": {"login": "alice"}, "body": "One more change first.", "created_at": "2026-09-18T15:00:00Z"}
+        answers[DRAFT_COMMENTS_40] = FakeAnswer([said, later, taken_back])
+        api, _ = client(answers)
+        self.assertIn("12", github.collect(api, "abc", "main")["releases"])
 
     def test_a_finished_claim_costs_no_call(self):
         ready, answers = released_answers()

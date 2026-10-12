@@ -41,6 +41,11 @@ RELEASING_BOTS = frozenset({"github-actions[bot]"})
 # issue can be claimed again, and under a name of its own, so the work it
 # holds stays for whoever carries it on.
 RELEASED_PREFIX = "released/"
+# What a worker that may not mark its pull request ready, a cloud session
+# whose gh pr calls are refused, comments on its draft when the work is
+# done, for a maintainer to mark: a draft whose author's latest comment
+# starts with it is finished, and waits for review as a ready one does.
+FINISHED_SIGNAL = "finished; ready to mark"
 
 # The line that names the claim's worker: "- Worker: name", or the older
 # "- Account: name" that claim files carried before workers had one name.
@@ -234,6 +239,17 @@ def is_release_comment(comment, trusted=None):
     if login in RELEASING_BOTS:
         return True
     return bool(trusted and login and trusted(login))
+
+
+def said_finished(comments, author):
+    """Whether the author's latest comment among a pull request's comments
+    starts with FINISHED_SIGNAL, so the draft is finished and its claim is
+    never released however long it waits."""
+    theirs = [c for c in comments if (c.get("user") or {}).get("login") == author and author]
+    if not theirs:
+        return False
+    latest = max(theirs, key=lambda c: parse_time(c.get("created_at") or "1970-01-01T00:00:00Z"))
+    return (latest.get("body") or "").strip().lower().startswith(FINISHED_SIGNAL)
 
 
 def latest_release(comments, trusted=None):

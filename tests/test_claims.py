@@ -111,6 +111,22 @@ class ClaimFile(unittest.TestCase):
         self.assertEqual(claims.claim_files(two_lists), ["x.md"])
 
 
+class SaidFinished(unittest.TestCase):
+    def comment(self, login, body, at):
+        return {"user": {"login": login}, "body": body, "created_at": at}
+
+    def test_the_authors_latest_comment_decides(self):
+        said = self.comment("alice", "Finished; ready to mark.", "2026-09-18T13:00:00Z")
+        other = self.comment("bob", "finished; ready to mark", "2026-09-18T14:00:00Z")
+        later = self.comment("alice", "Wait, one more thing.", "2026-09-18T15:00:00Z")
+        self.assertTrue(claims.said_finished([said, other], "alice"))
+        self.assertFalse(claims.said_finished([said, later], "alice"))
+        self.assertFalse(claims.said_finished([other], "alice"))
+        self.assertFalse(claims.said_finished([said], None))
+        self.assertFalse(claims.said_finished([], "alice"))
+        self.assertEqual(claims.FINISHED_SIGNAL, "finished; ready to mark")
+
+
 class IssueFiles(unittest.TestCase):
     def test_the_task_forms_answer_lists_a_path_a_line(self):
         body = "### Goal\n\nDo it.\n\n### Files likely touched\n\nsrc/a.py\n`src/b.py`\nsrc/a.py\n"

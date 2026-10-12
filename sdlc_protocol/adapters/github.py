@@ -357,6 +357,16 @@ def committed_at(api, sha):
     return (commit.get("committer") or {}).get("date") or ""
 
 
+def finished_draft(api, pull):
+    """Whether a draft's author said it is finished (claims.said_finished),
+    from the pull request's own comments; None, a pull request, costs no
+    call."""
+    if not pull:
+        return False
+    author = (pull.get("user") or {}).get("login")
+    return claims.said_finished(api.get_all(f"/repos/{api.repo}/issues/{pull['number']}/comments"), author)
+
+
 def releases(api, heads, found_issues, pulls, now=None):
     """What the release rule reads about each claim that has gone more than
     a day without a commit, by key: the branch's head commit with the time
@@ -364,21 +374,24 @@ def releases(api, heads, found_issues, pulls, now=None):
     issue, "" when there is none. The coordinator releases such a claim
     unless a comment already did (coordinator.releases_due), and the board
     counts it released once the label claimed is off too
-    (board.released_keys). A claim whose issue is labelled in-review or is
-    not open, or whose pull request is marked ready, costs no call; any
-    other costs one for its head commit, and, when that commit is more than
-    a day old, one for its issue's comments and one per author whose
-    permission must be asked, so the run pays only where a release can be
-    due or can have happened."""
+    (board.released_keys). A finished claim is left out: its issue labelled
+    in-review, its pull request marked ready, or its draft's author saying
+    it is finished (finished_draft). A claim whose issue is labelled
+    in-review or is not open, or whose pull request is marked ready, costs
+    no call; any other costs one for its head commit, and, when that commit
+    is more than a day old, one for its draft's comments, one for its
+    issue's comments and one per author whose permission must be asked, so
+    the run pays only where a release can be due or can have happened."""
     now = now or datetime.now(timezone.utc)
     ready, trusted = ready_branches(pulls), may_write(api)
+    drafts = {(p.get("head") or {}).get("ref"): p for p in pulls if p.get("draft")}
     found = {}
     for branch, sha in sorted(heads.items()):
         key = claims.key_of(branch)
         if not sha or branch in ready or not may_be_due(found_issues.get(key)):
             continue
         last_commit = committed_at(api, sha)
-        if not last_commit or not claims.is_idle(last_commit, now):
+        if not last_commit or not claims.is_idle(last_commit, now) or finished_draft(api, drafts.get(branch)):
             continue
         released_at = claims.latest_release(api.get_all(f"/repos/{api.repo}/issues/{key}/comments"), trusted)
         found[key] = {"released_at": released_at, "sha": sha, "committed_at": last_commit}
