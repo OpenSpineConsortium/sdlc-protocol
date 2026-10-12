@@ -1117,6 +1117,7 @@ class DeclaredDifferences(unittest.TestCase):
         # kept its row and its issue stayed out of the queue for good; the
         # library collects the releases and frees the issue.
         snap = fixture()
+        snap["pulls"][0]["draft"] = True
         snap["issues"].append({"number": 12, "title": "Released", "labels": [{"name": "todo"}]})
         snap["claim_issues"] = {"12": {"state": "open", "labels": ["todo"]}}
         snap["releases"] = {"12": {"released_at": "2026-09-20T09:00:00Z", "sha": "aaaaaaa1111111",

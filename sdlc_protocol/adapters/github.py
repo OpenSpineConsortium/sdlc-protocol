@@ -42,6 +42,11 @@ RECENT_MERGED = board.RECENT_MERGED
 # branch stops the merge, a rule, a review or the draft itself: how the
 # branch stands to its base is then read from mergeable and a comparison.
 OPAQUE_STATES = {"blocked", "draft"}
+# The permissions whose holders' release comments count when GitHub's
+# author_association does not vouch for them: write and above, in the old
+# permission word and in the role name.
+WRITE_PERMISSIONS = {"admin", "write"}
+WRITE_ROLES = {"admin", "maintain", "write"}
 # A required check run that finished with one of these let the merge go;
 # any other finish (failure, timed_out, cancelled, action_required, stale)
 # did not.
@@ -301,24 +306,56 @@ def claim_heads(listed):
 
 def may_be_released(issue):
     """Whether a claim on this issue can have been released: the issue is
-    open and the coordinator has taken the label claimed off it."""
-    return issue is not None and issue.get("state") == "open" and labels.CLAIMED not in issue.get("labels", [])
+    open, the coordinator has taken the label claimed off it, and it is not
+    labelled in-review, which a finished claim waiting for review is."""
+    names = (issue or {}).get("labels", [])
+    return issue is not None and issue.get("state") == "open" and not {labels.CLAIMED, labels.IN_REVIEW} & set(names)
 
 
-def releases(api, heads, found_issues):
+def ready_branches(pulls):
+    """The head branches of the open pull requests marked ready, as the API
+    details them; a pull request whose draft state is not given counts as
+    ready, as the board counts it."""
+    return {(p.get("head") or {}).get("ref") for p in pulls if not p.get("draft")}
+
+
+def may_write(api):
+    """A callable saying whether a login may write to the repository, from
+    GitHub's collaborator permission, asked once per login. It stands in
+    for author_association where that word does not vouch for an author:
+    GitHub may show a private member of the organization to a workflow's
+    token as a contributor. A call GitHub refuses counts as no, so a
+    release by an author nobody can vouch for frees nothing."""
+    answers = {}
+
+    def ask(login):
+        if login not in answers:
+            try:
+                found = api.get(f"/repos/{api.repo}/collaborators/{urllib.parse.quote(login, safe='')}/permission",
+                                missing_ok=True) or {}
+            except GitHubError:
+                found = {}
+            answers[login] = found.get("permission") in WRITE_PERMISSIONS or found.get("role_name") in WRITE_ROLES
+        return answers[login]
+    return ask
+
+
+def releases(api, heads, found_issues, pulls):
     """What board.released_keys reads about each claim a release can have
     freed, by key: the time of the latest release comment on its issue, and
     the branch's head commit with the time it was committed. A claim whose
-    issue still carries the label claimed costs no call; any other costs
-    one for its issue's comments and, when one of them is a release, one
-    more for the head commit, so the board pays only where a release can
-    have happened."""
+    issue still carries the label claimed or in-review, or whose pull
+    request is marked ready, costs no call; any other costs one for its
+    issue's comments, one per author whose permission must be asked, and,
+    when a comment is a release, one more for the head commit, so the board
+    pays only where a release can have happened."""
+    ready, trusted = ready_branches(pulls), may_write(api)
     found = {}
     for branch, sha in sorted(heads.items()):
         key = claims.key_of(branch)
-        if not sha or not may_be_released(found_issues.get(key)):
+        if not sha or branch in ready or not may_be_released(found_issues.get(key)):
             continue
-        released_at = claims.latest_release(api.get_all(f"/repos/{api.repo}/issues/{key}/comments"))
+        released_at = claims.latest_release(api.get_all(f"/repos/{api.repo}/issues/{key}/comments"), trusted)
         if released_at:
             commit = api.get(f"/repos/{api.repo}/git/commits/{sha}", missing_ok=True) or {}
             found[key] = {"released_at": released_at, "sha": sha,
@@ -344,7 +381,7 @@ def collect(api, sha, default_branch):
         "claims": {claims.key_of(b): claim_text(api, b) for b in branches},
         "claim_issues": found_issues,
         "merged": recent_merged(api),
-        "releases": releases(api, claim_heads(listed), found_issues),
+        "releases": releases(api, claim_heads(listed), found_issues, pulls),
     }
 
 
@@ -391,22 +428,47 @@ def release_claims(api, snapshot):
 
 
 def release_claim(api, key, release):
-    """Rename one released claim's branch. The branch is read again first
-    and left as it is when it moved since the snapshot, since a commit
-    after the release means its holder came back. A rename GitHub refuses
-    (a rule on the branch, a name already taken) is said and left for the
-    next run, never raised: the board is written before this runs, and a
-    refusal that stopped the run would stop every board after it."""
+    """Free one released claim's name and say so once on its issue. Nothing
+    here raises: a call GitHub refuses (a rule on the branch, a server
+    error) is said in the line and left for the next run, since the board
+    is written before this runs, and a failure that stopped the run would
+    stop every board after it, and the comments it still owes."""
     old, new = claims.branch_of(key), claims.released_branch(key, release.sha)
-    if branch_sha(api, old) != release.sha:
+    try:
+        done = free_name(api, old, new, release.sha)
+    except GitHubError as problem:
+        return f"{old}: not renamed to {new}: {problem}{github_words(problem)}"
+    if done is None:
         return f"{old}: no longer at {release.sha[:7]}, so it keeps its name"
     try:
-        api.post(f"/repos/{api.repo}/branches/{urllib.parse.quote(old, safe='')}/rename", {"new_name": new})
+        comment_once(api, key, board.RELEASED_MARKER.format(branch=new), board.released_text(old, new))
     except GitHubError as problem:
-        said = f": {problem.detail}" if problem.detail else ""
-        return f"{old}: not renamed to {new}: {problem}{said}"
-    comment_once(api, key, board.RELEASED_MARKER.format(branch=new), board.released_text(old, new))
-    return f"#{key}: claim released; {old} renamed to {new}"
+        return f"#{key}: {done}, but the comment on the issue failed: {problem}{github_words(problem)}"
+    return f"#{key}: {done}"
+
+
+def free_name(api, old, new, sha):
+    """Rename the claim branch old to new, reading it again first: None,
+    and nothing done, when it moved since the snapshot, since a commit
+    after the release means its holder came back. When new already keeps
+    the same commit, old was pushed again at the released head, and the
+    rename is refused for good; deleting old then frees the name and loses
+    nothing. What was done, in words."""
+    if branch_sha(api, old) != sha:
+        return None
+    try:
+        api.post(f"/repos/{api.repo}/branches/{urllib.parse.quote(old, safe='')}/rename", {"new_name": new})
+        return f"claim released; {old} renamed to {new}"
+    except GitHubError as problem:
+        if problem.status != 422 or branch_sha(api, new) != sha:
+            raise
+    api.delete(f"/repos/{api.repo}/git/refs/heads/{quoted(old)}")
+    return f"claim released; {new} already keeps {sha[:7]}, so {old} was deleted"
+
+
+def github_words(problem):
+    """GitHub's own words on a refused call, after a colon, or nothing."""
+    return f": {problem.detail}" if problem.detail else ""
 
 
 # --- the gate's world ---------------------------------------------------------

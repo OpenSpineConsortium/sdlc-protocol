@@ -193,6 +193,8 @@ class SnapshotShape(unittest.TestCase):
         self.assertEqual((pull.number, pull.branch, pull.head_sha), (40, "claude/12", "aaaaaaa1111111"))
         self.assertEqual((pull.mergeable_state, pull.state), ("behind", "behind"))
         self.assertEqual(pull.files, ["docs/agents/README.md", "docs/agents/STATE.md"])
+        self.assertFalse(pull.draft)
+        self.assertTrue(Pull.from_dict({"number": 1, "draft": True}).draft)
         self.assertEqual(snap.branches, ["main", "claude/12", "claude/13"])
         self.assertIsNone(snap.claims["13"])
         self.assertTrue(snap.claims["12"].startswith("# Claim: #12"))
@@ -406,7 +408,10 @@ HEAD_12 = "aaaaaaa1111111"
 
 
 def released_snapshot(**release):
+    """The fixture once the coordinator released claude/12, whose pull
+    request #40 is still a draft."""
     snap = snapshot()
+    snap["pulls"][0]["draft"] = True
     snap["issues"].append({"number": 12, "title": "Describe the board", "labels": [{"name": "todo"}]})
     snap["claim_issues"] = {"12": {"state": "open", "labels": ["todo"]}}
     snap["releases"] = {"12": {"released_at": RELEASED_AT, "sha": HEAD_12, "committed_at": LAST_COMMIT, **release}}
@@ -442,11 +447,25 @@ class Releases(unittest.TestCase):
         closed["claim_issues"]["12"]["state"] = "closed"
         no_issue = released_snapshot()
         del no_issue["claim_issues"]["12"]
-        for name, snap in (("still claimed", still_claimed), ("no release comment", no_comment),
+        for name, snap in (("still claimed, or claimed again", still_claimed), ("no release comment", no_comment),
                            ("issue closed", closed), ("issue unknown", no_issue)):
             self.assertEqual(board.released_keys(snap), set(), name)
             self.assertNotIn("| #12 | Describe the board |", section(board.render(snap), board.QUEUE_HEADING,
                                                                       board.BLOCKER_HEADING), name)
+
+    def test_a_finished_claim_waiting_for_review_is_never_released(self):
+        # The rename would close a pull request that only waits for the
+        # owner, so a release comment on it frees nothing, however old.
+        in_review = released_snapshot()
+        in_review["claim_issues"]["12"]["labels"] = ["in-review", "todo"]
+        ready = released_snapshot()
+        ready["pulls"][0]["draft"] = False
+        unknown = released_snapshot()
+        del unknown["pulls"][0]["draft"]
+        for name, snap in (("labelled in-review", in_review), ("marked ready", ready),
+                           ("draft state not given", unknown)):
+            self.assertEqual(board.released_keys(snap), set(), name)
+            self.assertIn("| #12 | claude/12 | main | #40 |", board.render(snap), name)
 
     def test_a_release_too_soon_or_a_commit_since_frees_nothing(self):
         cases = (
@@ -499,6 +518,7 @@ class Releases(unittest.TestCase):
         text = board.released_text("claude/12", "released/12-aaaaaaa")
         self.assertIn("claude/12 is now released/12-aaaaaaa", text)
         self.assertIn("back in the queue", text)
+        self.assertIn("put the label claimed back", text)
         text.encode("ascii")
 
 

@@ -276,6 +276,8 @@ def released_answers():
     ])
     answers[f"/repos/o/r/git/commits/{HEAD_12}"] = FakeAnswer({"sha": HEAD_12,
                                                                "committer": {"date": "2026-09-18T12:00:00Z"}})
+    draft = {k: v for k, v in snap["pulls"][0].items() if k != "files"}
+    answers["/repos/o/r/pulls/40"] = FakeAnswer(dict(draft, draft=True))
     return snap, answers
 
 
@@ -317,6 +319,35 @@ class Releases(unittest.TestCase):
         self.assertEqual(github.collect(api, "abc", "main")["releases"], {})
         self.assertFalse(any("/git/commits/" in c.full_url for c in opener.calls))
 
+    def test_an_author_github_does_not_vouch_for_counts_with_write_permission(self):
+        # GitHub may show a private member of the organization to the
+        # workflow's token as a contributor; their permission decides.
+        private = dict(RELEASE_COMMENT, author_association="CONTRIBUTOR", user={"login": "private-member"})
+        asking = "/repos/o/r/collaborators/private-member/permission"
+        cases = ((FakeAnswer({"permission": "admin", "role_name": "admin"}), True),
+                 (FakeAnswer({"permission": "write", "role_name": "maintain"}), True),
+                 (FakeAnswer({"permission": "read", "role_name": "triage"}), False),
+                 (Refusal(403, {"message": "Must have push access"}), False))
+        for answer, counts in cases:
+            _, answers = released_answers()
+            answers[COMMENTS_12] = FakeAnswer([private, private])
+            answers[asking] = answer
+            api, opener = client(answers)
+            self.assertEqual("12" in github.collect(api, "abc", "main")["releases"], counts, answer)
+            self.assertEqual(sum(c.full_url.endswith(asking) for c in opener.calls), 1, "asked once per login")
+
+    def test_a_finished_claim_costs_no_call(self):
+        ready, answers = released_answers()
+        answers["/repos/o/r/pulls/40"] = FakeAnswer({k: v for k, v in ready["pulls"][0].items() if k != "files"})
+        in_review, review_answers = released_answers()
+        review_answers["/repos/o/r/issues?state=open&per_page=100"] = FakeAnswer(in_review["issues"] + [
+            {"number": 12, "title": "Describe the board", "state": "open",
+             "labels": [{"name": "in-review"}, {"name": "todo"}]}])
+        for name, given in (("marked ready", answers), ("labelled in-review", review_answers)):
+            api, opener = client(given)
+            self.assertEqual(github.collect(api, "abc", "main")["releases"], {}, name)
+            self.assertNotIn(COMMENTS_12, [c.full_url.replace(github.API, "") for c in opener.calls], name)
+
     def test_the_released_branch_is_renamed_and_the_issue_told_once(self):
         api, opener = client({
             REF + "claude/12": FakeAnswer({"object": {"sha": HEAD_12}}),
@@ -345,11 +376,50 @@ class Releases(unittest.TestCase):
         api, opener = client({
             REF + "claude/12": FakeAnswer({"object": {"sha": HEAD_12}}),
             RENAME_12: Refusal(422, {"message": "Reference already exists"}),
+            REF + "released/12-aaaaaaa": FakeAnswer({"object": {"sha": "eeeeeee5555555"}}),
         })
         self.assertEqual(github.release_claims(api, released()), [
             "claude/12: not renamed to released/12-aaaaaaa: POST /repos/o/r/branches/claude%2F12/rename: "
             "HTTP 422: Reference already exists"])
         self.assertEqual(len(opener.sent("POST")), 1)
+
+    def test_no_call_github_refuses_stops_the_run(self):
+        # A server error while the branch is read again, and a comment
+        # refused after the rename: each is a line, and the next claim is
+        # still released.
+        snap = board.Snapshot.from_dict({
+            "branches": ["claude/12", "claude/13"],
+            "claim_issues": {k: {"state": "open", "labels": ["todo"]} for k in ("12", "13")},
+            "releases": {"12": {"released_at": "2026-09-20T09:00:00Z", "sha": HEAD_12,
+                                "committed_at": "2026-09-18T12:00:00Z"},
+                         "13": {"released_at": "2026-09-20T09:00:00Z", "sha": "bbbbbbb2222222",
+                                "committed_at": "2026-09-18T12:00:00Z"}},
+        })
+        api, opener = client({
+            REF + "claude/12": Refusal(502),
+            REF + "claude/13": FakeAnswer({"object": {"sha": "bbbbbbb2222222"}}),
+            "POST /repos/o/r/branches/claude%2F13/rename": FakeAnswer({"name": "released/13-bbbbbbb"}),
+            "/repos/o/r/issues/13/comments?per_page=100": Refusal(403, {"message": "Resource not accessible"}),
+        })
+        self.assertEqual(github.release_claims(api, snap), [
+            "claude/12: not renamed to released/12-aaaaaaa: GET /repos/o/r/git/ref/heads/claude/12: HTTP 502",
+            "#13: claim released; claude/13 renamed to released/13-bbbbbbb, but the comment on the issue failed: "
+            "GET /repos/o/r/issues/13/comments: HTTP 403: Resource not accessible"])
+
+    def test_a_claim_pushed_again_at_the_released_head_is_deleted(self):
+        # released/12-aaaaaaa already keeps that commit, so GitHub refuses
+        # the rename for good; deleting claude/12 frees the name and loses
+        # nothing, and the issue was told at the first release.
+        api, opener = client({
+            REF + "claude/12": FakeAnswer({"object": {"sha": HEAD_12}}),
+            RENAME_12: Refusal(422, {"message": "Reference already exists"}),
+            REF + "released/12-aaaaaaa": FakeAnswer({"object": {"sha": HEAD_12}}),
+            "DELETE /repos/o/r/git/refs/heads/claude/12": FakeAnswer(None),
+            COMMENTS_12: FakeAnswer([{"body": board.RELEASED_MARKER.format(branch="released/12-aaaaaaa") + "\nx"}]),
+        })
+        self.assertEqual(github.release_claims(api, released()), [
+            "#12: claim released; released/12-aaaaaaa already keeps aaaaaaa, so claude/12 was deleted"])
+        self.assertEqual([c.get_method() for c in opener.calls if c.get_method() != "GET"], ["POST", "DELETE"])
 
     def test_nothing_released_asks_nothing(self):
         snap, answers = fixture_answers()

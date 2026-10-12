@@ -90,9 +90,12 @@ class Issue:
 @dataclass
 class Pull:
     """An open pull request with its head branch, GitHub's word for how it
-    stands to the default branch (mergeable_state, as the API gives it) and
-    the paths it changes. The dict shape is the API's, head and all, so a
-    pull request detail from GitHub is a fixture as it is."""
+    stands to the default branch (mergeable_state, as the API gives it),
+    the paths it changes, and whether it is still a draft: one marked ready
+    waits for review however long it takes, so its claim is never released,
+    and a pull request whose draft state is not given counts as ready. The
+    dict shape is the API's, head and all, so a pull request detail from
+    GitHub is a fixture as it is."""
 
     number: int
     title: str = ""
@@ -101,6 +104,7 @@ class Pull:
     mergeable_state: str | None = None
     updated_at: str = ""
     files: list = field(default_factory=list)
+    draft: bool = False
 
     @property
     def state(self):
@@ -118,6 +122,7 @@ class Pull:
             mergeable_state=data.get("mergeable_state"),
             updated_at=data.get("updated_at") or "",
             files=[file_name(f) for f in data.get("files") or []],
+            draft=bool(data.get("draft")),
         )
 
     def to_dict(self):
@@ -128,6 +133,7 @@ class Pull:
             "mergeable_state": self.mergeable_state,
             "updated_at": self.updated_at,
             "files": list(self.files),
+            "draft": self.draft,
         }
 
 
@@ -313,11 +319,14 @@ def released_keys(snapshot, idle_after=IDLE_AFTER):
     more than idle_after, and which nothing has been committed to since
     (claims.was_released). It takes both of the coordinator's acts, the
     comment and the label it takes off, so a stray comment frees nothing;
-    and a commit after the release, its holder's or a new claim's, ends
-    it. The board leaves such a claim off the page and puts its issue back
-    in the queue, and the GitHub adapter renames its branch, so the name
-    is free for the next claim; the page reads the same before the rename
-    and after it, so one release rewrites the board once."""
+    a commit after the release, its holder's or a new claim's, ends it;
+    and putting the label claimed back undoes it. A finished claim is never
+    released, however long it waits for review: one whose issue is labelled
+    in-review or whose pull request is marked ready. The board leaves a
+    released claim off the page and puts its issue back in the queue, and
+    the GitHub adapter renames its branch, so the name is free for the next
+    claim; the page reads the same before the rename and after it, so one
+    release rewrites the board once."""
     snap = as_snapshot(snapshot)
     return {key_of(b) for b in claim_branches(snap.branches) if is_released(snap, key_of(b), idle_after)}
 
@@ -329,7 +338,9 @@ def is_released(snap, key, idle_after=IDLE_AFTER):
     release, issue = snap.releases.get(key), snap.claim_issues.get(key)
     if release is None or issue is None or not release.sha:
         return False
-    if issue.state != "open" or labels.CLAIMED in issue.labels:
+    if issue.state != "open" or labels.CLAIMED in issue.labels or labels.IN_REVIEW in issue.labels:
+        return False
+    if any(p.branch == branch_of(key) and not p.draft for p in snap.pulls):
         return False
     return was_released(release.released_at, release.committed_at, idle_after)
 
@@ -346,7 +357,9 @@ def released_text(old, new):
     return (
         f"released: the claim on this issue was released, so its branch {old} is now {new}, "
         f"which keeps its work; GitHub closes a pull request from the branch with the rename. "
-        f"The issue is back in the queue, and the next claim pushes {old} anew from the default branch."
+        f"The issue is back in the queue, and the next claim pushes {old} anew from the default branch. "
+        f"To undo the release, put the label claimed back on the issue first, then rename the branch "
+        f"back and reopen its pull request."
     )
 
 

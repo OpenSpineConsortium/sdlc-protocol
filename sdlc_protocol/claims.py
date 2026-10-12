@@ -26,9 +26,10 @@ IDLE_AFTER = timedelta(hours=24)
 # board and the field metrics tell a release from what people write
 # without reading what the comment says.
 RELEASE_MARKER = "<!-- sdlc-coordinator: claim-released -->"
-# Whose release comments count, in GitHub's author_association words: the
-# repository's owner, the members of its organization and its
-# collaborators. A comment by anyone else releases nothing.
+# Whose release comments count by GitHub's author_association word alone:
+# the repository's owner, the members of its organization and its
+# collaborators. Anyone else's count only when an adapter finds that they
+# may write to the repository (is_release_comment).
 RELEASERS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
 # Where a released claim's branch goes: out of the claude/ names, so the
 # issue can be claimed again, and under a name of its own, so the work it
@@ -156,20 +157,35 @@ def issue_order(key):
     return by_number(key_of(text) if is_claim_branch(text) else text)
 
 
-def is_release_comment(comment):
-    """Whether an issue comment, as the API gives it, releases a claim: its
-    first line is RELEASE_MARKER and its author is one of RELEASERS. A
-    comment that quotes the marker below its first line, a reply for
-    instance, talks about a release and is none; a comment by somebody the
-    repository does not trust cannot take a claim away from its holder."""
+def starts_with_release_marker(comment):
+    """Whether an issue comment, as the API gives it, has RELEASE_MARKER as
+    its first line. A comment that quotes the marker further down, a reply
+    for instance, talks about a release and is none."""
     lines = ((comment or {}).get("body") or "").strip().splitlines()
-    return bool(lines) and lines[0].strip() == RELEASE_MARKER and (comment or {}).get("author_association") in RELEASERS
+    return bool(lines) and lines[0].strip() == RELEASE_MARKER
 
 
-def latest_release(comments):
+def is_release_comment(comment, trusted=None):
+    """Whether an issue comment releases a claim: its first line is the
+    marker and the repository trusts its author, by GitHub's
+    author_association (RELEASERS) or, for an author that word does not
+    vouch for, by trusted, a callable given the author's login that an
+    adapter answers from the author's permission on the repository: GitHub
+    may show a private member of the organization to a workflow's token as
+    a mere contributor. A comment by anyone else cannot take a claim away
+    from its holder."""
+    if not starts_with_release_marker(comment):
+        return False
+    if comment.get("author_association") in RELEASERS:
+        return True
+    login = (comment.get("user") or {}).get("login")
+    return bool(trusted and login and trusted(login))
+
+
+def latest_release(comments, trusted=None):
     """When the latest release comment among an issue's comments was made,
     as GitHub wrote the time, or "" when none of them releases a claim."""
-    times = [c["created_at"] for c in comments if is_release_comment(c) and c.get("created_at")]
+    times = [c["created_at"] for c in comments if c.get("created_at") and is_release_comment(c, trusted)]
     return max(times, key=parse_time) if times else ""
 
 

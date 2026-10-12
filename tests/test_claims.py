@@ -187,6 +187,32 @@ class ReleaseComments(unittest.TestCase):
         self.assertFalse(claims.is_release_comment({}))
         self.assertFalse(claims.is_release_comment(None))
 
+    def test_an_author_the_association_does_not_vouch_for_is_asked_about(self):
+        # A private member of the organization reads as a contributor to a
+        # workflow's token; the adapter then asks whether they may write.
+        writers = {"private-member"}
+        asked = []
+
+        def trusted(login):
+            asked.append(login)
+            return login in writers
+
+        member = dict(comment(self.RELEASE, "CONTRIBUTOR"), user={"login": "private-member"})
+        stranger = dict(comment(self.RELEASE, "NONE"), user={"login": "passer-by"})
+        self.assertTrue(claims.is_release_comment(member, trusted))
+        self.assertFalse(claims.is_release_comment(stranger, trusted))
+        self.assertFalse(claims.is_release_comment(member))
+        self.assertFalse(claims.is_release_comment(dict(member, user=None), trusted))
+        self.assertTrue(claims.is_release_comment(comment(self.RELEASE, "OWNER"), trusted))
+        self.assertFalse(claims.is_release_comment(dict(member, body="Thanks"), trusted))
+        self.assertEqual(asked, ["private-member", "passer-by"])
+        self.assertEqual(claims.latest_release([member, stranger], trusted), "2026-09-21T11:00:00Z")
+
+    def test_the_marker_must_open_the_comment(self):
+        self.assertTrue(claims.starts_with_release_marker(comment("\n" + self.RELEASE, "NONE")))
+        self.assertFalse(claims.starts_with_release_marker(comment("> " + self.RELEASE)))
+        self.assertFalse(claims.starts_with_release_marker(None))
+
     def test_the_latest_release_is_the_newest_release_comment(self):
         comments = [
             comment(self.RELEASE, created_at="2026-09-21T11:00:00Z"),
