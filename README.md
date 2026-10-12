@@ -140,7 +140,10 @@ Until the variable `SDLC_APP_ID` is set here, the sync skips itself, stays green
    ```
 
 4. Require the check `check` on each consumer's main, with a ruleset, so auto-merge waits for it to be green; the sync only arms auto-merge, and GitHub refuses to arm it on a pull request with nothing left to wait for, which the run's summary then reports. On this repository require `check` and, if you like, the `downstream (<consumer>)` jobs.
-5. Tag each release after its pull request merges, so a consumer that installs can name it; for this one, `git tag v0.3.0 <merge commit> && git push origin v0.3.0`.
+
+## Releases
+
+A release is the version in `sdlc_protocol/__init__.py` and `pyproject.toml`, raised together by the pull request that changes what the package does. Nobody tags it by hand: once the version reaches main, `.github/workflows/release.yml` tags the first commit of main's first-parent line that carries it, the pull request's merge, as `v<version>`, and publishes the GitHub release with GitHub's own notes on what merged since the last one. `scripts/release.py` says what to tag: every version back to the newest one already tagged, oldest first, so a release a failed run or a burst of merges left untagged is made by the next run, and a tag that exists is never moved. The run needs only its own `GITHUB_TOKEN`; it also runs by hand, and a run by hand from any branch but main tags nothing.
 
 ## Installing
 

@@ -1,0 +1,78 @@
+name: Release
+
+# Tags each release of the library and publishes it, with nobody's hands
+# on it. A release is the version in sdlc_protocol/__init__.py, raised by
+# the pull request that changes it; once that version reaches main, this
+# run tags the first commit of main's first-parent line that carries it,
+# the pull request's merge, and publishes the GitHub release for the tag,
+# with GitHub's own notes on what merged since the last one; GitHub makes
+# the tag with the release, so nothing is pushed. scripts/release.py says
+# what to tag: every version back to the newest one already tagged, oldest
+# first, so a release that a burst of merges or a failed run left untagged
+# is made by the next run, and no tag is ever moved. The version main
+# carries gets its release even when its tag was pushed by hand. Consumers
+# that install name a tag (README.md, Installing), so a release is out the
+# moment its version reaches main.
+#
+# It runs when the version file, the script or this file changes on main,
+# so its own merge makes up any release still untagged, and by hand; a run
+# by hand from another branch tags nothing. GITHUB_TOKEN with contents:
+# write is all it needs. The loop reads the list on its own descriptor, so
+# no command inside it can take the list's place as its input.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "sdlc_protocol/__init__.py"
+      - "scripts/release.py"
+      - ".github/workflows/release.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Tag each version main carries without a tag, and publish its release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          REF: ${{ github.ref }}
+        run: |
+          set -eu
+          if [ "$REF" != "refs/heads/main" ]; then
+            echo "releases are made from main only; $REF tags nothing"
+            exit 0
+          fi
+          list="$RUNNER_TEMP/release.txt"
+          python3 scripts/release.py missing > "$list"
+          version="$(python3 scripts/release.py version)"
+          echo "v$version tagged" >> "$list"
+          while read -r tag commit <&3; do
+            title="sdlc-protocol ${tag#v}"
+            if gh release view "$tag" --repo "$REPO" > /dev/null 2>&1; then
+              echo "$tag is released already"
+            elif [ "$commit" = "tagged" ]; then
+              gh release create "$tag" --repo "$REPO" --verify-tag --title "$title" --generate-notes
+              echo "released $tag, whose tag was made before"
+            else
+              gh release create "$tag" --repo "$REPO" --target "$commit" --title "$title" --generate-notes
+              echo "tagged $commit as $tag and released it"
+            fi
+          done 3< "$list"
