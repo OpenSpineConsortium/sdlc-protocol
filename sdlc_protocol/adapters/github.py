@@ -32,6 +32,10 @@ API = "https://api.github.com"
 # Where an owner changes a ruleset, for the board's comment on a rename a
 # ruleset refused.
 WEB = "https://github.com"
+# The answers GitHub gives a rename it refuses for good: a rule on the
+# branch, or a token without the right. A 404 can mean only that the branch
+# went away since it was read, which the next run sees for itself.
+REFUSED_FOR_GOOD = {403, 422}
 API_VERSION = "2022-11-28"
 USER_AGENT = "sdlc-board"
 TIMEOUT = 60
@@ -393,10 +397,15 @@ def snapshot(api, sha, default_branch):
     return board.Snapshot.from_dict(collect(api, sha, default_branch))
 
 
+def has_marker(api, number, marker):
+    """Whether a comment on the issue or pull request carries the marker."""
+    comments = api.get_all(f"/repos/{api.repo}/issues/{number}/comments")
+    return any(marker in (c.get("body") or "") for c in comments)
+
+
 def comment_once(api, number, marker, text):
     """Post the comment unless one on the pull request carries the marker."""
-    comments = api.get_all(f"/repos/{api.repo}/issues/{number}/comments")
-    if any(marker in (c.get("body") or "") for c in comments):
+    if has_marker(api, number, marker):
         return False
     api.post(f"/repos/{api.repo}/issues/{number}/comments", {"body": marker + "\n" + text})
     return True
@@ -474,19 +483,24 @@ def free_name(api, old, new, sha):
 
 def explain_refusal(api, key, old, new, problem):
     """Say once on the issue why its released claim's name is not free,
-    when GitHub refused the rename for good, as a 4xx answer says: a
-    ruleset over the claim branches, or a token without the right. A
-    server error, or no answer at all, is for the moment, and the next run
-    tries again without a word. What was said, for the log line, or ""."""
-    if problem.status is None or not 400 <= problem.status < 500:
+    when GitHub refused the rename for good: a ruleset over the claim
+    branches, or a token without the right. Any other answer, or none, is
+    for the moment, and the next run tries again without a word. The
+    rulesets are read only for the first saying, so a rename refused run
+    after run costs one more call each time. What was said, for the log
+    line, or ""."""
+    if problem.status not in REFUSED_FOR_GOOD:
         return ""
+    marker = board.RENAME_REFUSED_MARKER.format(branch=new)
     words = f"HTTP {problem.status}{github_words(problem)}"
-    text = board.rename_refused_text(old, new, rulesets_on(api, (old, new)), words)
     try:
-        posted = comment_once(api, key, board.RENAME_REFUSED_MARKER.format(branch=new), text)
+        if has_marker(api, key, marker):
+            return ""
+        text = board.rename_refused_text(old, new, rulesets_on(api, (old, new)), words)
+        api.post(f"/repos/{api.repo}/issues/{key}/comments", {"body": marker + "\n" + text})
     except GitHubError as failure:
         return f"; saying so on #{key} failed: {failure}{github_words(failure)}"
-    return f"; said so on #{key}" if posted else ""
+    return f"; said so on #{key}"
 
 
 def rulesets_on(api, branches):
@@ -502,7 +516,8 @@ def rulesets_on(api, branches):
                 applied.setdefault(source, set()).add(rule.get("type") or "unnamed")
     except GitHubError:
         return None
-    return [ruleset(api, source, types) for source, types in sorted(applied.items(), key=lambda item: str(item[0]))]
+    order = sorted(applied.items(), key=lambda item: tuple(str(part) for part in item[0]))
+    return [ruleset(api, source, types) for source, types in order]
 
 
 def ruleset(api, source, types):

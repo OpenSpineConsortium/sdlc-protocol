@@ -421,6 +421,7 @@ class Releases(unittest.TestCase):
         line, = github.release_claims(api, released())
         self.assertTrue(line.endswith("Cannot update this ref."), line)
         self.assertEqual(len(opener.sent("POST")), 1, "only the rename is tried again")
+        self.assertFalse(any("/rules" in c.full_url for c in opener.calls), "the rules are read once")
 
     def test_rules_github_will_not_show_are_said_to_be_unread(self):
         api, opener = client({
@@ -436,14 +437,18 @@ class Releases(unittest.TestCase):
                       opener.sent("POST")[1]["body"])
 
     def test_a_rename_github_could_not_answer_is_left_for_the_next_run_unsaid(self):
-        api, opener = client({
-            REF + "claude/12": FakeAnswer({"object": {"sha": HEAD_12}}),
-            RENAME_12: Refusal(502),
-        })
-        self.assertEqual(github.release_claims(api, released()), [
-            "claude/12: not renamed to released/12-aaaaaaa: POST /repos/o/r/branches/claude%2F12/rename: HTTP 502"])
-        asked = [c.full_url.replace(github.API, "") for c in opener.calls]
-        self.assertFalse(any("/rules/" in path or "/comments" in path for path in asked), asked)
+        # A server error is for the moment, and a 404 can mean only that the
+        # branch went away since it was read.
+        for status in (502, 404):
+            api, opener = client({
+                REF + "claude/12": FakeAnswer({"object": {"sha": HEAD_12}}),
+                RENAME_12: Refusal(status),
+            })
+            self.assertEqual(github.release_claims(api, released()), [
+                "claude/12: not renamed to released/12-aaaaaaa: POST /repos/o/r/branches/claude%2F12/rename: "
+                f"HTTP {status}"])
+            asked = [c.full_url.replace(github.API, "") for c in opener.calls]
+            self.assertFalse(any("/rules/" in path or "/comments" in path for path in asked), asked)
 
     def test_a_comment_github_refuses_after_a_refused_rename_is_a_line(self):
         api, _ = client({
