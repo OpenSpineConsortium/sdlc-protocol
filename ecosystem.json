@@ -42,7 +42,7 @@
       "vendor_dir": "app/vendor",
       "modules": ["claims.py", "protocol_check.py"],
       "check": "bash scripts/check.sh",
-      "auto_merge": false,
+      "auto_merge": true,
       "uses": "the protocol check, posted as the check run sdlc/protocol (app/handlers.py)"
     }
   ]

@@ -21,7 +21,7 @@ Every copy also takes `__init__.py` and `vendoring.py`: the package's version, a
 | symphony-template | `tools/sdlc_protocol` | all of it | the board, the protocol check, team mode's clerk and the push guard, through the shims tools/board.py, check_protocol.py, team.py and guard_push.py | auto-merge, once its check is green |
 | coordbench | `coordbench/vendor/sdlc_protocol` | all of it | the sdlc arm's merge gate and the bare-git world (sdlc_protocol.gate and sdlc_protocol.adapters.bare_git, in coordbench/arms/sdlc/arm.py) | auto-merge, once its check is green |
 | symphony-marketplace | `plugins/sdlc/vendor/sdlc_protocol` | `guard.py` | the push guard in the plugin's PreToolUse hook (plugins/sdlc/scripts/guard.py) | auto-merge, once its check is green |
-| symphony-app | `app/vendor/sdlc_protocol` | `claims.py`, `protocol_check.py` | the protocol check, posted as the check run sdlc/protocol (app/handlers.py) | its owner (private: no auto-merge) |
+| symphony-app | `app/vendor/sdlc_protocol` | `claims.py`, `protocol_check.py` | the protocol check, posted as the check run sdlc/protocol (app/handlers.py) | auto-merge, once its check is green |
 
 A consumer that ships its copy on to users of its own names a version file in ecosystem.json. Whenever the copy's files change, `scripts/vendor.py` raises that file's patch version in the same run, so the sync's commit is also the release that takes the new copy to those users: Claude Code, for one, keeps an installed plugin on its cached copy until the version in the plugin's manifest changes.
 

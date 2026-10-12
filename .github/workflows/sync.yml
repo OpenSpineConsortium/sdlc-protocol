@@ -144,7 +144,7 @@ jobs:
           BOT_EMAIL: ${{ steps.bot.outputs.email }}
         run: |
           sync="python3 $GITHUB_WORKSPACE/scripts/sync.py"
-          report() { $sync summary --consumer "$CONSUMER" "$@" >> "$GITHUB_STEP_SUMMARY"; }
+          report() { $sync summary --consumer "$CONSUMER" "$@" | tee -a "$GITHUB_STEP_SUMMARY"; }
 
           # The sync's own open pull request. gh's --head matches the
           # branch's name alone, whatever repository the head is in, so a
