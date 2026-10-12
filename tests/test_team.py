@@ -1,8 +1,9 @@
-"""Team mode's clerk decides with no Claude usage, so its decisions are
-pinned here against an in-memory GitHub: when the lead plans and when it
-integrates, what a member carries or takes, and what seed writes. The
-fake below is the Client the clerk's rules are written against; the
-adapter over REST implements the same methods."""
+"""The clerk decides with no Claude usage, so its decisions are pinned
+here against an in-memory GitHub: when the coordinator plans and when it
+integrates, what a worker carries or takes, how the shared work is dealt
+by area, and what seed writes. The fake below is the Client the clerk's
+rules are written against; the adapter over REST implements the same
+methods."""
 
 import sys
 import unittest
@@ -11,7 +12,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from sdlc_protocol import labels, team  # noqa: E402
+from sdlc_protocol import claims, labels, team  # noqa: E402
 
 
 class FakeClient:
@@ -79,6 +80,7 @@ class ClientTest(unittest.TestCase):
         self.assertEqual((team.TODO_LABEL, team.EPIC_LABEL, team.BLOCKER_LABEL, team.BLOCKED_LABEL),
                          (labels.TODO, labels.EPIC, labels.BLOCKER, labels.BLOCKED))
         self.assertEqual((team.AGENT_PREFIX, team.ACCOUNT_PREFIX), ("agent:", "account:"))
+        self.assertEqual(team.worker_label("w1"), "worker:w1")
         self.assertEqual(team.CLAIM_PREFIX, "claude/")
 
 
@@ -225,6 +227,31 @@ class NextTest(unittest.TestCase):
         self.api.add_issue(5, ["todo"])
         self.assertEqual(team.next_for(self.api, "w1"), "take 5")
 
+    def test_a_worker_label_gives_a_task_as_the_older_spellings_did(self):
+        self.api.add_issue(2, ["todo"])
+        self.api.add_issue(3, ["todo", "worker:nightly"])
+        self.assertEqual(team.next_for(self.api, "nightly", ["nightly", "w2"]), "take 3")
+        self.assertEqual(team.next_for(self.api, "w2", ["nightly", "w2"]), "take 2")
+
+    def test_shared_work_is_dealt_by_area(self):
+        self.api.add_issue(4, ["todo"], body="### Files likely touched\n\nweb/app.js\n")
+        self.api.add_issue(5, ["todo"], body="### Files likely touched\n\napi/server.py\n")
+        self.api.add_issue(6, ["todo"], body="### Goal\n\nNo files named.\n")
+        members = ["api", "web", "any"]
+        areas = {"api": ("api/",), "web": ("web/**",)}
+        answers = [team.next_for(self.api, m, members, areas) for m in members]
+        self.assertEqual(answers, ["take 5", "take 4", "take 6"])
+
+    def test_work_that_reaches_outside_an_area_waits_for_a_worker_it_fits(self):
+        self.api.add_issue(4, ["todo"], body="## Files to touch\n\n- api/a.py\n- web/b.js\n")
+        self.assertEqual(team.next_for(self.api, "api", ["api"], {"api": ("api/",)}), "none")
+        self.assertEqual(team.next_for(self.api, "any", ["api", "any"], {"api": ("api/",)}), "take 4")
+
+    def test_dealing_takes_each_issue_once_in_the_order_given(self):
+        pool = [{"number": 1, "body": ""}, {"number": 2, "body": "### Files likely touched\n\ndocs/x.md\n"}]
+        dealt = team.deal(["a", "b", "c"], pool, {"a": ("src/",)})
+        self.assertEqual({member: issue["number"] for member, issue in dealt.items()}, {"a": 1, "b": 2})
+
     def test_main_makes_the_members_label_before_a_take(self):
         api = FakeClient()
         api.add_issue(4, ["todo"])
@@ -249,8 +276,9 @@ class SeedTest(unittest.TestCase):
         api.add_issue(1, ["epic"], body="Build the widget.")
         self.assertEqual(team.seed(api, 1, self.PLAN, ["w1", "w2"]), "seeded 101 102")
         parser, printer = api.issues[101], api.issues[102]
-        self.assertEqual(team.agent_of(parser), "w1")
-        self.assertEqual(team.agent_of(printer), "w2")
+        self.assertEqual(team.label_names(parser), ["todo", "worker:w1"])
+        self.assertEqual(labels.worker_of(printer), "w2")
+        self.assertIn("- [ ] #101 Parser (worker:w1)", api.issues[1]["body"])
         self.assertEqual(team.epic_of(parser), 1)
         self.assertIn("- src/parse.py", parser["body"])
         self.assertEqual(team.task_numbers(api.issues[1]), [101, 102])
@@ -269,7 +297,15 @@ class SeedTest(unittest.TestCase):
         api = FakeClient()
         api.add_issue(1, ["epic"])
         team.seed(api, 1, self.PLAN, ["w1", "w2"])
-        self.assertEqual(api.labels, {"todo", "epic", "agent:w1", "agent:w2"})
+        self.assertEqual(api.labels, {"todo", "epic", "worker:w1", "worker:w2"})
+
+    def test_with_no_worker_registered_the_tasks_go_to_the_open_queue(self):
+        api = FakeClient()
+        api.add_issue(1, ["epic"])
+        self.assertEqual(team.seed(api, 1, self.PLAN, []), "seeded 101 102")
+        self.assertEqual(team.label_names(api.issues[101]), ["todo"])
+        self.assertIn("- [ ] #101 Parser\n", api.issues[1]["body"])
+        self.assertEqual(api.labels, {"todo", "epic"})
 
     def test_a_sub_issue_link_that_fails_does_not_fail_the_seed(self):
         class Unlinked(FakeClient):
@@ -302,7 +338,25 @@ class SeedTest(unittest.TestCase):
     def test_a_task_body_names_the_epic_and_the_files(self):
         body = team.task_body(7, {"body": " Parse it. ", "files": ["a.py", "b.py"]})
         self.assertTrue(body.startswith("Epic: #7\n\nParse it.\n\n## Files to touch\n\n- a.py\n- b.py\n"))
-        self.assertIn("- (the lead named none)", team.task_body(7, {"body": "x"}))
+        self.assertIn("- (none named)", team.task_body(7, {"body": "x"}))
+        self.assertEqual(claims.issue_files(team.task_body(7, {"body": "x"})), [])
+        self.assertEqual(claims.issue_files(team.task_body(7, {"files": ["b.py", "a.py"]})), ["a.py", "b.py"])
+
+
+class PlanSchemaTest(unittest.TestCase):
+    def test_a_task_goes_to_a_registered_worker_or_with_none_to_anyone(self):
+        given = team.plan_schema(["alice", "nightly"])
+        task = given["properties"]["tasks"]["items"]
+        self.assertEqual(task["properties"]["owner"], {"type": "string", "enum": ["alice", "nightly"]})
+        self.assertEqual(task["required"], ["title", "owner", "files", "body"])
+        self.assertEqual(given["required"], ["plan", "tasks"])
+        self.assertEqual(team.plan_schema([])["properties"]["tasks"]["items"]["properties"]["owner"], {"type": "string"})
+
+    def test_a_plan_the_schema_admits_is_one_seed_reads(self):
+        api = FakeClient()
+        api.add_issue(1, ["epic"])
+        plan = {"plan": "p", "tasks": [{"title": "T", "owner": "alice", "files": ["a.py"], "body": "b"}]}
+        self.assertEqual(team.seed(api, 1, plan, ["alice"]), "seeded 101")
 
 
 class MembersTest(unittest.TestCase):

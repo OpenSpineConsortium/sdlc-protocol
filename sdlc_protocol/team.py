@@ -1,19 +1,25 @@
-"""Team mode's clerical work, done by code so no Claude usage goes to it.
+"""The clerk: the clerical work of the coordinator and the workers, done
+by code so no Claude usage goes to it.
 
-Team mode runs CooperBench's best-scoring configuration on GitHub: a lead
-turns an epic into a plan and pre-assigned sub-issues, members work them
-in parallel on claim branches, and the lead integrates at the end. Claude
-does the thinking; this module does the rest, three ways, each run by a
-workflow step through the command line (cli.py's "team" subcommand):
+The coordinator plans an epic the way CooperBench's best-scoring
+configuration does: Claude turns it into a plan and tasks given to
+workers, the workers carry them in parallel on claim branches, and the
+coordinator integrates at the end. A worker is any worker of the
+registry (workers.py): a person's sessions, a routine or a worker in
+GitHub Actions. Claude does the thinking; this module does the rest, three
+ways, each run by a workflow step through the command line (cli.py's
+"team" subcommand):
 
-  seed   read the lead's plan (the JSON claude-code-action returns under
-         --json-schema), write it into the epic, open one sub-issue per
-         task labelled todo and agent:<owner>, and link each under the epic.
-  route  after an issue event, say what the lead does next:
+  seed   read the coordinator's plan (the JSON claude-code-action returns
+         under --json-schema), write it into the epic, open one sub-issue
+         per task labelled todo and worker:<owner>, or todo alone where no
+         worker is registered, and link each under the epic.
+  route  after an issue event, say what the coordinator does next:
          "plan <epic>", "integrate <epic>", "unblock <task>" or "none".
-  next   for one member, say what it does next: "carry <issue>" (its own
-         claimed task needs work), "take <issue>" (its pre-assigned task,
-         else its share of the unclaimed blockers and todos) or "none".
+  next   for one worker, say what it does next: "carry <issue>" (its own
+         claim needs work), "take <issue>" (the task it was given, else its
+         share of the unclaimed blockers and todos that fit its area) or
+         "none".
 
 Every call to GitHub goes through a Client, the small interface below that
 adapters/github.py implements over REST and a test implements in memory,
@@ -26,13 +32,14 @@ import json
 import re
 from typing import Protocol, runtime_checkable
 
-from .claims import PREFIX as CLAIM_PREFIX, number_of
-# The label names and the two prefixes are spelled once, in labels.py: a
-# team member names itself with agent:<name>; any other account, and the
-# plain worker that runs as the main account, with account:<name>.
+from .claims import PREFIX as CLAIM_PREFIX, issue_files, number_of
+# The label names and the prefixes are spelled once, in labels.py: a
+# worker names itself with worker:<name>, and the older account:<name> and
+# agent:<name> are read as the same label.
 from .labels import (ACCOUNT_PREFIX, AGENT_PREFIX, BLOCKED as BLOCKED_LABEL,
-                     BLOCKER as BLOCKER_LABEL, EPIC as EPIC_LABEL, TODO as TODO_LABEL,
-                     agent_label as agent_of, holders, label_names)
+                     BLOCKER as BLOCKER_LABEL, EPIC as EPIC_LABEL, TODO as TODO_LABEL, WORKER_COLOUR,
+                     agent_label as agent_of, holders, label_names, worker_label)
+from .workers import fits
 
 # The one check the ruleset requires and a member can fix; the board's own
 # job and Claude's runs also leave check runs, which no member can mend.
@@ -44,7 +51,8 @@ EPIC_LINE = re.compile(r"^Epic: #(\d+)\s*$", re.MULTILINE)
 # base or conflicts with it; any other state waits on checks or a merge.
 NEEDS_REBASE = {"behind", "dirty"}
 FAILED = {"failure", "timed_out"}
-AGENT_COLOUR = "c5def5"
+# The colour a worker's label is made in; kept under team mode's name too.
+AGENT_COLOUR = WORKER_COLOUR
 
 
 class TeamError(Exception):
@@ -109,9 +117,9 @@ class Client(Protocol):
 # the clerk uses them under.
 
 def is_mine(issue, agent):
-    """An issue this member was given or claimed, and nobody else holds:
-    a second account can claim a member's task off the queue before the
-    member gets to it, and its branch is then that account's."""
+    """An issue this worker was given or claimed, and nobody else holds:
+    another worker can claim a task before the one it was given gets to
+    it, and its branch is then that worker's."""
     return holders(issue) == {agent}
 
 
@@ -227,7 +235,7 @@ class Snapshot:
 
     def pool(self):
         """The shared work: unclaimed issues labelled blocker or todo that
-        no member was given and that are not epics, blockers first, since a
+        no worker was given and that are not epics, blockers first, since a
         blocker stops everyone (spec/PROTOCOL.md)."""
         def shared(issue):
             labels = label_names(issue)
@@ -237,13 +245,31 @@ class Snapshot:
                       key=lambda i: (BLOCKER_LABEL not in label_names(i), i["number"]))
 
 
-def next_for(client, agent, team=None):
-    """The member's next move: its own claims first, then its pre-assigned
-    task, then its share of the shared work. Every member of a run asks at
-    the same moment, so the shared work is dealt out: the members with no
-    work of their own, in team order, take the first, second, third issue,
-    and one with no issue left for it waits, rather than start a session
-    that would race a peer for the same claim."""
+def deal(members, pool, areas=None):
+    """The shared work dealt out, by member: each member in turn takes the
+    first issue no member before it took whose files fit its area
+    (workers.fits; an issue that names no files fits every area), and a
+    member left with none is not in the answer. With no areas this is the
+    first issue to the first member, the second to the second, and so on."""
+    areas = areas or {}
+    dealt, taken = {}, set()
+    for member in members:
+        for issue in pool:
+            if issue["number"] not in taken and fits(areas.get(member, ()), issue_files(issue.get("body"))):
+                dealt[member] = issue
+                taken.add(issue["number"])
+                break
+    return dealt
+
+
+def next_for(client, agent, team=None, areas=None):
+    """The worker's next move: its own claims first, then the task it was
+    given, then its share of the shared work. The workers of one run ask at
+    the same moment, so the shared work is dealt out (deal): the workers
+    with no work of their own, in the order given, each take the next issue
+    that fits their area, and one with no issue left for it waits, rather
+    than start a session that would race a peer for the same claim. areas
+    maps a worker's name to its area; a worker not in it takes any issue."""
     team = list(team or [agent])
     if agent not in team:
         team.append(agent)
@@ -252,17 +278,17 @@ def next_for(client, agent, team=None):
     if own:
         return own
     idle = [member for member in team if member == agent or not snap.own_move(member)]
-    pool = snap.pool()
-    slot = idle.index(agent)
-    return f"take {pool[slot]['number']}" if slot < len(pool) else "none"
+    issue = deal(idle, snap.pool(), areas).get(agent)
+    return f"take {issue['number']}" if issue else "none"
 
 
-def next_move(client, agent, team=None, label=None):
-    """The member's next move as the worker workflow asks for it: next_for,
-    and when the move is a take and the member named its label, the label
-    is made first, so the session that follows can put it on the issue (a
-    label gh cannot find makes `gh issue edit --add-label` add none)."""
-    answer = next_for(client, agent, team)
+def next_move(client, agent, team=None, label=None, areas=None):
+    """The worker's next move as the workers' workflow asks for it:
+    next_for, and when the move is a take and the worker named its label,
+    the label is made first, so the session that follows can put it on the
+    issue (a label gh cannot find makes `gh issue edit --add-label` add
+    none)."""
+    answer = next_for(client, agent, team, areas)
     if label and answer.startswith("take "):
         ensure_label(client, label)
     return answer
@@ -270,11 +296,30 @@ def next_move(client, agent, team=None, label=None):
 
 # --- seed -------------------------------------------------------------------
 
+def plan_schema(owners):
+    """The JSON schema the coordinator's plan answers to, as Claude Code's
+    --json-schema takes it, and as seed reads the plan: one or two
+    paragraphs, then the tasks, each with a title, the worker it goes to,
+    the files it owns and its body. With workers registered, a task's owner
+    is one of them; with none, any text, which seed leaves out, so every
+    task goes to the open queue."""
+    owner = {"type": "string", "enum": list(owners)} if owners else {"type": "string"}
+    task = {"type": "object",
+            "properties": {"title": {"type": "string"}, "owner": owner,
+                           "files": {"type": "array", "items": {"type": "string"}}, "body": {"type": "string"}},
+            "required": ["title", "owner", "files", "body"]}
+    return {"type": "object",
+            "properties": {"plan": {"type": "string"}, "tasks": {"type": "array", "minItems": 1, "items": task}},
+            "required": ["plan", "tasks"]}
+
+
 def owners_for(tasks, agents):
-    """Each task's owner: the one the lead named when it is on the team;
-    a task whose owner is not goes first to a member no task names yet, so
-    no member sits idle while another holds two, then to the members in
-    turn."""
+    """Each task's owner: the one the plan named when it is a worker here;
+    a task whose owner is not goes first to a worker no task names yet, so
+    no worker sits idle while another holds two, then to the workers in
+    turn; with no workers registered, no task has an owner."""
+    if not agents:
+        return [None] * len(tasks)
     named = [task.get("owner") if task.get("owner") in agents else None for task in tasks]
     spare = [agent for agent in agents if agent not in named]
     owners, turn = [], 0
@@ -288,27 +333,30 @@ def owners_for(tasks, agents):
 
 
 def task_body(epic_number, task):
-    files = "\n".join(f"- {path}" for path in task.get("files", [])) or "- (the lead named none)"
+    files = "\n".join(f"- {path}" for path in task.get("files", [])) or "- (none named)"
     return (f"Epic: #{epic_number}\n\n{task.get('body', '').strip()}\n\n"
             f"## Files to touch\n\n{files}\n\n"
-            "Stay inside these files; another member owns the rest of the epic "
-            "(docs/agents/TEAM.md).\n")
+            "Stay inside these files; other workers own the rest of the epic "
+            "(docs/agents/WORKERS.md).\n")
 
 
 def ensure_label(client, name):
-    """Make a member's label; one that exists already is fine, and the
+    """Make a worker's label; one that exists already is fine, and the
     client treats it so. A label gh cannot find makes `gh issue edit
     --add-label` add none of the labels it was given, so the label is made
     before it is needed."""
-    client.create_label(name, AGENT_COLOUR)
+    client.create_label(name, WORKER_COLOUR)
 
 
 def open_task(client, epic_number, task, owner):
-    """Open one task issue and hang it under the epic as a sub-issue; the
-    link is a convenience for people, so its failure is not one."""
-    label = AGENT_PREFIX + owner
-    ensure_label(client, label)
-    made = client.create_issue(task["title"], task_body(epic_number, task), [TODO_LABEL, label])
+    """Open one task issue, given to its owner when it has one, and hang it
+    under the epic as a sub-issue; the link is a convenience for people, so
+    its failure is not one."""
+    names = [TODO_LABEL]
+    if owner:
+        names.append(worker_label(owner))
+        ensure_label(client, names[-1])
+    made = client.create_issue(task["title"], task_body(epic_number, task), names)
     try:
         client.add_sub_issue(epic_number, made["id"])
     except ClientError:
@@ -317,11 +365,12 @@ def open_task(client, epic_number, task, owner):
 
 
 def plan_section(plan, made):
-    """What seed appends to the epic: the lead's plan, the task list, and
-    the machine line route reads."""
-    lines = [f"- [ ] #{number} {title} (agent:{owner})" for number, title, owner in made]
+    """What seed appends to the epic: the coordinator's plan, the task
+    list, and the machine line route reads."""
+    lines = [f"- [ ] #{number} {title}" + (f" ({worker_label(owner)})" if owner else "")
+             for number, title, owner in made]
     numbers = " ".join(str(number) for number, _, _ in made)
-    return (f"\n\n{PLAN_MARKER}\n## Plan, by the lead\n\n{plan.strip()}\n\n"
+    return (f"\n\n{PLAN_MARKER}\n## Plan, by the coordinator\n\n{plan.strip()}\n\n"
             "## Tasks\n\n" + "\n".join(lines) + f"\n\n<!-- team:tasks {numbers} -->\n")
 
 
@@ -331,15 +380,15 @@ def seed(client, epic_number, plan, agents):
     if PLAN_MARKER in (epic.get("body") or ""):
         return "already planned"
     tasks = plan.get("tasks") or []
-    if not tasks or not agents:
-        raise TeamError("the plan has no tasks, or the team has no members")
+    if not tasks:
+        raise TeamError("the plan has no tasks")
     made = []
     for task, owner in zip(tasks, owners_for(tasks, agents)):
         made.append((open_task(client, epic_number, task, owner), task["title"], owner))
     body = (epic.get("body") or "") + plan_section(plan.get("plan", ""), made)
     client.set_body(epic_number, body)
     # An epic opened with the Task form carries todo, which would put it on
-    # the board's queue for any account to take whole; its tasks are the work.
+    # the board's queue for any worker to take whole; its tasks are the work.
     client.remove_label(epic_number, TODO_LABEL)
     return "seeded " + " ".join(str(number) for number, _, _ in made)
 

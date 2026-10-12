@@ -3,7 +3,7 @@
 A claim is the first push of the branch claude/<issue number>. GitHub
 refuses the second push of the same name, so the branch is the lock, and
 its first commit adds docs/agents/claims/<issue number>.md, which names
-the account, the plan and the files the work expects to touch. The board
+the worker, the plan and the files the work expects to touch. The board
 reads that file until the pull request has files of its own, and the
 coordinator releases a claim whose branch has had no commit for a day.
 A release is a comment on the issue that starts with RELEASE_MARKER;
@@ -31,16 +31,36 @@ RELEASE_MARKER = "<!-- sdlc-coordinator: claim-released -->"
 # collaborators. Anyone else's count only when an adapter finds that they
 # may write to the repository (is_release_comment).
 RELEASERS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
+# The bot a repository's own workflows write as, with their GITHUB_TOKEN:
+# the coordinator posts its releases as this bot. Only a workflow of the
+# repository can write as it, and a workflow only runs once someone who
+# may write has put it there, so its release counts like theirs. No
+# person's login can end in "[bot]", which GitHub keeps for its Apps.
+RELEASING_BOTS = frozenset({"github-actions[bot]"})
 # Where a released claim's branch goes: out of the claude/ names, so the
 # issue can be claimed again, and under a name of its own, so the work it
 # holds stays for whoever carries it on.
 RELEASED_PREFIX = "released/"
+# What a worker that may not mark its pull request ready, a cloud session
+# whose gh pr calls are refused, comments on its draft when the work is
+# done, for a maintainer to mark: a draft whose author's latest comment
+# starts with it is finished, and waits for review as a ready one does.
+FINISHED_SIGNAL = "finished; ready to mark"
 
-ACCOUNT_LINE = re.compile(r"^\W*account\W*:\s*(.+?)\s*$", re.IGNORECASE)
-# A note in parentheses after the account, like the claim template's
-# "(label account:main)", is for the reader, not the board.
+# The line that names the claim's worker: "- Worker: name", or the older
+# "- Account: name" that claim files carried before workers had one name.
+WORKER_LINE = re.compile(r"^\W*(?:worker|account)\W*:\s*(.+?)\s*$", re.IGNORECASE)
+ACCOUNT_LINE = WORKER_LINE
+# A note in parentheses after the name, like "(label worker:nightly)",
+# is for the reader, not the board.
 TRAILING_NOTE = re.compile(r"\s*\(.*\)\s*$")
 FILES_HEADING = re.compile(r"^#+\s*files to touch\s*$", re.IGNORECASE)
+PLAN_HEADING = re.compile(r"^#+\s*plan\s*$", re.IGNORECASE)
+# Where an issue lists the files its work will touch: the Task form's
+# "Files likely touched", or "Files to touch" in a task the coordinator
+# planned out of an epic.
+ISSUE_FILES_HEADING = re.compile(r"^#+\s*(?:files likely touched|files to touch)\s*$", re.IGNORECASE)
+NO_RESPONSE = "_No response_"
 LIST_ITEM = re.compile(r"^\s*[-*]\s+(.+?)\s*$")
 UNNAMED = "unnamed"
 
@@ -83,33 +103,70 @@ def by_number(value):
     return (0, int(text), "") if text.isdigit() else (1, 0, text)
 
 
-def claim_account(text):
-    """The account a claim file names, from a line like "Account: main" in
-    any of the Markdown spellings a hand might give it, without a note in
-    parentheses after it; "unnamed" when no line does."""
+def claim_worker(text):
+    """The worker a claim file names, from a line like "Worker: main", or
+    the older "Account: main", in any of the Markdown spellings a hand might
+    give it, without a note in parentheses after it; "unnamed" when no line
+    does."""
     for line in text.splitlines():
-        match = ACCOUNT_LINE.match(line)
+        match = WORKER_LINE.match(line)
         if match:
             return TRAILING_NOTE.sub("", match.group(1)).strip("`*_ ")
     return UNNAMED
+
+
+# The name the board read the same line under while it named an account.
+claim_account = claim_worker
+
+
+def section_lines(text, heading):
+    """The lines of a claim file under the heading the pattern matches, up
+    to the next heading."""
+    lines, inside = [], False
+    for line in text.splitlines():
+        if heading.match(line):
+            inside = True
+            continue
+        if inside and line.startswith("#"):
+            break
+        if inside:
+            lines.append(line)
+    return lines
 
 
 def claim_files(text):
     """The paths a claim file lists under its "Files to touch" heading, one
     list line each, up to the next heading, sorted: what the board shows
     for a claim whose pull request does not exist yet."""
-    files = []
-    inside = False
-    for line in text.splitlines():
-        if FILES_HEADING.match(line):
-            inside = True
+    matches = (LIST_ITEM.match(line) for line in section_lines(text, FILES_HEADING))
+    return sorted(match.group(1).strip("`") for match in matches if match)
+
+
+def issue_files(body):
+    """The paths an issue's body lists under "Files likely touched" or
+    "Files to touch": the first block of lines under the heading, one path
+    a line, without list marks or code spans, sorted and each once; what
+    the clerk deals work to a worker's area by. The prose after a blank
+    line is not a path, nor is a line in parentheses or GitHub's "_No
+    response_"."""
+    paths, started = set(), False
+    for line in section_lines(body or "", ISSUE_FILES_HEADING):
+        if not line.strip():
+            if started:
+                break
             continue
-        if inside and line.startswith("#"):
-            break
-        match = LIST_ITEM.match(line) if inside else None
-        if match:
-            files.append(match.group(1).strip("`"))
-    return sorted(files)
+        started = True
+        text = line.strip().lstrip("-*").strip().strip("`").strip()
+        if text and text != NO_RESPONSE and not text.startswith("("):
+            paths.add(text)
+    return sorted(paths)
+
+
+def claim_plan(text):
+    """The plan a claim file states under its "Plan" heading, as one line
+    of prose, or "" when it states none: what a release leaves behind for
+    the next worker."""
+    return " ".join(" ".join(section_lines(text or "", PLAN_HEADING)).split())
 
 
 def parse_time(value):
@@ -168,18 +225,31 @@ def starts_with_release_marker(comment):
 def is_release_comment(comment, trusted=None):
     """Whether an issue comment releases a claim: its first line is the
     marker and the repository trusts its author, by GitHub's
-    author_association (RELEASERS) or, for an author that word does not
-    vouch for, by trusted, a callable given the author's login that an
-    adapter answers from the author's permission on the repository: GitHub
-    may show a private member of the organization to a workflow's token as
-    a mere contributor. A comment by anyone else cannot take a claim away
-    from its holder."""
+    author_association (RELEASERS), as the repository's own workflows
+    (RELEASING_BOTS), or, for an author neither vouches for, by trusted, a
+    callable given the author's login that an adapter answers from the
+    author's permission on the repository: GitHub may show a private member
+    of the organization to a workflow's token as a mere contributor. A
+    comment by anyone else cannot take a claim away from its holder."""
     if not starts_with_release_marker(comment):
         return False
     if comment.get("author_association") in RELEASERS:
         return True
     login = (comment.get("user") or {}).get("login")
+    if login in RELEASING_BOTS:
+        return True
     return bool(trusted and login and trusted(login))
+
+
+def said_finished(comments, author):
+    """Whether the author's latest comment among a pull request's comments
+    starts with FINISHED_SIGNAL, so the draft is finished and its claim is
+    never released however long it waits."""
+    theirs = [c for c in comments if (c.get("user") or {}).get("login") == author and author]
+    if not theirs:
+        return False
+    latest = max(theirs, key=lambda c: parse_time(c.get("created_at") or "1970-01-01T00:00:00Z"))
+    return (latest.get("body") or "").strip().lower().startswith(FINISHED_SIGNAL)
 
 
 def latest_release(comments, trusted=None):

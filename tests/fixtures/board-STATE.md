@@ -4,7 +4,7 @@ As of commit 0123abc on main. Rewritten by .github/workflows/board.yml; do not e
 
 ## Claims (open claude/<issue> branches and docs/agents/claims/<issue>.md)
 
-| Issue | Branch | Account | PR | Files it touches |
+| Issue | Branch | Worker | PR | Files it touches |
 | --- | --- | --- | --- | --- |
 | #12 | claude/12 | main | #40 | docs/agents/README.md, docs/agents/STATE.md |
 | #13 | claude/13 | no claim file yet | #41 | .claude/skills/remember/SKILL.md |
@@ -16,11 +16,23 @@ As of commit 0123abc on main. Rewritten by .github/workflows/board.yml; do not e
 | #40 | Describe the board \| its tables | claude/12 | behind | 2026-09-18T12:00:00Z |
 | #41 | Add the remember skill | claude/13 | clean | 2026-09-22T08:00:00Z |
 
-## Queue (open issues labelled todo, unclaimed)
+## Overlaps (files that more than one piece of open work changes; land the work in this order: a blocker first, then work marked ready, then the oldest)
+
+| File | Open work, in the order it should land |
+| --- | --- |
+| (none) |  |
+
+## Queue (open issues labelled todo, unclaimed and given to no worker)
 
 | Issue | Title | Labels |
 | --- | --- | --- |
 | #14 | Write the release notes | todo |
+
+## Given to workers (open issues labelled todo that a worker's label names, not yet claimed)
+
+| Issue | Title | Worker |
+| --- | --- | --- |
+| (none) |  |  |
 
 ## Blockers (open issues labelled blocker)
 

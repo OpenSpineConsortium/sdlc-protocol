@@ -7,7 +7,7 @@ branch merges cleanly with the default branch as it is now, or the answer
 is "main moved" and the default branch stays as it was. What changes from
 one place to another is who merges (the owner, the gate itself, or
 auto-merge on a green check), how a branch brings a moved default branch in
-(accounts rebase, team members merge it in), and where the branches live
+(a worker rebases on it or merges it in), and where the branches live
 (GitHub, a bare repository, memory in a test). The first two are a Policy.
 The last is a World, which an adapter implements.
 
@@ -48,9 +48,9 @@ OWNER, GATE, AUTO_MERGE = "owner", "gate", "auto-merge"
 WHO_MERGES = (OWNER, GATE, AUTO_MERGE)
 MOVERS = {OWNER: "the owner", GATE: "the merge gate", AUTO_MERGE: "auto-merge"}
 
-# How a branch brings a moved default branch in: an account rebases and
-# pushes with --force-with-lease (docs/agents/PROTOCOL.md); a team member
-# merges it in, so nobody force-pushes (docs/agents/TEAM.md).
+# How a branch brings a moved default branch in: a worker rebases and
+# pushes with --force-with-lease, or merges it in, which needs no forced
+# push and is what a worker in Actions does (docs/agents/PROTOCOL.md).
 REBASE, MERGE = "rebase", "merge"
 BRING_MAIN_IN = (REBASE, MERGE)
 
@@ -115,9 +115,9 @@ class Policy:
         return f"{self.remote}/{self.default_branch}"
 
 
-# The two ways of working docs/agents/PROTOCOL.md describes: an account
-# rebases and the owner merges; a team member merges main in and lands by
-# auto-merge on a green check.
+# The two ways a worker lands, as docs/agents/PROTOCOL.md describes: it
+# rebases and the owner merges, or, when its file says "lands":
+# "auto-merge", it merges main in and lands by auto-merge on a green check.
 ACCOUNT_POLICY = Policy()
 TEAM_POLICY = Policy(bring_main_in=MERGE, who_merges=AUTO_MERGE)
 
@@ -274,8 +274,8 @@ class PullRequest:
 class Queue:
     """The issues and pull requests the gate decides over. given maps each
     issue number to the agent it was given to; in a closed queue each agent
-    claims only its own, as team mode's members take only the tasks the
-    lead gave them, and in an open one anybody claims any. base_ref is the
+    claims only its own, as an issue a worker's label names is that
+    worker's alone, and in an open one anybody claims any. base_ref is the
     commit the work began from. The caller holds a lock around every call
     that reads or changes the queue."""
 

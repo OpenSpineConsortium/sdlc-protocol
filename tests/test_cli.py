@@ -45,12 +45,12 @@ class Dispatch(unittest.TestCase):
         for argv in ([], ["boards"], ["--dry-run", str(FIXTURE)]):
             code, out, err = run(argv)
             self.assertEqual((code, out), (2, ""), argv)
-            self.assertIn("board,check,team,guard", err)
+            self.assertIn("board,check,team,workers,guard", err)
 
     def test_help_names_the_commands(self):
         code, out, _ = run(["-h"])
         self.assertEqual(code, 0)
-        self.assertIn("board,check,team,guard", out)
+        self.assertIn("board,check,team,workers,guard", out)
 
     def test_a_subcommands_own_help_exits_0(self):
         for command in ("board", "check", "team"):
@@ -126,9 +126,14 @@ class BoardLiveRun(unittest.TestCase):
     def live(self, argv, environ=None):
         calls = {}
 
-        def snapshot(api, sha, default_branch):
+        def snapshot(api, sha, default_branch, now):
             calls["snapshot"] = (api.token, api.repo, sha, default_branch)
+            calls["now"] = now
             return board.Snapshot.from_dict(json.loads(FIXTURE.read_text(encoding="utf-8")))
+
+        def coordinate(api, snap, now):
+            calls["coordinated"] = (snap, now)
+            return ["#7: claim released, idle since 2026-09-01T00:00:00Z"]
 
         def post_comments(api, due):
             calls["due"] = list(due)
@@ -140,6 +145,7 @@ class BoardLiveRun(unittest.TestCase):
 
         with mock.patch.object(github, "GitHub", FakeBoardApi), \
              mock.patch.object(github, "snapshot", snapshot), \
+             mock.patch.object(github, "coordinate", coordinate), \
              mock.patch.object(github, "post_comments", post_comments), \
              mock.patch.object(github, "release_claims", release_claims):
             result = run(["board"] + argv, environ=environ or self.ENVIRON)
@@ -157,12 +163,16 @@ class BoardLiveRun(unittest.TestCase):
             self.assertEqual([(n, m) for n, m, _ in calls["due"]],
                              [(40, "<!-- sdlc-board: main-moved 0123abc -->"),
                               (40, board.IDLE_MARKER), (41, board.IDLE_MARKER)])
-            # The released claims' branches are renamed after the board is
-            # written and before the comments, each said on a line of its own.
+            # The coordinator acts before the board is written, on the same
+            # snapshot and clock; the released claims' branches are renamed
+            # after it is written and before the comments, each said on a
+            # line of its own.
+            self.assertIs(calls["coordinated"][0], calls["released"])
+            self.assertIs(calls["coordinated"][1], calls["now"])
             self.assertIsInstance(calls["released"], board.Snapshot)
             self.assertEqual(printed.splitlines(),
-                             [f"{out.as_posix()}: rewritten", "#12: claim released", "PR #40: posted",
-                              "PR #40: posted", "PR #41: posted"])
+                             ["#7: claim released, idle since 2026-09-01T00:00:00Z", f"{out.as_posix()}: rewritten",
+                              "#12: claim released", "PR #40: posted", "PR #40: posted", "PR #41: posted"])
             (code, printed, _), _ = self.live(["--render-only", "--out", str(out)])
             self.assertEqual(printed.splitlines(), [f"{out.as_posix()}: unchanged"])
 
@@ -170,12 +180,13 @@ class BoardLiveRun(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             (code, _, _), calls = self.live(["--render-only", "--out", str(Path(folder) / "STATE.md")])
         self.assertEqual(code, 0)
+        self.assertNotIn("coordinated", calls)
         self.assertNotIn("due", calls)
         self.assertNotIn("released", calls)
         self.assertEqual(calls["snapshot"][2], "fromenv")
 
     def test_a_refused_call_is_one_line_and_exit_1(self):
-        def refused(api, sha, default_branch):
+        def refused(api, sha, default_branch, now):
             raise github.GitHubError("GET /repos/octo/widgets/issues: HTTP 403", 403)
 
         with mock.patch.object(github, "GitHub", FakeBoardApi), mock.patch.object(github, "snapshot", refused):
@@ -234,18 +245,21 @@ class TeamArguments(unittest.TestCase):
     ENVIRON = {"GITHUB_REPOSITORY": REPO, "CLAUDE_TEAM": '["w1", "w2"]'}
 
     def test_the_lead_workflows_route_line_with_an_empty_label(self):
-        # claude-lead.yml: route --event "$EVENT" --issue "$ISSUE" --label "$LABEL"
+        # claude-lead.yml, in copies of the template made before workers:
+        # route --event "$EVENT" --issue "$ISSUE" --label "$LABEL"
         args = cli.team_arguments(["route", "--event", "closed", "--issue", "12", "--label", ""], self.ENVIRON)
         self.assertEqual((args.repo, args.command, args.event, args.issue, args.label),
                          (REPO, "route", "closed", 12, ""))
 
     def test_the_lead_workflows_seed_line_takes_the_team_from_the_variable(self):
-        # claude-lead.yml: seed --epic "$EPIC" --plan "$RUNNER_TEMP/plan.json"
+        # claude-lead.yml, in copies made before workers:
+        # seed --epic "$EPIC" --plan "$RUNNER_TEMP/plan.json"
         args = cli.team_arguments(["seed", "--epic", "3", "--plan", "/runner/plan.json"], self.ENVIRON)
         self.assertEqual((args.command, args.epic, args.plan, args.team), ("seed", 3, "/runner/plan.json", '["w1", "w2"]'))
 
     def test_the_worker_workflows_next_line(self):
-        # claude-worker.yml: next --agent "$AGENT" --label "$LABEL"
+        # claude-worker.yml, in copies made before workers:
+        # next --agent "$AGENT" --label "$LABEL"
         args = cli.team_arguments(["next", "--agent", "w2", "--label", "agent:w2"], self.ENVIRON)
         self.assertEqual((args.command, args.agent, args.label, args.team), ("next", "w2", "agent:w2", '["w1", "w2"]'))
 
@@ -302,6 +316,171 @@ class TeamRun(unittest.TestCase):
         code, out, err = self.through_the_adapter(["next", "--agent", "w1"], FakeClient(), environ)
         self.assertEqual((code, out), (1, ""))
         self.assertTrue(err.startswith("team: CLAUDE_TEAM"))
+
+
+def registry(folder, *files):
+    """A registry folder holding these workers' files, each a dict."""
+    path = Path(folder) / "workers"
+    path.mkdir()
+    for data in files:
+        (path / f"{data['name']}.json").write_text(json.dumps(data), encoding="utf-8")
+    return str(path)
+
+
+class TeamWithTheRegistry(unittest.TestCase):
+    ENVIRON = {"GITHUB_TOKEN": "t", "GITHUB_REPOSITORY": REPO}
+
+    def through_the_adapter(self, argv, api):
+        with mock.patch.object(github, "GitHub", lambda token, repo: api):
+            return run(["team"] + argv, environ=self.ENVIRON)
+
+    def test_next_deals_among_the_workers_in_actions_each_by_its_area(self):
+        api = FakeClient()
+        api.add_issue(4, ["todo"], body="### Files likely touched\n\nweb/a.js\n")
+        api.add_issue(5, ["todo"], body="### Files likely touched\n\napi/b.py\n")
+        with tempfile.TemporaryDirectory() as folder:
+            where = registry(folder, {"name": "api", "runs": "actions", "area": ["api/"]},
+                             {"name": "web", "runs": "actions", "area": ["web/"]},
+                             {"name": "alice", "runs": "session"})
+            self.assertEqual(self.through_the_adapter(["next", "--agent", "web", "--registry", where,
+                                                       "--label", "worker:web"], api), (0, "take 4\n", ""))
+            self.assertEqual(self.through_the_adapter(["next", "--agent", "api", "--registry", where], api),
+                             (0, "take 5\n", ""))
+        self.assertIn("worker:web", api.labels)
+
+    def test_seed_gives_tasks_to_every_registered_worker(self):
+        api = FakeClient()
+        api.add_issue(1, ["epic"])
+        with tempfile.TemporaryDirectory() as folder:
+            where = registry(folder, {"name": "alice", "runs": "session"}, {"name": "nightly", "runs": "routine"})
+            plan = Path(folder) / "plan.json"
+            plan.write_text(json.dumps({"plan": "p", "tasks": [{"title": "A", "owner": "nightly"},
+                                                               {"title": "B", "owner": "ghost"}]}), encoding="utf-8")
+            code, out, _ = self.through_the_adapter(["seed", "--epic", "1", "--plan", str(plan), "--registry", where],
+                                                    api)
+        self.assertEqual((code, out), (0, "seeded 101 102\n"))
+        self.assertEqual([labels["name"] for labels in api.issues[101]["labels"]], ["todo", "worker:nightly"])
+        self.assertEqual([labels["name"] for labels in api.issues[102]["labels"]], ["todo", "worker:alice"])
+
+    def test_schema_needs_no_token_and_names_the_registered_workers(self):
+        with tempfile.TemporaryDirectory() as folder:
+            where = registry(folder, {"name": "nightly", "runs": "actions"}, {"name": "alice", "runs": "session"})
+            code, out, err = run(["team", "schema", "--registry", where], environ={})
+        self.assertEqual((code, err), (0, ""))
+        owner = json.loads(out)["properties"]["tasks"]["items"]["properties"]["owner"]
+        self.assertEqual(owner["enum"], ["alice", "nightly"])
+        code, out, _ = run(["team", "schema"], environ={})
+        self.assertEqual(json.loads(out)["properties"]["tasks"]["items"]["properties"]["owner"], {"type": "string"})
+
+    def test_a_broken_registry_is_one_line_and_exit_1(self):
+        with tempfile.TemporaryDirectory() as folder:
+            where = registry(folder, {"name": "Bad Name", "runs": "actions"})
+            code, out, err = self.through_the_adapter(["next", "--agent", "x", "--registry", where], FakeClient())
+        self.assertEqual((code, out), (1, ""))
+        self.assertTrue(err.startswith("team: Bad Name.json: name must be"), err)
+
+
+FORM_BODY = """### Name
+
+nightly
+
+### Where it runs
+
+routine: a routine on someone's Claude account
+
+### What it is for
+
+Docs fixes, every night.
+
+### Area
+
+docs/
+- `README.md`
+
+### How its pull requests land
+
+auto-merge: GitHub merges it once the check is green
+
+### Model
+
+_No response_
+
+### Turns per run
+
+_No response_
+
+### Rounds in a row
+
+3
+
+### Claude account
+
+the owner's Max account
+"""
+
+
+class Workers(unittest.TestCase):
+    def run_workers(self, argv, stdin=""):
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = cli.run_workers(argv, stdin=io.StringIO(stdin))
+        return code, out.getvalue(), err.getvalue()
+
+    def test_check_lists_the_workers_and_list_gives_the_matrix(self):
+        with tempfile.TemporaryDirectory() as folder:
+            where = registry(folder, {"name": "nightly", "runs": "actions"}, {"name": "alice", "runs": "session"})
+            self.assertEqual(self.run_workers(["--dir", where, "check"]),
+                             (0, f"2 workers in {where}: alice (session), nightly (actions)\n", ""))
+            self.assertEqual(self.run_workers(["--dir", where, "list"]), (0, '["alice", "nightly"]\n', ""))
+            self.assertEqual(self.run_workers(["--dir", where, "list", "--runs", "actions"]), (0, '["nightly"]\n', ""))
+            self.assertEqual(self.run_workers(["--dir", where, "get", "nightly", "max_turns"]), (0, "80\n", ""))
+            self.assertEqual(self.run_workers(["--dir", where, "get", "nightly", "label"]), (0, "worker:nightly\n", ""))
+            self.assertEqual(self.run_workers(["--dir", where, "get", "ghost", "runs"]),
+                             (1, "", f"workers: no worker named ghost in {where}\n"))
+
+    def test_describe_gives_a_line_per_worker(self):
+        with tempfile.TemporaryDirectory() as folder:
+            where = registry(folder, {"name": "nightly", "runs": "actions", "area": ["docs/"], "about": "Docs."})
+            self.assertEqual(self.run_workers(["--dir", where, "describe"]),
+                             (0, "nightly (actions): area docs/; Docs.\n", ""))
+            self.assertEqual(self.run_workers(["--dir", str(Path(folder) / "none"), "describe"]),
+                             (0, "(no worker is registered)\n", ""))
+
+    def test_no_registry_is_no_workers(self):
+        with tempfile.TemporaryDirectory() as folder:
+            where = str(Path(folder) / "none")
+            self.assertEqual(self.run_workers(["--dir", where, "check"]), (0, f"0 workers in {where}: none\n", ""))
+            self.assertEqual(self.run_workers(["--dir", where, "list", "--runs", "actions"]), (0, "[]\n", ""))
+
+    def test_check_names_every_problem_and_exits_1(self):
+        with tempfile.TemporaryDirectory() as folder:
+            where = registry(folder, {"name": "nightly", "runs": "cron", "colour": "red"})
+            code, out, err = self.run_workers(["--dir", where, "check"])
+        self.assertEqual((code, out), (1, ""))
+        self.assertEqual(err.splitlines(), [
+            "workers: nightly.json: colour is not a setting a worker has; the settings are name, runs, about, area, "
+            "lands, model, max_turns, rounds, account",
+            "workers: nightly.json: runs must be one of actions, routine, session"])
+
+    def test_from_form_writes_the_worker_and_says_its_name_and_how_it_runs(self):
+        with tempfile.TemporaryDirectory() as folder:
+            where = str(Path(folder) / "workers")
+            self.assertEqual(self.run_workers(["--dir", where, "from-form"], FORM_BODY), (0, "nightly routine\n", ""))
+            written = json.loads((Path(where) / "nightly.json").read_text(encoding="ascii"))
+            self.assertEqual(written, {"name": "nightly", "runs": "routine", "about": "Docs fixes, every night.",
+                                       "area": ["docs/", "README.md"], "lands": "auto-merge", "model": "",
+                                       "max_turns": 80, "rounds": 3, "account": "the owner's Max account"})
+            code, out, err = self.run_workers(["--dir", where, "from-form"], FORM_BODY)
+            self.assertEqual((code, out), (1, ""))
+            self.assertIn("a worker named nightly exists already", err)
+
+    def test_from_form_refuses_answers_that_do_not_hold_together(self):
+        with tempfile.TemporaryDirectory() as folder:
+            body = FORM_BODY.replace("\nnightly\n", "\nNight Shift\n").replace("\n3\n", "\nthree\n")
+            code, out, err = self.run_workers(["--dir", folder, "from-form"], body)
+        self.assertEqual((code, out), (1, ""))
+        self.assertIn("workers: name must be", err)
+        self.assertIn("workers: rounds must be a whole number from 1 to 50", err)
 
 
 class Check(unittest.TestCase):

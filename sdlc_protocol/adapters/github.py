@@ -1,13 +1,15 @@
 """The protocol over GitHub's REST API, through urllib.
 
-Three parts of the package read GitHub, and they read it the same way, so
+Four parts of the package read GitHub, and they read it the same way, so
 the calls live once, here. The board collects a Snapshot, posts the
 comments board.comments_due names and renames the branch of each claim
-board.released_keys counts as released; the team clerk calls the few
-methods team.Client lists; and the merge gate asks GitHubWorld, gate.World
-over one repository, how a branch stands, whether its required check
-passed, and for the merge itself, which goes through GitHub's merge API
-and only when the policy says the gate merges.
+board.released_keys counts as released; the coordinator, in the same run,
+releases the claims coordinator.releases_due names and tells the open work
+that meets other work in a file; the team clerk calls the few methods
+team.Client lists; and the merge gate asks GitHubWorld, gate.World over one
+repository, how a branch stands, whether its required check passed, and
+for the merge itself, which goes through GitHub's merge API and only when
+the policy says the gate merges.
 
 The token is an argument or GITHUB_TOKEN: a workflow's own token and an
 App installation token are both sent as a bearer token. It travels once
@@ -25,7 +27,7 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 
-from .. import board, claims, gate, labels, team
+from .. import board, claims, coordinator, gate, labels, team
 from ..gate import GateFailed, MainMoved, MergeRefused, MergeResult, NotAllowed
 
 API = "https://api.github.com"
@@ -311,12 +313,13 @@ def claim_heads(listed):
             for branch in listed if isinstance(branch, dict) and claims.is_claim_branch(branch.get("name") or "")}
 
 
-def may_be_released(issue):
-    """Whether a claim on this issue can have been released: the issue is
-    open, the coordinator has taken the label claimed off it, and it is not
-    labelled in-review, which a finished claim waiting for review is."""
+def may_be_due(issue):
+    """Whether a release can be due on a claim on this issue, or can have
+    happened: the issue is open and not labelled in-review, which a
+    finished claim waiting for review is, whether or not the label claimed
+    is still on it."""
     names = (issue or {}).get("labels", [])
-    return issue is not None and issue.get("state") == "open" and not {labels.CLAIMED, labels.IN_REVIEW} & set(names)
+    return issue is not None and issue.get("state") == "open" and labels.IN_REVIEW not in names
 
 
 def ready_branches(pulls):
@@ -347,32 +350,59 @@ def may_write(api):
     return ask
 
 
-def releases(api, heads, found_issues, pulls):
-    """What board.released_keys reads about each claim a release can have
-    freed, by key: the time of the latest release comment on its issue, and
-    the branch's head commit with the time it was committed. A claim whose
-    issue still carries the label claimed or in-review, or whose pull
-    request is marked ready, costs no call; any other costs one for its
-    issue's comments, one per author whose permission must be asked, and,
-    when a comment is a release, one more for the head commit, so the board
-    pays only where a release can have happened."""
+def committed_at(api, sha):
+    """When the commit was committed, as GitHub writes it, or "" when GitHub
+    does not know the commit."""
+    commit = api.get(f"/repos/{api.repo}/git/commits/{sha}", missing_ok=True) or {}
+    return (commit.get("committer") or {}).get("date") or ""
+
+
+def finished_draft(api, pull):
+    """Whether a draft's author said it is finished (claims.said_finished),
+    from the pull request's own comments; None, a pull request, costs no
+    call."""
+    if not pull:
+        return False
+    author = (pull.get("user") or {}).get("login")
+    return claims.said_finished(api.get_all(f"/repos/{api.repo}/issues/{pull['number']}/comments"), author)
+
+
+def releases(api, heads, found_issues, pulls, now=None):
+    """What the release rule reads about each claim that has gone more than
+    a day without a commit, by key: the branch's head commit with the time
+    it was committed, and the time of the latest release comment on its
+    issue, "" when there is none. The coordinator releases such a claim
+    unless a comment already did (coordinator.releases_due), and the board
+    counts it released once the label claimed is off too
+    (board.released_keys). A finished claim is left out: its issue labelled
+    in-review, its pull request marked ready, or its draft's author saying
+    it is finished (finished_draft). A claim whose issue is labelled
+    in-review or is not open, or whose pull request is marked ready, costs
+    no call; any other costs one for its head commit, and, when that commit
+    is more than a day old, one for its draft's comments, one for its
+    issue's comments and one per author whose permission must be asked, so
+    the run pays only where a release can be due or can have happened."""
+    now = now or datetime.now(timezone.utc)
     ready, trusted = ready_branches(pulls), may_write(api)
+    drafts = {(p.get("head") or {}).get("ref"): p for p in pulls if p.get("draft")}
     found = {}
     for branch, sha in sorted(heads.items()):
         key = claims.key_of(branch)
-        if not sha or branch in ready or not may_be_released(found_issues.get(key)):
+        if not sha or branch in ready or not may_be_due(found_issues.get(key)):
+            continue
+        last_commit = committed_at(api, sha)
+        if not last_commit or not claims.is_idle(last_commit, now) or finished_draft(api, drafts.get(branch)):
             continue
         released_at = claims.latest_release(api.get_all(f"/repos/{api.repo}/issues/{key}/comments"), trusted)
-        if released_at:
-            commit = api.get(f"/repos/{api.repo}/git/commits/{sha}", missing_ok=True) or {}
-            found[key] = {"released_at": released_at, "sha": sha,
-                          "committed_at": (commit.get("committer") or {}).get("date") or ""}
+        found[key] = {"released_at": released_at, "sha": sha, "committed_at": last_commit}
     return found
 
 
-def collect(api, sha, default_branch):
+def collect(api, sha, default_branch, now=None):
     """Everything the board renders, in the shape a --dry-run fixture has,
-    so a live run's answers can be saved and rendered again offline."""
+    so a live run's answers can be saved and rendered again offline; now is
+    the moment a claim's idleness is measured from, the wall clock unless
+    given."""
     repo = api.repo
     issues = [i for i in api.get_all(f"/repos/{repo}/issues", {"state": "open"}) if "pull_request" not in i]
     pulls = [pull_with_detail(api, p["number"]) for p in api.get_all(f"/repos/{repo}/pulls", {"state": "open"})]
@@ -388,13 +418,13 @@ def collect(api, sha, default_branch):
         "claims": {claims.key_of(b): claim_text(api, b) for b in branches},
         "claim_issues": found_issues,
         "merged": recent_merged(api),
-        "releases": releases(api, claim_heads(listed), found_issues, pulls),
+        "releases": releases(api, claim_heads(listed), found_issues, pulls, now),
     }
 
 
-def snapshot(api, sha, default_branch):
+def snapshot(api, sha, default_branch, now=None):
     """The board's Snapshot of the repository as GitHub knows it now."""
-    return board.Snapshot.from_dict(collect(api, sha, default_branch))
+    return board.Snapshot.from_dict(collect(api, sha, default_branch, now))
 
 
 def has_marker(api, number, marker):
@@ -420,6 +450,81 @@ def post_comments(api, due):
         if comment_once(api, number, marker, text):
             posted.append(f"PR #{number}: {kind} comment posted")
     return posted
+
+
+# --- the coordinator ----------------------------------------------------------
+
+def coordinate(api, snapshot, now):
+    """What the coordinator does in the board's run, before the board is
+    rendered: release every claim coordinator.releases_due names, then tell
+    each piece of open work about other work it meets that it has not been
+    told of. The snapshot is brought up to date with each release, so the
+    board this run renders shows it and the branch is renamed in the same
+    run. Nothing here raises: a call GitHub refuses is a line, and the next
+    claim is still released. The lines say what was done, one each, for the
+    workflow's log."""
+    snap = board.as_snapshot(snapshot)
+    lines = [release_one(api, snap, key, now) for key in coordinator.releases_due(snap, now)]
+    return lines + tell_overlaps(api, snap)
+
+
+def holding(api, default_branch, sha):
+    """What a branch holds beside the default branch, as coordinator.Holding,
+    from GitHub's comparison of the two; ahead is None when GitHub would not
+    compare them."""
+    try:
+        found = api.get(f"/repos/{api.repo}/compare/{quoted(default_branch)}...{sha}", missing_ok=True)
+    except GitHubError:
+        found = None
+    if not found:
+        return coordinator.Holding()
+    newest = (found.get("commits") or [{}])[-1]
+    message = (newest.get("commit") or {}).get("message") or ""
+    files = tuple(sorted(f["filename"] for f in found.get("files") or [] if f.get("filename")))
+    return coordinator.Holding(found.get("ahead_by"), (message.splitlines() or [""])[0], files)
+
+
+def release_one(api, snap, key, now):
+    """Release one claim: the comment first, then the labels, in the
+    protocol's order, so a claim is never taken off its holder without the
+    comment that says why. What was done, in a line."""
+    release = snap.releases[key]
+    text = coordinator.release_text(snap, key, holding(api, snap.default_branch, release.sha))
+    try:
+        posted = api.post(f"/repos/{api.repo}/issues/{key}/comments", {"body": text}) or {}
+    except GitHubError as problem:
+        return f"#{key}: not released, the comment failed: {problem}{github_words(problem)}"
+    taken_off = coordinator.labels_released(snap, key)
+    try:
+        for name in taken_off:
+            api.remove_label(int(key), name)
+    except GitHubError as problem:
+        return f"#{key}: release comment posted, but taking the labels off failed: {problem}{github_words(problem)}"
+    coordinator.after_release(snap, key, posted.get("created_at") or now.isoformat(), taken_off)
+    return f"#{key}: claim released, idle since {release.committed_at}"
+
+
+def tell_overlaps(api, snap):
+    """Post each overlap comment that is due, reading only the comments of
+    the work that meets other work; work whose comments GitHub would not
+    give is told nothing this run, so it is never told twice. The lines say
+    what was posted."""
+    lines, told = [], {}
+    for number in coordinator.meeting(snap):
+        try:
+            told[number] = coordinator.told_numbers(api.get_all(f"/repos/{api.repo}/issues/{number}/comments"))
+        except GitHubError as problem:
+            lines.append(f"#{number}: overlaps not told, its comments were not read: {problem}{github_words(problem)}")
+    for number, marker, text in coordinator.overlap_comments_due(snap, told):
+        if number not in told:
+            continue
+        try:
+            api.post(f"/repos/{api.repo}/issues/{number}/comments", {"body": marker + "\n" + text})
+        except GitHubError as problem:
+            lines.append(f"#{number}: overlap comment failed: {problem}{github_words(problem)}")
+            continue
+        lines.append(f"#{number}: overlap comment posted")
+    return lines
 
 
 def branch_sha(api, branch):

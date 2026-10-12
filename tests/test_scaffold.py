@@ -75,8 +75,8 @@ class Spec(unittest.TestCase):
 
     def test_keeps_the_template_sections_and_adds_one(self):
         self.assertEqual(headings(self.text), [
-            "How work is claimed", "Labels", "Pick", "Claim", "Announce", "Work in the open", "Finish",
-            "Blockers", "Release", "Team mode", "Policy and worlds", "Rules that hold everywhere",
+            "How work is claimed", "Workers", "Labels", "Pick", "Claim", "Announce", "Work in the open", "Finish",
+            "Blockers", "Release", "Overlaps", "Planning", "Policy and worlds", "Rules that hold everywhere",
         ])
 
     def test_names_every_policy_field_and_world_method(self):

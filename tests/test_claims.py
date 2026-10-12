@@ -90,11 +90,56 @@ class ClaimFile(unittest.TestCase):
         self.assertEqual(claims.claim_account("Plan: nothing named\n"), "unnamed")
         self.assertEqual(claims.claim_account(CLAIM_TEXT), "main")
 
+    def test_a_worker_line_names_the_worker_as_an_account_line_did(self):
+        for text in ("Worker: nightly", "- Worker: nightly", "- **Worker:** `nightly` (label worker:nightly)",
+                     "worker: nightly"):
+            self.assertEqual(claims.claim_worker(text + "\nPlan: x\n"), "nightly", text)
+        self.assertEqual(claims.claim_worker("- Worker: a\n- Account: b\n"), "a")
+        self.assertIs(claims.claim_account, claims.claim_worker)
+
+    def test_the_plan_is_the_prose_under_its_heading(self):
+        self.assertEqual(claims.claim_plan(CLAIM_TEXT), "Two sentences on what changes.")
+        self.assertEqual(claims.claim_plan("## Plan\n\nFirst line,\nsecond line.\n\n## Files to touch\n\n- a\n"),
+                         "First line, second line.")
+        self.assertEqual(claims.claim_plan("- Worker: x\n"), "")
+        self.assertEqual(claims.claim_plan(None), "")
+
     def test_claim_files_reads_the_list_under_its_heading_only(self):
         self.assertEqual(claims.claim_files(CLAIM_TEXT), ["docs/a.md", "docs/b.md"])
         self.assertEqual(claims.claim_files("- Account: main\n- Branch: claude/1\n"), [])
         two_lists = "## Files to touch\n\n- x.md\n\n## Notes\n\n- not a file\n"
         self.assertEqual(claims.claim_files(two_lists), ["x.md"])
+
+
+class SaidFinished(unittest.TestCase):
+    def comment(self, login, body, at):
+        return {"user": {"login": login}, "body": body, "created_at": at}
+
+    def test_the_authors_latest_comment_decides(self):
+        said = self.comment("alice", "Finished; ready to mark.", "2026-09-18T13:00:00Z")
+        other = self.comment("bob", "finished; ready to mark", "2026-09-18T14:00:00Z")
+        later = self.comment("alice", "Wait, one more thing.", "2026-09-18T15:00:00Z")
+        self.assertTrue(claims.said_finished([said, other], "alice"))
+        self.assertFalse(claims.said_finished([said, later], "alice"))
+        self.assertFalse(claims.said_finished([other], "alice"))
+        self.assertFalse(claims.said_finished([said], None))
+        self.assertFalse(claims.said_finished([], "alice"))
+        self.assertEqual(claims.FINISHED_SIGNAL, "finished; ready to mark")
+
+
+class IssueFiles(unittest.TestCase):
+    def test_the_task_forms_answer_lists_a_path_a_line(self):
+        body = "### Goal\n\nDo it.\n\n### Files likely touched\n\nsrc/a.py\n`src/b.py`\nsrc/a.py\n"
+        self.assertEqual(claims.issue_files(body), ["src/a.py", "src/b.py"])
+
+    def test_a_planned_tasks_list_stops_at_the_prose_after_it(self):
+        body = "Epic: #1\n\n## Files to touch\n\n- api/x.py\n- `api/y.py`\n\nStay inside these files.\n"
+        self.assertEqual(claims.issue_files(body), ["api/x.py", "api/y.py"])
+
+    def test_no_answer_names_no_file(self):
+        for body in ("### Files likely touched\n\n_No response_\n", "## Files to touch\n\n- (none named)\n",
+                     "### Goal\n\nNothing about files.\n", "", None):
+            self.assertEqual(claims.issue_files(body), [], body)
 
 
 class Times(unittest.TestCase):
@@ -186,6 +231,16 @@ class ReleaseComments(unittest.TestCase):
         self.assertFalse(claims.is_release_comment(comment(None)))
         self.assertFalse(claims.is_release_comment({}))
         self.assertFalse(claims.is_release_comment(None))
+
+    def test_the_repositorys_own_workflows_release_as_their_bot(self):
+        # The coordinator, a step of the board's run, posts as the bot of
+        # the workflow's GITHUB_TOKEN, which GitHub shows with no
+        # association that vouches for it.
+        bot = dict(comment(self.RELEASE, "NONE"), user={"login": "github-actions[bot]", "type": "Bot"})
+        self.assertTrue(claims.is_release_comment(bot))
+        other_app = dict(bot, user={"login": "some-app[bot]", "type": "Bot"})
+        self.assertFalse(claims.is_release_comment(other_app))
+        self.assertFalse(claims.is_release_comment(dict(bot, body="Thanks")))
 
     def test_an_author_the_association_does_not_vouch_for_is_asked_about(self):
         # A private member of the organization reads as a contributor to a

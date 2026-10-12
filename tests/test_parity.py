@@ -4,14 +4,19 @@ output, byte for byte.
 
 Four tools moved here, and each is held to its old self on the inputs the
 template's own tests use. The board renders the same STATE.md for every
-snapshot the template's tests/test_board.py renders, collects the same
-snapshot from the same GitHub, apart from the releases it reads since,
-and posts the same comments. The protocol
+snapshot the template's tests/test_board.py renders, in the template's
+layout (as_the_templates: since then the page names a claim's worker
+where it named an account, and shows the overlaps and the issues given to
+workers), collects the same snapshot from the same GitHub, apart from the
+releases it reads since, and posts the same comments. The protocol
 check names the same problems for the template's events, as a function and
 as a command. The push guard, the version on the template's branch
 claude/11, gives the same exit code and the same reason for each hook
 payload of its tests. The team clerk gives the same answers and makes the
-same writes for each scenario of the template's tests/test_team.py.
+same writes for each scenario of the template's tests/test_team.py, in
+team mode's words (as_team_modes: since then a task is given to a worker
+by worker:<name> where team mode wrote agent:<name>, and the coordinator
+plans where the lead did).
 
 Both sides talk to one GitHub held in memory and served as a urllib
 opener, so each runs through its own REST client as it would against
@@ -455,6 +460,63 @@ def repo_from_snapshot(snap):
     return repo
 
 
+# The template's idle comment, which promised a release the coordinator now
+# makes in the same run (DeclaredDifferences).
+OLD_IDLE_TEXT = ("idle: no change for more than a day; if this work is parked, say so here, or the coordinator "
+                 "may release the claim.")
+
+# What the board's page added or renamed since the template's tools, and the
+# template's own words for what it renamed (DeclaredDifferences pins both).
+NEW_SECTIONS = (board.OVERLAP_HEADING, board.GIVEN_HEADING)
+TEMPLATE_QUEUE_HEADING = "## Queue (open issues labelled todo, unclaimed)"
+WORKER_COLUMNS = "| Issue | Branch | Worker | PR | Files it touches |"
+ACCOUNT_COLUMNS = "| Issue | Branch | Account | PR | Files it touches |"
+
+
+def page_parts(page):
+    """A page as its intro and its sections, each from its heading on."""
+    parts = page.split("\n\n## ")
+    return [parts[0]] + ["## " + part for part in parts[1:]]
+
+
+def as_the_templates(page, queue=True):
+    """The library's page in the template's layout: the claims' column
+    titled Account and the queue under its old heading, as the template
+    wrote them, and the two sections added since, the overlaps and the
+    issues given to workers, left out. queue=False leaves the queue out
+    too, for a snapshot whose queue the template drew by its old rule."""
+    kept = []
+    for part in page_parts(page):
+        if part.startswith(NEW_SECTIONS) or (part.startswith(board.QUEUE_HEADING) and not queue):
+            continue
+        kept.append(part.replace(board.QUEUE_HEADING, TEMPLATE_QUEUE_HEADING, 1).replace(WORKER_COLUMNS,
+                                                                                        ACCOUNT_COLUMNS, 1))
+    return "\n\n".join(kept)
+
+
+def without_queue(page):
+    """The template's page without its queue."""
+    return "\n\n".join(part for part in page_parts(page) if not part.startswith(TEMPLATE_QUEUE_HEADING))
+
+
+def queues_an_accounts_issue(snap):
+    """Whether the template's queue held an issue an account's label names,
+    which the library gives to that worker instead (DeclaredDifferences)."""
+    for issue in snap.get("issues") or []:
+        names = [label if isinstance(label, str) else label["name"] for label in issue.get("labels") or []]
+        if "todo" in names and "claimed" not in names and any(n.startswith("account:") for n in names):
+            return True
+    return False
+
+
+def same_page(new, old, snap):
+    """The library's page and the template's, compared in the template's
+    layout, without the queue where the template drew it by its old rule."""
+    if queues_an_accounts_issue(snap):
+        return as_the_templates(new, queue=False), without_queue(old)
+    return as_the_templates(new), old
+
+
 @needs_template
 class BoardParity(unittest.TestCase):
     def test_every_snapshot_renders_the_same_page(self):
@@ -462,8 +524,9 @@ class BoardParity(unittest.TestCase):
             snap = scenario_snapshot(path, change)
             old = template_board().render(copy.deepcopy(snap))
             with self.subTest(name):
-                self.assertEqual(board.render(copy.deepcopy(snap)).encode("ascii"), old.encode("ascii"))
-                self.assertEqual(board.render(board.Snapshot.from_dict(snap)), old)
+                new, expected = same_page(board.render(copy.deepcopy(snap)), old, snap)
+                self.assertEqual(new.encode("ascii"), expected.encode("ascii"))
+                self.assertEqual(same_page(board.render(board.Snapshot.from_dict(snap)), old, snap)[0], expected)
 
     def test_the_same_github_collects_the_same_snapshot_and_page(self):
         for name, path, change in BOARD_SCENARIOS + (("an unsettled pull request", FIXTURE, unsettled_pull),):
@@ -479,8 +542,8 @@ class BoardParity(unittest.TestCase):
                 self.assertEqual(new.pop("releases"), {})
                 self.assertEqual(new, old)
                 self.assertEqual(new_sleep.calls, old_sleep.calls)
-                self.assertEqual(board.render(github.snapshot(library_client(new_repo), sha, trunk)),
-                                 template_board().render(old))
+                self.assertEqual(*same_page(board.render(github.snapshot(library_client(new_repo), sha, trunk)),
+                                            template_board().render(old), snap))
 
     def test_the_same_comments_are_posted_once(self):
         now = datetime(2026, 9, 23, 12, 0, tzinfo=timezone.utc)
@@ -501,7 +564,9 @@ class BoardParity(unittest.TestCase):
                                        board.comments_due(snap, event_name, ref_name, now))
             with self.subTest(f"{path.name} {event_name} {ref_name} {sorted(already)}"):
                 self.assertEqual(new, old)
-                self.assertEqual(new_repo.writes, old_repo.writes)
+                self.assertEqual(json.loads(json.dumps(new_repo.writes).replace(json.dumps(board.IDLE_TEXT)[1:-1],
+                                                                                json.dumps(OLD_IDLE_TEXT)[1:-1])),
+                                 json.loads(json.dumps(old_repo.writes)))
 
     def test_the_rules_give_the_same_answers(self):
         old = template_board()
@@ -509,8 +574,7 @@ class BoardParity(unittest.TestCase):
             self.assertEqual(board.pr_state({"mergeable_state": given}), old.pr_state({"mergeable_state": given}), given)
         for state in ("behind", "conflicting"):
             self.assertEqual(board.main_moved_text(state, "main", "0123abc"), old.main_moved_text(state, "main", "0123abc"))
-        self.assertEqual((board.MAIN_MOVED_MARKER, board.IDLE_MARKER, board.IDLE_TEXT),
-                         (old.MAIN_MOVED_MARKER, old.IDLE_MARKER, old.IDLE_TEXT))
+        self.assertEqual((board.MAIN_MOVED_MARKER, board.IDLE_MARKER), (old.MAIN_MOVED_MARKER, old.IDLE_MARKER))
         spellings = ("Account: main", "- Account: main", "**Account**: main", "- **Account:** `main`",
                      "- Account: main (label account:main)", "Plan: nothing named", CLAIM_TEXT)
         for text in spellings:
@@ -523,14 +587,17 @@ class BoardParity(unittest.TestCase):
     def test_the_dry_run_prints_and_writes_the_same_page(self):
         with tempfile.TemporaryDirectory() as folder:
             for path in (FIXTURE, WIDE):
+                snap = fixture(path)
                 old = run_command([str(TOOLS / "board.py"), "--dry-run", str(path)], folder)
                 new = run_command(library_command("board", "--dry-run", str(path)), folder)
-                self.assertEqual(new, old, path.name)
+                self.assertEqual((new[0], new[2]), (old[0], old[2]), path.name)
+                self.assertEqual(*same_page(new[1], old[1], snap), path.name)
                 self.assertEqual(old[0], 0)
                 old_out, new_out = Path(folder) / "old.md", Path(folder) / "new.md"
                 run_command([str(TOOLS / "board.py"), "--dry-run", str(path), "--out", str(old_out)], folder)
                 run_command(library_command("board", "--dry-run", str(path), "--out", str(new_out)), folder)
-                self.assertEqual(new_out.read_bytes(), old_out.read_bytes(), path.name)
+                self.assertEqual(*same_page(new_out.read_text(encoding="ascii"), old_out.read_text(encoding="ascii"),
+                                            snap), path.name)
 
     def test_a_live_run_without_a_token_fails_the_same_way(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -1034,6 +1101,40 @@ def library_ask(repo):
     return ask
 
 
+# What the clerk writes in the words of the workers and the coordinator,
+# and team mode's words for the same, in the order they are put back.
+TEAM_MODES_WORDS = (
+    ("Stay inside these files; other workers own the rest of the epic (docs/agents/WORKERS.md).",
+     "Stay inside these files; another member owns the rest of the epic (docs/agents/TEAM.md)."),
+    ("## Plan, by the coordinator", "## Plan, by the lead"),
+    ("- (none named)", "- (the lead named none)"),
+    ("refused: the plan has no tasks", "refused: the plan has no tasks, or the team has no members"),
+    ("worker:", "agent:"),
+)
+
+
+def as_team_modes(value):
+    """What the library's clerk answered or wrote, in team mode's words, to
+    compare with the template's clerk: every string with each of the
+    clerk's words since put back as team mode wrote them."""
+    if isinstance(value, str):
+        for new, old in TEAM_MODES_WORDS:
+            value = value.replace(new, old)
+        return value
+    if isinstance(value, dict):
+        return {as_team_modes(key): as_team_modes(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return type(value)(as_team_modes(item) for item in value)
+    return value
+
+
+def sorted_labels(state):
+    """A repository's state with its labels in order again, each once, as
+    FakeRepo keeps them, once translating a name has moved it or made it
+    the name of a label team mode had made already."""
+    return dict(state, labels=sorted(set(state["labels"])))
+
+
 @needs_template
 class TeamParity(unittest.TestCase):
     def test_every_scenario_gets_the_same_answers_and_writes(self):
@@ -1045,9 +1146,9 @@ class TeamParity(unittest.TestCase):
                 old = scenario(old_repo, template_ask(old_repo), str(plan))
                 new = scenario(new_repo, library_ask(new_repo), str(plan))
                 with self.subTest(scenario.__name__):
-                    self.assertEqual(new, old)
-                    self.assertEqual(new_repo.writes, old_repo.writes)
-                    self.assertEqual(new_repo.state(), old_repo.state())
+                    self.assertEqual(as_team_modes(new), old)
+                    self.assertEqual(as_team_modes(new_repo.writes), old_repo.writes)
+                    self.assertEqual(sorted_labels(as_team_modes(new_repo.state())), old_repo.state())
 
     def test_the_pure_rules_give_the_same_answers(self):
         old = template_team()
@@ -1061,9 +1162,9 @@ class TeamParity(unittest.TestCase):
             issue = {"body": body}
             self.assertEqual((team.epic_of(issue), team.task_numbers(issue)),
                              (old.epic_of(issue), old.task_numbers(issue)), body)
-        self.assertEqual(team.task_body(3, PLAN["tasks"][0]), old.task_body(3, PLAN["tasks"][0]))
+        self.assertEqual(as_team_modes(team.task_body(3, PLAN["tasks"][0])), old.task_body(3, PLAN["tasks"][0]))
         made = [(101, "Parser", "w1"), (102, "Printer", "w2")]
-        self.assertEqual(team.plan_section(PLAN["plan"], made), old.plan_section(PLAN["plan"], made))
+        self.assertEqual(as_team_modes(team.plan_section(PLAN["plan"], made)), old.plan_section(PLAN["plan"], made))
 
     @staticmethod
     def members(module, text):
@@ -1109,8 +1210,36 @@ class DeclaredDifferences(unittest.TestCase):
 
     def test_the_render_can_name_the_default_branch(self):
         snap = fixture()
-        self.assertEqual(board.render(snap, None), template_board().render(snap))
+        self.assertEqual(as_the_templates(board.render(snap, None)), template_board().render(snap))
         self.assertIn("on trunk.", board.render(snap, "trunk"))
+
+    def test_the_page_names_a_worker_where_the_template_named_an_account(self):
+        snap = fixture()
+        old, new = template_board().render(copy.deepcopy(snap)), board.render(snap)
+        self.assertIn(ACCOUNT_COLUMNS, old)
+        self.assertNotIn(WORKER_COLUMNS, old)
+        self.assertIn(WORKER_COLUMNS, new)
+        self.assertIn("| #12 | claude/12 | main | #40 |", old)
+        self.assertIn("| #12 | claude/12 | main | #40 |", new)
+
+    def test_the_page_shows_overlaps_and_given_work_where_the_template_showed_neither(self):
+        snap = fixture(WIDE)
+        old, new = template_board().render(copy.deepcopy(snap)), board.render(snap)
+        for heading in NEW_SECTIONS:
+            self.assertNotIn(heading, old)
+            self.assertIn(heading, new)
+        self.assertIn(TEMPLATE_QUEUE_HEADING, old)
+        self.assertIn(board.QUEUE_HEADING, new)
+
+    def test_an_issue_an_accounts_label_names_is_given_to_it_where_the_template_queued_it(self):
+        # The library reads account:<name> as the older spelling of
+        # worker:<name>, and an issue a worker's label names is that
+        # worker's alone, so it leaves the open queue.
+        snap = fixture(WIDE)
+        old, new = template_board().render(copy.deepcopy(snap)), board.render(snap)
+        self.assertIn("| #9 | Nine  with a dash | account:main, todo |", old.split(TEMPLATE_QUEUE_HEADING)[1])
+        self.assertNotIn("| #9 |", new.split(board.QUEUE_HEADING)[1].split(board.GIVEN_HEADING)[0])
+        self.assertIn("| #9 | Nine  with a dash | main |", new.split(board.GIVEN_HEADING)[1])
 
     def test_a_released_claim_returns_to_the_queue_where_the_template_kept_it_out(self):
         # The template's board never read a release, so a released claim
@@ -1127,6 +1256,36 @@ class DeclaredDifferences(unittest.TestCase):
         self.assertNotIn("| #12 | Released | todo |", old)
         self.assertNotIn("| #12 | claude/12 |", new)
         self.assertIn("| #12 | Released | todo |", new.split(board.QUEUE_HEADING)[1])
+
+    def test_a_task_is_given_by_a_workers_label_where_team_mode_used_an_agents(self):
+        old_repo, new_repo = FakeRepo(), FakeRepo()
+        for repo in (old_repo, new_repo):
+            repo.add_issue(1, ["epic"])
+        with tempfile.TemporaryDirectory() as folder:
+            plan = Path(folder) / "plan.json"
+            plan.write_text(json.dumps(PLAN), encoding="utf-8")
+            template_ask(old_repo)(["seed", "--epic", "1", "--plan", str(plan), "--team", '["w1", "w2"]'])
+            library_ask(new_repo)(["seed", "--epic", "1", "--plan", str(plan), "--team", '["w1", "w2"]'])
+        self.assertIn("agent:w1", [label["name"] for label in old_repo.issues[101]["labels"]])
+        self.assertIn("worker:w1", [label["name"] for label in new_repo.issues[101]["labels"]])
+
+    def test_a_plan_for_no_workers_opens_tasks_for_the_queue_where_team_mode_refused(self):
+        old_repo, new_repo = FakeRepo(), FakeRepo()
+        for repo in (old_repo, new_repo):
+            repo.add_issue(1, ["epic"])
+        with tempfile.TemporaryDirectory() as folder:
+            plan = Path(folder) / "plan.json"
+            plan.write_text(json.dumps(PLAN), encoding="utf-8")
+            old = template_ask(old_repo)(["seed", "--epic", "1", "--plan", str(plan), "--team", "[]"])
+            new = library_ask(new_repo)(["seed", "--epic", "1", "--plan", str(plan), "--team", "[]"])
+        self.assertEqual(old, "refused: the plan has no tasks, or the team has no members")
+        self.assertEqual(new, "seeded 101 102")
+        self.assertEqual([label["name"] for label in new_repo.issues[101]["labels"]], ["todo"])
+
+    def test_the_idle_comment_no_longer_promises_a_release_for_a_word_on_the_pull_request(self):
+        self.assertEqual(template_board().IDLE_TEXT, OLD_IDLE_TEXT)
+        self.assertNotEqual(board.IDLE_TEXT, OLD_IDLE_TEXT)
+        self.assertIn("marked ready waits", board.IDLE_TEXT)
 
     def test_a_check_event_that_is_not_an_object_passes_instead_of_crashing(self):
         with tempfile.TemporaryDirectory() as folder:

@@ -4,7 +4,7 @@ As of commit fedcba9 on trunk. Rewritten by .github/workflows/board.yml; do not 
 
 ## Claims (open claude/<issue> branches and docs/agents/claims/<issue>.md)
 
-| Issue | Branch | Account | PR | Files it touches |
+| Issue | Branch | Worker | PR | Files it touches |
 | --- | --- | --- | --- | --- |
 | #5 | claude/5 | main | (no pull request yet) | docs/a.md, docs/b.md, tools/x.py |
 | #6 | claude/6 | third | issue closed | delete the branch |
@@ -30,13 +30,26 @@ As of commit fedcba9 on trunk. Rewritten by .github/workflows/board.yml; do not 
 | #65 | A draft | claude/33 | unknown | 2026-09-23T11:30:00Z |
 | #66 | Behind trunk | claude/34 | behind | 2026-09-23T11:45:00Z |
 
-## Queue (open issues labelled todo, unclaimed)
+## Overlaps (files that more than one piece of open work changes; land the work in this order: a blocker first, then work marked ready, then the oldest)
+
+| File | Open work, in the order it should land |
+| --- | --- |
+| a.md | #61, #66 |
+| docs/b.md | #63, #5 |
+
+## Queue (open issues labelled todo, unclaimed and given to no worker)
 
 | Issue | Title | Labels |
 | --- | --- | --- |
-| #9 | Nine  with a dash | account:main, todo |
 | #25 | Blocks everyone \| twice over | blocker, todo |
 | #100 | A hundred, to sort after nine | todo |
+
+## Given to workers (open issues labelled todo that a worker's label names, not yet claimed)
+
+| Issue | Title | Worker |
+| --- | --- | --- |
+| #9 | Nine  with a dash | main |
+| #24 | A member's task | w1 |
 
 ## Blockers (open issues labelled blocker)
 

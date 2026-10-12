@@ -94,7 +94,7 @@ class TheImportClosure(unittest.TestCase):
 
     def test_relative_imports_from_a_subpackage_climb_to_the_package(self):
         self.assertEqual(ecosystem.imports_of("adapters/github.py"),
-                         ["board.py", "claims.py", "gate.py", "labels.py", "team.py"])
+                         ["board.py", "claims.py", "coordinator.py", "gate.py", "labels.py", "team.py"])
         self.assertEqual(ecosystem.imports_of("adapters/bare_git.py"), ["gate.py"])
 
     def test_an_import_inside_a_function_counts(self):

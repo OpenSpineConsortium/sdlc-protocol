@@ -6,7 +6,7 @@ The claim protocol's rules live once, in the package `sdlc_protocol` of OpenSpin
 
 ## The repositories
 
-- **OpenSpineConsortium/symphony-protocol** (public, this repository): The claim protocol as one Python package with no dependencies: the labels, the claim, the board, the protocol check, team mode's clerk, the push guard and the merge gate.
+- **OpenSpineConsortium/symphony-protocol** (public, this repository): The claim protocol as one Python package with no dependencies: the labels, the claim, the board, the coordinator, the registry of workers, the protocol check, the clerk, the push guard and the merge gate.
 - **OpenSpineConsortium/symphony-template** (internal): The template a Claude project is made from, kept as files: its instructions, its memory, its board, and the workflows and hooks that run the protocol.
 - **OpenSpineConsortium/coordbench** (public): The playground and benchmark that compares ways of coordinating Claude Code agents on CooperBench's task pairs, this protocol among them.
 - **OpenSpineConsortium/symphony-marketplace** (public): The Claude Code plugin marketplace whose one plugin, symphony, brings the skills, /board and the hooks to a repository not made from the template.
@@ -18,7 +18,7 @@ Every copy also takes `__init__.py` and `vendoring.py`: the package's version, a
 
 | Repository | Copy in | Modules | Uses it for | The sync's pull request merges by |
 | --- | --- | --- | --- | --- |
-| symphony-template | `tools/sdlc_protocol` | all of it | the board, the protocol check, team mode's clerk and the push guard, through the shims tools/board.py, check_protocol.py, team.py and guard_push.py | auto-merge, once its check is green |
+| symphony-template | `tools/sdlc_protocol` | all of it | the board with the coordinator's releases and overlaps, the protocol check, the clerk, the registry of workers and the push guard, through the shims tools/board.py, check_protocol.py, team.py, workers.py and guard_push.py | auto-merge, once its check is green |
 | coordbench | `coordbench/vendor/sdlc_protocol` | all of it | the sdlc arm's merge gate and the bare-git world (sdlc_protocol.gate and sdlc_protocol.adapters.bare_git, in coordbench/arms/sdlc/arm.py) | auto-merge, once its check is green |
 | symphony-marketplace | `plugins/sdlc/vendor/sdlc_protocol` | `guard.py` | the push guard in the plugin's PreToolUse hook (plugins/sdlc/scripts/guard.py) | auto-merge, once its check is green |
 | symphony-app | `app/vendor/sdlc_protocol` | `claims.py`, `protocol_check.py` | the protocol check, posted as the check run sdlc/protocol (app/handlers.py) | auto-merge, once its check is green |
@@ -43,12 +43,14 @@ flowchart LR
     m_board["board"]
     m_claims["claims"]
     m_cli["cli"]
+    m_coordinator["coordinator"]
     m_gate["gate"]
     m_guard["guard"]
     m_labels["labels"]
     m_protocol_check["protocol_check"]
     m_team["team"]
     m_vendoring["vendoring"]
+    m_workers["workers"]
   end
   r_symphony_template(["symphony-template"])
   r_coordbench(["coordbench"])
@@ -58,6 +60,7 @@ flowchart LR
   m_adapters_bare_git --> m_gate
   m_adapters_github --> m_board
   m_adapters_github --> m_claims
+  m_adapters_github --> m_coordinator
   m_adapters_github --> m_gate
   m_adapters_github --> m_labels
   m_adapters_github --> m_team
@@ -71,10 +74,16 @@ flowchart LR
   m_cli --> m_protocol_check
   m_cli --> m_team
   m_cli --> m_vendoring
+  m_cli --> m_workers
+  m_coordinator --> m_board
+  m_coordinator --> m_claims
+  m_coordinator --> m_labels
   m_gate --> m_claims
   m_protocol_check --> m_claims
   m_team --> m_claims
   m_team --> m_labels
+  m_team --> m_workers
+  m_workers --> m_labels
   r_symphony_template -. all .-> library
   r_coordbench -. all .-> library
   r_symphony_marketplace -.-> m_guard
@@ -92,13 +101,15 @@ What each module is, in the first sentence of its docstring:
 - `adapters.memory`: A world held in memory, for tests and simulations of the merge gate.
 - `board`: The board: what a repository's open work looks like, as one page.
 - `claims`: The claim: a branch named for an issue and the file that describes it.
-- `cli`: The command line: python3 -m sdlc_protocol `<board|check|team|guard|verify-vendored>`.
+- `cli`: The command line: python3 -m sdlc_protocol `<board|check|team|workers|guard|verify-vendored>`.
+- `coordinator`: The coordinator's rules: which claims to release and what to say when it does, and what to tell open work that meets other work in the same files.
 - `gate`: The merge gate: the claim protocol's decisions as a policy over a world.
 - `guard`: Refuse a git push the board rules forbid, before it runs.
 - `labels`: The labels the claim protocol reads and writes.
 - `protocol_check`: Hold a `claude/<issue>` pull request to the claim protocol.
-- `team`: Team mode's clerical work, done by code so no Claude usage goes to it.
+- `team`: The clerk: the clerical work of the coordinator and the workers, done by code so no Claude usage goes to it.
 - `vendoring`: The record a vendored copy of this package carries, and its check.
+- `workers`: The workers a repository runs, kept as files: one small JSON file per worker under .github/symphony/workers/, named for the worker.
 
 ## How a change travels
 
