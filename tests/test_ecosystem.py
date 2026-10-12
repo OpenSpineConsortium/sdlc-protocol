@@ -50,10 +50,13 @@ class TheFile(unittest.TestCase):
     def test_every_copy_takes_the_version_and_its_own_check(self):
         self.assertEqual(ECO["always_copied"], ["__init__.py", "vendoring.py"])
 
-    def test_the_private_app_merges_by_hand_and_the_others_by_auto_merge(self):
+    def test_every_consumer_lands_by_auto_merge(self):
+        """The App's repository is private, where GitHub offers auto-merge
+        only on a paid plan; its organization has one, and on GitHub Free
+        the sync reports GitHub's refusal and the pull request waits."""
         for consumer in ECO["consumers"]:
             with self.subTest(consumer=consumer["repository"]):
-                self.assertEqual(consumer["auto_merge"], consumer["visibility"] != "private")
+                self.assertTrue(consumer["auto_merge"])
 
     def test_the_template_is_internal_as_github_has_it(self):
         """GitHub has the template internal, so another repository's run
@@ -146,9 +149,11 @@ class TheShape(unittest.TestCase):
         self.assertProblem(lambda eco: consumer_of(eco, "coordbench").update(visibility="secret"),
                            "visibility is not one of public, internal, private")
 
-    def test_auto_merge_on_a_private_repository(self):
-        self.assertProblem(lambda eco: consumer_of(eco, "symphony-app").update(auto_merge=True),
-                           "GitHub Free offers no auto-merge")
+    def test_auto_merge_on_a_private_repository_is_no_problem(self):
+        """GitHub offers it there on a paid plan, and on GitHub Free it
+        refuses to arm it, which the sync's summary reports."""
+        eco = changed(lambda eco: consumer_of(eco, "coordbench").update(visibility="private"))
+        self.assertEqual(ecosystem.problems(eco), [])
 
     def test_auto_merge_on_an_internal_repository_is_no_problem(self):
         """Only GitHub Enterprise Cloud has internal repositories, and it has

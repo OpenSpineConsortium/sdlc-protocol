@@ -213,10 +213,12 @@ class TheBody(unittest.TestCase):
     def test_a_consumer_with_no_version_file_has_no_release_section(self):
         self.assertNotIn("## The release", self.body())
 
-    def test_auto_merge_where_ecosystem_json_gives_it_and_the_owner_on_the_private_app(self):
+    def test_auto_merge_where_ecosystem_json_gives_it_and_the_owner_on_a_private_repository_without(self):
         self.assertIn("Auto-merge", self.body(TEMPLATE))
-        self.assertIn("Its owner merges it: GitHub Free offers auto-merge only on public", self.body(APP))
-        self.assertNotIn("Auto-merge,", self.body(APP))
+        self.assertIn("Auto-merge, when this repository allows it", self.body(APP))
+        private = self.body(dict(APP, auto_merge=False))
+        self.assertIn("Its owner merges it: GitHub Free offers auto-merge only on public", private)
+        self.assertNotIn("Auto-merge,", private)
 
     def test_a_public_consumer_without_auto_merge_is_not_called_private(self):
         text = self.body(dict(COORDBENCH, auto_merge=False))

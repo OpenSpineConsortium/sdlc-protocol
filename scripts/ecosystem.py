@@ -311,9 +311,6 @@ def visibility_problems(where, consumer):
         return [f"{where}: visibility is not one of {', '.join(VISIBILITIES)}"]
     if not isinstance(auto_merge, bool):
         return [f"{where}: auto_merge is not true or false"]
-    if visibility == "private" and auto_merge:
-        return [f"{where}: auto_merge is true on a private repository, where GitHub Free offers no auto-merge "
-                "and this ecosystem relies on no paid plan"]
     return []
 
 
