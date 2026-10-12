@@ -23,8 +23,8 @@ from typing import NamedTuple
 
 from . import labels
 from .claims import (
-    IDLE_AFTER, branch_of, by_number, claim_account, claim_files, is_claim_branch, is_idle, key_of,
-    was_released,
+    IDLE_AFTER, PREFIX, RELEASED_PREFIX, branch_of, by_number, claim_account, claim_files, is_claim_branch,
+    is_idle, key_of, was_released,
 )
 
 RECENT_MERGED = 5
@@ -46,6 +46,10 @@ IDLE_TEXT = (
 # What the board says on an issue once it has renamed a released claim's
 # branch; the marker names the new branch, so each release is told once.
 RELEASED_MARKER = "<!-- sdlc-board: released {branch} -->"
+# What the board says on an issue when GitHub refused for good to rename
+# its released claim's branch; the marker names the branch the rename was
+# to make, so each refusal is told once, and a newer head's again.
+RENAME_REFUSED_MARKER = "<!-- sdlc-board: rename-refused {branch} -->"
 
 CLAIM_HEADING = "## Claims (open claude/<issue> branches and docs/agents/claims/<issue>.md)"
 CLAIM_COLUMNS = ("Issue", "Branch", "Account", "PR", "Files it touches")
@@ -361,6 +365,43 @@ def released_text(old, new):
         f"To undo the release, put the label claimed back on the issue first, then rename the branch "
         f"back and reopen its pull request."
     )
+
+
+class Ruleset(NamedTuple):
+    """A ruleset whose rules apply to a branch the board could not rename:
+    its name, the page where an owner changes it, "" when there is none to
+    link, and the types of the rules it applies to the branch."""
+
+    name: str
+    link: str
+    types: tuple
+
+
+def rename_refused_text(old, new, rulesets, words):
+    """What the board says on an issue when GitHub refused for good to
+    rename the branch of its released claim, in GitHub's words: the name
+    stays taken, so nobody can claim the issue, until a board run renames
+    it. A ruleset over the claim branches is what makes a rename an
+    administrator's, so each one that applies to either name is named with
+    its rules; rulesets is None when the board could not read them, and
+    empty when none applies, which leaves the token's own right."""
+    said = " ".join(str(words).split())
+    lines = [f"rename refused: the claim on this issue was released, but GitHub refused to rename its "
+             f"branch {old} to {new} ({said}), so the name {old} is still taken and nobody can claim the "
+             f"issue yet. Every board run tries the rename again."]
+    if rulesets:
+        lines += ["", "These rulesets apply to the two names:"]
+        lines += [f"- {f'[{r.name}]({r.link})' if r.link else r.name}: {', '.join(r.types)}" for r in rulesets]
+        lines += ["", f"Take `{PREFIX}**` and `{RELEASED_PREFIX}**` out of their targets, so that they hold the "
+                      f"default branch alone, and the next board run renames the branch."]
+    elif rulesets is None:
+        lines += ["", f"The board could not read which rulesets apply to the two names. A ruleset whose target "
+                      f"takes in `{PREFIX}**` or `{RELEASED_PREFIX}**` makes the rename an administrator's: take "
+                      f"those names out of its target, and the next board run renames the branch."]
+    else:
+        lines += ["", "No ruleset applies to the two names, so the board's token may lack the right to rename "
+                      "a branch: its workflow needs contents: write."]
+    return "\n".join(lines)
 
 
 def pulls_behind_main(pulls):
