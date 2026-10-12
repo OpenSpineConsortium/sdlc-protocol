@@ -245,18 +245,21 @@ class TeamArguments(unittest.TestCase):
     ENVIRON = {"GITHUB_REPOSITORY": REPO, "CLAUDE_TEAM": '["w1", "w2"]'}
 
     def test_the_lead_workflows_route_line_with_an_empty_label(self):
-        # claude-lead.yml: route --event "$EVENT" --issue "$ISSUE" --label "$LABEL"
+        # claude-lead.yml, in copies of the template made before workers:
+        # route --event "$EVENT" --issue "$ISSUE" --label "$LABEL"
         args = cli.team_arguments(["route", "--event", "closed", "--issue", "12", "--label", ""], self.ENVIRON)
         self.assertEqual((args.repo, args.command, args.event, args.issue, args.label),
                          (REPO, "route", "closed", 12, ""))
 
     def test_the_lead_workflows_seed_line_takes_the_team_from_the_variable(self):
-        # claude-lead.yml: seed --epic "$EPIC" --plan "$RUNNER_TEMP/plan.json"
+        # claude-lead.yml, in copies made before workers:
+        # seed --epic "$EPIC" --plan "$RUNNER_TEMP/plan.json"
         args = cli.team_arguments(["seed", "--epic", "3", "--plan", "/runner/plan.json"], self.ENVIRON)
         self.assertEqual((args.command, args.epic, args.plan, args.team), ("seed", 3, "/runner/plan.json", '["w1", "w2"]'))
 
     def test_the_worker_workflows_next_line(self):
-        # claude-worker.yml: next --agent "$AGENT" --label "$LABEL"
+        # claude-worker.yml, in copies made before workers:
+        # next --agent "$AGENT" --label "$LABEL"
         args = cli.team_arguments(["next", "--agent", "w2", "--label", "agent:w2"], self.ENVIRON)
         self.assertEqual((args.command, args.agent, args.label, args.team), ("next", "w2", "agent:w2", '["w1", "w2"]'))
 

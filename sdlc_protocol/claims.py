@@ -51,8 +51,8 @@ FINISHED_SIGNAL = "finished; ready to mark"
 # "- Account: name" that claim files carried before workers had one name.
 WORKER_LINE = re.compile(r"^\W*(?:worker|account)\W*:\s*(.+?)\s*$", re.IGNORECASE)
 ACCOUNT_LINE = WORKER_LINE
-# A note in parentheses after the account, like the claim template's
-# "(label account:main)", is for the reader, not the board.
+# A note in parentheses after the name, like "(label worker:nightly)",
+# is for the reader, not the board.
 TRAILING_NOTE = re.compile(r"\s*\(.*\)\s*$")
 FILES_HEADING = re.compile(r"^#+\s*files to touch\s*$", re.IGNORECASE)
 PLAN_HEADING = re.compile(r"^#+\s*plan\s*$", re.IGNORECASE)
