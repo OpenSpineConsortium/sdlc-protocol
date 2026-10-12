@@ -12,7 +12,7 @@ Four other repositories run a copy of this code, so a change here is a change th
 - sdlc_protocol/vendoring.py: the record a copy carries and its check; it imports nothing from the package and nothing outside the standard library, since a consumer runs it as a script inside a copy that may hold only a few modules.
 - ecosystem.json: the consumers, their copies and their checks; ECOSYSTEM.md: the map drawn from it and from the package's imports, which `python3 scripts/architecture.py` rewrites after a change to either.
 - tests/: one test module per module, test_<module>.py, the scripts' included, with fixtures under tests/fixtures/.
-- scripts/check.sh: the checks; scripts/vendor.py (and its wrapper vendor.sh): the copy into a consumer and its record; scripts/sync.py: the logic the sync and downstream jobs call; scripts/ecosystem.py: reading ecosystem.json and the imports, shared by the others.
+- scripts/check.sh: the checks; scripts/vendor.py (and its wrapper vendor.sh): the copy into a consumer and its record; scripts/sync.py: the logic the sync and downstream jobs call; scripts/release.py: which versions the release workflow tags; scripts/ecosystem.py: reading ecosystem.json and the imports, shared by the others.
 
 ## Checks
 

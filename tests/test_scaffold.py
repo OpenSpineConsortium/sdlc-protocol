@@ -11,9 +11,13 @@ leg per consumer and skip the one it cannot read, the sync must run on a
 push to main that changes the package, never from another branch and
 never two at once, must take as its own only a pull request from its own
 repository, must arm auto-merge without ever merging, and must push only
-what the branch does not already hold. No workflow may put an expression
-inside a shell step, where a value would run as code, and every shell
-step must at least parse. The copy itself,
+what the branch does not already hold. The release must run on a push to
+main that changes the version or what tags it, never from another branch
+and never two at once, with a token that writes contents and nothing
+else, must push nothing and must make a tag only where the script found
+one missing, so none is moved. No workflow may put an expression inside a
+shell step, where a value would run as code, and every shell step must at
+least parse. The copy itself,
 scripts/vendor.py and its record, is tests/test_vendor.py's and
 tests/test_vendoring.py's.
 """
@@ -257,6 +261,66 @@ class SyncWorkflow(unittest.TestCase):
         self.assertIn("report --state closed --url \"$url\"", block)
         self.assertIn('report --state "up to date"', block)
         self.assertLess(self.text.index('url="$(own_pull)"'), start)
+
+
+class ReleaseWorkflow(unittest.TestCase):
+    def setUp(self):
+        self.text = workflow("release.yml")
+
+    def test_runs_on_a_push_to_main_that_changes_the_version_or_what_tags_it(self):
+        self.assertIn("  push:\n    branches: [main]\n    paths:\n", self.text)
+        for path in ("sdlc_protocol/__init__.py", "scripts/release.py", ".github/workflows/release.yml"):
+            self.assertIn(f'      - "{path}"\n', self.text)
+        self.assertIn("  workflow_dispatch:\n", self.text)
+
+    def test_a_run_off_main_tags_nothing_and_says_why(self):
+        """A run by hand can name any branch, whose unmerged version would
+        otherwise be released."""
+        self.assertIn("REF: ${{ github.ref }}", self.text)
+        self.assertRegex(self.text, r'if \[ "\$REF" != "refs/heads/main" \]; then\n'
+                                    r'\s+echo "releases are made from main only; \$REF tags nothing"\n'
+                                    r'\s+exit 0\n')
+
+    def test_one_release_at_a_time_and_a_newer_push_waits(self):
+        self.assertIn("concurrency:\n  group: release\n  cancel-in-progress: false\n", self.text)
+
+    def test_the_token_writes_contents_and_nothing_else(self):
+        self.assertIn("permissions:\n  contents: write\n\n", self.text)
+
+    def test_reads_every_commit_and_tag_and_keeps_no_credential(self):
+        """The walk back to the newest tagged version needs the whole
+        history and the tags; nothing is pushed, so the checkout keeps no
+        token in its git configuration."""
+        self.assertIn("          fetch-depth: 0\n          persist-credentials: false\n", self.text)
+
+    def test_pushes_nothing_and_makes_a_tag_only_where_the_script_found_one_missing(self):
+        """GitHub makes the tag with the release, at the commit the script
+        names; the version main carries is released only from a tag that
+        is already there."""
+        code = code_lines(self.text)
+        self.assertEqual([line for line in code if "git push" in line or "git tag" in line], [])
+        self.assertEqual([line.strip() for line in code if "gh release create" in line], [
+            'gh release create "$tag" --repo "$REPO" --verify-tag --title "$title" --generate-notes',
+            'gh release create "$tag" --repo "$REPO" --target "$commit" --title "$title" --generate-notes',
+        ])
+        self.assertIn('python3 scripts/release.py missing > "$list"', self.text)
+        self.assertIn('elif [ "$commit" = "tagged" ]; then', self.text)
+
+    def test_releases_only_a_tag_that_has_no_release(self):
+        view = self.text.index('if gh release view "$tag" --repo "$REPO" > /dev/null 2>&1; then')
+        self.assertLess(view, self.text.index("gh release create"))
+
+    def test_a_version_it_cannot_read_stops_the_run(self):
+        """An assignment takes its command's exit status, so set -e stops
+        the run; inside echo's argument the failure would pass unseen."""
+        self.assertIn('version="$(python3 scripts/release.py version)"', self.text)
+        self.assertIn('echo "v$version tagged" >> "$list"', self.text)
+
+    def test_the_loop_reads_the_list_on_its_own_descriptor(self):
+        """A command inside the loop that reads its standard input would
+        otherwise take the rest of the list in its place."""
+        self.assertIn("while read -r tag commit <&3; do", self.text)
+        self.assertIn('done 3< "$list"', self.text)
 
 
 class EveryWorkflow(unittest.TestCase):
