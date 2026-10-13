@@ -64,8 +64,8 @@ class Settings(unittest.TestCase):
 
     def test_a_number_too_long_for_int_in_a_file_is_named_in_the_checks_words(self):
         # JSON reads an integer through int(), which refuses a run of more
-        # than 4,300 digits, so such a file was called "not JSON", which it
-        # is; it is a file whose number is no whole number from 1 to 500.
+        # than 4,300 digits, so such a file was called "not JSON", though it
+        # is JSON; it is a file whose number is no whole number from 1 to 500.
         for key, stop in (("max_turns", 500), ("rounds", 50)):
             for literal in ("1" * 4301, "-" + "1" * 4301, "1" * 10):
                 with self.assertRaises(workers.WorkerError) as caught:
