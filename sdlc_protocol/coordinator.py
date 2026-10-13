@@ -66,7 +66,9 @@ def releases_due(snapshot, now, idle_after=claims.IDLE_AFTER):
     """The keys of the claims the coordinator releases now, in issue order:
     claims.release_due over every candidate, so a claim already released
     (claims.was_released) is not released twice, and one released too soon
-    is released again."""
+    is released again. A draft its author called finished is a candidate
+    only once a person's release of it counts (adapters.github.releases),
+    so it is never released here."""
     snap = board.as_snapshot(snapshot)
     keys = [key for key in snap.releases if is_candidate(snap, key)]
     last_commits = {key: snap.releases[key].committed_at for key in keys}

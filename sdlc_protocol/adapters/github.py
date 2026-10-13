@@ -409,14 +409,21 @@ def releases(api, heads, found_issues, pulls, now=None):
     issue, "" when there is none. The coordinator releases such a claim
     unless a comment already did (coordinator.releases_due), and the board
     counts it released once the label claimed is off too
-    (board.released_keys). A finished claim is left out: its issue labelled
-    in-review, its pull request marked ready, or its draft's author saying
-    it is finished (finished_draft). A claim whose issue is labelled
-    in-review or is not open, or whose pull request is marked ready, costs
-    no call; any other costs one for its head commit, and, when that commit
-    is more than a day old, one for its draft's comments, one for its
-    issue's comments and one per author whose permission must be asked, so
-    the run pays only where a release can be due or can have happened."""
+    (board.released_keys). A finished claim, its issue labelled in-review
+    or its pull request marked ready, is left out, since the board counts
+    no release of it. So is a draft whose author said it is finished
+    (finished_draft), which the coordinator never releases, unless a person
+    has released it, as the protocol lets anyone who may write release any
+    claim: it is read only once its issue no longer carries claimed, and
+    kept only when its release comment counts (claims.was_released), so
+    the board counts the release and the coordinator, which finds it done,
+    adds none. A claim whose issue is labelled in-review or is not open,
+    or whose pull request is marked ready, costs no call; any other costs
+    one for its head commit, and, when that commit is more than a day old,
+    one for its draft's comments, then, unless the draft is finished and
+    its issue still carries claimed, one for its issue's comments and one
+    per author whose permission must be asked, so the run pays only where
+    a release can be due or can have happened."""
     now = now or datetime.now(timezone.utc)
     ready, trusted = ready_branches(pulls), may_write(api)
     drafts = {(p.get("head") or {}).get("ref"): p for p in pulls if p.get("draft")}
@@ -426,9 +433,14 @@ def releases(api, heads, found_issues, pulls, now=None):
         if not sha or branch in ready or not may_be_due(found_issues.get(key)):
             continue
         last_commit = committed_at(api, sha)
-        if not last_commit or not claims.is_idle(last_commit, now) or finished_draft(api, drafts.get(branch)):
+        if not last_commit or not claims.is_idle(last_commit, now):
+            continue
+        finished = finished_draft(api, drafts.get(branch))
+        if finished and labels.CLAIMED in found_issues[key]["labels"]:
             continue
         released_at = claims.latest_release(api.get_all(f"/repos/{api.repo}/issues/{key}/comments"), trusted)
+        if finished and not claims.was_released(released_at, last_commit):
+            continue
         found[key] = {"released_at": released_at, "sha": sha, "committed_at": last_commit}
     return found
 

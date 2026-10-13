@@ -202,9 +202,10 @@ class Release:
     or can have freed (adapters.github.releases): one gone more than a day
     without a commit, whose issue is open and not labelled in-review, and
     whose pull request, if it has one, is a draft its author has not called
-    finished. The coordinator releases those that no release comment has
-    released yet (coordinator.releases_due), and the board counts a
-    release once the label claimed is off too (released_keys)."""
+    finished, or one its author called finished that a person has released.
+    The coordinator releases those that no release comment has released yet
+    (coordinator.releases_due), and the board counts a release once the
+    label claimed is off too (released_keys)."""
 
     released_at: str = ""
     sha: str = ""
@@ -363,11 +364,12 @@ def released_keys(snapshot, idle_after=IDLE_AFTER):
     a commit after the release, its holder's or a new claim's, ends it;
     and putting the label claimed back undoes it. A finished claim is never
     released, however long it waits for review: one whose issue is labelled
-    in-review or whose pull request is marked ready. The board leaves a
-    released claim off the page and puts its issue back in the queue, and
-    the GitHub adapter renames its branch, so the name is free for the next
-    claim; the page reads the same before the rename and after it, so one
-    release rewrites the board once."""
+    in-review or whose pull request is marked ready; a draft its author
+    called finished only by a person, since the coordinator never releases
+    one. The board leaves a released claim off the page and puts its issue
+    back in the queue, and the GitHub adapter renames its branch, so the
+    name is free for the next claim; the page reads the same before the
+    rename and after it, so one release rewrites the board once."""
     snap = as_snapshot(snapshot)
     return {key_of(b) for b in claim_branches(snap.branches) if is_released(snap, key_of(b), idle_after)}
 

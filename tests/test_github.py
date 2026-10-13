@@ -21,7 +21,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from sdlc_protocol import board, claims, cli, gate, team  # noqa: E402
+from sdlc_protocol import board, claims, cli, coordinator, gate, team  # noqa: E402
 from sdlc_protocol.adapters import github  # noqa: E402
 
 FIXTURES = ROOT / "tests" / "fixtures"
@@ -424,6 +424,9 @@ REFUSED_12 = "<!-- sdlc-board: rename-refused released/12-aaaaaaa -->"
 DRAFT_COMMENTS_40 = "/repos/o/r/issues/40/comments?per_page=100"
 RELEASE_COMMENT = {"body": claims.RELEASE_MARKER + "\nReleased: no commit on claude/12 for two days.",
                    "author_association": "OWNER", "created_at": "2026-09-20T09:00:00Z"}
+# What the draft's author says on it when the work is done and only a
+# maintainer can mark it ready.
+FINISHED = {"user": {"login": "alice"}, "body": "finished; ready to mark", "created_at": "2026-09-18T13:00:00Z"}
 
 
 def released_answers():
@@ -528,20 +531,58 @@ class Releases(unittest.TestCase):
             self.assertEqual(bool(released_at), counts, answer)
             self.assertEqual(sum(c.full_url.endswith(asking) for c in opener.calls), 1, "asked once per login")
 
-    def test_a_draft_its_author_said_is_finished_is_never_released(self):
+    def test_a_draft_its_author_said_is_finished_is_never_released_by_the_coordinator(self):
         # A cloud session whose gh pr calls are refused cannot mark its pull
         # request ready, and says so on the draft for a maintainer instead.
-        said = {"user": {"login": "alice"}, "body": "finished; ready to mark", "created_at": "2026-09-18T13:00:00Z"}
+        # While its issue carries claimed no release can count, so its
+        # issue's comments cost no call.
         later = {"user": {"login": "bob"}, "body": "Thanks!", "created_at": "2026-09-18T14:00:00Z"}
         _, answers = released_answers()
-        answers[DRAFT_COMMENTS_40] = FakeAnswer([said, later])
+        answers["/repos/o/r/issues?state=open&per_page=100"] = FakeAnswer([
+            {"number": 12, "title": "Describe the board", "state": "open",
+             "labels": [{"name": "claimed"}, {"name": "todo"}, {"name": "worker:alice"}]}])
+        answers[DRAFT_COMMENTS_40] = FakeAnswer([FINISHED, later])
         api, opener = client(answers)
-        self.assertEqual(github.collect(api, "abc", "main")["releases"], {})
+        found = github.collect(api, "abc", "main")
+        self.assertEqual(found["releases"], {})
         self.assertNotIn(COMMENTS_12, [c.full_url.replace(github.API, "") for c in opener.calls])
+        self.assertEqual(coordinator.releases_due(board.Snapshot.from_dict(found), NOW), [])
         taken_back = {"user": {"login": "alice"}, "body": "One more change first.", "created_at": "2026-09-18T15:00:00Z"}
-        answers[DRAFT_COMMENTS_40] = FakeAnswer([said, later, taken_back])
+        answers[DRAFT_COMMENTS_40] = FakeAnswer([FINISHED, later, taken_back])
         api, _ = client(answers)
         self.assertIn("12", github.collect(api, "abc", "main")["releases"])
+
+    def test_a_finished_draft_a_person_released_by_hand_is_released_and_the_coordinator_releases_none(self):
+        # The coordinator never releases a finished claim, but a person may,
+        # by the steps of any release (spec, Release): the comment, then
+        # the labels. The board left out every finished draft before it
+        # read any release comment, so such a release never took effect:
+        # the claim stayed held and its issue out of the queue for good.
+        _, answers = released_answers()
+        answers[DRAFT_COMMENTS_40] = FakeAnswer([FINISHED])
+        api, _ = client(answers)
+        snap = github.snapshot(api, "abc", "main")
+        self.assertEqual(snap.releases["12"].released_at, RELEASE_COMMENT["created_at"])
+        self.assertEqual(board.released_keys(snap), {"12"})
+        page = board.render(snap)
+        self.assertNotIn("| #12 | claude/12 |", page)
+        self.assertIn("| #12 | Describe the board | todo |", page.split(board.QUEUE_HEADING)[1])
+        self.assertEqual(coordinator.releases_due(snap, NOW), [])
+
+    def test_a_finished_draft_with_no_release_that_counts_is_left_to_its_review(self):
+        # With claimed off and no release comment, or one made before the
+        # claim had gone a day without a commit, the coordinator must not
+        # take the finished claim for one it may release.
+        too_soon = dict(RELEASE_COMMENT, created_at="2026-09-19T09:00:00Z")
+        for comments in ([], [too_soon]):
+            _, answers = released_answers()
+            answers[DRAFT_COMMENTS_40] = FakeAnswer([FINISHED])
+            answers[COMMENTS_12] = FakeAnswer(comments)
+            api, _ = client(answers)
+            snap = github.snapshot(api, "abc", "main")
+            self.assertEqual(snap.releases, {}, comments)
+            self.assertEqual(coordinator.releases_due(snap, NOW), [], comments)
+            self.assertEqual(board.released_keys(snap), set(), comments)
 
     def test_a_finished_claim_costs_no_call(self):
         ready, answers = released_answers()
