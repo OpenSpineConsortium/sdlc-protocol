@@ -14,7 +14,12 @@ around the hook.
 The hook is the first fence and branch protection on GitHub the second,
 so anything this module cannot read it lets through rather than wedging
 the session: an unparseable command, a broken payload or a git that
-answers nothing all pass, and GitHub still refuses what matters.
+answers nothing all pass, and GitHub still refuses what matters. Git is
+found behind what a person puts before it to set its environment or how
+it runs: leading VAR=value assignments and the wrappers env, command,
+nice and time, each with its own options. A command handed to another
+shell as text, as bash -c 'git push ...' does, is one word to this module
+and passes, as does any wrapper not named here.
 
 shlex reads a newline as whitespace, which would glue a line onto the one
 before it, so a small pass runs first: it turns each unquoted newline into
@@ -31,6 +36,7 @@ than this hook can read, each misreading cut real commands out of sight,
 and the one shape it bought is rare and answered by a rephrasing.
 """
 
+import re
 import shlex
 import subprocess
 
@@ -41,6 +47,21 @@ VALUE_OPTIONS = {"--receive-pack", "--repo", "-o", "--push-option"}
 # Global options of git itself that take a separate value, between "git"
 # and the verb, as in "git -C clone push".
 GIT_VALUE_OPTIONS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path"}
+
+# The words a person puts before git to run it another way, each with its
+# options that take their value as the next word, as GNU's env, nice and
+# time read them (bash's own time takes only -p, a flag); an option written
+# with its value attached, --unset=HOME or -n5, is one word.
+WRAPPERS = {
+    "env": {"-u", "--unset", "-C", "--chdir", "-S", "--split-string"},
+    "command": set(),
+    "nice": {"-n", "--adjustment"},
+    "time": {"-o", "--output", "-f", "--format"},
+}
+# command -v and -V say what would run and run nothing.
+DESCRIBES_ONLY = set("vV")
+# A word the shell reads as an assignment to the command's environment.
+ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
 
 # What ends a word for the shell: a # right after one of these starts a
 # comment; anywhere else it is part of the word.
@@ -120,11 +141,54 @@ def simple_commands(command):
     return commands
 
 
+def program(word):
+    """A command's name without its directory: /usr/bin/git is git."""
+    return word.rsplit("/", 1)[-1]
+
+
+def past_options(argv, i, takes_value):
+    """Where a wrapper's command starts: past its options from argv[i] on,
+    each one in takes_value with the next word as its value, and past a --
+    that ends them."""
+    while i < len(argv) and argv[i].startswith("-"):
+        if argv[i] == "--":
+            return i + 1
+        i += 2 if argv[i] in takes_value else 1
+    return i
+
+
+def describes_only(options):
+    """Whether command's options say it runs nothing (DESCRIBES_ONLY), one
+    of them alone or in a bundle such as -pv."""
+    return any(DESCRIBES_ONLY & set(word[1:]) for word in options if not word.startswith("--"))
+
+
+def command_start(argv):
+    """Where the command itself starts in argv: past leading assignments and
+    the WRAPPERS with their options; None when nothing is run, as after a
+    lone assignment or command -v."""
+    i = 0
+    while i < len(argv):
+        name = program(argv[i])
+        if ASSIGNMENT.match(argv[i]):
+            i += 1
+        elif name in WRAPPERS:
+            end = past_options(argv, i + 1, WRAPPERS[name])
+            if name == "command" and describes_only(argv[i + 1:end]):
+                return None
+            i = end
+        else:
+            return i
+    return None
+
+
 def push_arguments(argv):
-    """The arguments after "push" when argv is a git push, else None."""
-    if not argv or argv[0].rsplit("/", 1)[-1] != "git":
+    """The arguments after "push" when argv is a git push, else None; git
+    may stand behind assignments and wrappers (command_start)."""
+    start = command_start(argv)
+    if start is None or program(argv[start]) != "git":
         return None
-    i = 1
+    i = start + 1
     while i < len(argv):
         word = argv[i]
         if word in GIT_VALUE_OPTIONS:
@@ -140,7 +204,7 @@ def push_arguments(argv):
 
 def refusal(args, current_branch, default_branch):
     """Why this push is refused, or None when it is allowed."""
-    force = lease = False
+    force = lease = deleting = False
     wholesale = None
     positionals = []
     skip = False
@@ -153,12 +217,18 @@ def refusal(args, current_branch, default_branch):
             lease = True
         elif arg in ("--all", "--branches", "--mirror"):
             wholesale = arg
+        elif arg in ("-d", "--delete"):
+            deleting = True
         elif arg in VALUE_OPTIONS:
             skip = True
         elif arg.startswith("-"):
             continue
         else:
             positionals.append(arg)
+    # A refspec's leading + forces that one ref, as --force forces them all;
+    # the first word is the remote, never a refspec, and under --delete
+    # each refspec is a name to delete, the + in it part of the name.
+    force = force or (not deleting and any(spec.startswith("+") for spec in positionals[1:]))
     if wholesale:
         return (f"a push with {wholesale} moves branches wholesale; "
                 "push your own claim branch alone (.claude/rules/board.md)")

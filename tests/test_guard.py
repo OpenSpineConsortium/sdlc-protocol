@@ -35,6 +35,19 @@ class RefusalTest(unittest.TestCase):
         self.assertIsNotNone(refusal(["--force", "origin", "claude/7"]))
         self.assertIsNotNone(refusal(["-f", "origin", "claude/7"]))
 
+    def test_a_refspec_written_with_a_plus_is_a_force(self):
+        # A leading + forces that one ref as --force forces them all, so it
+        # is refused in the force refusal's words, a lease beside it or not.
+        force = refusal(["--force", "origin", "claude/7"])
+        for args in (["origin", "+claude/7"], ["origin", "+HEAD:claude/7"], ["origin", "+claude/7:claude/8"],
+                     ["--force-with-lease", "origin", "+claude/7"], ["-u", "origin", "claude/7", "+feature"],
+                     ["origin", "+"]):
+            self.assertEqual(refusal(args), force, args)
+        self.assertIsNone(refusal(["+origin", "claude/7"]), "the first word is the remote, not a refspec")
+        # Under --delete git reads the + as part of the name to delete,
+        # "unable to delete '+claude/7'", so that is no force.
+        self.assertIsNone(refusal(["--delete", "origin", "+claude/7"]))
+
     def test_lease_allowed_on_claim_branch(self):
         self.assertIsNone(refusal(["--force-with-lease", "origin", "claude/7"]))
         self.assertIsNone(refusal(["-u", "--force-with-lease=claude/7", "origin", "claude/7"]))
@@ -75,6 +88,30 @@ class ParsingTest(unittest.TestCase):
     def test_git_global_options_are_stepped_over(self):
         self.assertEqual(guard.push_arguments(["git", "-C", "clone", "push", "origin", "x"]),
                          ["origin", "x"])
+
+    def test_git_is_found_behind_assignments_and_the_four_wrappers(self):
+        # A person may put the environment, env, command, nice or time
+        # before git, each with its own options; the push behind them is
+        # still a push.
+        for command in ("FOO=1 git push origin main", "GIT_TRACE=1 A='b c' git push origin main",
+                        "env git push origin main", "/usr/bin/env -i FOO=1 git push origin main",
+                        "env -u HOME --chdir=. -C .. git push origin main", "env -- git push origin main",
+                        "command git push origin main", "command -p git push origin main",
+                        "nice git push origin main", "nice -n 5 git push origin main", "nice -10 git push origin main",
+                        "nice --adjustment=3 git push origin main", "time git push origin main",
+                        "time -p git push origin main", "time -o out.txt -f %e -a git push origin main",
+                        "FOO=1 env BAR=2 nice -n 2 time -p command /usr/bin/git -C . push origin main"):
+            pushes = [guard.push_arguments(argv) for argv in guard.simple_commands(command)]
+            self.assertEqual(pushes, [["origin", "main"]], command)
+
+    def test_a_wrapper_that_runs_no_git_push_is_no_push(self):
+        # command -v and -V only say what would run; the rest run something
+        # that is not git, or nothing at all.
+        for command in ("command -v git", "command -V git push origin main", "command -pv git push origin main",
+                        "env", "nice", "time", "FOO=1", "FOO=1 echo git push origin main", "env cat git push",
+                        "nice -n 5", "time -o out.txt"):
+            pushes = [guard.push_arguments(argv) for argv in guard.simple_commands(command)]
+            self.assertEqual(pushes, [None] * len(pushes), command)
 
     def test_other_git_verbs_are_not_pushes(self):
         self.assertIsNone(guard.push_arguments(["git", "pull", "origin", "main"]))
@@ -154,6 +191,20 @@ class RunTest(unittest.TestCase):
         self.assertIn("pull requests", message)
         self.assertEqual(self.run_guard("git commit -F - <<'EOF'\nClaim #7\n\nThe board first.\nEOF\n"
                                         "git push -u origin claude/7"), (0, ""))
+
+    def test_a_push_behind_a_prefix_is_judged_as_the_push_itself(self):
+        refused = self.run_guard("git push origin main")
+        self.assertEqual(refused[0], 2)
+        for prefix in ("FOO=1 ", "env ", "command ", "nice ", "time ", "env FOO=1 nice -n 5 "):
+            self.assertEqual(self.run_guard(prefix + "git push origin main"), refused, prefix)
+            self.assertEqual(self.run_guard(prefix + "git push -u origin claude/7"), (0, ""), prefix)
+        force = self.run_guard("git push --force origin claude/7")
+        self.assertEqual(self.run_guard("time git push origin +claude/7"), force)
+
+    def test_a_command_handed_to_another_shell_as_text_is_out_of_reach(self):
+        """The trade the docstring states: what bash -c runs is one word to
+        this module, so it passes, and branch protection stands behind it."""
+        self.assertEqual(self.run_guard("bash -c 'git push origin main'"), (0, ""))
 
     def test_command_without_push_passes_without_git(self):
         with mock.patch.object(guard, "branches", side_effect=AssertionError("git was asked")):
