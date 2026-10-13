@@ -8,8 +8,12 @@ The lane runs every mutant against the searches below and requires every
 one to be caught: some search must report a violation under the mutant
 that it does not report on the library as it stands.
 
-The searches are breadth first (explore.explore), each from a short
-prefix: a few verbs that put the repository where a family of rules
+Two lanes come before the searches, since they are cheap and judge rules
+no search runs: the guard grammar against git's recorded answers
+(guard_grammar.judge, over the plain commands alone here) and dealing
+(dealing.run_lane); each reports its failures as the searches report
+violations. The searches are breadth first (explore.explore), each from a
+short prefix: a few verbs that put the repository where a family of rules
 applies (a held claim, a draft, two claims on one file), then every
 interleaving of the scope's verbs to a small depth. A prefix holds no
 board run of its own, so it reaches the same state with or without a
@@ -33,10 +37,11 @@ from datetime import timedelta
 from typing import NamedTuple
 from unittest import mock
 
-from sdlc_protocol import board, claims, coordinator, guard
+from sdlc_protocol import board, claims, coordinator, guard, team
 from sdlc_protocol.adapters import github
+from sdlc_protocol.workers import fits
 
-from . import cycle, explore, invariants, model as M, oracle, verbs
+from . import cycle, dealing, explore, guard_grammar, invariants, model as M, oracle, verbs
 from .verbs import CAROL, DANA, SAM, Scope, Verb
 
 
@@ -50,6 +55,16 @@ class Mutant(NamedTuple):
     replacement: object
     guarantee: str
     why: str
+
+
+class Lane(NamedTuple):
+    """A lane that judges a rule no search runs: run() gives what it finds,
+    as a mapping from a key, (guarantee, detail), to how it was found, in
+    the shape a search's violations have."""
+
+    name: str
+    run: object
+    known: tuple = ()
 
 
 class Search(NamedTuple):
@@ -73,6 +88,8 @@ ORIGINAL_LABELS_RELEASED = coordinator.labels_released
 ORIGINAL_IS_RELEASED = board.is_released
 ORIGINAL_COMMENTS_DUE = board.comments_due
 ORIGINAL_OVERLAPS_DUE = coordinator.overlap_comments_due
+ORIGINAL_REFUSAL = guard.refusal
+ORIGINAL_TOLD = coordinator.told_numbers
 
 
 def comment_then_labels(api, snap, key, now):
@@ -143,6 +160,48 @@ def renamed_unread(api, old, new, sha):
     return f"claim released; {new} already keeps {sha[:7]}, so {old} was deleted"
 
 
+def force_let_through(args, current_branch, default_branch):
+    """guard.refusal passing --force, as a change that dropped one rule."""
+    reason = ORIGINAL_REFUSAL(args, current_branch, default_branch)
+    return None if reason and reason.startswith("--force overwrites") else reason
+
+
+def lease_let_through_anywhere(args, current_branch, default_branch):
+    """guard.refusal passing --force-with-lease outside claude/."""
+    reason = ORIGINAL_REFUSAL(args, current_branch, default_branch)
+    return None if reason and reason.startswith("--force-with-lease to") else reason
+
+
+def deal_without_the_taken_set(members, pool, areas=None):
+    """team.deal forgetting which issues it dealt already, so two members
+    get the first issue that fits them both."""
+    areas, dealt = areas or {}, {}
+    for member in members:
+        for issue in pool:
+            if fits(areas.get(member, ()), claims.issue_files(issue.get("body"))):
+                dealt[member] = issue
+                break
+    return dealt
+
+
+def told_on_any_line(comments, trusted=None):
+    """coordinator.told_numbers reading a marker on any line, so a reply
+    that quotes one counts as the coordinator's."""
+    told = set()
+    for comment in comments:
+        for line in ((comment or {}).get("body") or "").splitlines():
+            match = coordinator.OVERLAP_LINE.fullmatch(line.strip())
+            numbers = [claims.number_in(number) for number in match.group(1).split()] if match else []
+            if numbers and None not in numbers and claims.is_trusted_author(comment, trusted):
+                told.update(numbers)
+    return told
+
+
+def told_by_anyone(comments, trusted=None):
+    """coordinator.told_numbers trusting every author."""
+    return ORIGINAL_TOLD(comments, trusted=lambda login: True)
+
+
 def number_with_any_zeros(key):
     """claims.number_in taking leading zeros, as before 0.4.1 (F5)."""
     text = str(key)
@@ -210,6 +269,21 @@ MUTANTS = {
     "the rename made without reading the head again": Mutant(
         github, "free_name", renamed_unread,
         "G3", "a commit pushed before the rename, its holder coming back, keeps the claim"),
+    "the guard passes --force": Mutant(
+        guard, "refusal", force_let_through,
+        "G11a", "a plain forced push is refused anywhere (board rules)"),
+    "the guard passes a lease outside claude/": Mutant(
+        guard, "refusal", lease_let_through_anywhere,
+        "G11a", "the one forced push allowed is a lease on one's own claude/ branch (board rules)"),
+    "dealing without its taken set": Mutant(
+        team, "deal", deal_without_the_taken_set,
+        "G14", "the workers of one run are dealt distinct issues"),
+    "an overlap marker read on any line": Mutant(
+        coordinator, "told_numbers", told_on_any_line,
+        "G7", "a comment that quotes the marker further down told nothing"),
+    "an overlap marker trusted from any author": Mutant(
+        coordinator, "told_numbers", told_by_anyone,
+        "G7", "only the coordinator's own marker tells a piece of work"),
 }
 
 
@@ -226,6 +300,24 @@ SHARED = ("src/shared.py",)
 # last search runs each board run in its two halves (DESIGN.md, 3.3), so
 # a rule that reads the repository again in the second half is met.
 F7 = ("G1", "the board names b for claude/1, whose holder is a")
+PLAIN_COMMANDS = [c for c in guard_grammar.commands() if c.prefix == "" and c.wrapper == "{}"]
+
+
+def guard_lane():
+    judgement = guard_grammar.judge(commands=PLAIN_COMMANDS)
+    found = {("G11a", f"{d.kind}: {d.why}"): (d.example,) for d in judgement.failures}
+    found.update({("G11a", "no answer recorded"): (argv,) for argv in judgement.missing})
+    return found
+
+
+def dealing_lane():
+    lane = dealing.run_lane()
+    return {("G14", f"#{n} dealt twice"): (" then ".join(deal.order), str(deal.looks))
+            for deal in lane.doubled_from_one_look for n in deal.doubled}
+
+
+LANES = (Lane("the guard grammar against git's answers", guard_lane),
+         Lane("dealing from one look", dealing_lane))
 SEARCHES = (
     Search("a released claim under every fault", (CLAIM, CLAIMED, WORKER, Verb("wait", "clock", (25,))),
            Scope(workers=("a",), people=(), waits=(25,), faults=tuple(verbs.FAULTS)), 2),
@@ -238,7 +330,11 @@ SEARCHES = (
            Scope(workers=("a",), people=(M.OWNER, DANA, SAM), waits=(24, 25)), 4),
     Search("the holder back between the halves of a run", (CLAIM, CLAIMED, WORKER, Verb("wait", "clock", (25,))),
            Scope(workers=("a",), people=(), waits=(25,), split_board=True), 3),
+    Search("a stranger's marker on overlapping claims", (CLAIM, Verb("claim", "b", (2,))),
+           Scope(workers=("a", "b"), issues=(1, 2), people=(SAM,), waits=(25,),
+                 files=((1, SHARED), (2, SHARED))), 2, issues=(1, 2)),
 )
+CATCHERS = LANES + SEARCHES
 
 
 # --- running ------------------------------------------------------------------
@@ -256,7 +352,10 @@ def start(search):
 
 
 def violations(search):
-    """Every distinct violation the search meets, with its first trace."""
+    """Every distinct violation the search or lane meets, with its first
+    trace."""
+    if isinstance(search, Lane):
+        return search.run()
     model, on_prefix = start(search)
     found = {(v.guarantee, v.detail): search.prefix for v in on_prefix}
     for f in explore.explore(model, search.scope, search.depth).found:
@@ -283,7 +382,7 @@ class Verdict(NamedTuple):
         return bool(self.search)
 
 
-def judge(name, baselines, searches=SEARCHES):
+def judge(name, baselines, searches=CATCHERS):
     """Whether a search catches the mutant: the first search, in order,
     that meets a violation the library itself does not, and the shortest
     such violation it met."""
@@ -298,13 +397,13 @@ def judge(name, baselines, searches=SEARCHES):
     return Verdict(name, "", "", "", (), time.perf_counter() - began)
 
 
-def baselines(searches=SEARCHES):
+def baselines(searches=CATCHERS):
     """What each search meets on the library as it stands; the lane
     expects nothing, since the open findings are read as built."""
     return {search.name: violations(search) for search in searches}
 
 
-def surprises(plain, searches=SEARCHES):
+def surprises(plain, searches=CATCHERS):
     """By search, what the library itself breaks beyond the search's known
     findings: a search that is red on the library cannot tell a mutant."""
     found = {}
@@ -315,7 +414,7 @@ def surprises(plain, searches=SEARCHES):
     return found
 
 
-def run_lane(names=None, searches=SEARCHES):
+def run_lane(names=None, searches=CATCHERS):
     plain = baselines(searches)
     return plain, [judge(name, plain, searches) for name in (names or MUTANTS)]
 
@@ -324,7 +423,7 @@ def main(argv=None):
     names = (argv if argv is not None else sys.argv[1:]) or None
     plain, verdicts = run_lane(names)
     status = 0
-    for search in SEARCHES:
+    for search in CATCHERS:
         for key in search.known:
             if key in plain[search.name]:
                 print(f"known    on the library itself in {search.name!r}: {key[0]}, {key[1]}")

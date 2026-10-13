@@ -138,7 +138,9 @@ class IdleHolder:
             number = free_issue(seen)
             return Verb("claim", seen.worker, (number,)) if number is not None else None
         claim = seen.mine[0]
-        if self.returns_at is not None and seen.now >= self.returns_at * HOUR and not self.returned:
+        if self.returned:
+            return None
+        if self.returns_at is not None and seen.now >= self.returns_at * HOUR:
             self.returned = True
             return Verb("commit", seen.worker, (claim.number,))
         return announce(seen, claim)
