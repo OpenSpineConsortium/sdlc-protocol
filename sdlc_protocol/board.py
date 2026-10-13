@@ -26,7 +26,7 @@ from typing import NamedTuple
 from . import labels
 from .claims import (
     CLAIM_DIR, IDLE_AFTER, PREFIX, RELEASED_PREFIX, branch_of, by_number, claim_files, claim_worker,
-    is_claim_branch, is_idle, key_of, was_released,
+    is_claim_branch, is_idle, key_of, number_in, number_of, was_released,
 )
 
 RECENT_MERGED = 5
@@ -34,10 +34,20 @@ RECENT_MERGED = 5
 # the current directory, since the workflow checks out the branch "board".
 STATE_PATH = Path("STATE.md")
 NO_CLAIM_FILE = "no claim file yet"
+# A claim file GitHub gave no text of: its contents API gives the text of a
+# file of up to 1 MB, and answers a bigger one with an empty content and
+# the encoding "none". The snapshot holds it as False, where a text is the
+# file's and None is no file yet, and the Worker cell says so when no label
+# names the worker either.
+UNREAD_CLAIM = False
+CLAIM_FILE_NOT_READ = "claim file over 1 MB, not read"
 # A claim branch that outlived its issue: the row stays, and says what to do.
 ISSUE_CLOSED = "issue closed"
 DELETE_BRANCH = "delete the branch"
 NO_PULL_YET = "(no pull request yet)"
+# The issue cell of a branch under claude/ that names no issue, as
+# claude/x does, or claude/03, which reads as a claim on #3 and is none.
+NOT_A_CLAIM = "(not a claim)"
 
 MAIN_MOVED_MARKER = "<!-- sdlc-board: main-moved {sha} -->"
 IDLE_MARKER = "<!-- sdlc-board: idle -->"
@@ -193,10 +203,16 @@ class ClaimIssue:
 @dataclass
 class Release:
     """What the release rule reads about one claim: when the latest release
-    comment on its issue was made (claims.latest_release), and the head of
-    its branch, the commit and when it was committed. An adapter fills it
-    only for a claim whose issue is open, no longer labelled claimed and
-    holds a release comment, the only claims a release can have freed."""
+    comment on its issue was made (claims.latest_release), "" when none
+    stands, and the head of its branch, the commit and when it was
+    committed. An adapter fills it for every claim a release can be due on
+    or can have freed (adapters.github.releases): one gone more than a day
+    without a commit, whose issue is open and not labelled in-review, and
+    whose pull request, if it has one, is a draft its author has not called
+    finished, or one its author called finished that a person has released.
+    The coordinator releases those that no release comment has released yet
+    (coordinator.releases_due), and the board counts a release once the
+    label claimed is off too (released_keys)."""
 
     released_at: str = ""
     sha: str = ""
@@ -217,8 +233,9 @@ class Snapshot:
     the default branch's commit and name, the open issues (pull requests
     left out), the open pull requests with their standing and files, the
     branch names, the claim files by issue key (None for a branch with no
-    file yet), the issue behind each claim branch, what a release reads
-    about a claim by issue key, and the merges last."""
+    file yet, UNREAD_CLAIM for one GitHub gave no text of), the issue
+    behind each claim branch, what a release reads about a claim by issue
+    key, and the merges last."""
 
     sha: str = ""
     default_branch: str = "main"
@@ -313,7 +330,24 @@ def short_sha(sha):
 
 
 def issue_ref(key):
-    return f"#{key}" if key.isdigit() else key
+    """The issue cell of a claim's row: #<number>, or NOT_A_CLAIM for a key
+    that names no issue, which shown as itself could read as one (03, #3,
+    or a digit of another script that the page folds into an ASCII one)."""
+    return f"#{key}" if number_in(key) is not None else NOT_A_CLAIM
+
+
+def escaped(name):
+    """A name with each character outside ASCII written as its escape, so
+    the page, which folds such characters into ASCII ones (cell), never
+    shows a branch such as claude/ and a fullwidth 3 as claude/3."""
+    return "".join(ch if ch.isascii() else escape(ch) for ch in name)
+
+
+def escape(ch):
+    """One character as Python writes it in a string: \\uXXXX, or \\UXXXXXXXX
+    for one past U+FFFF."""
+    code = ord(ch)
+    return f"\\u{code:04x}" if code <= 0xFFFF else f"\\U{code:08x}"
 
 
 def claim_branches(branches):
@@ -322,33 +356,37 @@ def claim_branches(branches):
 
 def claimed_numbers(branches, released=()):
     """The issue numbers that have a claim branch, leaving out the claims
-    named in released, by key, since a released claim holds nothing."""
-    return {int(key_of(b)) for b in claim_branches(branches) if key_of(b).isdigit() and key_of(b) not in released}
+    named in released, by key, since a released claim holds nothing; a
+    branch whose key is no number (claims.number_in) claims none."""
+    numbers = (number_of(b) for b in claim_branches(branches) if key_of(b) not in released)
+    return {number for number in numbers if number is not None}
 
 
 def released_keys(snapshot, idle_after=IDLE_AFTER):
-    """The claims the coordinator released, by issue key: a claim branch
-    whose issue is open and no longer labelled claimed, whose latest
-    release comment came after the branch had gone without a commit for
-    more than idle_after, and which nothing has been committed to since
-    (claims.was_released). It takes both of the coordinator's acts, the
-    comment and the label it takes off, so a stray comment frees nothing;
-    a commit after the release, its holder's or a new claim's, ends it;
-    and putting the label claimed back undoes it. A finished claim is never
-    released, however long it waits for review: one whose issue is labelled
-    in-review or whose pull request is marked ready. The board leaves a
-    released claim off the page and puts its issue back in the queue, and
-    the GitHub adapter renames its branch, so the name is free for the next
-    claim; the page reads the same before the rename and after it, so one
-    release rewrites the board once."""
+    """The claims released, by the coordinator or by a person who may
+    write, by issue key: a claim branch whose issue is open and no longer
+    labelled claimed, whose latest release comment came after the branch
+    had gone without a commit for more than idle_after, and which nothing
+    has been committed to since (claims.was_released). It takes both acts
+    of a release, the comment and the label claimed taken off, so a stray
+    comment frees nothing; a commit after the release, its holder's or a
+    new claim's, ends it; and putting the label claimed back undoes it. A
+    finished claim is never released, however long it waits for review:
+    one whose issue is labelled in-review or whose pull request is marked
+    ready; a draft its author called finished only by a person, since the
+    coordinator never releases one. The board leaves a released claim off
+    the page and puts its issue back in the queue, and the GitHub adapter
+    renames its branch, so the name is free for the next claim; the page
+    reads the same before the rename and after it, so one release rewrites
+    the board once."""
     snap = as_snapshot(snapshot)
     return {key_of(b) for b in claim_branches(snap.branches) if is_released(snap, key_of(b), idle_after)}
 
 
 def is_released(snap, key, idle_after=IDLE_AFTER):
-    """Whether the coordinator released the claim with this key, by
-    released_keys' rule; a claim with no head commit known is not, since
-    its branch could not be renamed."""
+    """Whether the claim with this key was released, by the coordinator
+    or by a person who may write, by released_keys' rule; a claim with no
+    head commit known is not, since its branch could not be renamed."""
     release, issue = snap.releases.get(key), snap.claim_issues.get(key)
     if release is None or issue is None or not release.sha:
         return False
@@ -496,9 +534,12 @@ def table(columns, rows):
 
 def claim_row(key, branch, text, pull, issue):
     """One claim as the board shows it. The worker is the claim file's, or
-    the issue's label once the finishing pull request has deleted the file.
+    the issue's label once the finishing pull request has deleted the file
+    or when GitHub gave no text of it (UNREAD_CLAIM).
     A branch whose issue is closed is a leftover: the row says so in place
-    of the pull request and asks for the branch to go in place of the files."""
+    of the pull request and asks for the branch to go in place of the files.
+    A branch whose key names no issue claims nothing, and the row says so in
+    place of the issue, with the branch's name escaped (escaped)."""
     closed = issue is not None and issue.state == "closed"
     if pull:
         files = sorted(pull.files)
@@ -519,8 +560,9 @@ def claim_row(key, branch, text, pull, issue):
     if text:
         worker = claim_worker(text)
     else:
-        worker = labels.worker_of({"labels": issue.labels} if issue else None) or NO_CLAIM_FILE
-    return [issue_ref(key), branch, worker, pull_cell, files_cell]
+        missing = CLAIM_FILE_NOT_READ if text is UNREAD_CLAIM else NO_CLAIM_FILE
+        worker = labels.worker_of({"labels": issue.labels} if issue else None) or missing
+    return [issue_ref(key), escaped(branch), worker, pull_cell, files_cell]
 
 
 def claim_rows(snap):
@@ -628,11 +670,11 @@ def open_work(snapshot):
         files = own_files(pull.files) or (own_files(claim_files(snap.claims.get(key) or "")) if key else ())
         work.append(Work(pull.number, files, not pull.draft, bool(key) and is_blocker(snap, key)))
     for branch in claim_branches(snap.branches):
-        key = key_of(branch)
-        if branch in pulls or key in released or not key.isdigit():
+        key, number = key_of(branch), number_of(branch)
+        if branch in pulls or key in released or number is None:
             continue
         files = own_files(claim_files(snap.claims.get(key) or ""))
-        work.append(Work(int(key), files, False, is_blocker(snap, key), False))
+        work.append(Work(number, files, False, is_blocker(snap, key), False))
     return sorted(work, key=lambda w: w.number)
 
 

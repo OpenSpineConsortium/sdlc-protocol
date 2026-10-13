@@ -159,6 +159,14 @@ class NextTest(unittest.TestCase):
         self.api.branches.add("claude/2")
         self.assertEqual(team.next_for(self.api, "w1"), "none")
 
+    def test_a_branch_that_writes_the_number_with_a_leading_zero_claims_nothing(self):
+        # Only claude/2 holds #2: GitHub would take a first push of claude/2
+        # beside claude/02, so a worker sent to #2 can still claim it.
+        self.api.add_issue(2, ["todo"])
+        self.api.branches.add("claude/02")
+        self.assertEqual(team.claim_branches(self.api), set())
+        self.assertEqual(team.next_for(self.api, "w1"), "take 2")
+
     def test_a_claim_without_a_pull_request_or_in_draft_is_carried(self):
         self.api.add_issue(2, ["claimed", "agent:w1"])
         self.api.branches.add("claude/2")

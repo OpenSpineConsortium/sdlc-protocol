@@ -10,9 +10,10 @@ where it named an account, and shows the overlaps and the issues given to
 workers), collects the same snapshot from the same GitHub, apart from the
 releases it reads since, and posts the same comments. The protocol
 check names the same problems for the template's events, as a function and
-as a command. The push guard, the version on the template's branch
-claude/11, gives the same exit code and the same reason for each hook
-payload of its tests. The team clerk gives the same answers and makes the
+as a command. The push guard, the template's own as its main held it at
+2a8bc3f, before it vendored this library, gives the same exit code and the
+same reason for each hook payload of its tests. The team clerk gives the
+same answers and makes the
 same writes for each scenario of the template's tests/test_team.py, in
 team mode's words (as_team_modes: since then a task is given to a worker
 by worker:<name> where team mode wrote agent:<name>, and the coordinator
@@ -36,9 +37,11 @@ import atexit
 import base64
 import copy
 import functools
+import http.client
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -111,7 +114,10 @@ def template_tools():
 
 
 TOOLS = template_tools()
-GUARD_SOURCE = "origin/claude/11:tools/guard_push.py"
+# The template's guard as its main held it last before it became a shim
+# over this library (76ece1b), by commit: the branch claude/11 it was read
+# from first is gone from GitHub.
+GUARD_SOURCE = "2a8bc3f:tools/guard_push.py"
 FIXTURES = ROOT / "tests" / "fixtures"
 FIXTURE = FIXTURES / "board.json"
 WIDE = FIXTURES / "board-wide.json"
@@ -218,10 +224,12 @@ def found(thing):
 class FakeRepo:
     """GitHub's REST API for one repository, held in dictionaries and served
     as an opener. Both clients send it the requests they would send to
-    api.github.com; it answers from its state as GitHub would (a JSON copy,
-    404 for what is not there, 422 for a label that exists) and keeps every
-    write, so two runs compare by what they changed as well as by what they
-    answered. The setters are the template's FakeGitHub's."""
+    api.github.com, each request line written as http.client writes it, so
+    a path it would refuse fails here too; it answers from its state as
+    GitHub would (a JSON copy, 404 for what is not there, 422 for a label
+    that exists) and keeps every write, so two runs compare by what they
+    changed as well as by what they answered. The setters are the
+    template's FakeGitHub's."""
 
     def __init__(self):
         self.issues, self.pulls, self.files, self.contents = {}, {}, {}, {}
@@ -248,6 +256,7 @@ class FakeRepo:
                 "comments": self.comments}
 
     def open(self, request, timeout=None):
+        http.client.HTTPConnection("api.github.com").putrequest(request.get_method(), request.selector)
         url = urllib.parse.urlsplit(request.full_url)
         method = request.get_method()
         body = json.loads(request.data) if request.data else None
@@ -471,6 +480,9 @@ NEW_SECTIONS = (board.OVERLAP_HEADING, board.GIVEN_HEADING)
 TEMPLATE_QUEUE_HEADING = "## Queue (open issues labelled todo, unclaimed)"
 WORKER_COLUMNS = "| Issue | Branch | Worker | PR | Files it touches |"
 ACCOUNT_COLUMNS = "| Issue | Branch | Account | PR | Files it touches |"
+# A claims row the library marks as no claim, which the template showed by
+# its key, the branch's name after claude/.
+NOT_A_CLAIM_ROW = re.compile(r"^\| \(not a claim\) \| claude/([^ |]+) \|", re.MULTILINE)
 
 
 def page_parts(page):
@@ -481,14 +493,16 @@ def page_parts(page):
 
 def as_the_templates(page, queue=True):
     """The library's page in the template's layout: the claims' column
-    titled Account and the queue under its old heading, as the template
-    wrote them, and the two sections added since, the overlaps and the
-    issues given to workers, left out. queue=False leaves the queue out
-    too, for a snapshot whose queue the template drew by its old rule."""
+    titled Account, the queue under its old heading and a branch that
+    names no issue shown by its key, as the template wrote them, and the
+    two sections added since, the overlaps and the issues given to workers,
+    left out. queue=False leaves the queue out too, for a snapshot whose
+    queue the template drew by its old rule."""
     kept = []
     for part in page_parts(page):
         if part.startswith(NEW_SECTIONS) or (part.startswith(board.QUEUE_HEADING) and not queue):
             continue
+        part = NOT_A_CLAIM_ROW.sub(r"| \1 | claude/\1 |", part)
         kept.append(part.replace(board.QUEUE_HEADING, TEMPLATE_QUEUE_HEADING, 1).replace(WORKER_COLUMNS,
                                                                                         ACCOUNT_COLUMNS, 1))
     return "\n\n".join(kept)
@@ -685,8 +699,8 @@ class CheckParity(unittest.TestCase):
 # --- the push guard ------------------------------------------------------------------
 
 def guard_source():
-    """The claude/11 guard's source from the template's git, or None when
-    git or the branch is not there."""
+    """The template's own guard's source from its git (GUARD_SOURCE), or
+    None when git or that commit is not there."""
     try:
         shown = subprocess.run(["git", "-C", str(TEMPLATE), "show", GUARD_SOURCE], capture_output=True,
                                env=environment(), timeout=60)
@@ -1296,6 +1310,52 @@ class DeclaredDifferences(unittest.TestCase):
         self.assertEqual(old[0], 1)
         self.assertIn("AttributeError", old[2])
         self.assertEqual(new, (0, "the event is not readable; nothing checked\n", ""))
+
+    def test_a_branch_that_names_no_issue_is_marked_where_the_template_showed_its_key(self):
+        # Shown by its key, claude/03 read as #03 and claude/#3 as #3; the
+        # library marks every such row as no claim.
+        snap = fixture(WIDE)
+        old, new = template_board().render(copy.deepcopy(snap)), board.render(snap)
+        self.assertIn("| x-notes | claude/x-notes | main |", old)
+        self.assertIn("| (not a claim) | claude/x-notes | main |", new)
+        zero = fixture()
+        zero["branches"].append("claude/03")
+        zero["claims"]["03"] = "- Account: bob\n"
+        self.assertIn("| #03 | claude/03 | bob |", template_board().render(copy.deepcopy(zero)))
+        self.assertIn("| (not a claim) | claude/03 | bob |", board.render(zero))
+
+    def test_a_leading_zero_names_no_issue_where_the_template_read_the_number(self):
+        # The template's check matched claude/(\d+) and read 07 as #7, a
+        # second claim beside claude/7 that GitHub's lock lets through; the
+        # library holds that name to no issue and says so.
+        the_event = event(branch="claude/07")
+        with tempfile.TemporaryDirectory() as folder:
+            self.assertEqual(template_check().problems_for(copy.deepcopy(the_event), checkout(folder, False)),
+                             ["docs/agents/claims/7.md is missing: a draft carries its claim file "
+                              "(docs/agents/PROTOCOL.md, Claim)"])
+        self.assertEqual(protocol_check.problems_for(the_event["pull_request"], False), [
+            "claude/07 reads as a claim branch and claims nothing, since a claim branch is claude/ and the issue's "
+            "number in one to nine ASCII digits with no leading zero; the claim branch of #7 is claude/7, so push "
+            "the work there (docs/agents/PROTOCOL.md, Claim)"])
+
+    def test_the_guard_reads_a_push_as_git_does_where_the_template_read_its_spelling(self):
+        # Each of these the template's guard let through, and git or bash
+        # pushes it: a bundle with -f, a + refspec, a push behind a reserved
+        # word or an assignment, the matching refspec, and a name that reads
+        # as a claim and claims nothing.
+        source = guard_source()
+        if source is None:
+            self.skipTest(f"the template has no {GUARD_SOURCE}, or git is missing")
+        with tempfile.TemporaryDirectory() as folder:
+            old_guard = Path(folder) / "guard_push.py"
+            old_guard.write_bytes(source)
+            claim = make_checkout(Path(folder) / "claim", "claude/7")
+            for command in ("git push -fu origin claude/7", "git push origin +claude/7",
+                            "if git push origin main; then :; fi", "FOO=1 git push origin main",
+                            "git push origin :", "git push origin claude/07"):
+                payload = json.dumps({"tool_input": {"command": command}, "cwd": str(claim)})
+                self.assertEqual(run_command([str(old_guard)], claim, stdin=payload), (0, "", ""), command)
+                self.assertEqual(run_command(library_command("guard"), claim, stdin=payload)[0], 2, command)
 
     def test_a_guard_payload_that_is_not_an_object_passes_instead_of_crashing(self):
         source = guard_source()

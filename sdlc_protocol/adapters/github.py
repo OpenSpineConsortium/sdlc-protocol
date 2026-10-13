@@ -19,6 +19,7 @@ apart, on the exception, for a caller that wants to say why.
 """
 
 import base64
+import http.client
 import json
 import os
 import time
@@ -38,6 +39,8 @@ WEB = "https://github.com"
 # branch, or a token without the right. A 404 can mean only that the branch
 # went away since it was read, which the next run sees for itself.
 REFUSED_FOR_GOOD = {403, 422}
+# What GitHub answers for an issue someone deleted.
+GONE = 410
 API_VERSION = "2022-11-28"
 USER_AGENT = "sdlc-board"
 TIMEOUT = 60
@@ -86,10 +89,14 @@ def next_link(headers):
 
 def error_detail(problem):
     """GitHub's message from a refused call's JSON body, or "" when the
-    body is empty, unreadable or not GitHub's shape."""
+    body is empty, unreadable or not GitHub's shape. A body cut short
+    raises http.client's IncompleteRead, which is no OSError, when it is
+    read, and GitHub.request reads it inside its handler of the refusal,
+    whose neighbours never catch what a handler raises: only this except
+    keeps it from ending the run."""
     try:
         body = json.loads(problem.read() or b"null")
-    except (AttributeError, OSError, TypeError, ValueError):
+    except (AttributeError, OSError, TypeError, ValueError, http.client.HTTPException):
         return ""
     return str(body.get("message") or "") if isinstance(body, dict) else ""
 
@@ -98,6 +105,24 @@ def quoted(name):
     """A branch or label name made safe for a URL path, slashes kept, since
     GitHub reads a ref's slashes as part of its name."""
     return urllib.parse.quote(name, safe="/")
+
+
+def unsent(call, token):
+    """Why a call was refused before it was sent, in words that quote no
+    header, since one holds the token. http.client writes the request line
+    in ASCII and refuses any other path, and every path here quotes what a
+    person names (quoted), so such a path is a call built wrong; it writes a
+    header in Latin-1 with no bare line break, and the token is the one
+    header whose value comes from outside the adapter, so a token pasted
+    with a curly quote or a newline is said as the token. Anything else
+    urllib refuses to send, a proxy setting it cannot read for one, is said
+    in no more words than that, since urllib's own may quote a password."""
+    if not call.selector.isascii():
+        return "the path holds a character outside ASCII, which http.client does not send"
+    if not (token.isascii() and token.isprintable()):
+        return ("the token holds a character http.client does not send in a header, such as a curly quote or a "
+                "line break")
+    return "urllib would not send the call"
 
 
 class GitHub:
@@ -130,7 +155,18 @@ class GitHub:
 
     def request(self, method, url, body=None, missing_ok=False):
         """One call; the decoded JSON and the answer's headers. A 404 is
-        (None, headers) when missing_ok says absence is an answer."""
+        (None, headers) when missing_ok says absence is an answer. Every
+        failure of the call, whether GitHub, the connection or http.client
+        refused it, is a GitHubError, whichever part of urllib raised it;
+        the URL is always the adapter's own or the next page a Link header
+        names, which has the scheme urllib asks of it before trying
+        anything. An answer cut short (IncompleteRead) and one that is no
+        HTTP (BadStatusLine) are http.client's own exceptions, no OSError,
+        which urllib passes on as they are, past every caller that turns a
+        refusal into a line. A call http.client will not send is said by
+        what holds the character it refuses (unsent), and the answer is read
+        as JSON only once the call is done, so a call never sent is never
+        said to have had an answer that was not JSON."""
         data = json.dumps(body).encode("utf-8") if body is not None else None
         headers = self.headers()
         if data is not None:
@@ -139,14 +175,19 @@ class GitHub:
         where = f"{method} {urllib.parse.urlsplit(url).path}"
         try:
             with self.opener.open(call, timeout=TIMEOUT) as answer:
-                raw = answer.read()
-                return (json.loads(raw) if raw else None), answer.headers
+                raw, answered = answer.read(), answer.headers
         except urllib.error.HTTPError as problem:
             if problem.code == 404 and missing_ok:
                 return None, problem.headers
             raise GitHubError(f"{where}: HTTP {problem.code}", problem.code, error_detail(problem)) from None
         except OSError as problem:
             raise GitHubError(f"{where}: {getattr(problem, 'reason', problem)}") from None
+        except http.client.HTTPException as problem:
+            raise GitHubError(f"{where}: {problem!r}") from None
+        except ValueError:
+            raise GitHubError(f"{where}: {unsent(call, self.token)}") from None
+        try:
+            return (json.loads(raw) if raw else None), answered
         except ValueError:
             raise GitHubError(f"{where}: the answer was not JSON") from None
 
@@ -237,6 +278,8 @@ class GitHub:
         self.patch(f"/repos/{self.repo}/issues/{number}", {"body": body})
 
     def remove_label(self, number, name):
+        """Take a label off an issue; GitHub's 404 for one the issue no
+        longer carries is the label being off, not a failure."""
         self.delete(f"/repos/{self.repo}/issues/{number}/labels/{urllib.parse.quote(name, safe='')}",
                     missing_ok=True)
 
@@ -264,15 +307,38 @@ def pull_with_detail(api, number):
 
 
 def claim_text(api, branch):
-    """The claim file on a claude/<issue> branch, or None when there is none yet."""
+    """The claim file on a claude/<issue> branch, or None when there is none
+    yet, or when what stands at its path is no file: GitHub answers a folder
+    with the list of what it holds, and a submodule, or a link to anything
+    but a file, with an object of that type, and reading a list as a file
+    raised in every run while the branch stood. A file GitHub gives no text
+    of, one over 1 MB, which it answers with an empty content and the
+    encoding "none", is board.UNREAD_CLAIM, never an empty claim file. The
+    key is quoted, as a hand-made branch may put anything after claude/:
+    http.client refuses a path it cannot send as ASCII, and a # would begin
+    the URL's fragment, which asks for the claims folder."""
     name = board.branch_name(branch)
     found = api.get(
-        f"/repos/{api.repo}/contents/{claims.CLAIM_DIR}/{claims.key_of(name)}.md",
+        f"/repos/{api.repo}/contents/{claims.CLAIM_DIR}/{quoted(claims.key_of(name))}.md",
         {"ref": name}, missing_ok=True,
     )
-    if found is None:
+    if not isinstance(found, dict) or found.get("type", "file") != "file":
         return None
+    if found.get("encoding") == "none":
+        return board.UNREAD_CLAIM
     return base64.b64decode(found.get("content") or "").decode("utf-8", "replace")
+
+
+def unread_claim_lines(snapshot):
+    """A line for each claim file GitHub gave no text of, for the workflow's
+    log, since the page says so only where no label names the worker: where
+    one does, as the protocol's Announce step makes it, the row shows that
+    worker and no files, as for a claim file that lists none."""
+    snap = board.as_snapshot(snapshot)
+    return [f"{claims.branch_of(key)}: GitHub gave no text for {claims.claim_path(key)}, a file over 1 MB, so the "
+            f"board reads no worker and no files from it, and a release quotes no plan"
+            for key, text in sorted(snap.claims.items(), key=lambda item: claims.by_number(item[0]))
+            if text is board.UNREAD_CLAIM]
 
 
 def recent_merged(api):
@@ -293,17 +359,33 @@ def claim_issues(api, branches, open_issues):
     """The issue behind each claim branch, by its key: the state and the
     label names. An open issue comes from the list already read; any other
     takes one call, so the board can say that a branch outlived its issue.
-    A branch whose key is not a number has none."""
+    A branch whose key is no number (claims.number_in) has none and costs
+    no call: a key such as a superscript would put a path in the URL that
+    http.client refuses, and that refusal stopped the whole run."""
     by_number = {str(i["number"]): i for i in open_issues}
     found = {}
     for branch in board.claim_branches(branches):
         key = claims.key_of(branch)
-        if not key.isdigit():
+        if claims.number_of(branch) is None:
             continue
-        issue = by_number.get(key) or api.get(f"/repos/{api.repo}/issues/{key}", missing_ok=True)
+        issue = by_number.get(key) or issue_or_none(api, key)
         if issue is not None:
             found[key] = {"state": issue.get("state", ""), "labels": labels.label_names(issue)}
     return found
+
+
+def issue_or_none(api, number):
+    """The issue with this number, or None when GitHub has none by it: 404
+    for a number no issue was given, and 410 for an issue someone deleted,
+    whose branch the template's tidy workflow, which runs when an issue
+    closes, leaves standing; the 410 raised, and stopped every run while
+    the branch stood."""
+    try:
+        return api.get(f"/repos/{api.repo}/issues/{number}", missing_ok=True)
+    except GitHubError as problem:
+        if problem.status == GONE:
+            return None
+        raise
 
 
 def claim_heads(listed):
@@ -374,14 +456,21 @@ def releases(api, heads, found_issues, pulls, now=None):
     issue, "" when there is none. The coordinator releases such a claim
     unless a comment already did (coordinator.releases_due), and the board
     counts it released once the label claimed is off too
-    (board.released_keys). A finished claim is left out: its issue labelled
-    in-review, its pull request marked ready, or its draft's author saying
-    it is finished (finished_draft). A claim whose issue is labelled
-    in-review or is not open, or whose pull request is marked ready, costs
-    no call; any other costs one for its head commit, and, when that commit
-    is more than a day old, one for its draft's comments, one for its
-    issue's comments and one per author whose permission must be asked, so
-    the run pays only where a release can be due or can have happened."""
+    (board.released_keys). A finished claim, its issue labelled in-review
+    or its pull request marked ready, is left out, since the board counts
+    no release of it. So is a draft whose author said it is finished
+    (finished_draft), which the coordinator never releases, unless a person
+    has released it, as the protocol lets anyone who may write release any
+    claim: it is read only once its issue no longer carries claimed, and
+    kept only when its release comment counts (claims.was_released), so
+    the board counts the release and the coordinator, which finds it done,
+    adds none. A claim whose issue is labelled in-review or is not open,
+    or whose pull request is marked ready, costs no call; any other costs
+    one for its head commit, and, when that commit is more than a day old,
+    one for its draft's comments, then, unless the draft is finished and
+    its issue still carries claimed, one for its issue's comments and one
+    per author whose permission must be asked, so the run pays only where
+    a release can be due or can have happened."""
     now = now or datetime.now(timezone.utc)
     ready, trusted = ready_branches(pulls), may_write(api)
     drafts = {(p.get("head") or {}).get("ref"): p for p in pulls if p.get("draft")}
@@ -391,9 +480,14 @@ def releases(api, heads, found_issues, pulls, now=None):
         if not sha or branch in ready or not may_be_due(found_issues.get(key)):
             continue
         last_commit = committed_at(api, sha)
-        if not last_commit or not claims.is_idle(last_commit, now) or finished_draft(api, drafts.get(branch)):
+        if not last_commit or not claims.is_idle(last_commit, now):
+            continue
+        finished = finished_draft(api, drafts.get(branch))
+        if finished and labels.CLAIMED in found_issues[key]["labels"]:
             continue
         released_at = claims.latest_release(api.get_all(f"/repos/{api.repo}/issues/{key}/comments"), trusted)
+        if finished and not claims.was_released(released_at, last_commit):
+            continue
         found[key] = {"released_at": released_at, "sha": sha, "committed_at": last_commit}
     return found
 
@@ -443,13 +537,28 @@ def comment_once(api, number, marker, text):
 
 def post_comments(api, due):
     """Post each comment board.comments_due names, once each; the lines say
-    which were posted, one each, for the workflow's log."""
-    posted = []
+    which were posted and which failed, one each, for the workflow's log.
+    Nothing here raises: a comment GitHub refuses, or whose pull request's
+    comments it would not give, is a line, and the next comment is still
+    tried. The board is written before the comments, and the workflow
+    writes it to its branch only after a run that succeeded, so a refusal
+    that escaped here would keep the board off its branch, and one GitHub
+    gives for good would keep it off on every run. A refused idle comment
+    is due again, and a later run, which finds no marker yet, posts it; a
+    "main moved" comment is due only in the run of the push that moved the
+    default branch, so a refused one is never posted, and the pull request
+    hears that main moved only when the default branch moves again."""
+    lines = []
     for number, marker, text in due:
         kind = "idle" if marker == board.IDLE_MARKER else "main-moved"
-        if comment_once(api, number, marker, text):
-            posted.append(f"PR #{number}: {kind} comment posted")
-    return posted
+        try:
+            posted = comment_once(api, number, marker, text)
+        except GitHubError as problem:
+            lines.append(f"PR #{number}: {kind} comment failed: {problem}{github_words(problem)}")
+            continue
+        if posted:
+            lines.append(f"PR #{number}: {kind} comment posted")
+    return lines
 
 
 # --- the coordinator ----------------------------------------------------------
@@ -485,34 +594,90 @@ def holding(api, default_branch, sha):
 
 
 def release_one(api, snap, key, now):
-    """Release one claim: the comment first, then the labels, in the
-    protocol's order, so a claim is never taken off its holder without the
-    comment that says why. What was done, in a line."""
-    release = snap.releases[key]
+    """Release one claim: the labels first, then the comment, in the
+    protocol's order, and the board counts a release only once both are
+    done. A run that fails between them puts back the labels it took off,
+    so the issue is as the run found it and the next run starts the
+    release over, unless the comment turns out to be there after all, one
+    GitHub wrote and lost its answer to, which makes the release whole.
+    Only when GitHub refuses the putting back too are the labels left off
+    with no comment, until a run releases the claim or a person puts them
+    back. What was done, in a line."""
+    release, names, taken_off = snap.releases[key], coordinator.labels_released(snap, key), []
+    try:
+        for name in names:
+            if take_label_off(api, key, name):
+                taken_off.append(name)
+    except GitHubError as problem:
+        return (f"#{key}: not released, taking the labels off failed: {problem}{github_words(problem)}"
+                + put_back(api, key, taken_off))
     text = coordinator.release_text(snap, key, holding(api, snap.default_branch, release.sha))
+    lost = ""
     try:
-        posted = api.post(f"/repos/{api.repo}/issues/{key}/comments", {"body": text}) or {}
+        released_at = (api.post(f"/repos/{api.repo}/issues/{key}/comments", {"body": text}) or {}).get("created_at")
     except GitHubError as problem:
-        return f"#{key}: not released, the comment failed: {problem}{github_words(problem)}"
-    taken_off = coordinator.labels_released(snap, key)
+        released_at = landed_release(api, key, release)
+        if not released_at:
+            return (f"#{key}: not released, the comment failed: {problem}{github_words(problem)}"
+                    + put_back(api, key, taken_off))
+        lost = f" (GitHub's answer to the comment was lost, {problem}, but the comment is there)"
+    coordinator.after_release(snap, key, released_at or now.isoformat(), names)
+    return f"#{key}: claim released, idle since {release.committed_at}{lost}"
+
+
+def take_label_off(api, key, name):
+    """Take one label off a claim's issue: True when it came off, False when
+    GitHub answered 404, for an issue that no longer carried it, which is
+    the label being off too, so a release goes on and puts back, if a later
+    step fails, only what it took off."""
     try:
-        for name in taken_off:
-            api.remove_label(int(key), name)
+        api.delete(f"/repos/{api.repo}/issues/{key}/labels/{urllib.parse.quote(name, safe='')}")
     except GitHubError as problem:
-        return f"#{key}: release comment posted, but taking the labels off failed: {problem}{github_words(problem)}"
-    coordinator.after_release(snap, key, posted.get("created_at") or now.isoformat(), taken_off)
-    return f"#{key}: claim released, idle since {release.committed_at}"
+        if problem.status == 404:
+            return False
+        raise
+    return True
+
+
+def put_back(api, key, names):
+    """Put the labels a release took off back on its issue once a later step
+    failed, so the claim stays its holder's until a run releases it whole;
+    what was done, as the end of the release's line."""
+    if not names:
+        return ""
+    listed = ", ".join(names)
+    try:
+        api.post(f"/repos/{api.repo}/issues/{key}/labels", {"labels": names})
+    except GitHubError as problem:
+        return f"; putting {listed} back failed too, so they stay off: {problem}{github_words(problem)}"
+    return f"; {listed} put back"
+
+
+def landed_release(api, key, release):
+    """When the comment that releases this claim was made, by the rule the
+    next run reads it with (claims.was_released), or "" when none stands:
+    a call that GitHub answered with an error, a 502 or a timeout, may
+    still have written the comment, and once it stands the release is done.
+    A read GitHub refuses finds none."""
+    try:
+        comments = api.get_all(f"/repos/{api.repo}/issues/{key}/comments")
+    except GitHubError:
+        return ""
+    released_at = claims.latest_release(comments, may_write(api))
+    return released_at if claims.was_released(released_at, release.committed_at) else ""
 
 
 def tell_overlaps(api, snap):
     """Post each overlap comment that is due, reading only the comments of
-    the work that meets other work; work whose comments GitHub would not
-    give is told nothing this run, so it is never told twice. The lines say
-    what was posted."""
-    lines, told = [], {}
+    the work that meets other work, and counting only the markers of
+    authors the repository trusts (coordinator.told_numbers); work whose
+    comments GitHub would not give is told nothing this run, so it is never
+    told twice. The lines say what was posted."""
+    lines, told, trusted = [], {}, may_write(api)
     for number in coordinator.meeting(snap):
         try:
-            told[number] = coordinator.told_numbers(api.get_all(f"/repos/{api.repo}/issues/{number}/comments"))
+            comments = api.get_all(f"/repos/{api.repo}/issues/{number}/comments")
+            told[number] = coordinator.told_numbers(comments, trusted)
         except GitHubError as problem:
             lines.append(f"#{number}: overlaps not told, its comments were not read: {problem}{github_words(problem)}")
     for number, marker, text in coordinator.overlap_comments_due(snap, told):

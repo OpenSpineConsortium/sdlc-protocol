@@ -57,7 +57,28 @@ class Branches(unittest.TestCase):
         # The template's check matched \d, which a superscript does not;
         # isdigit() lets it through and int() then raises.
         self.assertIsNone(claims.number_of("claude/\u00b2"))
-        self.assertEqual(claims.number_of("claude/007"), 7)
+
+    def test_only_the_name_branch_of_writes_names_an_issue(self):
+        # GitHub's lock on a claim is the first push of a name, so claude/03
+        # beside claude/3 would be a second claim on #3: only the issue's
+        # number as GitHub writes it, with no leading zero, names it.
+        for name in ("claude/03", "claude/007", "claude/00", "claude/0123456789"):
+            self.assertIsNone(claims.number_of(name), name)
+        for name in ("claude/3", "claude/30", "claude/0", "claude/123456789"):
+            self.assertEqual(claims.branch_of(claims.number_of(name)), name)
+        self.assertIsNone(claims.number_of("agent/07", "agent/"))
+
+    def test_a_name_of_digits_that_names_no_issue_reads_as_a_claim(self):
+        for name in ("claude/03", "claude/00", "claude/1234567890", "claude/\u0663", "claude/\u00b2", "claude/\uff13"):
+            self.assertTrue(claims.reads_as_claim(name), name)
+        for name in ("claude/3", "claude/0", "claude/x", "claude/03-notes", "claude/#3", "claude/", "main", "03"):
+            self.assertFalse(claims.reads_as_claim(name), name)
+
+    def test_the_number_a_name_of_digits_means(self):
+        self.assertEqual([claims.meant_number(key) for key in ("03", "00", "\u0663", "\u00b2", "\uff13\uff10")],
+                         [3, 0, 3, 2, 30])
+        for key in ("1234567890", "9" * 5000, "x", "", "3a"):
+            self.assertIsNone(claims.meant_number(key), key[:12])
 
     def test_a_policy_may_name_another_prefix(self):
         self.assertEqual(claims.branch_of(7, "agent/"), "agent/7")
@@ -73,6 +94,24 @@ class Branches(unittest.TestCase):
     def test_numbers_sort_before_names(self):
         keys = ["x", "100", "9", "a", "12"]
         self.assertEqual(sorted(keys, key=claims.by_number), ["9", "12", "100", "a", "x"])
+
+    def test_a_key_in_digits_int_cannot_read_sorts_as_a_name_and_never_raises(self):
+        # A superscript or a circled digit passes isdigit() but not int();
+        # the board sorts its claims by this key, so one such branch name
+        # stopped the whole page.
+        keys = ["10", "\u00b2", "3", "\u27800", "x"]
+        self.assertEqual(sorted(keys, key=claims.by_number), ["3", "10", "x", "\u00b2", "\u27800"])
+        branches = ["claude/\u27800", "claude/9", "claude/\u00b2"]
+        self.assertEqual(sorted(branches, key=claims.issue_order), ["claude/9", "claude/\u00b2", "claude/\u27800"])
+
+    def test_only_ascii_digits_name_an_issue_and_no_branch_name_raises(self):
+        # Another script's digits, which int() reads as a number, name no
+        # issue either, and a run of digits longer than int() reads is no
+        # number rather than an error.
+        for name in ("claude/\u00b2", "claude/\u27800", "claude/\u0663", "claude/1234567890", "claude/" + "9" * 5000):
+            self.assertIsNone(claims.number_of(name), name[:20])
+            claims.issue_order(name)
+        self.assertEqual(claims.number_of("claude/123456789"), 123456789)
 
 
 class ClaimFile(unittest.TestCase):

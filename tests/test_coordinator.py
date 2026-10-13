@@ -15,6 +15,8 @@ from sdlc_protocol import board, claims, coordinator  # noqa: E402
 
 NOW = datetime(2026, 9, 20, 12, 0, tzinfo=timezone.utc)
 HEAD = "aaaaaaa1111111"
+# Who the coordinator's comments are by: the repository's own workflows.
+BOT = {"author_association": "NONE", "user": {"login": "github-actions[bot]"}}
 CLAIM_TEXT = ("# Claim: #12\n\n- Issue: https://github.com/octo/widgets/issues/12\n- Worker: nightly\n"
               "- Branch: claude/12\n\n## Plan\n\nDescribe the board,\nsection by section.\n\n"
               "## Files to touch\n\n- docs/agents/README.md\n")
@@ -105,6 +107,14 @@ class ReleaseText(unittest.TestCase):
         nobody.claim_issues["12"].labels = ["todo"]
         self.assertIn("held by a worker nobody named,", coordinator.release_text(nobody, "12", coordinator.Holding()))
 
+    def test_a_release_of_a_claim_whose_file_github_gave_no_text_of_says_where_the_plan_is(self):
+        snap = idle_claim(claims={"12": board.UNREAD_CLAIM})
+        text = coordinator.release_text(snap, "12", coordinator.Holding())
+        self.assertIn("held by nightly,", text)
+        self.assertIn("The claim file is over 1 MB, more than GitHub gives the text of, so its plan is not quoted; "
+                      "docs/agents/claims/12.md on released/12-aaaaaaa has it.", text)
+        self.assertNotIn("states no plan", text)
+
     def test_a_branch_with_only_its_claim_file_and_a_long_one_are_both_said_plainly(self):
         only = coordinator.Holding(1, "Claim #12", ("docs/agents/claims/12.md",))
         self.assertIn("1 commit ahead of main, the newest \"Claim #12\"; it changes nothing but its claim file.",
@@ -113,6 +123,20 @@ class ReleaseText(unittest.TestCase):
         text = coordinator.release_text(idle_claim(), "12", many)
         self.assertIn("9 commits ahead of main; it changes `f00.md`", text)
         self.assertIn("`f19.md` and 5 more.", text)
+
+    def test_what_a_release_quotes_is_cut_so_github_takes_the_comment_whatever_the_claim_holds(self):
+        # GitHub refuses a comment over 65,536 characters, and a release
+        # whose comment is refused never happens.
+        huge = "x" * 100000
+        snap = idle_claim(claims={"12": f"- Worker: {huge}\n\n## Plan\n\n{huge}\n"})
+        holding = coordinator.Holding(3, huge, tuple(f"{n:02d}{huge}" for n in range(25)))
+        text = coordinator.release_text(snap, "12", holding)
+        self.assertLess(len(text), 65536 // 5)
+        self.assertIn(f"held by {'x' * 200}..., has had no commit", text)
+        self.assertIn(f'the newest "{"x" * 200}..."', text)
+        self.assertIn(f"`00{'x' * 198}...`", text)
+        self.assertIn("The claim's plan, cut short (docs/agents/claims/12.md on released/12-aaaaaaa has it whole): ",
+                      text)
 
     def test_the_labels_taken_off_are_claimed_and_every_workers(self):
         snap = idle_claim()
@@ -183,10 +207,29 @@ class Overlaps(unittest.TestCase):
         self.assertIn("Land them in this order: #17, #40, #42:", due[42].text)
 
     def test_told_numbers_read_every_overlap_marker_and_nothing_else(self):
-        comments = [{"body": "<!-- sdlc-coordinator: overlap 17 40 -->\noverlap: ..."},
-                    {"body": "a person quoting <!-- sdlc-coordinator: overlap 3 -->"},
-                    {"body": "<!-- sdlc-board: idle -->\nidle"}, {"body": None}, {}]
+        comments = [dict(BOT, body="<!-- sdlc-coordinator: overlap 17 40 -->\noverlap: ..."),
+                    dict(BOT, body="a person quoting <!-- sdlc-coordinator: overlap 3 -->"),
+                    dict(BOT, body="<!-- sdlc-board: idle -->\nidle"), {"body": None}, {}]
         self.assertEqual(coordinator.told_numbers(comments), {17, 40})
+
+    def test_a_marker_counts_only_from_an_author_the_repository_trusts(self):
+        # Anyone may comment on a public repository's issues; a marker by a
+        # stranger naming the other work would keep it from being told.
+        stranger = {"body": "<!-- sdlc-coordinator: overlap 42 -->", "author_association": "NONE",
+                    "user": {"login": "stranger"}}
+        member = dict(stranger, author_association="MEMBER", body="<!-- sdlc-coordinator: overlap 17 -->")
+        writer = dict(stranger, user={"login": "writer"}, body="<!-- sdlc-coordinator: overlap 40 -->")
+        self.assertEqual(coordinator.told_numbers([stranger, member, writer]), {17})
+        self.assertEqual(coordinator.told_numbers([stranger, member, writer], lambda login: login == "writer"),
+                         {17, 40})
+
+    def test_a_marker_whose_numbers_name_no_issue_counts_for_nothing_and_never_raises(self):
+        # int() refuses more than 4,300 digits, and one such comment stopped
+        # every board run before STATE.md was written.
+        comments = [dict(BOT, body="<!-- sdlc-coordinator: overlap " + "1" * 4301 + " -->"),
+                    dict(BOT, body="<!-- sdlc-coordinator: overlap 17 042 -->"),
+                    dict(BOT, body="<!-- sdlc-coordinator: overlap 40 -->")]
+        self.assertEqual(coordinator.told_numbers(comments), {40})
 
 
 if __name__ == "__main__":

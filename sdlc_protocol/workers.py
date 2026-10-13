@@ -38,6 +38,12 @@ NAME = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$")
 MODEL = re.compile(r"^[A-Za-z0-9._:\[\]-]{0,80}$")
 TURNS = range(1, 501)
 ROUNDS = range(1, 51)
+# A whole number of a worker's settings, as the form's answer or a file's
+# JSON gives it, read only in ASCII digits, at most nine of them, far more
+# than any setting takes: int() refuses a run of more than 4,300 digits
+# with a ValueError, where every other bad value is named in one line, and
+# it reads another script's digits as a number.
+WHOLE_NUMBER = re.compile(r"[0-9]{1,9}")
 ABOUT_LENGTH = 200
 ACCOUNT_LENGTH = 120
 PATTERN_LENGTH = 200
@@ -151,10 +157,18 @@ def from_dict(data):
 def parse(text):
     """The Worker a file's text describes, or WorkerError."""
     try:
-        data = json.loads(text)
+        data = json.loads(text, parse_int=json_integer)
     except ValueError as problem:
         raise WorkerError(f"not JSON: {problem}") from None
     return from_dict(data)
+
+
+def json_integer(literal):
+    """An integer of a worker's file as parse reads it: an int when
+    WHOLE_NUMBER takes it, else the float it stands for, which the check
+    names as no whole number as it names 1.5, never a run of digits
+    int() refuses, which made the file read as no JSON."""
+    return int(literal) if WHOLE_NUMBER.fullmatch(literal) else float(literal)
 
 
 def load(directory=REGISTRY):
@@ -281,9 +295,10 @@ def first_word(answer):
 
 
 def as_number(answer):
-    """A number answer as an int, or the text itself, which the check then
-    names as no number."""
-    return int(answer) if answer.strip().isdecimal() else answer
+    """A number answer as an int when WHOLE_NUMBER takes it, or the text
+    itself, which the check then names as no number."""
+    text = answer.strip()
+    return int(text) if WHOLE_NUMBER.fullmatch(text) else answer
 
 
 def from_form(body):

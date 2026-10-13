@@ -62,6 +62,20 @@ class Settings(unittest.TestCase):
         found = problems(name="a", runs="session", schedule="hourly")
         self.assertTrue(found[0].startswith("schedule is not a setting a worker has"), found)
 
+    def test_a_number_too_long_for_int_in_a_file_is_named_in_the_checks_words(self):
+        # JSON reads an integer through int(), which refuses a run of more
+        # than 4,300 digits, so such a file was called "not JSON", though it
+        # is JSON; it is a file whose number is no whole number from 1 to 500.
+        for key, stop in (("max_turns", 500), ("rounds", 50)):
+            for literal in ("1" * 4301, "-" + "1" * 4301, "1" * 10):
+                with self.assertRaises(workers.WorkerError) as caught:
+                    workers.parse(f'{{"name": "a", "runs": "actions", "{key}": {literal}}}')
+                self.assertEqual(str(caught.exception), f"{key} must be a whole number from 1 to {stop}", literal[:20])
+        for key in ("name", "about", "model", "account"):
+            with self.assertRaises(workers.WorkerError, msg=key):
+                workers.parse(f'{{"name": "a", "runs": "actions", "{key}": {"1" * 4301}}}')
+        self.assertEqual(workers.parse('{"name": "a", "runs": "actions", "max_turns": 40}').max_turns, 40)
+
     def test_a_file_that_is_no_json_object_says_so(self):
         with self.assertRaises(workers.WorkerError) as caught:
             workers.parse("[1]")
@@ -153,6 +167,19 @@ class Form(unittest.TestCase):
         data = workers.from_form("### Name\n\nx\n\n### Where it runs\n\nsession\n\n### Turns per run\n\nmany\n")
         self.assertEqual(data["max_turns"], "many")
         self.assertIn("max_turns must be a whole number", workers.problems_of(data)[0])
+
+    def test_a_number_too_long_for_int_or_in_another_script_is_named_in_the_checks_words(self):
+        # int() refuses a run of more than 4,300 digits with a ValueError,
+        # which left from_form, so the "Add a worker" workflow ended in a
+        # traceback where every other bad answer is one line; and int()
+        # reads another script's digits, as in a Turns per run of 30
+        # written in Arabic-Indic digits, as a number.
+        for answer in ("1" * 4301, "1" * 10, "\u0663\u0660", "-5", "4.5"):
+            body = f"### Name\n\nx\n\n### Where it runs\n\nactions\n\n### Turns per run\n\n{answer}\n"
+            data = workers.from_form(body)
+            self.assertEqual(data["max_turns"], answer, answer[:20])
+            self.assertEqual(workers.problems_of(data), ["max_turns must be a whole number from 1 to 500"], answer[:20])
+        self.assertEqual(workers.from_form("### Rounds in a row\n\n 007 \n")["rounds"], 7)
 
 
 if __name__ == "__main__":

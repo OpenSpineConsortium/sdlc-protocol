@@ -82,6 +82,17 @@ class Rendering(unittest.TestCase):
         self.assertIn("| #13 | claude/13 | no claim file yet | #41 | .claude/skills/remember/SKILL.md |", self.text)
         self.assertNotIn("| main |", self.text.split(board.PULL_HEADING)[0].split("| #12")[0])
 
+    def test_a_claim_file_github_gave_no_text_of_is_named_so_unless_a_label_names_the_worker(self):
+        snap = snapshot()
+        snap["claims"]["12"] = board.UNREAD_CLAIM
+        snap["claim_issues"] = {"12": {"state": "open", "labels": ["claimed", "todo"]}}
+        text = board.render(snap)
+        self.assertIn("| #12 | claude/12 | claim file over 1 MB, not read | #40 |", text)
+        snap["claim_issues"]["12"]["labels"].append("worker:nightly")
+        self.assertIn("| #12 | claude/12 | nightly | #40 |", board.render(snap))
+        again = Snapshot.from_json(Snapshot.from_dict(snap).to_json())
+        self.assertIs(again.claims["12"], board.UNREAD_CLAIM)
+
     def test_a_claim_whose_issue_is_closed_says_so_and_asks_for_the_branch_to_go(self):
         snap = snapshot()
         snap["branches"].append("claude/3")
@@ -466,6 +477,58 @@ class Leniency(unittest.TestCase):
         self.assertEqual(list(snap.claims), ["4"])
         self.assertIn("| #4 | claude/4 | main | (no pull request yet) | - |", board.render(snap))
 
+    def test_a_branch_named_in_digits_int_cannot_read_stops_neither_the_page_nor_the_queue(self):
+        # A superscript or a circled digit passes isdigit() but not int(): a
+        # single such branch raised in the claims' sort, the queue's claimed
+        # numbers and the overlaps' open work, so no board was written.
+        snap = Snapshot.from_dict({
+            "branches": ["claude/3", "claude/\u00b2", "claude/\u27800", "claude/\u0663"],
+            "claims": {"3": "- Worker: alice\n\n## Files to touch\n\n- a.md\n",
+                       "\u00b2": "- Worker: bob\n\n## Files to touch\n\n- a.md\n"},
+            "issues": [{"number": 2, "title": "Two", "labels": ["todo"]}],
+        })
+        page = board.render(snap)
+        self.assertIn("| #3 | claude/3 | alice | (no pull request yet) | a.md |", page)
+        self.assertIn("| #2 | Two | todo |", section(page, board.QUEUE_HEADING, board.GIVEN_HEADING))
+        self.assertEqual(board.claimed_numbers(snap.branches), {3})
+        self.assertEqual([w.number for w in board.open_work(snap)], [3])
+        self.assertEqual(board.overlaps(snap), {})
+
+    def test_a_branch_that_names_no_issue_never_reads_as_a_claim_on_the_page(self):
+        # The page folds what is not ASCII into ASCII, so claude/ and a
+        # fullwidth 3 read as claude/3 beside the real claim, a superscript
+        # 2 as claude/2 while #2 sat in the queue, and the key #3 as #3.
+        snap = Snapshot.from_dict({
+            "branches": ["claude/3", "claude/\uff13", "claude/#3", "claude/\u00b2", "claude/x-notes"],
+            "claims": {"3": "- Worker: alice\n", "\uff13": "- Worker: mallory\n", "#3": "- Worker: mallory\n"},
+            "issues": [{"number": 2, "title": "Two", "labels": ["todo"]}],
+        })
+        rows = section(board.render(snap), board.CLAIM_HEADING, board.PULL_HEADING)
+        self.assertIn("| #3 | claude/3 | alice |", rows)
+        self.assertIn("| (not a claim) | claude/\\uff13 | mallory |", rows)
+        self.assertIn("| (not a claim) | claude/#3 | mallory |", rows)
+        self.assertIn("| (not a claim) | claude/\\u00b2 | no claim file yet |", rows)
+        self.assertIn("| (not a claim) | claude/x-notes | no claim file yet |", rows)
+        self.assertEqual(rows.count("| #"), 1, rows)
+        self.assertEqual(rows.count("claude/3 "), 1, rows)
+        self.assertNotIn("claude/2 ", rows)
+
+    def test_a_second_name_for_an_issue_claims_nothing(self):
+        # claude/03 is another name than claude/3, so GitHub takes a first
+        # push of each: only the name branch_of writes holds #3, and the
+        # other is shown as a branch under claude/ that claims nothing.
+        both = Snapshot.from_dict({
+            "branches": ["claude/03", "claude/3"],
+            "claims": {"03": "- Worker: bob\n", "3": "- Worker: alice\n"},
+        })
+        rows = section(board.render(both), board.CLAIM_HEADING, board.PULL_HEADING)
+        self.assertIn("| #3 | claude/3 | alice | (no pull request yet) | - |\n| (not a claim) | claude/03 | bob |", rows)
+        alone = Snapshot.from_dict({"branches": ["claude/03"], "claims": {"03": "- Worker: bob\n"},
+                                    "issues": [{"number": 3, "title": "Three", "labels": ["todo"]}]})
+        self.assertEqual(board.claimed_numbers(alone.branches), set())
+        self.assertEqual(board.open_work(alone), [])
+        self.assertIn("| #3 | Three | todo |", section(board.render(alone), board.QUEUE_HEADING, board.GIVEN_HEADING))
+
     def test_a_pull_with_no_update_time_is_not_idle(self):
         pulls = [Pull(1, updated_at=""), {"number": 2, "updated_at": "2026-09-20T00:00:00Z"}]
         self.assertEqual([board.as_pull(p).number for p in board.idle_pulls(pulls, self.NOW)], [2])
@@ -735,8 +798,8 @@ class ReleasedClaimReturns(unittest.TestCase):
         self.assertIn("| #5 | claude/5 | alice | (no pull request yet) | src/alice.py |", page)
         self.assertNotIn("| #5 |", section(page, board.QUEUE_HEADING, board.BLOCKER_HEADING))
 
-        # The coordinator releases the idle claim: the release comment, then
-        # claimed and alice's label off. The board shows the issue free.
+        # The coordinator releases the idle claim: claimed and alice's label
+        # off, then the release comment. The board shows the issue free.
         released_at = "2026-09-20T09:00:00Z"
         before_rename = self.snapshot(["todo"], released_at)
         self.assertEqual(board.released_keys(before_rename), {"5"})

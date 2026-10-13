@@ -1,7 +1,8 @@
 """The claim: a branch named for an issue and the file that describes it.
 
-A claim is the first push of the branch claude/<issue number>. GitHub
-refuses the second push of the same name, so the branch is the lock, and
+A claim is the first push of the branch claude/<issue number>, the number
+as GitHub writes it, in ASCII digits with no leading zero. GitHub refuses
+the second push of the same name, so the branch is the lock, and
 its first commit adds docs/agents/claims/<issue number>.md, which names
 the worker, the plan and the files the work expects to touch. The board
 reads that file until the pull request has files of its own, and the
@@ -15,6 +16,7 @@ talks to git or to GitHub.
 """
 
 import re
+import unicodedata
 from datetime import datetime, timedelta, timezone
 
 PREFIX = "claude/"
@@ -26,16 +28,17 @@ IDLE_AFTER = timedelta(hours=24)
 # board and the field metrics tell a release from what people write
 # without reading what the comment says.
 RELEASE_MARKER = "<!-- sdlc-coordinator: claim-released -->"
-# Whose release comments count by GitHub's author_association word alone:
-# the repository's owner, the members of its organization and its
-# collaborators. Anyone else's count only when an adapter finds that they
-# may write to the repository (is_release_comment).
+# Whose release comments, and overlap markers, count by GitHub's
+# author_association word alone: the repository's owner, the members of its
+# organization and its collaborators. Anyone else's count only when an
+# adapter finds that they may write to the repository (is_trusted_author).
 RELEASERS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
 # The bot a repository's own workflows write as, with their GITHUB_TOKEN:
-# the coordinator posts its releases as this bot. Only a workflow of the
-# repository can write as it, and a workflow only runs once someone who
-# may write has put it there, so its release counts like theirs. No
-# person's login can end in "[bot]", which GitHub keeps for its Apps.
+# the coordinator posts its releases and overlap comments as this bot.
+# Only a workflow of the repository can write as it, and a workflow only
+# runs once someone who may write has put it there, so what it posts
+# counts like theirs. No person's login can end in "[bot]", which GitHub
+# keeps for its Apps.
 RELEASING_BOTS = frozenset({"github-actions[bot]"})
 # Where a released claim's branch goes: out of the claude/ names, so the
 # issue can be claimed again, and under a name of its own, so the work it
@@ -44,7 +47,9 @@ RELEASED_PREFIX = "released/"
 # What a worker that may not mark its pull request ready, a cloud session
 # whose gh pr calls are refused, comments on its draft when the work is
 # done, for a maintainer to mark: a draft whose author's latest comment
-# starts with it is finished, and waits for review as a ready one does.
+# starts with it is finished, and waits for its review, which the
+# coordinator never cuts short with a release; a person who may write
+# can still release it by hand, and that release counts.
 FINISHED_SIGNAL = "finished; ready to mark"
 
 # The line that names the claim's worker: "- Worker: name", or the older
@@ -63,6 +68,15 @@ ISSUE_FILES_HEADING = re.compile(r"^#+\s*(?:files likely touched|files to touch)
 NO_RESPONSE = "_No response_"
 LIST_ITEM = re.compile(r"^\s*[-*]\s+(.+?)\s*$")
 UNNAMED = "unnamed"
+# An issue number as a claim branch's key must spell it: as branch_of
+# writes it, in ASCII digits with no leading zero, one to nine of them.
+# GitHub refuses only a second push of the same name, so claude/03 beside
+# claude/3 would be a second claim on #3. str.isdigit would also take a
+# superscript, which int() refuses, and str.isdecimal another script's
+# digits, which int() reads as a number; a run of digits longer than int()
+# reads would raise where an answer belongs. Nine digits is far more than
+# any queue has issues, as the gate reads an issue too (gate.ISSUE_TEXT).
+NUMBER = re.compile(r"0|[1-9][0-9]{0,8}")
 
 
 def branch_of(number, prefix=PREFIX):
@@ -82,13 +96,42 @@ def key_of(branch, prefix=PREFIX):
     return branch[len(prefix):] if is_claim_branch(branch, prefix) else None
 
 
+def number_in(key):
+    """The issue number a claim branch's key spells, or None when it spells
+    none (NUMBER): every place that reads a branch name as an issue number
+    reads it here, so no branch name can raise there and only one name
+    holds an issue."""
+    text = str(key)
+    return int(text) if NUMBER.fullmatch(text) else None
+
+
 def number_of(branch, prefix=PREFIX):
     """The issue number a claim branch names, or None when the branch is no
-    claim or what follows claude/ is not a number. Decimal digits only, as
-    the template's check matched them with \\d: a superscript passes
-    isdigit() but not int(), and a branch name must never raise."""
+    claim or what follows claude/ is no number as branch_of writes one
+    (number_in): a number comes back only when branch_of(number) is the
+    branch itself, so claude/03 names no issue, and a branch name never
+    raises."""
     key = key_of(branch, prefix)
-    return int(key) if key is not None and key.isdecimal() else None
+    return None if key is None else number_in(key)
+
+
+def reads_as_claim(branch, prefix=PREFIX):
+    """Whether a branch reads as a claim and claims nothing: digits after
+    claude/, of any script, that are not an issue's number as branch_of
+    writes it (number_in), as in claude/03, a name its author meant for a
+    claim, which the protocol check and the push guard refuse."""
+    key = key_of(branch, prefix)
+    return bool(key) and key.isdigit() and number_in(key) is None
+
+
+def meant_number(key):
+    """The issue number a key of digits seems to mean, read in ASCII with
+    no leading zero, as #3 for claude/03, or None when it has more digits
+    than an issue's number has, or is not all digits."""
+    if not key or not key.isdigit():
+        return None
+    text = "".join(str(unicodedata.digit(digit)) for digit in key).lstrip("0") or "0"
+    return number_in(text)
 
 
 def claim_path(number):
@@ -98,9 +141,10 @@ def claim_path(number):
 
 def by_number(value):
     """A sort key that puts numbers in order and anything else after them,
-    so claude/9 comes before claude/100 and claude/x after both."""
-    text = str(value)
-    return (0, int(text), "") if text.isdigit() else (1, 0, text)
+    so claude/9 comes before claude/100 and claude/x after both; a key that
+    spells no number (number_in) sorts by its text, and never raises."""
+    number = number_in(value)
+    return (0, number, "") if number is not None else (1, 0, str(value))
 
 
 def claim_worker(text):
@@ -224,18 +268,22 @@ def starts_with_release_marker(comment):
 
 def is_release_comment(comment, trusted=None):
     """Whether an issue comment releases a claim: its first line is the
-    marker and the repository trusts its author, by GitHub's
-    author_association (RELEASERS), as the repository's own workflows
-    (RELEASING_BOTS), or, for an author neither vouches for, by trusted, a
-    callable given the author's login that an adapter answers from the
-    author's permission on the repository: GitHub may show a private member
-    of the organization to a workflow's token as a mere contributor. A
+    marker and the repository trusts its author (is_trusted_author). A
     comment by anyone else cannot take a claim away from its holder."""
-    if not starts_with_release_marker(comment):
-        return False
-    if comment.get("author_association") in RELEASERS:
+    return starts_with_release_marker(comment) and is_trusted_author(comment, trusted)
+
+
+def is_trusted_author(comment, trusted=None):
+    """Whether the repository trusts the author of a comment, as the API
+    gives it, to speak for the coordinator: by GitHub's author_association
+    (RELEASERS), as the repository's own workflows (RELEASING_BOTS), or, for
+    an author neither vouches for, by trusted, a callable given the author's
+    login that an adapter answers from the author's permission on the
+    repository: GitHub may show a private member of the organization to a
+    workflow's token as a mere contributor."""
+    if (comment or {}).get("author_association") in RELEASERS:
         return True
-    login = (comment.get("user") or {}).get("login")
+    login = ((comment or {}).get("user") or {}).get("login")
     if login in RELEASING_BOTS:
         return True
     return bool(trusted and login and trusted(login))
@@ -243,8 +291,9 @@ def is_release_comment(comment, trusted=None):
 
 def said_finished(comments, author):
     """Whether the author's latest comment among a pull request's comments
-    starts with FINISHED_SIGNAL, so the draft is finished and its claim is
-    never released however long it waits."""
+    starts with FINISHED_SIGNAL, so the draft is finished, and the
+    coordinator never releases its claim however long it waits; a
+    person's release of it still counts."""
     theirs = [c for c in comments if (c.get("user") or {}).get("login") == author and author]
     if not theirs:
         return False

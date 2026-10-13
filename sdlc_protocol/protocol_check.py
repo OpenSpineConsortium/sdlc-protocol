@@ -9,6 +9,9 @@ forgot them cannot merge however the session that made it was feeling:
 - A draft still carries docs/agents/claims/<issue>.md: the claim stays
   visible exactly as long as it holds.
 - A pull request marked ready has deleted it: finishing lets go.
+- A head branch that reads as a claim, claude/ and digits, is the
+  issue's claim branch, its number as GitHub writes it; claude/03 claims
+  nothing, while its author meant a claim on #3.
 
 Any other head branch, dependabot's or a person's, is not a claim and
 passes untouched. The pull request is the object GitHub's event carries;
@@ -18,7 +21,7 @@ nothing here reads a file.
 
 import re
 
-from .claims import claim_path, number_of
+from .claims import branch_of, claim_path, key_of, meant_number, number_of, reads_as_claim
 
 # The forms GitHub links a pull request to an issue with; the protocol
 # writes "Closes #N" and the rest are the same promise.
@@ -54,7 +57,7 @@ def problems_for(pull, claim_file_exists):
     branch = head_branch(pull)
     number = claim_number(pull)
     if number is None:
-        return []
+        return [misnamed(branch)] if reads_as_claim(branch) else []
     if callable(claim_file_exists):
         claim_file_exists = claim_file_exists(number)
     problems = []
@@ -72,3 +75,13 @@ def problems_for(pull, claim_file_exists):
         problems.append(f"{path} is still here: a pull request marked ready has deleted its claim file "
                         f"({PROTOCOL}, Finish)")
     return problems
+
+
+def misnamed(branch):
+    """The problem with a head branch that reads as a claim and claims
+    nothing (claims.reads_as_claim): the issue it seems to mean has its own
+    claim branch, which is where the work goes."""
+    meant = meant_number(key_of(branch))
+    there = f"; the claim branch of #{meant} is {branch_of(meant)}, so push the work there" if meant is not None else ""
+    return (f"{branch} reads as a claim branch and claims nothing, since a claim branch is claude/ and the "
+            f"issue's number in one to nine ASCII digits with no leading zero{there} ({PROTOCOL}, Claim)")

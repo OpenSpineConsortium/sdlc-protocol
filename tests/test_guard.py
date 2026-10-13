@@ -10,7 +10,15 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from sdlc_protocol import guard  # noqa: E402
+from sdlc_protocol import claims, guard  # noqa: E402
+
+FORCE = ("--force overwrites history another account may hold; the one forced push the protocol allows is "
+         "--force-with-lease on your own claude/ branch after a rebase (.claude/rules/board.md)")
+PLUS = ("a + before a refspec forces that ref as --force does, and git lets it override --force-with-lease; the "
+        "one forced push the protocol allows is --force-with-lease on your own claude/ branch after a rebase, with "
+        "no + (.claude/rules/board.md)")
+MAIN = "a push to main is refused: the default branch takes only pull requests (.claude/rules/board.md)"
+BOARD = "a push to board is refused: only the board workflow writes that branch (.claude/rules/board.md)"
 
 
 def refusal(args, current="claude/7", default="main"):
@@ -34,6 +42,123 @@ class RefusalTest(unittest.TestCase):
     def test_force_refused_even_on_own_claim(self):
         self.assertIsNotNone(refusal(["--force", "origin", "claude/7"]))
         self.assertIsNotNone(refusal(["-f", "origin", "claude/7"]))
+
+    def test_a_refspec_written_with_a_plus_is_a_force(self):
+        # A leading + forces that one ref as --force forces them all, and
+        # git 2.43 lets it override a lease: a push of +claude/7 with
+        # --force-with-lease overwrote a peer's newer commit that the lease
+        # alone refused. The refusal names the +, which is what to drop.
+        for args in (["origin", "+claude/7"], ["origin", "+HEAD:claude/7"], ["origin", "+claude/7:claude/8"],
+                     ["--force-with-lease", "origin", "+claude/7"], ["-u", "origin", "claude/7", "+feature"],
+                     ["origin", "+"]):
+            self.assertEqual(refusal(args), PLUS, args)
+        self.assertEqual(refusal(["--force", "origin", "+claude/7"]), FORCE, "--force is named where it is given")
+        self.assertIsNone(refusal(["+origin", "claude/7"]), "the first word is the remote, not a refspec")
+        # Under --delete git reads the + as part of the name to delete,
+        # "unable to delete '+claude/7'", so that is no force.
+        self.assertIsNone(refusal(["--delete", "origin", "+claude/7"]))
+
+    def test_short_options_bundle_as_git_reads_them(self):
+        # git 2.43 force-updated a branch on "git push -fu origin HEAD:x"
+        # and on -uf; -o takes the rest of its word as its value.
+        for args in (["-fu", "origin", "claude/7"], ["-uf", "origin", "claude/7"], ["-vqf", "origin", "x"],
+                     ["-df", "origin", "x"]):
+            self.assertEqual(refusal(args), FORCE, args)
+        for args in (["-of", "origin", "claude/7"], ["-uo", "f", "origin", "claude/7"], ["-un", "origin", "claude/7"]):
+            self.assertIsNone(refusal(args), args)
+        self.assertIsNone(refusal(["-du", "origin", "+claude/7"]), "-d in a bundle deletes, so the + is a name")
+
+    def test_a_long_option_is_read_by_any_start_that_names_it_alone(self):
+        # git 2.43 took --force-w for --force-with-lease, and --mi for
+        # --mirror; --forc and --d name more than one option, and git
+        # refuses them and pushes nothing.
+        lease = refusal(["--force-with-lease", "origin", "feature"], current="feature")
+        self.assertEqual(refusal(["--force-w", "origin", "feature"], current="feature"), lease)
+        self.assertEqual(refusal(["--force-with-l=feature", "origin", "feature"], current="feature"), lease)
+        self.assertIsNone(refusal(["--force-w", "origin", "claude/7"]))
+        self.assertEqual(refusal(["--mi", "origin"]), refusal(["--mirror", "origin"]))
+        self.assertEqual(refusal(["--al", "origin"]), refusal(["--all", "origin"]))
+        self.assertEqual(refusal(["--br", "origin"]), refusal(["--branches", "origin"]))
+        self.assertIsNone(refusal(["--de", "origin", "+claude/7"]), "--de is --delete")
+        # git 2.43 deleted claude/2 on "--delet origin claude/2", as it does
+        # on --delete, which the guard lets through for one's own claim
+        # branch after its merge, and refuses for main.
+        self.assertIsNone(refusal(["--delet", "origin", "claude/2"]))
+        self.assertEqual(refusal(["--delet", "origin", "main"]), MAIN)
+        # git 2.43 answered "git push --forc origin claude/1" with "ambiguous
+        # option: forc (could be --force-with-lease or --force-if-includes)",
+        # exit 129, and pushed nothing.
+        for ambiguous in ("--forc", "--d", "--a", "--force-"):
+            self.assertIsNone(refusal([ambiguous, "origin", "claude/7"]), ambiguous)
+
+    def test_an_option_taken_back_with_no_is_not_in_force(self):
+        self.assertIsNone(refusal(["--force", "--no-force", "origin", "claude/7"]))
+        self.assertIsNone(refusal(["--force-with-lease", "--no-force-with", "origin", "feature"], current="feature"))
+        self.assertIsNone(refusal(["--all", "--no-all", "origin", "claude/7"]))
+        self.assertEqual(refusal(["--no-force", "-f", "origin", "claude/7"]), FORCE)
+
+    def test_a_value_is_no_refspec_and_the_words_after_two_dashes_are_refspecs(self):
+        self.assertEqual(refusal(["--recurse-submodules", "check", "origin", "main"]), MAIN)
+        self.assertIsNone(refusal(["--exec", "git-receive-pack", "origin", "claude/7"]))
+        self.assertIsNone(refusal(["--receive-pack=git-receive-pack", "-o", "ci.skip", "origin", "claude/7"]))
+        self.assertEqual(refusal(["--", "origin", "main"]), MAIN)
+
+    def test_a_refspec_that_moves_many_branches_is_wholesale(self):
+        # The matching refspec : updates every branch both sides have, the
+        # default one among them, and a pattern with a * pushes every
+        # branch it matches.
+        for spec in (":", "+:", "refs/heads/*:refs/heads/*", "claude/*"):
+            self.assertEqual(refusal(["origin", spec]),
+                             f"a push with the refspec {spec} moves branches wholesale; push your own claim "
+                             "branch alone (.claude/rules/board.md)", spec)
+
+    def test_a_name_that_reads_as_a_claim_and_claims_nothing_is_refused(self):
+        # GitHub's lock is per name, so claude/03 beside claude/3 would be a
+        # second branch on #3 that claims nothing; the guard names the
+        # issue's own claim branch.
+        self.assertEqual(refusal(["origin", "claude/03"]), (
+            "a push to claude/03 is refused: it reads as a claim branch and claims nothing, since a claim branch "
+            "is claude/ and the issue's number in one to nine ASCII digits with no leading zero, so the claim "
+            "branch of #3 is claude/3 (docs/agents/PROTOCOL.md, Claim)"))
+        self.assertIn("so the claim branch of #3 is claude/3", refusal(["-u", "origin", "HEAD"], current="claude/\u0663"))
+        self.assertIn("so the claim branch of #0 is claude/0", refusal([], current="claude/00"))
+        self.assertIn("with no leading zero (docs/agents/PROTOCOL.md", refusal(["origin", "HEAD:claude/1234567890"]))
+        for args in (["origin", "claude/3"], ["origin", "claude/0"], ["origin", "claude/x"],
+                     ["origin", "claude/upbeat-sagan-6th2hu"], ["origin", "claude/03-notes"],
+                     ["origin", "claude/03:claude/3"], ["--delete", "origin", "claude/03"], ["origin", ":claude/03"],
+                     ["-d", "origin", "claude/\u00b2"]):
+            self.assertIsNone(refusal(args), args)
+
+    def test_a_branch_written_as_git_resolves_it_is_that_branch(self):
+        # git reads heads/main as refs/heads/main on both sides of a
+        # refspec, as it reads any name with refs/ left off, and @ alone as
+        # HEAD. Against a bare remote, git 2.43 updated main on "git push
+        # origin heads/main", "HEAD:heads/main", "heads/claude/7:heads/main"
+        # and, from main, "git push origin @"; it deleted board on "git push
+        # origin :heads/board" and "git push --delete origin heads/board";
+        # and the guard let each of them through.
+        for args, current in ((["origin", "heads/main"], "claude/7"), (["origin", "HEAD:heads/main"], "claude/7"),
+                              (["origin", "heads/claude/7:heads/main"], "claude/7"),
+                              (["origin", ":heads/main"], "claude/7"),
+                              (["--delete", "origin", "heads/main"], "claude/7"),
+                              (["origin", "@"], "main"), (["-u", "origin", "@"], "main")):
+            self.assertEqual(refusal(args, current=current), MAIN, args)
+        for args in (["origin", "heads/board"], ["origin", "HEAD:heads/board"], ["origin", ":heads/board"],
+                     ["--delete", "origin", "heads/board"], ["--delet", "origin", "heads/board"]):
+            self.assertEqual(refusal(args), BOARD, args)
+        # refs/heads/ is taken off once: git 2.43 made a branch named
+        # heads/main on "git push origin HEAD:refs/heads/heads/main".
+        self.assertIsNone(refusal(["origin", "HEAD:refs/heads/heads/main"]))
+        self.assertIsNone(refusal(["origin", "refs/tags/main"]), "a tag is no branch")
+        self.assertIsNone(refusal(["origin", "@"]), "@ on a claim branch pushes that branch")
+        # git pushed claude/7 on "--force-with-lease origin heads/claude/7",
+        # one's own claim branch, which the guard refused as another one.
+        self.assertIsNone(refusal(["--force-with-lease", "origin", "heads/claude/7"]))
+
+    def test_the_claim_number_is_the_rule_claims_states(self):
+        # The guard keeps its own copy, since the marketplace takes guard.py
+        # alone; it must say what claims.NUMBER says.
+        self.assertEqual(guard.CLAIM_NUMBER.pattern, claims.NUMBER.pattern)
 
     def test_lease_allowed_on_claim_branch(self):
         self.assertIsNone(refusal(["--force-with-lease", "origin", "claude/7"]))
@@ -75,6 +200,30 @@ class ParsingTest(unittest.TestCase):
     def test_git_global_options_are_stepped_over(self):
         self.assertEqual(guard.push_arguments(["git", "-C", "clone", "push", "origin", "x"]),
                          ["origin", "x"])
+
+    def test_git_is_found_behind_assignments_and_the_four_wrappers(self):
+        # A person may put the environment, env, command, nice or time
+        # before git, each with its own options; the push behind them is
+        # still a push.
+        for command in ("FOO=1 git push origin main", "GIT_TRACE=1 A='b c' git push origin main",
+                        "env git push origin main", "/usr/bin/env -i FOO=1 git push origin main",
+                        "env -u HOME --chdir=. -C .. git push origin main", "env -- git push origin main",
+                        "command git push origin main", "command -p git push origin main",
+                        "nice git push origin main", "nice -n 5 git push origin main", "nice -10 git push origin main",
+                        "nice --adjustment=3 git push origin main", "time git push origin main",
+                        "time -p git push origin main", "time -o out.txt -f %e -a git push origin main",
+                        "FOO=1 env BAR=2 nice -n 2 time -p command /usr/bin/git -C . push origin main"):
+            pushes = [guard.push_arguments(argv) for argv in guard.simple_commands(command)]
+            self.assertEqual(pushes, [["origin", "main"]], command)
+
+    def test_a_wrapper_that_runs_no_git_push_is_no_push(self):
+        # command -v and -V only say what would run; the rest run something
+        # that is not git, or nothing at all.
+        for command in ("command -v git", "command -V git push origin main", "command -pv git push origin main",
+                        "env", "nice", "time", "FOO=1", "FOO=1 echo git push origin main", "env cat git push",
+                        "nice -n 5", "time -o out.txt"):
+            pushes = [guard.push_arguments(argv) for argv in guard.simple_commands(command)]
+            self.assertEqual(pushes, [None] * len(pushes), command)
 
     def test_other_git_verbs_are_not_pushes(self):
         self.assertIsNone(guard.push_arguments(["git", "pull", "origin", "main"]))
@@ -154,6 +303,54 @@ class RunTest(unittest.TestCase):
         self.assertIn("pull requests", message)
         self.assertEqual(self.run_guard("git commit -F - <<'EOF'\nClaim #7\n\nThe board first.\nEOF\n"
                                         "git push -u origin claude/7"), (0, ""))
+
+    def test_a_push_behind_a_prefix_is_judged_as_the_push_itself(self):
+        refused = self.run_guard("git push origin main")
+        self.assertEqual(refused[0], 2)
+        for prefix in ("FOO=1 ", "env ", "command ", "nice ", "time ", "env FOO=1 nice -n 5 "):
+            self.assertEqual(self.run_guard(prefix + "git push origin main"), refused, prefix)
+            self.assertEqual(self.run_guard(prefix + "git push -u origin claude/7"), (0, ""), prefix)
+        self.assertEqual(self.run_guard("time git push origin +claude/7"), (2, PLUS))
+
+    def test_a_push_inside_a_compound_command_is_judged_as_the_push_itself(self):
+        # The reserved words run nothing of their own, so the push after
+        # one runs; bash 5.2 ran each of these.
+        for command in ("! git push origin main", "if git push origin main; then echo ok; fi",
+                        "if ! git push origin main; then echo failed; fi",
+                        "while ! git push origin main; do sleep 1; done", "until git push origin main; do sleep 5; done",
+                        "for i in 1 2; do git push origin main; done", "if false; then :; else git push origin main; fi",
+                        "if false; then :; elif git push origin main; then :; fi", "{ git push origin main; }",
+                        "false || { git push origin main; }", "f() { git push origin main; }; f",
+                        "function f { git push origin main; }; f"):
+            self.assertEqual(self.run_guard(command), (2, MAIN), command)
+        for command in ("if git push -u origin claude/7; then echo ok; fi",
+                        "for i in 1 2 3; do git push origin claude/7 && break; sleep 2; done",
+                        "while read -r b; do git push origin \"$b\"; done", "do_not=1 echo git push origin main"):
+            self.assertEqual(self.run_guard(command), (0, ""), command)
+
+    def test_a_push_behind_exec_nohup_or_timeout_is_judged_as_the_push_itself(self):
+        for command in ("exec git push origin main", "exec -a pusher git push origin main",
+                        "exec -cla pusher git push origin main", "nohup git push origin main",
+                        "timeout 60 git push origin main", "timeout -s KILL -k 5 1m git push origin main",
+                        "timeout --signal=TERM --kill-after 5 10 git push origin main", "timeout -- 60 git push origin main",
+                        "FOO+=1 git push origin main", "env -iu HOME git push origin main"):
+            self.assertEqual(self.run_guard(command), (2, MAIN), command)
+        self.assertEqual(self.run_guard("timeout 60 git push -u origin claude/7"), (0, ""))
+
+    def test_a_branch_written_as_git_resolves_it_is_judged_as_that_branch(self):
+        for command in ("git push origin heads/main", "git push origin HEAD:heads/main",
+                        "git push --delete origin heads/main"):
+            self.assertEqual(self.run_guard(command), (2, MAIN), command)
+        self.assertEqual(self.run_guard("git push origin :heads/board"), (2, BOARD))
+        self.assertEqual(self.run_guard("git push -u origin heads/claude/7"), (0, ""))
+
+    def test_a_command_handed_to_another_shell_as_text_is_out_of_reach(self):
+        """The trade the docstring states: what bash -c, eval or env -S runs
+        is text to this module, and a wrapper it does not name is no git, so
+        each passes, and branch protection stands behind it."""
+        for command in ("bash -c 'git push origin main'", "eval 'git push origin main'",
+                        "env -S 'git push origin main'", "sudo git push origin main"):
+            self.assertEqual(self.run_guard(command), (0, ""), command)
 
     def test_command_without_push_passes_without_git(self):
         with mock.patch.object(guard, "branches", side_effect=AssertionError("git was asked")):
