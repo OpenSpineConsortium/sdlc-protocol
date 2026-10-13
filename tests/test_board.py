@@ -483,6 +483,25 @@ class Leniency(unittest.TestCase):
         self.assertEqual([w.number for w in board.open_work(snap)], [3])
         self.assertEqual(board.overlaps(snap), {})
 
+    def test_a_branch_that_names_no_issue_never_reads_as_a_claim_on_the_page(self):
+        # The page folds what is not ASCII into ASCII, so claude/ and a
+        # fullwidth 3 read as claude/3 beside the real claim, a superscript
+        # 2 as claude/2 while #2 sat in the queue, and the key #3 as #3.
+        snap = Snapshot.from_dict({
+            "branches": ["claude/3", "claude/\uff13", "claude/#3", "claude/\u00b2", "claude/x-notes"],
+            "claims": {"3": "- Worker: alice\n", "\uff13": "- Worker: mallory\n", "#3": "- Worker: mallory\n"},
+            "issues": [{"number": 2, "title": "Two", "labels": ["todo"]}],
+        })
+        rows = section(board.render(snap), board.CLAIM_HEADING, board.PULL_HEADING)
+        self.assertIn("| #3 | claude/3 | alice |", rows)
+        self.assertIn("| (not a claim) | claude/\\uff13 | mallory |", rows)
+        self.assertIn("| (not a claim) | claude/#3 | mallory |", rows)
+        self.assertIn("| (not a claim) | claude/\\u00b2 | no claim file yet |", rows)
+        self.assertIn("| (not a claim) | claude/x-notes | no claim file yet |", rows)
+        self.assertEqual(rows.count("| #"), 1, rows)
+        self.assertEqual(rows.count("claude/3 "), 1, rows)
+        self.assertNotIn("claude/2 ", rows)
+
     def test_a_second_name_for_an_issue_claims_nothing(self):
         # claude/03 is another name than claude/3, so GitHub takes a first
         # push of each: only the name branch_of writes holds #3, and the
@@ -492,7 +511,7 @@ class Leniency(unittest.TestCase):
             "claims": {"03": "- Worker: bob\n", "3": "- Worker: alice\n"},
         })
         rows = section(board.render(both), board.CLAIM_HEADING, board.PULL_HEADING)
-        self.assertIn("| #3 | claude/3 | alice | (no pull request yet) | - |\n| 03 | claude/03 | bob |", rows)
+        self.assertIn("| #3 | claude/3 | alice | (no pull request yet) | - |\n| (not a claim) | claude/03 | bob |", rows)
         alone = Snapshot.from_dict({"branches": ["claude/03"], "claims": {"03": "- Worker: bob\n"},
                                     "issues": [{"number": 3, "title": "Three", "labels": ["todo"]}]})
         self.assertEqual(board.claimed_numbers(alone.branches), set())

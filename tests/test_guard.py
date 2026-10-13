@@ -10,7 +10,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from sdlc_protocol import guard  # noqa: E402
+from sdlc_protocol import claims, guard  # noqa: E402
 
 FORCE = ("--force overwrites history another account may hold; the one forced push the protocol allows is "
          "--force-with-lease on your own claude/ branch after a rebase (.claude/rules/board.md)")
@@ -102,6 +102,28 @@ class RefusalTest(unittest.TestCase):
             self.assertEqual(refusal(["origin", spec]),
                              f"a push with the refspec {spec} moves branches wholesale; push your own claim "
                              "branch alone (.claude/rules/board.md)", spec)
+
+    def test_a_name_that_reads_as_a_claim_and_claims_nothing_is_refused(self):
+        # GitHub's lock is per name, so claude/03 beside claude/3 would be a
+        # second branch on #3 that claims nothing; the guard names the
+        # issue's own claim branch.
+        self.assertEqual(refusal(["origin", "claude/03"]), (
+            "a push to claude/03 is refused: it reads as a claim branch and claims nothing, since a claim branch "
+            "is claude/ and the issue's number in one to nine ASCII digits with no leading zero, so the claim "
+            "branch of #3 is claude/3 (docs/agents/PROTOCOL.md, Claim)"))
+        self.assertIn("so the claim branch of #3 is claude/3", refusal(["-u", "origin", "HEAD"], current="claude/\u0663"))
+        self.assertIn("so the claim branch of #0 is claude/0", refusal([], current="claude/00"))
+        self.assertIn("with no leading zero (docs/agents/PROTOCOL.md", refusal(["origin", "HEAD:claude/1234567890"]))
+        for args in (["origin", "claude/3"], ["origin", "claude/0"], ["origin", "claude/x"],
+                     ["origin", "claude/upbeat-sagan-6th2hu"], ["origin", "claude/03-notes"],
+                     ["origin", "claude/03:claude/3"], ["--delete", "origin", "claude/03"], ["origin", ":claude/03"],
+                     ["-d", "origin", "claude/\u00b2"]):
+            self.assertIsNone(refusal(args), args)
+
+    def test_the_claim_number_is_the_rule_claims_states(self):
+        # The guard keeps its own copy, since the marketplace takes guard.py
+        # alone; it must say what claims.NUMBER says.
+        self.assertEqual(guard.CLAIM_NUMBER.pattern, claims.NUMBER.pattern)
 
     def test_lease_allowed_on_claim_branch(self):
         self.assertIsNone(refusal(["--force-with-lease", "origin", "claude/7"]))

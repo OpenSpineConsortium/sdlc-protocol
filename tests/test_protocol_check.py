@@ -88,12 +88,25 @@ class CheckProtocolTest(unittest.TestCase):
         self.assertEqual(protocol_check.problems_for(pull(branch="main"), exists), [])
         self.assertEqual(asked, [7])
 
-    def test_a_number_written_with_a_leading_zero_is_no_claim(self):
+    def test_a_number_written_with_a_leading_zero_is_no_claim_and_says_so(self):
         # claude/07 would be a second claim on #7 beside claude/7, which the
-        # first-push lock does not stop, so it is held to nothing, as any
-        # branch that is no claim is.
+        # first-push lock does not stop, so it claims nothing; its author
+        # meant a claim, so the check names the issue's own claim branch
+        # instead of passing it as a branch the protocol does not cover.
         self.assertIsNone(protocol_check.claim_number(pull(branch="claude/07")))
-        self.assertEqual(self.with_claim(False, pull(branch="claude/07", body="")), [])
+        self.assertEqual(self.with_claim(False, pull(branch="claude/07", body="")), [
+            "claude/07 reads as a claim branch and claims nothing, since a claim branch is claude/ and the issue's "
+            "number in one to nine ASCII digits with no leading zero; the claim branch of #7 is claude/7, so push "
+            "the work there (docs/agents/PROTOCOL.md, Claim)"])
+        self.assertEqual(self.with_claim(True, pull(branch="claude/07")), self.with_claim(False, pull(branch="claude/07")))
+        self.assertIn("the claim branch of #3 is claude/3", self.with_claim(False, pull(branch="claude/\u0663"))[0])
+        self.assertIn("the claim branch of #2 is claude/2", self.with_claim(False, pull(branch="claude/\u00b2"))[0])
+        self.assertTrue(self.with_claim(False, pull(branch="claude/1234567890"))[0].endswith(
+            "with no leading zero (docs/agents/PROTOCOL.md, Claim)"))
+
+    def test_a_branch_under_claude_that_reads_as_no_number_passes(self):
+        for branch in ("claude/x", "claude/upbeat-sagan-6th2hu", "claude/03-notes", "claude/#3", "claude/"):
+            self.assertEqual(self.with_claim(False, pull(branch=branch, body="")), [], branch)
 
     def test_the_claim_number_comes_from_the_head_branch(self):
         self.assertEqual(protocol_check.claim_number(pull()), 7)

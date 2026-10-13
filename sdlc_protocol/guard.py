@@ -7,9 +7,11 @@ The rules are the board rules of the repository that vendors this
 (its .claude/rules/board.md): the default branch takes only pull
 requests, the board branch takes only the board workflow's writes, and
 the one forced push the protocol allows is --force-with-lease on one's
-own claude/ branch after a rebase. A refusal is the rule working; the
-answer to one is a pull request, a rebase or another branch, never a way
-around the hook.
+own claude/ branch after a rebase; and the protocol's Claim rule, that the
+claim branch of issue N is claude/N exactly, so a branch of other digits
+after claude/, which reads as a claim and claims nothing, is not pushed.
+A refusal is the rule working; the answer to one is a pull request, a
+rebase or another branch, never a way around the hook.
 
 The hook is the first fence and branch protection on GitHub the second,
 so anything this module cannot read it lets through rather than wedging
@@ -46,6 +48,7 @@ and the one shape it bought is rare and answered by a rephrasing.
 import re
 import shlex
 import subprocess
+import unicodedata
 from typing import NamedTuple
 
 # git push's own options, as its parse-options reads them (git 2.43's
@@ -112,6 +115,14 @@ ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\+?=")
 # "{ git push ...; }" each run the push. function takes the next word as
 # the name it defines.
 RESERVED = {"!", "{", "if", "then", "else", "elif", "while", "until", "do"}
+
+# A claim branch is claude/ and the issue's number as GitHub writes it,
+# one to nine ASCII digits with no leading zero, the rule claims.NUMBER
+# states (this module imports nothing of the package, since the plugin
+# marketplace takes it alone). Any other digits after claude/, as in
+# claude/03, read as a claim and claim nothing, since GitHub's lock, the
+# refusal of a second push, works per name.
+CLAIM_NUMBER = re.compile(r"0|[1-9][0-9]{0,8}")
 
 # What ends a word for the shell: a # right after one of these starts a
 # comment; anywhere else it is part of the word.
@@ -336,22 +347,39 @@ def moves_many(spec):
     return spec.lstrip("+") == ":" or "*" in spec
 
 
-def destinations_of(refspecs, current_branch):
-    """The branches a push writes: a refspec's destination, after the colon
-    when it has one, and the current branch for HEAD or no refspec at all."""
-    destinations = []
+def targets_of(refspecs, current_branch, deleting):
+    """The branches a push writes, each with whether it deletes it: a
+    refspec's destination, after the colon when it has one, the current
+    branch for HEAD or no refspec at all, and a deletion under --delete or
+    for a refspec with nothing before its colon."""
+    targets = []
     for spec in refspecs:
-        name = spec.lstrip("+")
+        name, deleted = spec.lstrip("+"), deleting
         if ":" in name:
-            name = name.split(":", 1)[1]
+            source, name = name.split(":", 1)
+            deleted = deleted or not source
         name = name.removeprefix("refs/heads/")
         if name in ("", "HEAD"):
             name = current_branch
         if name:
-            destinations.append(name)
+            targets.append((name, deleted))
     if not refspecs and current_branch:
-        destinations.append(current_branch)
-    return destinations
+        targets.append((current_branch, deleting))
+    return targets
+
+
+def misnamed_claim(name):
+    """Why a push that writes this branch is refused for a name that reads
+    as a claim and claims nothing (CLAIM_NUMBER), naming the issue's own
+    claim branch where the digits spell one; None for any other name."""
+    key = name[len("claude/"):] if name.startswith("claude/") else ""
+    if not key.isdigit() or CLAIM_NUMBER.fullmatch(key):
+        return None
+    meant = "".join(str(unicodedata.digit(digit)) for digit in key).lstrip("0") or "0"
+    own = f", so the claim branch of #{meant} is claude/{meant}" if len(meant) <= 9 else ""
+    return (f"a push to {name} is refused: it reads as a claim branch and claims nothing, since a claim "
+            f"branch is claude/ and the issue's number in one to nine ASCII digits with no leading "
+            f"zero{own} (docs/agents/PROTOCOL.md, Claim)")
 
 
 def refusal(args, current_branch, default_branch):
@@ -378,16 +406,19 @@ def refusal(args, current_branch, default_branch):
         return ("a + before a refspec forces that ref as --force does, and git lets it override "
                 "--force-with-lease; the one forced push the protocol allows is --force-with-lease "
                 "on your own claude/ branch after a rebase, with no + (.claude/rules/board.md)")
-    destinations = destinations_of(refspecs, current_branch)
-    for name in destinations:
+    targets = targets_of(refspecs, current_branch, deleting)
+    for name, deleted in targets:
         if name == default_branch:
             return (f"a push to {name} is refused: the default branch takes only "
                     "pull requests (.claude/rules/board.md)")
         if name == "board":
             return ("a push to board is refused: only the board workflow writes that "
                     "branch (.claude/rules/board.md)")
+        misnamed = None if deleted else misnamed_claim(name)
+        if misnamed:
+            return misnamed
     if "force-with-lease" in options:
-        strays = [name for name in destinations if not name.startswith("claude/")]
+        strays = [name for name, _ in targets if not name.startswith("claude/")]
         if strays:
             return (f"--force-with-lease to {', '.join(strays)} is refused: a forced push "
                     "is for your own claude/ branch only (.claude/rules/board.md)")

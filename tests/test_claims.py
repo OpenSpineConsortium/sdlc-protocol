@@ -68,6 +68,18 @@ class Branches(unittest.TestCase):
             self.assertEqual(claims.branch_of(claims.number_of(name)), name)
         self.assertIsNone(claims.number_of("agent/07", "agent/"))
 
+    def test_a_name_of_digits_that_names_no_issue_reads_as_a_claim(self):
+        for name in ("claude/03", "claude/00", "claude/1234567890", "claude/\u0663", "claude/\u00b2", "claude/\uff13"):
+            self.assertTrue(claims.reads_as_claim(name), name)
+        for name in ("claude/3", "claude/0", "claude/x", "claude/03-notes", "claude/#3", "claude/", "main", "03"):
+            self.assertFalse(claims.reads_as_claim(name), name)
+
+    def test_the_number_a_name_of_digits_means(self):
+        self.assertEqual([claims.meant_number(key) for key in ("03", "00", "\u0663", "\u00b2", "\uff13\uff10")],
+                         [3, 0, 3, 2, 30])
+        for key in ("1234567890", "9" * 5000, "x", "", "3a"):
+            self.assertIsNone(claims.meant_number(key), key[:12])
+
     def test_a_policy_may_name_another_prefix(self):
         self.assertEqual(claims.branch_of(7, "agent/"), "agent/7")
         self.assertEqual(claims.number_of("agent/7", "agent/"), 7)

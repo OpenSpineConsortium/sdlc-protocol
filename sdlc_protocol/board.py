@@ -38,6 +38,9 @@ NO_CLAIM_FILE = "no claim file yet"
 ISSUE_CLOSED = "issue closed"
 DELETE_BRANCH = "delete the branch"
 NO_PULL_YET = "(no pull request yet)"
+# The issue cell of a branch under claude/ that names no issue, as
+# claude/x does, or claude/03, which reads as a claim on #3 and is none.
+NOT_A_CLAIM = "(not a claim)"
 
 MAIN_MOVED_MARKER = "<!-- sdlc-board: main-moved {sha} -->"
 IDLE_MARKER = "<!-- sdlc-board: idle -->"
@@ -318,7 +321,24 @@ def short_sha(sha):
 
 
 def issue_ref(key):
-    return f"#{key}" if number_in(key) is not None else key
+    """The issue cell of a claim's row: #<number>, or NOT_A_CLAIM for a key
+    that names no issue, which shown as itself could read as one (03, #3,
+    or a digit of another script that the page folds into an ASCII one)."""
+    return f"#{key}" if number_in(key) is not None else NOT_A_CLAIM
+
+
+def escaped(name):
+    """A name with each character outside ASCII written as its escape, so
+    the page, which folds such characters into ASCII ones (cell), never
+    shows a branch such as claude/ and a fullwidth 3 as claude/3."""
+    return "".join(ch if ch.isascii() else escape(ch) for ch in name)
+
+
+def escape(ch):
+    """One character as Python writes it in a string: \\uXXXX, or \\UXXXXXXXX
+    for one past U+FFFF."""
+    code = ord(ch)
+    return f"\\u{code:04x}" if code <= 0xFFFF else f"\\U{code:08x}"
 
 
 def claim_branches(branches):
@@ -505,7 +525,9 @@ def claim_row(key, branch, text, pull, issue):
     """One claim as the board shows it. The worker is the claim file's, or
     the issue's label once the finishing pull request has deleted the file.
     A branch whose issue is closed is a leftover: the row says so in place
-    of the pull request and asks for the branch to go in place of the files."""
+    of the pull request and asks for the branch to go in place of the files.
+    A branch whose key names no issue claims nothing, and the row says so in
+    place of the issue, with the branch's name escaped (escaped)."""
     closed = issue is not None and issue.state == "closed"
     if pull:
         files = sorted(pull.files)
@@ -527,7 +549,7 @@ def claim_row(key, branch, text, pull, issue):
         worker = claim_worker(text)
     else:
         worker = labels.worker_of({"labels": issue.labels} if issue else None) or NO_CLAIM_FILE
-    return [issue_ref(key), branch, worker, pull_cell, files_cell]
+    return [issue_ref(key), escaped(branch), worker, pull_cell, files_cell]
 
 
 def claim_rows(snap):

@@ -16,7 +16,7 @@ As of commit fedcba9 on trunk. Rewritten by .github/workflows/board.yml; do not 
 | #32 | claude/32 | no claim file yet | #64 | cafe.md |
 | #33 | claude/33 | unnamed | #65 | - |
 | #34 | claude/34 | wurth | #66 | a.md, b.md, c.md |
-| x-notes | claude/x-notes | main | (no pull request yet) | notes.md |
+| (not a claim) | claude/x-notes | main | (no pull request yet) | notes.md |
 
 ## Open pull requests
 

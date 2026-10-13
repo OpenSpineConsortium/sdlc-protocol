@@ -16,6 +16,7 @@ talks to git or to GitHub.
 """
 
 import re
+import unicodedata
 from datetime import datetime, timedelta, timezone
 
 PREFIX = "claude/"
@@ -109,6 +110,25 @@ def number_of(branch, prefix=PREFIX):
     raises."""
     key = key_of(branch, prefix)
     return None if key is None else number_in(key)
+
+
+def reads_as_claim(branch, prefix=PREFIX):
+    """Whether a branch reads as a claim and claims nothing: digits after
+    claude/, of any script, that are not an issue's number as branch_of
+    writes it (number_in), as in claude/03, a name its author meant for a
+    claim, which the protocol check and the push guard refuse."""
+    key = key_of(branch, prefix)
+    return bool(key) and key.isdigit() and number_in(key) is None
+
+
+def meant_number(key):
+    """The issue number a key of digits seems to mean, read in ASCII with
+    no leading zero, as #3 for claude/03, or None when it has more digits
+    than an issue's number has, or is not all digits."""
+    if not key or not key.isdigit():
+        return None
+    text = "".join(str(unicodedata.digit(digit)) for digit in key).lstrip("0") or "0"
+    return number_in(text)
 
 
 def claim_path(number):
