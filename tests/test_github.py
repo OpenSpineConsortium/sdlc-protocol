@@ -9,9 +9,11 @@ import io
 import json
 import os
 import sys
+import tempfile
 import unittest
 import urllib.error
 import urllib.parse
+from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
@@ -19,7 +21,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from sdlc_protocol import board, claims, gate, team  # noqa: E402
+from sdlc_protocol import board, claims, cli, gate, team  # noqa: E402
 from sdlc_protocol.adapters import github  # noqa: E402
 
 FIXTURES = ROOT / "tests" / "fixtures"
@@ -38,6 +40,14 @@ class FakeAnswer:
 
     def __exit__(self, *_):
         return False
+
+
+class CutAnswer(FakeAnswer):
+    """An answer whose connection closed before its body was whole, which
+    http.client tells by raising IncompleteRead when it is read."""
+
+    def read(self):
+        raise http.client.IncompleteRead(b'{"id"', 96)
 
 
 class Refusal:
@@ -271,6 +281,18 @@ class Token(unittest.TestCase):
         self.assertEqual(str(caught.exception), "GET /repos/o/r: HTTP 401")
         self.assertEqual((caught.exception.status, caught.exception.detail), (401, "Bad credentials"))
 
+    def test_an_answer_http_client_cannot_read_is_a_github_error(self):
+        # Neither is an OSError: an answer cut short, and one that is no
+        # HTTP at all, which urllib passes on as http.client raised them.
+        for raised, said in ((http.client.IncompleteRead(b"{", 9), "IncompleteRead(1 bytes read, 9 more expected)"),
+                             (http.client.BadStatusLine("NOT HTTP"), "BadStatusLine('NOT HTTP')")):
+            opener = mock.Mock()
+            opener.open.side_effect = raised
+            api = github.GitHub("t", "o/r", opener=opener, sleep=lambda seconds: None)
+            with self.assertRaises(github.GitHubError) as caught:
+                api.get("/repos/o/r/issues")
+            self.assertEqual(str(caught.exception), f"GET /repos/o/r/issues: {said}")
+
     def test_an_error_is_a_client_error_the_clerk_can_tolerate(self):
         self.assertTrue(issubclass(github.GitHubError, team.ClientError))
 
@@ -324,6 +346,73 @@ class Collect(unittest.TestCase):
                (41, board.IDLE_MARKER, board.IDLE_TEXT)]
         self.assertEqual(github.post_comments(api, due), ["PR #40: main-moved comment posted"])
         self.assertEqual(opener.sent("POST"), [{"body": "<!-- sdlc-board: main-moved 0123abc -->\nmain moved: x"}])
+
+    def test_a_comment_github_refuses_is_a_line_and_the_next_comment_is_still_tried(self):
+        # A refused comment, a secondary rate limit or a server error, ended
+        # the board's run with exit 1 after STATE.md was written, and the
+        # workflow writes the board to its branch only after a run that
+        # succeeded; a comment GitHub refuses for good froze the branch.
+        api, opener = client({
+            "/repos/o/r/issues/40/comments?per_page=100": FakeAnswer([]),
+            "POST /repos/o/r/issues/40/comments": Refusal(403, {"message": "You have exceeded a secondary rate limit"}),
+            "/repos/o/r/issues/41/comments?per_page=100": Refusal(502),
+            "/repos/o/r/issues/42/comments?per_page=100": FakeAnswer([]),
+            "POST /repos/o/r/issues/42/comments": FakeAnswer({}),
+        })
+        due = [board.DueComment(40, "<!-- sdlc-board: main-moved 0123abc -->", "main moved: x"),
+               board.DueComment(41, board.IDLE_MARKER, board.IDLE_TEXT),
+               board.DueComment(42, board.IDLE_MARKER, board.IDLE_TEXT)]
+        self.assertEqual(github.post_comments(api, due), [
+            "PR #40: main-moved comment failed: POST /repos/o/r/issues/40/comments: HTTP 403: "
+            "You have exceeded a secondary rate limit",
+            "PR #41: idle comment failed: GET /repos/o/r/issues/41/comments: HTTP 502",
+            "PR #42: idle comment posted"])
+        # 41's comments could not be read, so whether it was told is not
+        # known, and nothing is posted to it: the next run tells it once.
+        self.assertEqual([c.full_url.replace(github.API, "") for c in opener.calls if c.get_method() == "POST"],
+                         ["/repos/o/r/issues/40/comments", "/repos/o/r/issues/42/comments"])
+
+    def test_a_comment_whose_answer_was_cut_short_is_a_line_and_the_next_comment_is_still_tried(self):
+        # http.client raises IncompleteRead, which is no OSError, for an
+        # answer that ends before its length, and it left the client as it
+        # was, past every except GitHubError of the adapter, so it ended
+        # the run after STATE.md was written. GitHub may have written the
+        # comment; the next run reads its marker and posts nothing twice.
+        api, _ = client({
+            "/repos/o/r/issues/40/comments?per_page=100": FakeAnswer([]),
+            "POST /repos/o/r/issues/40/comments": CutAnswer({}),
+            "/repos/o/r/issues/41/comments?per_page=100": FakeAnswer([]),
+            "POST /repos/o/r/issues/41/comments": FakeAnswer({}),
+        })
+        due = [board.DueComment(40, board.IDLE_MARKER, board.IDLE_TEXT),
+               board.DueComment(41, board.IDLE_MARKER, board.IDLE_TEXT)]
+        self.assertEqual(github.post_comments(api, due), [
+            "PR #40: idle comment failed: POST /repos/o/r/issues/40/comments: "
+            "IncompleteRead(5 bytes read, 96 more expected)",
+            "PR #41: idle comment posted"])
+
+    def test_a_board_run_whose_comment_github_refuses_writes_the_board_and_exits_0(self):
+        snap, answers = fixture_answers()
+        answers["/repos/o/r/issues/40/comments?per_page=100"] = FakeAnswer([])
+        answers["POST /repos/o/r/issues/40/comments"] = Refusal(500)
+        answers["/repos/o/r/issues/41/comments?per_page=100"] = FakeAnswer([])
+        answers["POST /repos/o/r/issues/41/comments"] = FakeAnswer({})
+        api, _ = client(answers)
+        environ = {"GITHUB_TOKEN": "t", "GITHUB_REPOSITORY": "o/r", "GITHUB_EVENT_NAME": "push",
+                   "GITHUB_REF_NAME": "main"}
+        with tempfile.TemporaryDirectory() as folder:
+            out = Path(folder) / "STATE.md"
+            printed, said = io.StringIO(), io.StringIO()
+            with mock.patch.object(github, "GitHub", lambda token, repo: api), \
+                 redirect_stdout(printed), redirect_stderr(said):
+                code = cli.run_board(["--sha", snap["sha"], "--out", str(out)], environ)
+            self.assertEqual((code, said.getvalue()), (0, ""))
+            self.assertEqual(out.read_bytes(), (FIXTURES / "board-STATE.md").read_bytes())
+            self.assertEqual(printed.getvalue().splitlines(), [
+                f"{out.as_posix()}: rewritten",
+                "PR #40: main-moved comment failed: POST /repos/o/r/issues/40/comments: HTTP 500",
+                "PR #40: idle comment failed: POST /repos/o/r/issues/40/comments: HTTP 500",
+                "PR #41: idle comment posted"])
 
 
 HEAD_12 = "aaaaaaa1111111"

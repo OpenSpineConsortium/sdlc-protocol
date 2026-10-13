@@ -19,6 +19,7 @@ apart, on the exception, for a caller that wants to say why.
 """
 
 import base64
+import http.client
 import json
 import os
 import time
@@ -132,7 +133,12 @@ class GitHub:
 
     def request(self, method, url, body=None, missing_ok=False):
         """One call; the decoded JSON and the answer's headers. A 404 is
-        (None, headers) when missing_ok says absence is an answer."""
+        (None, headers) when missing_ok says absence is an answer. Every
+        failure is a GitHubError, whichever part of urllib raised it:
+        http.client's own, an answer cut short (IncompleteRead) or one that
+        is no HTTP (BadStatusLine), are no OSError, and urllib passes them
+        on as they are, past every caller that turns a refusal into a
+        line."""
         data = json.dumps(body).encode("utf-8") if body is not None else None
         headers = self.headers()
         if data is not None:
@@ -149,6 +155,8 @@ class GitHub:
             raise GitHubError(f"{where}: HTTP {problem.code}", problem.code, error_detail(problem)) from None
         except OSError as problem:
             raise GitHubError(f"{where}: {getattr(problem, 'reason', problem)}") from None
+        except http.client.HTTPException as problem:
+            raise GitHubError(f"{where}: {problem!r}") from None
         except ValueError:
             raise GitHubError(f"{where}: the answer was not JSON") from None
 
@@ -470,13 +478,24 @@ def comment_once(api, number, marker, text):
 
 def post_comments(api, due):
     """Post each comment board.comments_due names, once each; the lines say
-    which were posted, one each, for the workflow's log."""
-    posted = []
+    which were posted, one each, for the workflow's log. Nothing here
+    raises: a comment GitHub refuses, or whose pull request's comments it
+    would not give, is a line, and the next comment is still tried. The
+    board is written before the comments, and the workflow writes it to
+    its branch only after a run that succeeded, so one refused comment
+    stopped the board, a refusal for good stopped it on every run, and the
+    comment is posted by a later run, which finds no marker yet."""
+    lines = []
     for number, marker, text in due:
         kind = "idle" if marker == board.IDLE_MARKER else "main-moved"
-        if comment_once(api, number, marker, text):
-            posted.append(f"PR #{number}: {kind} comment posted")
-    return posted
+        try:
+            posted = comment_once(api, number, marker, text)
+        except GitHubError as problem:
+            lines.append(f"PR #{number}: {kind} comment failed: {problem}{github_words(problem)}")
+            continue
+        if posted:
+            lines.append(f"PR #{number}: {kind} comment posted")
+    return lines
 
 
 # --- the coordinator ----------------------------------------------------------
