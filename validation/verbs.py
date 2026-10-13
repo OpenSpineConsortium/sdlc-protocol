@@ -204,7 +204,7 @@ def rebase_main(model, worker, number):
     model.fetch(worker)
     ref = claim_ref(number)
     head, main = model.refs[ref], model.refs[MAIN]
-    own = sorted(model.ancestors(head) - model.ancestors(main), key=lambda c: (model.commits[c].committed_at, c))
+    own = model.in_order(model.ancestors(head) - model.ancestors(main))
     tip = main
     for sha in own:
         record = model.commits[sha]

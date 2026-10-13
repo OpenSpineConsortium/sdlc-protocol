@@ -4,7 +4,9 @@ FakeGitHub is an opener: the library's GitHub adapter takes it through the
 opener argument it already has (adapters/github.py, GitHub.__init__), and
 every call the adapter makes is answered from the model, a write changing
 the model as GitHub would. It serves exactly the endpoints the adapter's
-board, coordinator and clerk call, and a call to any other raises
+board run calls (the snapshot, the coordinator, the renames and the
+comments); the clerk's and the gate's come with the steps that drive them
+(DESIGN.md, 14). A call to any other endpoint raises
 Unserved, which no part of the adapter catches, so a call the harness
 does not model stops the run loudly rather than reading as a 404.
 
@@ -77,6 +79,8 @@ class Call(NamedTuple):
     body: object
     status: int
     applied: bool
+    # Whether a Fault made the answer, as against a refusal the model gives.
+    injected: bool = False
 
 
 class Answer:
@@ -130,7 +134,7 @@ class FakeGitHub:
         path = "/" + "/".join(segments)
         fault = self.fault_for(f"{method} {path}")
         if fault is not None and not fault.applied:
-            self.calls.append(Call(method, path, tuple(sorted(query.items())), body, fault.status, False))
+            self.calls.append(Call(method, path, tuple(sorted(query.items())), body, fault.status, False, True))
             raise self.fault_answer(request.full_url, fault)
         try:
             found, headers = self.answer(method, segments, query, body, request.full_url)
@@ -138,7 +142,7 @@ class FakeGitHub:
             self.calls.append(Call(method, path, tuple(sorted(query.items())), body, refused.status, False))
             raise refusal(request.full_url, refused.status) from None
         self.calls.append(Call(method, path, tuple(sorted(query.items())), body,
-                              fault.status if fault else 200, method != "GET"))
+                              fault.status if fault else 200, method != "GET", fault is not None))
         if fault is not None:
             raise self.fault_answer(request.full_url, fault)
         return Answer(found, headers)
@@ -217,6 +221,8 @@ class FakeGitHub:
             raise Refused(404)
         if len(s) == 2 and method == "GET":
             return (self.issue_json(target) if number in self.model.issues else self.pull_as_issue(target)), {}
+        if len(s) == 2:
+            raise Unserved(f"{method} /{'/'.join(s)}")
         if s[2] == "comments" and len(s) == 3:
             if method == "GET":
                 return self.page([self.comment_json(number, i, c) for i, c in enumerate(target.comments)], query, url)
@@ -345,7 +351,7 @@ class FakeGitHub:
         if base_sha is None or sha not in model.commits:
             raise Refused(404)
         ahead = model.ancestors(sha) - model.ancestors(base_sha)
-        order = sorted(ahead, key=lambda c: (model.commits[c].committed_at, c))
+        order = model.in_order(ahead)
         return {"ahead_by": len(ahead), "commits": [{"sha": c, "commit": {"message": model.commits[c].message}}
                                                    for c in order],
                 "files": [{"filename": f} for f in model.changed(model.merge_base(sha, base_sha), sha)]}

@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from sdlc_protocol import board, claims, coordinator, labels  # noqa: E402
+from sdlc_protocol.adapters import github  # noqa: E402
 from validation import invariants, oracle  # noqa: E402
 
 SPEC = (ROOT / "spec" / "PROTOCOL.md").read_text(encoding="utf-8")
@@ -56,6 +57,8 @@ class TheOracleSpeaksTheSpec(unittest.TestCase):
         self.assertEqual(oracle.WORKER_SPELLINGS, labels.HOLDER_PREFIXES)
         self.assertEqual(oracle.IDLE_MINUTES * 60, claims.IDLE_AFTER.total_seconds())
         self.assertTrue(oracle.OVERLAP_MARKER.fullmatch(coordinator.OVERLAP_MARKER.format(numbers="2 13")))
+        self.assertEqual(oracle.EPIC, labels.EPIC)
+        self.assertEqual(oracle.REFUSED_FOR_GOOD, frozenset(github.REFUSED_FOR_GOOD))
 
     def test_the_board_s_own_markers_are_board_py_s(self):
         self.assertEqual(oracle.BOARD_MARKERS, {

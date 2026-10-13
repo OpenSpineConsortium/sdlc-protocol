@@ -80,6 +80,7 @@ class SameOrderAsTheCli(unittest.TestCase):
                 self.assertEqual([c[:5] for c in calls], [c[:5] for c in record.calls])
                 self.assertEqual(page, record.page)
                 self.assertEqual(lines, list(record.lines))
+                two.board_text = page
                 self.assertEqual(one.canonical(), two.canonical())
 
     def test_the_busy_state_has_every_kind_of_write_in_it(self):

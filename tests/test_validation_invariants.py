@@ -6,6 +6,7 @@ because the run's effects are compared with the oracle's and both waits
 sit on the threshold."""
 
 import contextlib
+import re
 import sys
 import unittest
 from datetime import timedelta
@@ -16,6 +17,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from sdlc_protocol import board, claims, coordinator  # noqa: E402
+from sdlc_protocol.adapters import github  # noqa: E402
 from validation import cycle, invariants, model as M, oracle, verbs  # noqa: E402
 from validation.verbs import Scope, Verb  # noqa: E402
 
@@ -27,8 +29,8 @@ def board_with(*faults, event=cycle.SCHEDULE, ref_name=""):
     return Verb("board", "board", (event, ref_name, faults))
 
 
-def violations(steps, scope=Scope(), known=oracle.AS_BUILT, issues=(1,)):
-    model = M.seeded(issues or scope.issues, writers=("a", "b", "c", verbs.CAROL, verbs.DANA))
+def violations(steps, scope=Scope(), known=oracle.AS_BUILT, issues=(1,), labels=("todo",)):
+    model = M.seeded(issues or scope.issues, writers=("a", "b", "c", verbs.CAROL, verbs.DANA), labels=labels)
     cycle.board_run(model)
     found = []
     for step in steps:
@@ -68,6 +70,22 @@ class AnHonestRun(unittest.TestCase):
                  Verb("finished", "a", (100,)), Verb("wait", "clock", (50,)), BOARD, Verb("marker", M.OWNER, (1,)),
                  Verb("label-off", M.OWNER, (1, "claimed")), BOARD]
         self.assertEqual(violations(steps), [])
+
+
+class TheProtocolCheckIsReadAsGitHubReadsABody(unittest.TestCase):
+    def test_a_body_closing_another_issue_or_in_another_keyword(self):
+        """G12's "the body closes its issue" is GitHub's reading: any closing
+        keyword in any case, and #12 does not close #1."""
+        for body, closes in (("Closes #1", True), ("closes #1", True), ("Fixes #1", True), ("Closes #12", False),
+                             ("Resolves #1.", True), ("See #1", False)):
+            with self.subTest(body=body):
+                model = M.seeded()
+                verbs.apply(model, Verb("claim", "a", (1,)))
+                verbs.apply(model, Verb("open-draft", "a", (1,)))
+                model.pulls[100].body = body
+                found = invariants.protocol_check_agrees(model)
+                self.assertEqual(found, [], body)
+                self.assertEqual(re.search(invariants.CLOSES % 1, body) is not None, closes)
 
 
 class TheFixesOf041Hold(unittest.TestCase):
@@ -120,9 +138,42 @@ class TheOpenFindingsShow(unittest.TestCase):
         found = violations([Verb("claim", "a", (1,)), Verb("lease-onto", "b", (1,))], Scope(careless=True))
         self.assertEqual(guarantees(found), ["G1"])
 
+    def test_f13_the_landing_order_s_oldest_is_the_lowest_number(self):
+        """Found by this step: a claim made five hours after another's draft
+        lands first, since its issue's number is below the pull request's."""
+        steps = [Verb("claim", "a", (1,)), Verb("open-draft", "a", (1,)), Verb("wait", "clock", (5,)),
+                 Verb("claim", "b", (2,)), BOARD]
+        self.assertEqual(violations(steps, SHARED, issues=None), [])
+        found = violations(steps, SHARED, oracle.AS_BUILT - {"F13"}, issues=None)
+        self.assertEqual([(v.guarantee, v.detail) for v in found],
+                         [("G7", "the board's Overlaps are {'src/shared.py': [2, 100]}, the oracle's "
+                                 "{'src/shared.py': [100, 2]}")])
+
+    def test_f14_given_to_workers_needs_the_label_todo(self):
+        """Found by this step: an issue a worker's label names, with no todo,
+        is shown in neither the Queue nor Given to workers."""
+        self.assertEqual(violations([BOARD], labels=("worker:a",)), [])
+        found = violations([BOARD], known=oracle.AS_BUILT - {"F14"}, labels=("worker:a",))
+        self.assertEqual([(v.guarantee, v.detail) for v in found],
+                         [("G9", "Given to workers is {}, the oracle's {1: ['a']}")])
+
 
 ORIGINAL_IS_IDLE = claims.is_idle
 ORIGINAL_LABELS_RELEASED = coordinator.labels_released
+
+
+def comment_then_labels(api, snap, key, now):
+    """release_one with the spec's order reversed, as cf3bdb0 had it (F1)."""
+    release = snap.releases[key]
+    text = coordinator.release_text(snap, key, github.holding(api, snap.default_branch, release.sha))
+    api.post(f"/repos/{api.repo}/issues/{key}/comments", {"body": text})
+    names = coordinator.labels_released(snap, key)
+    for name in names:
+        github.take_label_off(api, key, name)
+    coordinator.after_release(snap, key, now.isoformat(), names)
+    return f"#{key}: claim released"
+
+
 MUTANTS = {
     "idle at exactly 24 hours": (claims, "is_idle", lambda last, now, idle_after=claims.IDLE_AFTER:
                                  now - claims.parse_time(last) >= idle_after),
@@ -132,7 +183,21 @@ MUTANTS = {
                                             [n for n in ORIGINAL_LABELS_RELEASED(snap, key) if n == "claimed"]),
     "a release comment accepted from any author": (claims, "is_trusted_author", lambda comment, trusted=None: True),
     "an idle comment to a released claim's pull request": (board, "released_branches", lambda snap: set()),
+    "the comment before the labels": (github, "release_one", comment_then_labels),
+    "a refused rename never said": (github, "explain_refusal", lambda *a, **k: ""),
 }
+
+
+class TheChecksHoldUnderAFaultThatNeverFires(unittest.TestCase):
+    """The review of this step found the whole effects comparison skipped
+    for any board verb that named a fault, fired or not."""
+
+    def test_the_release_order_is_checked_in_a_run_whose_fault_never_fired(self):
+        steps = [Verb("claim", "a", (1,)), Verb("label-on", "a", (1, "claimed")), Verb("wait", "clock", (25,)),
+                 board_with("label-post-500")]
+        self.assertEqual(violations(steps), [])
+        with mock.patch.object(github, "release_one", comment_then_labels):
+            self.assertEqual(guarantees(violations(steps)), ["G3"])
 
 
 class TheMutantsThePrototypeMissedAreCaught(unittest.TestCase):
@@ -152,6 +217,8 @@ class TheMutantsThePrototypeMissedAreCaught(unittest.TestCase):
             "a release comment accepted from any author": [claim, Verb("wait", "clock", (25,)),
                                                            Verb("marker", verbs.SAM, (1,)), BOARD],
             "an idle comment to a released claim's pull request": [claim, draft, Verb("wait", "clock", (25,)), BOARD],
+            "the comment before the labels": [claim, labelled, Verb("wait", "clock", (25,)), BOARD],
+            "a refused rename never said": [claim, Verb("wait", "clock", (25,)), board_with("rename-403")],
         }
         for mutant, steps in traces.items():
             with self.subTest(mutant=mutant):

@@ -6,7 +6,7 @@ This is the design of the harness that validates this library against its spec: 
 - **Other repositories' files** are named with the repository: symphony-template's `.github/workflows/board.yml` (read at a1d9695), coordbench's `PARITY.md` and the other coordbench files section 1 names (read at d6a3480; PARITY.md was last changed by e8e72f7), beethoven-qa's `src/beethoven_qa/gate.py` (read at 85f0e1c), symphony-app's `manifest.json` (read at 17cea0c), and GitHub's documentation by its path in the github/docs repository, read on 2026-10-13.
 - **Bare module names.** A name such as claims.py or adapters/github.py is a file of the package, under `sdlc_protocol/`; a bare name that follows a path in the same list, as measure.py does in "validation/prototype/explore.py and measure.py", is a file in that path's folder. Paths inside a scenario's own repository (`src/1.py`, `docs/agents/claims/1.md`) and REST paths are not files of this one.
 - **Planned files.** Build step 1 of section 14 is built: validation/model.py, fake_github.py, cycle.py, verbs.py, policies.py, oracle.py, invariants.py, explore.py and page.py, GUARANTEES.md, and their tests, tests/test_validation_*.py. The files the later steps will add, and the folder `validation-out/` their lanes write to, are listed in section 12 and are marked "planned" where they are named; every other path in this document names a file that exists at this commit.
-- **The package does not change here.** F1, F3, F5, F6, F10 and F11 are fixed in 0.4.1 (pull request #11, released and synced on 2026-10-13); F2 and F12 are still open, each waiting on the owner's choice of fix; F4, F7, F8 and F9 are decisions for the owner (section 14).
+- **The package does not change here.** F1, F3, F5, F6, F10 and F11 are fixed in 0.4.1 (pull request #11, released and synced on 2026-10-13); F2 and F12 are still open, each waiting on the owner's choice of fix; F4, F7, F8 and F9 are decisions for the owner (section 14); F13 and F14, found by build step 1 when its oracle was held to the spec's words, are two more readings where the library and the spec part, for the owner to settle on either side.
 - **Where the numbers come from.** Every number was measured in one container: 4 CPUs shared with other sessions, Python 3.12.3, git 2.43.0. State counts are exact and were reproduced on this branch; times move with the load.
 
 ## Summary
@@ -24,7 +24,7 @@ There are five lanes:
 4. **CrossHair**, by hand from a scratch virtual environment, over the same assert-shaped properties, with no dependency in CI.
 5. **Canary**, monthly and by hand, for the few things only live GitHub shows, on the internal test repository OpenSpineConsortium/sdlc-template-test.
 
-The prototype and its critique found twelve things. Section 13 has the evidence for each and how to reproduce it.
+The prototype and its critique found twelve things, and build step 1 two more. Section 13 has the evidence for each and how to reproduce it.
 
 | | Finding | Status |
 | --- | --- | --- |
@@ -40,6 +40,8 @@ The prototype and its critique found twelve things. Section 13 has the evidence 
 | F10 | Releasing a finished draft by hand never takes effect | fixed in 0.4.1 |
 | F11 | One refused comment fails the whole board run, and the board branch is not written | fixed in 0.4.1 |
 | F12 | "Main moved" is lost when the board's concurrency group replaces the run the push to main started | open; the owner's choice of fix |
+| F13 | The Overlaps' landing order reads "the oldest" as the lowest number, an issue's and a pull request's alike, so a claim made later lands before an older draft | found by step 1; the library or the spec, the owner's choice |
+| F14 | Given to workers needs the label todo and leaves epics out, which the spec's sentence does not say, so an issue labelled only worker:<name> is shown nowhere | found by step 1; the library or the spec, the owner's choice |
 
 What held wherever the prototype looked, and how far that goes:
 - Under honest workers, one issue had one holder, and a holder who came back between the release comment and the rename kept the claim.
@@ -410,7 +412,7 @@ The first design listed thirteen more scenarios, S06 to S18. None stays a scenar
 
 ### 6.1 Search
 
-validation/explore.py provides `explore(scope, depth, search="bfs") -> Exploration`. The search starts from the seeded state and applies, to a copy, every verb enabled for every worker and person, and every fault the scope names. It checks each new state's guarantees and deduplicates states by their key. Breadth first, the first trace that breaks a guarantee is a shortest one.
+validation/explore.py provides `explore(start, scope, depth, known=oracle.AS_BUILT) -> Exploration`, the search of this step; the depth-first search of the deep scopes, chosen by an argument, is planned. The search starts from the state it is given, the seeded state after one board run in the tests, and applies, to a copy, every verb enabled for every worker and person, and every fault the scope names. It checks each new state's guarantees and deduplicates states by their key. Breadth first, the first trace that breaks a guarantee is a shortest one.
 
 **No pruning at a violation.** The prototype stopped exploring at every violating state (validation/prototype/explore.py:353-357), so with entries in known.json nothing past a known finding would ever be explored. The harness records the violation and goes on; each known finding is a switch in the oracle (section 2.6), so a known red neither stops the search nor hides a second fault behind it.
 
@@ -816,12 +818,22 @@ Every reproduction runs from the repository's root, on the library as the checko
 - **Why it is common.** A merge fires pull_request closed, a push to main, issues closed and delete at nearly the same moment, and the push trigger at board.yml:62 has no branch filter, so every worker's push to a `claude/` branch also queues a run, whose job board.yml:94 then skips; that such a run still takes the pending slot is inferred, not measured. So the push to main's run is often replaced, and that commit's "main moved" comments are never posted.
 - **The fix's options.** Make "main moved" depend on state: on any run, tell each behind or conflicting pull request that has no marker for main's current sha. Or add `queue: max` to the group, which github.com offers (github/docs data/features/actions-nga.yml). The model has the transition "a pending run is replaced" (section 3.3), and canary C2 measures the drops.
 
+**F13. The landing order's "oldest" is the lowest number.** Status: found by build step 1; a fix in the library or a word in the spec, the owner's choice.
+- **What happens.** board.landing_key orders the open work that meets in a file by blocker, then ready, then the number the work is shown by (board.py, landing_key), where spec line 73 says "then the oldest". A claim with no pull request is shown by its issue's number and one with a pull request by the pull request's, so the two kinds are compared by numbers from two sequences, and a claim made later lands before an older draft whenever its issue's number is the lower.
+- **Evidence.** tests/test_validation_invariants.py, `test_f13_the_landing_order_s_oldest_is_the_lowest_number`: a claims #1 and opens its draft (#100); five hours later b claims #2, which lists the same file; the board's Overlaps row reads #2, #100, where the oracle, reading "the oldest" as the work that began first, reads #100, #2. The oracle reads the rule as built with F13 in oracle.AS_BUILT.
+- **The choice.** Order by when the work began, which the board can read from the claim branch's first commit or the pull request's opening; or say in the spec that the order is by number, which is what a reader of the page can check.
+
+**F14. Given to workers needs the label todo.** Status: found by build step 1; a fix in the library or a word in the spec, the owner's choice.
+- **What happens.** board.given_rows lists an issue under Given to workers only when it carries todo and not epic (board.py, given_rows), where spec line 17 says "An issue a worker's label names is that worker's alone: it is left out of the board's Queue and shown under Given to workers until the worker claims it", and the coordinator gives a task by "labelling it `worker:<name>`" (line 77). An open issue labelled worker:a with no todo is shown in neither section.
+- **Evidence.** tests/test_validation_invariants.py, `test_f14_given_to_workers_needs_the_label_todo`: one issue labelled worker:a alone; the page's Given to workers is empty, the oracle's names #1 for a. The oracle reads the rule as built with F14 in oracle.AS_BUILT.
+- **The choice.** Show every open, unclaimed issue a worker's label names; or say in the spec that Given to workers lists the queue's issues, labelled todo, that a worker's label names, and that an epic is the coordinator's.
+
 ## 14. Build order and the owner's decisions
 
 Pull requests, in order:
-1. **Foundations, in memory:** the sound state key, waits of 24 and 25 hours and the atomic verbs; no pruning at a violation; the effect-equivalence oracle built from the spec's text, and G15; validation/model.py, fake_github.py, cycle.py, verbs.py, policies.py, oracle.py and invariants.py, GUARANTEES.md and its test. Built: validation/README.md says what each file holds and what it measured. Until known.json (step 5), the open findings are switches in the oracle, `oracle.AS_BUILT`, and F7 shows only under the careless scope.
+1. **Foundations, in memory:** the sound state key, waits of 24 and 25 hours and the atomic verbs; no pruning at a violation; the effect-equivalence oracle built from the spec's text, and G15; validation/model.py, fake_github.py, cycle.py, verbs.py, policies.py, oracle.py and invariants.py, GUARANTEES.md and its test. Built, with explore.py, page.py and the fake's transport (an ASCII request line, Link pagination, `mergeable` null on the first read of a run) and the board-branch write that happens only when a run exits 0, which were step 3's: validation/README.md says what each file holds and what it measured. Until known.json (step 5), the open findings are switches in the oracle, `oracle.AS_BUILT`, and F7 shows only under the careless scope.
 2. **The mutation lane,** standard library, 10 to 20 mutants, as the acceptance test of step 1: no step after this one starts until every mutant is caught.
-3. **A FakeGitHub faithful to the transport:** an ASCII request line, Link pagination, `mergeable` null on the first read; the concurrency group and the board-branch write that happens only when a run exits 0; and the board run in two halves in cli.py.
+3. **The run as the workflow makes it:** the concurrency group, with its pending run replaced; and the board run in two halves in cli.py.
 4. **The fast lane, under 60 seconds:** S01 to S05 and the three table-driven tests (section 5.3); the checker at depth 5 plus searches from scenario prefixes; the guard grammar against git's answers, which this step records first, into validation/guard_git.json (planned; section 8.2), by the command the deep lane later runs again; dealing; the Unicode-class property lane.
 5. **Regression traces for F1 to F12,** each red in known.json until its fix lands, which then removes the entry; F1, F3, F5, F6, F10 and F11, fixed in 0.4.1, are recorded green from the start.
 6. **The deep lane:** two issues at depth 7, one issue at depth 8 with the depth-aware digest set, the soak, conformance against git, git's answers for the guard grammar recorded again on every deep run, and the gate over BareGitWorld; validate.yml.
@@ -835,4 +847,6 @@ The owner's decisions:
 - **F7.** Which second fence, if any: the guard reading the claim file on `origin/claude/N` before a lease push, the board reading the activity API's `force_push` events, or neither? A ruleset blocking forced pushes on `claude/**` is ruled out: it refuses the prescribed lease and makes renames an administrator's.
 - **F8.** Keep the committer date, as the spec says, and state the trust it places in the pusher; or read the server's `pushed_at` from the activity API, once canary C5 shows it behaves as documented.
 - **F9.** After C0's one GET: should drafts hear "main moved", read the way GitHubWorld reads them?
+- **F13.** Order the overlaps by when the work began, or write the number order into the spec?
+- **F14.** Show every open, unclaimed issue a worker's label names under Given to workers, or write todo, and the epics' exclusion, into the spec?
 - **The canary.** Bringing sdlc-template-test to the current template; for C2, Actions read added to SymphonyBoard or the owner's own sign-in; and, for C7, the owner's own sign-in or Symphony Setup installed on that repository for the run.

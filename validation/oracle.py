@@ -22,7 +22,10 @@ oracle reads the spec, and the finding shows as a disagreement. AS_BUILT
 holds the open findings the board's run can reach (DESIGN.md, 13): F2,
 overlapping work told again once a claim opens its pull request; F9, a
 draft never told "main moved"; F12, "main moved" told only in the run the
-push to main started.
+push to main started; F13, the landing order's "oldest" read as the lowest
+number; F14, Given to workers needing the label todo and leaving epics
+out. F13 and F14 are what the harness of build step 1 found when its
+oracle was held to the spec's words (DESIGN.md, 13).
 """
 
 import re
@@ -72,13 +75,15 @@ SPEC = {
                  "its claim lists, and a claim with no pull request yet by the files its claim lists",
     "landing order": "a blocker first, since it stops everyone; then work marked ready, which waits only for its "
                      "merge; then the oldest",
+    "rename refused": "When GitHub refuses the rename for good, for a ruleset whose target takes in the claim "
+                      "branches or a token without the right, the board says so once on the issue",
 }
 
 CLAIM_PREFIX = "claude/"
 CLAIM_NUMBER = re.compile(r"[1-9][0-9]{0,8}")
 CLAIM_DIR = "docs/agents/claims/"
 FILES_HEADING = "## Files to touch"
-TODO, CLAIMED, IN_REVIEW, BLOCKER = "todo", "claimed", "in-review", "blocker"
+TODO, CLAIMED, IN_REVIEW, BLOCKER, EPIC = "todo", "claimed", "in-review", "blocker", "epic"
 WORKER_SPELLINGS = ("worker:", "account:", "agent:")
 IDLE_MINUTES = 24 * HOUR
 FINISHED = "finished; ready to mark"
@@ -102,8 +107,13 @@ BOARD_MARKERS = {
     "rename-refused": "<!-- sdlc-board: rename-refused {branch} -->",
 }
 
+# The answers GitHub gives a rename it refuses for good (DESIGN.md, G10): a
+# rule on the branch, or a token without the right; held to the library's
+# own list by tests/test_validation_guarantees.py.
+REFUSED_FOR_GOOD = frozenset({403, 422})
+
 # The open findings the oracle reads as the library is built.
-AS_BUILT = frozenset({"F2", "F9", "F12"})
+AS_BUILT = frozenset({"F2", "F9", "F12", "F13", "F14"})
 
 
 class Effect(NamedTuple):
@@ -238,13 +248,15 @@ def queue(model):
                   and CLAIMED not in i.labels and n not in held and not workers_named(i.labels))
 
 
-def given(model):
-    """Given to workers: open issues labelled todo that a worker's label
-    names, not yet claimed, with the workers named (SPEC["given"])."""
+def given(model, known=AS_BUILT):
+    """Given to workers: open issues a worker's label names, not yet
+    claimed, with the workers named (SPEC["given"]). The spec's sentence
+    asks for no other label; with F14 known, the issue must carry todo and
+    not epic, as the library reads it."""
     held = held_numbers(model)
     return {n: workers_named(i.labels) for n, i in model.issues.items()
-            if i.state == "open" and TODO in i.labels and CLAIMED not in i.labels and n not in held
-            and workers_named(i.labels)}
+            if i.state == "open" and CLAIMED not in i.labels and n not in held and workers_named(i.labels)
+            and ("F14" not in known or (TODO in i.labels and EPIC not in i.labels))}
 
 
 def claims_listed(model):
@@ -270,13 +282,16 @@ def labels_released(model, number):
 class Piece(NamedTuple):
     """One piece of open work: its identity (the issue a claim's work is
     for, else the pull request's number), the number it is told on and
-    shown by now, its files, and the landing order's two words."""
+    shown by now, its files, the landing order's two words, and the minute
+    the work began: the push that made its branch, or the opening of a
+    pull request from a branch that is no claim."""
 
     identity: int
     number: int
     files: tuple
     ready: bool
     blocker: bool
+    began: int = 0
 
 
 def listed_files(text):
@@ -318,13 +333,14 @@ def open_work(model, known=AS_BUILT):
         listed = listed_files(claim_file_text(model, pull.head, number)) if number is not None else []
         files = own(model.files_changed(pull.head)) or own(listed)
         identity = number if number is not None and "F2" not in known else pull.number
-        pieces.append(Piece(identity, pull.number, files, not pull.draft, is_blocker(model, number)))
+        began = model.created.get(pull.head, pull.opened_at)
+        pieces.append(Piece(identity, pull.number, files, not pull.draft, is_blocker(model, number), began))
     for ref in sorted(model.refs):
         number = claim_number(ref)
         if number is None or ref in pulled or released(model, number):
             continue
         files = own(listed_files(claim_file_text(model, ref, number)))
-        pieces.append(Piece(number, number, files, False, is_blocker(model, number)))
+        pieces.append(Piece(number, number, files, False, is_blocker(model, number), model.created.get(ref, 0)))
     return pieces
 
 
@@ -333,9 +349,12 @@ def is_blocker(model, number):
     return issue is not None and BLOCKER in issue.labels
 
 
-def landing(piece):
-    """SPEC["landing order"]."""
-    return (not piece.blocker, not piece.ready, piece.number)
+def landing(piece, known=AS_BUILT):
+    """SPEC["landing order"]: "the oldest" is the work that began first,
+    the number breaking a tie; with F13 known, the lowest number, as the
+    library reads it, an issue's and a pull request's alike."""
+    age = piece.number if "F13" in known else piece.began
+    return (not piece.blocker, not piece.ready, age, piece.number)
 
 
 def overlaps(model, known=AS_BUILT):
@@ -345,7 +364,7 @@ def overlaps(model, known=AS_BUILT):
     for piece in open_work(model, known):
         for path in piece.files:
             meeting.setdefault(path, []).append(piece)
-    return {path: [p.number for p in sorted(pieces, key=landing)]
+    return {path: [p.number for p in sorted(pieces, key=lambda p: landing(p, known))]
             for path, pieces in sorted(meeting.items()) if len(pieces) > 1}
 
 
@@ -452,6 +471,19 @@ def expected_effects(before, event="schedule", ref_name="", known=AS_BUILT):
             effects.append(Effect("comment", number, "released"))
     effects += [e for e in main_moved_effects(model, event, ref_name, known) if e.target in {p.number for p in spoken}]
     effects += [e for e in idle_effects(model) if e.target in {p.number for p in spoken}]
+    return effects
+
+
+def rename_refused_effects(before, refused):
+    """SPEC["rename refused"]: for each rename of a claim branch GitHub
+    refused for good in a run, given as (old name, new name, status), one
+    comment on the issue, unless one for that new name stands already."""
+    effects = []
+    for old, new, status in refused:
+        number = claim_number(old)
+        if status in REFUSED_FOR_GOOD and number is not None \
+                and not has_marker(before, number, BOARD_MARKERS["rename-refused"].format(branch=new)):
+            effects.append(Effect("comment", number, "rename-refused"))
     return effects
 
 

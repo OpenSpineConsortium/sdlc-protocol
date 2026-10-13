@@ -14,10 +14,11 @@ lease that matches the pusher's own remote-tracking ref. So the claim lock
 is the model's, as it is GitHub's, and the library under test never sees
 it: the board reads only what the fake GitHub (fake_github.py) answers.
 
-canonical() is the state key (DESIGN.md, 6.3): everything a guarantee or
-the oracle reads, comment bodies whole, the label events, every head a
-claim branch ever had and the tracking refs included, so two states with
-one key behave the same under every verb. The reductions of section 6.4
+canonical() is the state key (DESIGN.md, 6.3): everything a guarantee,
+the oracle or a scripted worker reads, comment bodies whole, the label
+events, every head a claim branch ever had, the tracking refs and the
+board's last page included, so two states with one key behave the same
+under every verb. The reductions of section 6.4
 (times capped, workers by symmetry) come with the checker's fast lane.
 """
 
@@ -126,8 +127,10 @@ class RepoModel:
     # Every commit a claude/ branch ever pointed at.
     ever_heads: frozenset = frozenset()
     label_events: tuple = ()
-    # The worker whose push made each branch that stands, by branch name.
+    # The worker whose push made each branch that stands, by branch name,
+    # and the minute the push made it: when that piece of work began.
     creators: dict = field(default_factory=dict)
+    created: dict = field(default_factory=dict)
     # Each worker's remote-tracking refs, as its last fetch or push left them.
     tracking: dict = field(default_factory=dict)
     # The board branch's STATE.md: written only by a board run that exits 0.
@@ -169,6 +172,19 @@ class RepoModel:
         old, new = self.tree(base), self.tree(head)
         return sorted(p for p in set(old) | set(new) if old.get(p) != new.get(p))
 
+    def in_order(self, shas):
+        """The commits parents before children, as git lists a range; among
+        commits neither of which descends from the other, the earlier
+        committer date first, then the sha. Sorting by date alone put a
+        parent after its child when both were made in one minute."""
+        left, placed = set(shas), []
+        while left:
+            ready = [c for c in left if not (set(self.commits[c].parents) & left)]
+            first = min(ready, key=lambda c: (self.commits[c].committed_at, c))
+            placed.append(first)
+            left.remove(first)
+        return placed
+
     def reachable(self):
         found = set()
         for sha in self.refs.values():
@@ -191,6 +207,7 @@ class RepoModel:
             return Push(False, "fetch first")
         if current is None:
             self.creators[ref] = worker
+            self.created[ref] = self.now
         self.set_ref(ref, sha)
         mine[ref] = sha
         return Push(True)
@@ -203,6 +220,7 @@ class RepoModel:
     def delete_ref(self, ref):
         self.refs.pop(ref, None)
         self.creators.pop(ref, None)
+        self.created.pop(ref, None)
 
     def rename_ref(self, old, new):
         """GitHub's rename: the ref moves, and the open pull request whose
@@ -211,6 +229,7 @@ class RepoModel:
         self.set_ref(new, self.refs.pop(old))
         if old in self.creators:
             self.creators[new] = self.creators.pop(old)
+            self.created[new] = self.created.pop(old)
         for pull in self.pulls.values():
             if pull.head == old and pull.state == "open":
                 pull.state = "closed"
@@ -292,7 +311,9 @@ class RepoModel:
             tuple(sorted(self.ever_heads)),
             self.label_events,
             tuple(sorted(self.creators.items())),
+            tuple(sorted(self.created.items())),
             tuple(sorted((w, tuple(sorted(refs.items()))) for w, refs in self.tracking.items())),
+            self.board_text,
         )
 
     def digest(self):

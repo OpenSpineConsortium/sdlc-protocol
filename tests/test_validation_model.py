@@ -10,7 +10,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from validation import model as M  # noqa: E402
+from validation import model as M, verbs  # noqa: E402
+from validation.verbs import Verb  # noqa: E402
 
 
 def claim_commit(model, worker, number=1):
@@ -61,6 +62,31 @@ class Pushes(unittest.TestCase):
         self.model.push("a", "claude/1", moved)
         later = self.model.commit((moved,), "b", {"x": "2\n"}, "more")
         self.assertEqual(self.model.push("b", "claude/1", later, lease=True), M.Push(False, "stale info"))
+
+
+class CommitsInOrder(unittest.TestCase):
+    def test_a_parent_comes_before_its_child_made_in_the_same_minute(self):
+        model = M.seeded()
+        first = claim_commit(model, "a")
+        second = model.commit((first,), "a", {**model.tree(first), "src/1.py": "a 0\n"}, "Work on #1")
+        third = model.commit((second,), "a", {**model.tree(second), "src/1.py": "a 0\na 0\n"}, "Work on #1")
+        for shas in (frozenset({first, second, third}), frozenset({third, first, second})):
+            self.assertEqual(model.in_order(shas), [first, second, third])
+
+    def test_a_rebase_replays_them_in_that_order_and_keeps_the_work(self):
+        """Replayed by date alone, an older commit landed last and its text
+        overwrote the newer one's, so a rebase lost work git keeps."""
+        model = M.seeded()
+        for verb in (Verb("claim", "a", (1,)), Verb("commit", "a", (1,)), Verb("commit", "a", (1,)),
+                     Verb("move-main", M.OWNER)):
+            verbs.apply(model, verb)
+        own = model.changed(model.merge_base(model.refs[M.MAIN], model.refs["claude/1"]), model.refs["claude/1"])
+        before = model.tree(model.refs["claude/1"])
+        verbs.apply(model, Verb("rebase-main", "a", (1,)))
+        after = model.tree(model.refs["claude/1"])
+        self.assertEqual(own, ["docs/agents/claims/1.md", "src/1.py"])
+        self.assertEqual({p: after.get(p) for p in own}, {p: before[p] for p in own})
+        self.assertTrue(model.is_ancestor(model.refs[M.MAIN], model.refs["claude/1"]))
 
 
 class Standing(unittest.TestCase):
@@ -123,6 +149,12 @@ class TheKey(unittest.TestCase):
             M.LabelEvent(0, 1, "a", True, "claimed"),))))
         self.assertTrue(self.differs(lambda m: setattr(m, "ever_heads", m.ever_heads | {"f" * 40})))
         self.assertTrue(self.differs(lambda m: m.fetch("b")))
+
+    def test_keeps_the_board_s_page_and_when_each_branch_began(self):
+        """A scripted worker acts on the page, and the landing order on
+        when the work began, so neither may be folded."""
+        self.assertTrue(self.differs(lambda m: setattr(m, "board_text", "# Board\n")))
+        self.assertTrue(self.differs(lambda m: m.created.__setitem__("claude/1", 5)))
 
     def test_two_paths_to_one_state_meet(self):
         one, two = self.model.clone(), self.model.clone()

@@ -92,6 +92,11 @@ class Faults(unittest.TestCase):
         self.assertEqual([c.body for c in model.issues[1].comments], ["kept"])
         self.assertTrue(fake.calls[-1].applied)
 
+    def test_a_change_to_an_issue_s_body_is_unserved_not_a_fake_s_error(self):
+        api, _ = cycle.api_for(M.seeded())
+        with self.assertRaises(Unserved):
+            api.set_body(1, "x")
+
     def test_a_label_the_issue_does_not_carry_is_a_404(self):
         model = M.seeded()
         api, _ = cycle.api_for(model)

@@ -20,6 +20,7 @@ dealing (G14) are later steps' (section 14), and G11a's grammar judged by
 git is step 4's.
 """
 
+import re
 from collections import Counter
 from typing import NamedTuple
 
@@ -46,6 +47,10 @@ EFFECT_GUARANTEE = {
 # Statuses that mean a read did not succeed, as against an answer such as
 # 404 that the adapter reads as absence.
 FAILED_READ = 500
+# A body that closes issue N, as GitHub reads one: a closing keyword, in
+# any case, then #N and no further digit (spec, Finish: the body says
+# "Closes #N"; Rules: "the body closes its issue").
+CLOSES = r"(?i)\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#%d\b"
 
 
 class Violation(NamedTuple):
@@ -164,7 +169,8 @@ def protocol_check_agrees(model):
         side = {"repo": {"full_name": REPO}}
         found = protocol_check.problems_for({"head": {"ref": pull.head, **side}, "base": side, "draft": pull.draft,
                                              "body": pull.body}, has_file)
-        owed = (pull.draft and not has_file) or (not pull.draft and has_file) or f"Closes #{number}" not in pull.body
+        closes = re.search(CLOSES % number, pull.body) is not None
+        owed = (pull.draft and not has_file) or (not pull.draft and has_file) or not closes
         if bool(found) != owed:
             problems.append(Violation("G12", f"the protocol check says {found or 'no problem'} on #{pull.number}"))
     return problems
@@ -187,18 +193,24 @@ def command_checks(outcome):
 
 # --- cycles -----------------------------------------------------------------
 
-def cycle_checks(before, after, record, faulted, known=oracle.AS_BUILT):
-    """Every cycle guarantee for one board run."""
+def cycle_checks(before, after, record, known=oracle.AS_BUILT):
+    """Every cycle guarantee for one board run. The writes are compared
+    with the oracle's, and a half release or a noisy second run counted,
+    only for a run no injected fault touched, read from the calls, since
+    a verb may name a fault that never fires; the release order, the
+    rename refused and the rest hold under faults too."""
     if record.exit_code != 0:
         if reads_failed(record.calls):
             return []
         return [Violation("G15", f"the run exited {record.exit_code}: {record.raised}")]
     problems = []
     actual = effects_of(record.calls)
-    if not faulted:
+    if not any(c.injected for c in record.calls):
         problems += effects_agree(before, record, actual, known)
         problems += [Violation("G3L", f"a release no rule completes: #{n}") for n in oracle.half_released(after)]
         problems += quiet_second_run(after, record)
+    problems += release_order(actual)
+    problems += rename_refused_said(before, record, actual)
     problems += releases_only_due(before, actual)
     problems += labels_put_back(before, after, record, actual)
     problems += nothing_lost(before, after, actual)
@@ -214,13 +226,28 @@ def effects_agree(before, record, actual, known):
     order: the labels off, then the comment, then the rename, then the word
     on the issue."""
     expected = oracle.expected_effects(before, record.event, record.ref_name, known)
+    made = [e for e in actual if e != oracle.Effect("comment", e.target, "rename-refused")]
     problems = []
-    missing, extra = Counter(expected) - Counter(actual), Counter(actual) - Counter(expected)
+    missing, extra = Counter(expected) - Counter(made), Counter(made) - Counter(expected)
     for effect in sorted(missing, key=repr):
         problems.append(Violation(guarantee_of(effect), f"owed and not made: {tuple(effect)}"))
     for effect in sorted(extra, key=repr):
         problems.append(Violation(guarantee_of(effect), f"made and not owed: {tuple(effect)}"))
-    problems += release_order(actual)
+    return problems
+
+
+def rename_refused_said(before, record, actual):
+    """G10: a rename GitHub refused for good is said once on the issue, in
+    the run it was refused, and said at no other time."""
+    refused = [(c.path[len("/branches/"):-len("/rename")], c.body["new_name"], c.status) for c in record.calls
+               if c.method == "POST" and c.path.endswith("/rename") and not c.applied]
+    owed = oracle.rename_refused_effects(before, refused)
+    said = [e for e in actual if e == oracle.Effect("comment", e.target, "rename-refused")]
+    problems = []
+    for effect in sorted(Counter(owed) - Counter(said), key=repr):
+        problems.append(Violation("G10", f"a refused rename not said on #{effect.target}"))
+    for effect in sorted(Counter(said) - Counter(owed), key=repr):
+        problems.append(Violation("G10", f"a rename said refused on #{effect.target} with none refused for good"))
     return problems
 
 
@@ -305,8 +332,9 @@ def board_renders_the_state(after, record, known):
         problems.append(Violation("G5", f"the board lists claims {page.claim_branches(shown)}, the oracle {listed}"))
     if page.queue(shown) != oracle.queue(after):
         problems.append(Violation("G5", f"the board's Queue is {page.queue(shown)}, the oracle's {oracle.queue(after)}"))
-    if page.given(shown) != oracle.given(after):
-        problems.append(Violation("G9", f"Given to workers is {page.given(shown)}, the oracle's {oracle.given(after)}"))
+    if page.given(shown) != oracle.given(after, known):
+        problems.append(Violation("G9", f"Given to workers is {page.given(shown)}, the oracle's "
+                                        f"{oracle.given(after, known)}"))
     if page.overlaps(shown) != oracle.overlaps(after, known):
         problems.append(Violation("G7", f"the board's Overlaps are {page.overlaps(shown)}, the oracle's "
                                         f"{oracle.overlaps(after, known)}"))
@@ -327,6 +355,5 @@ def step_checks(before, after, verb, outcome, known=oracle.AS_BUILT):
     """Every check one step owes: the state's, the command's, the cycle's."""
     problems = state_checks(after) + command_checks(outcome)
     if outcome.run is not None:
-        faulted = len(verb.args) > 2 and bool(verb.args[2])
-        problems += cycle_checks(before, after, outcome.run, faulted, known)
+        problems += cycle_checks(before, after, outcome.run, known)
     return problems

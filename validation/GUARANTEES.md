@@ -5,11 +5,11 @@ One row per guarantee of DESIGN.md section 2.3: the sentence of spec/PROTOCOL.md
 The statuses:
 - **checked**: an invariant checks it on every step it applies to, in the tests and in every search; no trace reached so far breaks it.
 - **checked, under F8**: as checked, under the assumption the spec states, that idleness is the committer date the pusher sets (finding F8).
-- **known (F...)**: checked, and the named open finding contradicts it: the oracle reads that rule as the library is built (oracle.AS_BUILT), and without the switch the harness reports the finding.
+- **known (F...)**: checked, and the named open finding contradicts it: either the oracle reads that rule as the library is built (oracle.AS_BUILT) and without the switch the harness reports the finding, or, for F7, which no board rule answers, the finding shows only under the careless scope, whose verbs do what the rules forbid and git allows.
 - **partly checked**: the part this step's worlds reach; the rest waits for the build step named.
 - **not checked yet**: no world of this step reaches it; the build step named adds it.
 
-As it stands is build step 1 of DESIGN.md section 14: the memory world, the fake GitHub, the board run, the verbs, the scripted workers, the oracle and the invariants, with a first breadth-first search. "Checked" here means checked by the unit tests' traces and by searches of small scope (two workers, one or two issues, a depth of 4 to 5), not yet by the fast lane's scopes, which build step 4 adds once step 2's mutants have shown the searches bite.
+As it stands is build step 1 of DESIGN.md section 14: the memory world, the fake GitHub, the board run, the verbs, the scripted workers, the oracle and the invariants, with a first breadth-first search. "Checked" here means checked by the unit tests' traces and by the searches tests/test_validation_explore.py runs, two workers on one issue to depth 4 (about 3,000 states); searches of one issue to depth 5 (23,936 states) and of two issues to depth 4 (8,910 states) were run by hand on 0.4.1 and found nothing, but nothing in the repository runs them yet. The fast lane's scopes come with build step 4, once step 2's mutants have shown the searches bite.
 
 | Id | Guarantee | The spec's words | Status |
 | --- | --- | --- | --- |
@@ -20,9 +20,9 @@ As it stands is build step 1 of DESIGN.md section 14: the memory world, the fake
 | G4 | The board and the coordinator never make a commit unreachable | "the name `claude/<issue>` is free, the work stays under the new name" | checked |
 | G5 | A release frees nothing it should not | "A release comment made sooner, or by anyone else, frees nothing; a commit pushed to the branch before the rename, its holder coming back, keeps the claim; and putting the label claimed back undoes a release" | checked |
 | G6 | The coordinator never releases a finished claim | "That holds for a draft whose author said it is finished as for any other, though the coordinator never releases one" | checked |
-| G7 | Overlaps are told when owed, once, in order | "In the same run the coordinator tells each piece of open work about the work it meets, once" | known (F2): a claim that opens its pull request is told again of the work it was told of |
+| G7 | Overlaps are told when owed, once, in order | "In the same run the coordinator tells each piece of open work about the work it meets, once" | known (F2, F13): a claim that opens its pull request is told again of the work it was told of; "the oldest" is read as the lowest number, an issue's and a pull request's alike |
 | G8 | Labels name the holder | "An issue a worker's label names is that worker's alone: it is left out of the board's Queue and shown under Given to workers until the worker claims it." | checked |
-| G9 | The board renders the state, and a run with nothing new writes nothing | "The board then leaves the claim and its pull request off the page and lists the issue in the Queue again" | checked |
+| G9 | The board renders the state, and a run with nothing new writes nothing | "The board then leaves the claim and its pull request off the page and lists the issue in the Queue again" | known (F14): Given to workers needs the label todo and leaves epics out, which the spec's sentence does not say |
 | G10 | Each kind of comment is posted when owed, and once | "the board says on the issue where the branch went" | known (F9, F12): a draft is never told "main moved", and a pull request is told only in the run a push to main started |
 | G11a | The guard refuses every push it can read that the rules forbid | "The push guard (sdlc_protocol.guard, run as a Claude Code hook through `python3 -m sdlc_protocol guard`) refuses those pushes before they run, and branch protection on GitHub stands behind it." | partly checked: the guard passes every allowed shape the verbs run; the grammar judged by git's own answers is build step 4 |
 | G11b | What only the second fence enforces | "Never push to another worker's branch." | not checked yet: the second fence is GitHub's, measured by canary C7 (build step 7) |
