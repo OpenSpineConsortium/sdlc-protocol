@@ -237,6 +237,8 @@ class GitHub:
         self.patch(f"/repos/{self.repo}/issues/{number}", {"body": body})
 
     def remove_label(self, number, name):
+        """Take a label off an issue; GitHub's 404 for one the issue no
+        longer carries is the label being off, not a failure."""
         self.delete(f"/repos/{self.repo}/issues/{number}/labels/{urllib.parse.quote(name, safe='')}",
                     missing_ok=True)
 
@@ -490,21 +492,25 @@ def holding(api, default_branch, sha):
 
 
 def release_one(api, snap, key, now):
-    """Release one claim: the comment first, then the labels, in the
-    protocol's order, so a claim is never taken off its holder without the
-    comment that says why. What was done, in a line."""
+    """Release one claim: the labels first, then the comment, in the
+    protocol's order. The board counts a release only once both are done,
+    so a claim is never taken off its holder without the comment that says
+    why, and a run that fails between them leaves no release comment, so
+    the claim is still due and the next run releases it again, a label
+    already gone counting as taken off (GitHub.remove_label). What was
+    done, in a line."""
     release = snap.releases[key]
-    text = coordinator.release_text(snap, key, holding(api, snap.default_branch, release.sha))
-    try:
-        posted = api.post(f"/repos/{api.repo}/issues/{key}/comments", {"body": text}) or {}
-    except GitHubError as problem:
-        return f"#{key}: not released, the comment failed: {problem}{github_words(problem)}"
     taken_off = coordinator.labels_released(snap, key)
     try:
         for name in taken_off:
             api.remove_label(int(key), name)
     except GitHubError as problem:
-        return f"#{key}: release comment posted, but taking the labels off failed: {problem}{github_words(problem)}"
+        return f"#{key}: not released, taking the labels off failed: {problem}{github_words(problem)}"
+    text = coordinator.release_text(snap, key, holding(api, snap.default_branch, release.sha))
+    try:
+        posted = api.post(f"/repos/{api.repo}/issues/{key}/comments", {"body": text}) or {}
+    except GitHubError as problem:
+        return f"#{key}: not released, the labels are off but the comment failed: {problem}{github_words(problem)}"
     coordinator.after_release(snap, key, posted.get("created_at") or now.isoformat(), taken_off)
     return f"#{key}: claim released, idle since {release.committed_at}"
 

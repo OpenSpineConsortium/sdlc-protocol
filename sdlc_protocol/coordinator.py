@@ -13,12 +13,15 @@ or a coordinator routine, and is not here.
 A release is the protocol's (spec/PROTOCOL.md, Release): a claim whose
 branch has gone more than a day without a commit, whose issue is open and
 not labelled in-review, and whose pull request, if it has one, is still a
-draft. The coordinator posts one comment on the issue, whose first line is
+draft. The coordinator takes the label claimed and the holder's label off
+the issue, then posts one comment on it, whose first line is
 claims.RELEASE_MARKER, saying why, whose the claim was, what its branch
 holds and what its plan was, so the next worker can carry the work on or
-start over; then it takes the label claimed and the holder's label off the
-issue, and the board renames the branch in the same run. Like the board,
-this module only decides and words; adapters/github.py makes the calls.
+start over, and the board renames the branch in the same run. The board
+counts a release only once both are done, and a run that fails between
+them leaves no release comment, so the claim is still due and the next run
+releases it again. Like the board, this module only decides and words;
+adapters/github.py makes the calls.
 """
 
 import re
