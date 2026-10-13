@@ -75,6 +75,12 @@ def merged(page):
     return [number(r[0]) for r in rows(page, board.MERGED_HEADING)]
 
 
+def not_claims(page):
+    """The branches the Claims section lists as no claim (board.NOT_A_CLAIM
+    in the issue cell): a name that reads as a claim and claims nothing."""
+    return sorted(r[1] for r in rows(page, board.CLAIM_HEADING) if r[0] == board.NOT_A_CLAIM)
+
+
 def claim_workers(page):
     """The Claims section as a map from branch to the worker shown."""
     return {r[1]: r[2] for r in rows(page, board.CLAIM_HEADING)}

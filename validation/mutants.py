@@ -8,11 +8,13 @@ The lane runs every mutant against the searches below and requires every
 one to be caught: some search must report a violation under the mutant
 that it does not report on the library as it stands.
 
-Two lanes come before the searches, since they are cheap and judge rules
-no search runs: the guard grammar against git's recorded answers
-(guard_grammar.judge, over the plain commands alone here) and dealing
-(dealing.run_lane); each reports its failures as the searches report
-violations. The searches are breadth first (explore.explore), each from a
+Three lanes come before the searches, since they are cheap and judge rules
+no search runs: the regression traces, one per finding (replay.py, since
+build step 5), which catch the mutants that undo a fix of 0.4.1 on the
+trace of the finding fixed; the guard grammar against git's recorded
+answers (guard_grammar.judge, over the plain commands alone here); and
+dealing (dealing.run_lane); each reports its failures as the searches
+report violations. The searches are breadth first (explore.explore), each from a
 short prefix: a few verbs that put the repository where a family of rules
 applies (a held claim, a draft, two claims on one file), then every
 interleaving of the scope's verbs to a small depth. A prefix holds no
@@ -33,7 +35,7 @@ import contextlib
 import sys
 import time
 import urllib.parse
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from typing import NamedTuple
 from unittest import mock
 
@@ -41,7 +43,7 @@ from sdlc_protocol import board, claims, coordinator, guard, team
 from sdlc_protocol.adapters import github
 from sdlc_protocol.workers import fits
 
-from . import cycle, dealing, explore, guard_grammar, invariants, model as M, oracle, verbs
+from . import cycle, dealing, explore, guard_grammar, invariants, model as M, oracle, replay, verbs
 from .verbs import CAROL, DANA, SAM, Scope, Verb
 
 
@@ -208,6 +210,46 @@ def number_with_any_zeros(key):
     return int(text) if text.isascii() and text.isdigit() and len(text) <= 9 else None
 
 
+def sort_key_with_int_after_isdigit(value):
+    """claims.by_number testing with isdigit and then calling int, as
+    before 0.4.1 (F6): a superscript passes the test and int raises, so a
+    hand-made branch name stops the render."""
+    return (0, int(value), "") if str(value).isdigit() else (1, 0, str(value))
+
+
+def releases_skipping_finished(api, heads, found_issues, pulls, now=None):
+    """github.releases leaving every finished draft out before it reads
+    any release comment, as before 0.4.1 (F10), so a person's release of
+    one is never seen; every other reading is release's own."""
+    now = now or datetime.now(timezone.utc)
+    ready, trusted = github.ready_branches(pulls), github.may_write(api)
+    drafts = {(p.get("head") or {}).get("ref"): p for p in pulls if p.get("draft")}
+    found = {}
+    for branch, sha in sorted(heads.items()):
+        key = claims.key_of(branch)
+        if not sha or branch in ready or not github.may_be_due(found_issues.get(key)):
+            continue
+        last_commit = github.committed_at(api, sha)
+        if not last_commit or not claims.is_idle(last_commit, now):
+            continue
+        if github.finished_draft(api, drafts.get(branch)):
+            continue
+        released_at = claims.latest_release(api.get_all(f"/repos/{api.repo}/issues/{key}/comments"), trusted)
+        found[key] = {"released_at": released_at, "sha": sha, "committed_at": last_commit}
+    return found
+
+
+def comments_unguarded(api, due):
+    """github.post_comments letting a refused comment's error escape, as
+    before 0.4.1 (F11), so one refusal fails the run."""
+    lines = []
+    for number, marker, text in due:
+        kind = "idle" if marker == board.IDLE_MARKER else "main-moved"
+        if github.comment_once(api, number, marker, text):
+            lines.append(f"PR #{number}: {kind} comment posted")
+    return lines
+
+
 MUTANTS = {
     "idle at exactly 24 hours": Mutant(
         claims, "is_idle", lambda last, now, idle_after=claims.IDLE_AFTER: now - claims.parse_time(last) >= idle_after,
@@ -284,6 +326,18 @@ MUTANTS = {
     "an overlap marker trusted from any author": Mutant(
         coordinator, "told_numbers", told_by_anyone,
         "G7", "only the coordinator's own marker tells a piece of work"),
+    "a sort key that calls int after isdigit": Mutant(
+        claims, "by_number", sort_key_with_int_after_isdigit,
+        "G15", "a branch name never raises, so one hand-made name cannot stop the board (F6)"),
+    "a branch name sent unquoted": Mutant(
+        github, "quoted", lambda name: name,
+        "G15", "a branch name is quoted into the request path, so a hand-made name cannot stop a live run (F6)"),
+    "a finished draft's release by hand not seen": Mutant(
+        github, "releases", releases_skipping_finished,
+        "G9", "a person's release of a finished draft counts, and the board shows it (F10)"),
+    "a refused comment stops the run": Mutant(
+        github, "post_comments", comments_unguarded,
+        "G15", "a refused comment is a line in the log, never a failed run (F11)"),
 }
 
 
@@ -296,11 +350,26 @@ SHARED = ("src/shared.py",)
 
 # Cheapest first, since a mutant is judged by the first search that
 # catches it. The careless search meets F7 on the library itself: a lease
-# after a fetch takes another's claim, which no board rule answers. The
-# last search runs each board run in its two halves (DESIGN.md, 3.3), so
-# a rule that reads the repository again in the second half is met.
+# after a fetch takes another's claim, which no board rule answers; the
+# traces meet F7 and F4, dealing from differing looks, which no rule
+# answers either. The last search runs each board run in its two halves
+# (DESIGN.md, 3.3), so a rule that reads the repository again in the
+# second half is met.
 F7 = ("G1", "the board names b for claude/1, whose holder is a")
+F4 = ("G14", "#6 dealt twice from differing looks: {'a': 'take 5', 'b': 'take 6', 'c': 'take 6'}")
 PLAIN_COMMANDS = [c for c in guard_grammar.commands() if c.prefix == "" and c.wrapper == "{}"]
+
+
+def traces_lane():
+    """Every regression trace played as built; a violation's trace is the
+    finding's id and the verbs up to the red step."""
+    found = {}
+    for finding, trace in replay.traces().items():
+        record = replay.replay(trace)
+        for at, violation in record.violations:
+            verbs_so_far = [v for step in record.steps[:at + 1] for v in step.verbs]
+            found.setdefault((violation.guarantee, violation.detail), (finding, *verbs_so_far))
+    return found
 
 
 def guard_lane():
@@ -316,7 +385,8 @@ def dealing_lane():
             for deal in lane.doubled_from_one_look for n in deal.doubled}
 
 
-LANES = (Lane("the guard grammar against git's answers", guard_lane),
+LANES = (Lane("the regression traces", traces_lane, known=(F7, F4)),
+         Lane("the guard grammar against git's answers", guard_lane),
          Lane("dealing from one look", dealing_lane))
 SEARCHES = (
     Search("a released claim under every fault", (CLAIM, CLAIMED, WORKER, Verb("wait", "clock", (25,))),
@@ -398,8 +468,9 @@ def judge(name, baselines, searches=CATCHERS):
 
 
 def baselines(searches=CATCHERS):
-    """What each search meets on the library as it stands; the lane
-    expects nothing, since the open findings are read as built."""
+    """What each search meets on the library as it stands: nothing, since
+    the open findings are read as built, but what a search or lane knows
+    (F7 under careless workers, F4 from differing looks)."""
     return {search.name: violations(search) for search in searches}
 
 

@@ -19,7 +19,8 @@ A finding the library does not yet answer is a switch, in known: with its
 id in known, the oracle reads that rule as the library is built, so the
 search goes on past it and reports it once, as known; without it, the
 oracle reads the spec, and the finding shows as a disagreement. AS_BUILT
-holds the open findings the board's run can reach (DESIGN.md, 13): F2,
+holds the open findings the board's run can reach (DESIGN.md, 13), read
+from validation/known.json since build step 5 (known.py): F2,
 overlapping work told again once a claim opens its pull request; F9, a
 draft never told "main moved"; F12, "main moved" told only in the run the
 push to main started; F13, the landing order's "oldest" read as the lowest
@@ -31,6 +32,7 @@ oracle was held to the spec's words (DESIGN.md, 13).
 import re
 from typing import NamedTuple
 
+from .known import AS_BUILT
 from .model import BOT, HOUR, MAIN, Comment
 
 # --- the spec's words -------------------------------------------------------
@@ -112,8 +114,8 @@ BOARD_MARKERS = {
 # own list by tests/test_validation_guarantees.py.
 REFUSED_FOR_GOOD = frozenset({403, 422})
 
-# The open findings the oracle reads as the library is built.
-AS_BUILT = frozenset({"F2", "F9", "F12", "F13", "F14"})
+# The open findings the oracle reads as the library is built are
+# known.json's "as_built", imported above as AS_BUILT.
 
 
 class Effect(NamedTuple):

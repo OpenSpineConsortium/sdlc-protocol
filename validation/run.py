@@ -15,13 +15,20 @@ most, so the scenario shows what a worker that never sees the model does;
 an argument ("released", n) names the newest released branch of issue n,
 which no scenario can spell in advance, since the name holds the head's
 sha.
+
+Two steps are no verb of the model's: "guard" asks the push guard about a
+command and, when the command is one of the guard grammar's, judges the
+guard's answer by git's recorded one (guard_grammar.judged_by_git, G11a);
+"deal" has the workers ask the clerk from the model as the steps left it,
+each at the moment its look names (dealing.play, G14). Both are what the
+regression traces of DESIGN.md 5.3 need (replay.py).
 """
 
 import copy
 from collections import Counter
 from typing import NamedTuple
 
-from . import invariants, model as M, oracle, page, policies, verbs
+from . import dealing, guard_grammar, invariants, model as M, oracle, page, policies, verbs
 from .model import HOUR, RELEASED_PREFIX
 from .verbs import CAROL, DANA, Scope, Verb
 
@@ -120,6 +127,7 @@ def observed(model, expect, outcomes, scenario, step):
     yield "queue", expect.queue, page.queue(shown)
     yield "given", expect.given, page.given(shown)
     yield "claims", expect.claims, page.claim_workers(shown)
+    yield "not_claims", expect.not_claims, page.not_claims(shown)
     yield "overlaps", expect.overlaps, page.overlaps(shown)
     yield "merged", expect.merged, page.merged(shown)
     yield "pulls", expect.pulls, open_pulls(model)
@@ -208,7 +216,24 @@ def play(scenario, steps, known):
                 if verb is None:
                     break
                 apply(verb)
-        elif step.verb not in ("look", "guard"):
+        elif step.verb == "guard":
+            judged = guard_grammar.judged_by_git(step.args[0])
+            found = [invariants.Violation(*pair) for pair in judged or ()]
+            checks += judged is not None
+            violations.extend(found)
+            ran.append(f"guard {step.actor} {step.args[0]}")
+            timeline.append(f"{step.at:>4} h  guard {step.actor} {step.args[0]}: "
+                            + ("not in the grammar" if judged is None else "judged by git")
+                            + (f"; {len(found)} red" if found else ""))
+        elif step.verb == "deal":
+            deal = dealing.play(model, tuple(step.args[0]), tuple(step.args[1]))
+            found = [invariants.Violation(*pair) for pair in dealing.violations(deal)]
+            checks += 1
+            violations.extend(found)
+            ran.append(f"deal {' then '.join(deal.order)} at {deal.looks}")
+            timeline.append(f"{step.at:>4} h  deal after {' then '.join(deal.order)}, looks at {deal.looks}: "
+                            f"{deal.moves}" + (f"; {len(found)} red" if found else ""))
+        elif step.verb != "look":
             apply(Verb(step.verb, step.actor, resolve(model, step.args)))
         if not ran:
             timeline.append(f"{step.at:>4} h  {step.actor} {step.verb} {' '.join(str(a) for a in step.args)}")

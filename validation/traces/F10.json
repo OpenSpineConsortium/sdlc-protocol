@@ -1,0 +1,21 @@
+{
+  "finding": "F10",
+  "title": "releasing a finished draft by hand never takes effect",
+  "status": "fixed in 0.4.1 (#11)",
+  "breaks": ["G5", "G3", "G10"],
+  "world": "memory",
+  "issues": {"1": ["todo"]},
+  "workers": ["a"],
+  "steps": [
+    {"verb": "claim", "actor": "a", "args": [1]},
+    {"at": 25, "verb": "announce", "actor": "a", "args": [1]},
+    {"verb": "open-draft", "actor": "a", "args": [1], "expect": {"pulls": [100]}},
+    {"verb": "finished", "actor": "a", "args": [100]},
+    {"verb": "marker", "actor": "owner", "args": [1]},
+    {"verb": "label-off", "actor": "owner", "args": [1, "claimed"]},
+    {"verb": "label-off", "actor": "owner", "args": [1, "worker:a"], "expect": {"labels": {"1": ["todo"]}}},
+    {"verb": "board",
+     "expect": {"queue": [1], "refs": {"claude/1": false}, "released": {"1": 1}, "pulls": [], "comments": {"1": {"released": 1}}},
+     "note": "the person's release of the finished draft counts: the board frees the name and lists #1 in the Queue; before 0.4.1 the board skipped a finished draft before reading the release comment and showed the claim held for good, which the invariants report as the page's claims and Queue rows (G5), the rename owed (G3) and the released comment owed (G10), where DESIGN.md's table says G9"}
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "finding": "F3",
+  "title": "the push guard passes forced pushes and pushes to main in plain shapes",
+  "status": "fixed in 0.4.1 (#11)",
+  "breaks": ["G11a"],
+  "world": "memory",
+  "issues": {"1": ["todo"]},
+  "workers": ["a"],
+  "steps": [
+    {"verb": "guard", "actor": "a", "args": ["git push origin +claude/7"], "expect": {"refused": true},
+     "note": "each command is one of the guard grammar's, so the guard's answer is also judged by git's recorded one"},
+    {"verb": "guard", "actor": "a", "args": ["git push -fu origin claude/7"], "expect": {"refused": true}},
+    {"verb": "guard", "actor": "a", "args": ["git push --al origin"], "expect": {"refused": true}},
+    {"verb": "guard", "actor": "a", "args": ["git push --mirr origin"], "expect": {"refused": true}},
+    {"verb": "guard", "actor": "a", "args": ["git push origin heads/main"], "expect": {"refused": true}},
+    {"verb": "guard", "actor": "a", "args": ["FOO=1 git push origin main"], "expect": {"refused": true}}
+  ]
+}

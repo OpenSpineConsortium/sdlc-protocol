@@ -1,0 +1,18 @@
+{
+  "finding": "F1",
+  "title": "a release whose label removal failed is never completed",
+  "status": "fixed in 0.4.1 (#11)",
+  "breaks": ["G3L"],
+  "world": "memory",
+  "issues": {"1": ["todo"]},
+  "workers": ["a"],
+  "steps": [
+    {"verb": "claim", "actor": "a", "args": [1], "expect": {"holders": {"1": "a"}}},
+    {"verb": "announce", "actor": "a", "args": [1], "expect": {"labels": {"1": ["todo", "claimed", "worker:a"]}}},
+    {"at": 25, "verb": "board", "faults": ["label-delete-500"],
+     "expect": {"labels": {"1": ["todo", "claimed", "worker:a"]}, "comments": {"1": {}}, "refs": {"claude/1": true}},
+     "note": "the first label's DELETE answers 500: as built the labels come off first, so no comment is posted and the claim is whole; before 0.4.1 the comment came first and the claim was half released for good"},
+    {"verb": "board",
+     "expect": {"labels": {"1": ["todo"]}, "comments": {"1": {"claim-released": 1, "released": 1}}, "refs": {"claude/1": false}, "released": {"1": 1}, "queue": [1]}}
+  ]
+}

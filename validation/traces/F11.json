@@ -1,0 +1,18 @@
+{
+  "finding": "F11",
+  "title": "one refused comment fails the whole board run, and the board branch is not written",
+  "status": "fixed in 0.4.1 (#11)",
+  "breaks": ["G15"],
+  "world": "memory",
+  "issues": {"1": ["todo"]},
+  "workers": ["a"],
+  "steps": [
+    {"verb": "claim", "actor": "a", "args": [1]},
+    {"verb": "announce", "actor": "a", "args": [1]},
+    {"verb": "open-draft", "actor": "a", "args": [1], "expect": {"pulls": [100]}},
+    {"verb": "mark-ready", "actor": "a", "args": [100]},
+    {"at": 25, "verb": "board", "faults": ["comment-500"], "expect": {"comments": {"100": {}}, "claims": {"claude/1": "a"}},
+     "note": "the idle comment's POST answers 500: as built the run exits 0 with the refusal in its log, and the board reaches its branch; before 0.4.1 the error escaped and the run exited 1 with STATE.md written locally only"},
+    {"verb": "board", "expect": {"comments": {"100": {"idle": 1}}}}
+  ]
+}

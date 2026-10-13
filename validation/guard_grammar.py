@@ -204,6 +204,20 @@ def judge(answers=None, commands=None):
     return Judgement(total, agreed, counted, tuple(sorted(missing)))
 
 
+def judged_by_git(text, answers=None):
+    """One command judged by git's recorded answer, for a trace's guard
+    step (replay.py): the disagreements that fail, as (guarantee, detail)
+    pairs, empty when the guard and git agree; None when the command is
+    not one of the grammar's, so git recorded no answer for it."""
+    command = next((c for c in commands() if c.text == text), None)
+    if command is None:
+        return None
+    judgement = judge(answers, [command])
+    found = [("G11a", f"{d.kind}: {d.why}") for d in judgement.failures]
+    found += [("G11a", "no answer recorded") for _ in judgement.missing]
+    return found
+
+
 def pairs(offers):
     return {tuple(offer) for offer in offers}
 

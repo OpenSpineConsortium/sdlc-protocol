@@ -1,0 +1,22 @@
+{
+  "finding": "F4",
+  "title": "the clerk can deal one issue to two workers of the same run",
+  "status": "open; decision for the owner (DESIGN.md, 14)",
+  "breaks": ["G14"],
+  "world": "memory",
+  "issues": {"4": ["todo"], "5": ["todo"], "6": ["todo"]},
+  "workers": ["a", "b", "c", "d"],
+  "steps": [
+    {"verb": "claim", "actor": "a", "args": [4]},
+    {"verb": "label-on", "actor": "a", "args": [4, "claimed"]},
+    {"verb": "label-on", "actor": "a", "args": [4, "worker:a"]},
+    {"verb": "label-off", "actor": "a", "args": [4, "todo"]},
+    {"verb": "commit", "actor": "a", "args": [4]},
+    {"verb": "drop-claim-file", "actor": "a", "args": [4]},
+    {"verb": "open-draft", "actor": "a", "args": [4]},
+    {"verb": "mark-ready", "actor": "a", "args": [100]},
+    {"verb": "board", "expect": {"queue": [5, 6], "claims": {"claude/4": "a"}, "pulls": [100]}},
+    {"verb": "deal", "args": [["main-moves", "outsider-claims"], [0, 0, 1]], "shows": "F4",
+     "note": "a and b ask before main moves, so a's ready pull request is clean and a is dealt #5, b #6; c asks after, when a's pull request is behind and a carries its own claim, so c is dealt #6 too"}
+  ]
+}

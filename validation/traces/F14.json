@@ -1,0 +1,13 @@
+{
+  "finding": "F14",
+  "title": "Given to workers needs the label todo",
+  "status": "open; found by build step 1; a fix in the library or a word in the spec, the owner's choice",
+  "breaks": ["G9"],
+  "world": "memory",
+  "issues": {"1": ["worker:a"]},
+  "workers": ["a"],
+  "steps": [
+    {"verb": "board", "shows": "F14", "expect": {"given": {}, "queue": []},
+     "note": "an open issue a worker's label names, with no todo, is shown in neither section as built; reading the spec, it is a's and shown under Given to workers"}
+  ]
+}
