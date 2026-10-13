@@ -1,0 +1,7 @@
+# Validation
+
+This folder is for checking that the library keeps the promises spec/PROTOCOL.md makes, by running the library's own code, not a copy of it, against scripted workers, a fake of GitHub that keeps state, and real git, and judging every step by an oracle written from the spec's own text. It lives beside the package and never inside it: scripts/vendor.py copies only `sdlc_protocol/`, so nothing here reaches a consumer, and a commit that changes only this folder brings no sync pull request, since a copy's record names the last commit that changed the package.
+
+What is in it now: [DESIGN.md](DESIGN.md), the design of the validation harness, which a later session builds the harness from, with the findings F1 to F12 the design's prototype and its critique turned up and the status of each; and [prototype/](prototype/), the prototype that design measured (a model of what GitHub holds, a fake REST opener the real adapter runs against, a breadth-first checker, a gate explorer, a guard grammar, rule coverage, probes, mutants and CrossHair properties), kept so every number in DESIGN.md can be reproduced. [prototype/README.md](prototype/README.md) says how to run each script and what it printed.
+
+The harness itself is not built yet. Nothing here runs in the test suite or in CI (`python3 -m unittest discover -s tests` reads only `tests/`), and the prototype is to be replaced by the harness DESIGN.md describes, built in the order its section 14 gives.
