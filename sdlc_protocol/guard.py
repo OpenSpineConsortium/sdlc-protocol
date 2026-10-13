@@ -15,11 +15,18 @@ The hook is the first fence and branch protection on GitHub the second,
 so anything this module cannot read it lets through rather than wedging
 the session: an unparseable command, a broken payload or a git that
 answers nothing all pass, and GitHub still refuses what matters. Git is
-found behind what a person puts before it to set its environment or how
-it runs: leading VAR=value assignments and the wrappers env, command,
-nice and time, each with its own options. A command handed to another
-shell as text, as bash -c 'git push ...' does, is one word to this module
-and passes, as does any wrapper not named here.
+found behind what the shell reads before a command: VAR=value
+assignments, the reserved words that open a compound command or negate a
+pipeline (!, {, if, then, else, elif, while, until, do, and function with
+its name), and the wrappers env, command, nice, time, exec, nohup and
+timeout, each with its own options. A push is read as git reads its
+arguments: short options in a bundle, as in -fu; a long one by any start
+of its name that names it alone, as --force-w, or taken back with --no-;
+a value that is no refspec; and the refspecs that write many branches,
+the matching refspec : and a pattern with a *. What a command hands to
+another shell or command as text, as bash -c 'git push ...', eval and
+env -S do, is one word to this module and passes, as do a wrapper not
+named here (sudo, xargs) and a git alias for push.
 
 shlex reads a newline as whitespace, which would glue a line onto the one
 before it, so a small pass runs first: it turns each unquoted newline into
@@ -39,29 +46,72 @@ and the one shape it bought is rare and answered by a rephrasing.
 import re
 import shlex
 import subprocess
+from typing import NamedTuple
 
-# Options of git push that take their value as a separate word; the value
-# must not be read as a refspec.
-VALUE_OPTIONS = {"--receive-pack", "--repo", "-o", "--push-option"}
+# git push's own options, as its parse-options reads them (git 2.43's
+# git push -h): each long one by what it takes, VALUE a value attached with
+# = or given as the next word, which is then no refspec, OPTIONAL a value
+# only when attached with =, FLAG none. All but NOT_NEGATED also read as
+# --no-<name>, which takes the option back, and git takes any start of a
+# long name that names one option alone for the whole of it, --force-w for
+# --force-with-lease and --mi for --mirror. The short ones bundle, -fu
+# being -f and -u, and -o takes the rest of its word, or the next word.
+FLAG, VALUE, OPTIONAL = "flag", "value", "optional"
+PUSH_OPTIONS = {
+    "verbose": FLAG, "quiet": FLAG, "repo": VALUE, "all": FLAG, "branches": FLAG, "mirror": FLAG,
+    "delete": FLAG, "tags": FLAG, "dry-run": FLAG, "porcelain": FLAG, "force": FLAG,
+    "force-with-lease": OPTIONAL, "force-if-includes": FLAG, "recurse-submodules": VALUE, "thin": FLAG,
+    "receive-pack": VALUE, "exec": VALUE, "set-upstream": FLAG, "progress": FLAG, "prune": FLAG,
+    "no-verify": FLAG, "verify": FLAG, "follow-tags": FLAG, "signed": OPTIONAL, "atomic": FLAG,
+    "push-option": VALUE, "ipv4": FLAG, "ipv6": FLAG,
+}
+NOT_NEGATED = {"no-verify", "verify", "ipv4", "ipv6"}
+PUSH_LETTERS = {"v": "verbose", "q": "quiet", "d": "delete", "n": "dry-run", "f": "force",
+                "u": "set-upstream", "o": "push-option", "4": "ipv4", "6": "ipv6"}
+# The options that push branches wholesale rather than the one named.
+WHOLESALE = ("all", "branches", "mirror")
 
 # Global options of git itself that take a separate value, between "git"
 # and the verb, as in "git -C clone push".
 GIT_VALUE_OPTIONS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path"}
 
-# The words a person puts before git to run it another way, each with its
-# options that take their value as the next word, as GNU's env, nice and
-# time read them (bash's own time takes only -p, a flag); an option written
-# with its value attached, --unset=HOME or -n5, is one word.
+
+class Wrapper(NamedTuple):
+    """How a command that runs another reads its own words first, as GNU's
+    getopt does: its short options that take a value, attached as in -n5 or
+    as the next word, its long options that take one, attached with = or as
+    the next word, and how many words follow its options before the command
+    it runs, as timeout's duration does."""
+
+    short_values: str = ""
+    long_values: frozenset = frozenset()
+    operands: int = 0
+
+
+# The commands a person puts before git to run it another way, as GNU's
+# env, nice, time, nohup and timeout and bash's command and exec read their
+# options (bash's own time takes only -p, a flag).
 WRAPPERS = {
-    "env": {"-u", "--unset", "-C", "--chdir", "-S", "--split-string"},
-    "command": set(),
-    "nice": {"-n", "--adjustment"},
-    "time": {"-o", "--output", "-f", "--format"},
+    "env": Wrapper("uCS", frozenset({"--unset", "--chdir", "--split-string"})),
+    "command": Wrapper(),
+    "nice": Wrapper("n", frozenset({"--adjustment"})),
+    "time": Wrapper("of", frozenset({"--output", "--format"})),
+    "exec": Wrapper("a"),
+    "nohup": Wrapper(),
+    "timeout": Wrapper("ks", frozenset({"--kill-after", "--signal"}), operands=1),
 }
 # command -v and -V say what would run and run nothing.
 DESCRIBES_ONLY = set("vV")
-# A word the shell reads as an assignment to the command's environment.
-ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
+# A word the shell reads as an assignment to the command's environment,
+# VAR=value or VAR+=value.
+ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\+?=")
+# The reserved words the shell reads before a command without running
+# anything of their own: those that open or go on with a compound command,
+# and ! that negates a pipeline. The command after one is a command of its
+# own, so "if git push ...", "while ! git push ...", "do git push ..." and
+# "{ git push ...; }" each run the push. function takes the next word as
+# the name it defines.
+RESERVED = {"!", "{", "if", "then", "else", "elif", "while", "until", "do"}
 
 # What ends a word for the shell: a # right after one of these starts a
 # comment; anywhere else it is part of the word.
@@ -146,15 +196,31 @@ def program(word):
     return word.rsplit("/", 1)[-1]
 
 
-def past_options(argv, i, takes_value):
+def value_is_next(bundle, value_letters):
+    """Whether a bundle of short options ends in one that takes a value, so
+    that the value is the next word, as in -n alone or -iu; a value
+    attached, as in -n5 or -uHOME, is the rest of the bundle."""
+    for at, letter in enumerate(bundle):
+        if letter in value_letters:
+            return at == len(bundle) - 1
+    return False
+
+
+def past_options(argv, i, wrapper):
     """Where a wrapper's command starts: past its options from argv[i] on,
-    each one in takes_value with the next word as its value, and past a --
-    that ends them."""
+    each with its value (Wrapper), past a -- that ends them, and past the
+    operands the wrapper takes before the command."""
     while i < len(argv) and argv[i].startswith("-"):
-        if argv[i] == "--":
-            return i + 1
-        i += 2 if argv[i] in takes_value else 1
-    return i
+        word = argv[i]
+        i += 1
+        if word == "--":
+            break
+        if word.startswith("--"):
+            if "=" not in word and word in wrapper.long_values:
+                i += 1
+        elif value_is_next(word[1:], wrapper.short_values):
+            i += 1
+    return i + wrapper.operands
 
 
 def describes_only(options):
@@ -164,14 +230,18 @@ def describes_only(options):
 
 
 def command_start(argv):
-    """Where the command itself starts in argv: past leading assignments and
-    the WRAPPERS with their options; None when nothing is run, as after a
-    lone assignment or command -v."""
+    """Where the command itself starts in argv: past leading assignments,
+    the RESERVED words, function and its name, and the WRAPPERS with their
+    options; None when nothing is run, as after a lone assignment or
+    command -v."""
     i = 0
     while i < len(argv):
-        name = program(argv[i])
-        if ASSIGNMENT.match(argv[i]):
+        word = argv[i]
+        name = program(word)
+        if word in RESERVED or ASSIGNMENT.match(word):
             i += 1
+        elif word == "function":
+            i += 2
         elif name in WRAPPERS:
             end = past_options(argv, i + 1, WRAPPERS[name])
             if name == "command" and describes_only(argv[i + 1:end]):
@@ -202,42 +272,75 @@ def push_arguments(argv):
     return None
 
 
-def refusal(args, current_branch, default_branch):
-    """Why this push is refused, or None when it is allowed."""
-    force = lease = deleting = False
-    wholesale = None
-    positionals = []
-    skip = False
-    for arg in args:
-        if skip:
-            skip = False
-        elif arg in ("-f", "--force"):
-            force = True
-        elif arg == "--force-with-lease" or arg.startswith("--force-with-lease="):
-            lease = True
-        elif arg in ("--all", "--branches", "--mirror"):
-            wholesale = arg
-        elif arg in ("-d", "--delete"):
-            deleting = True
-        elif arg in VALUE_OPTIONS:
-            skip = True
-        elif arg.startswith("-"):
-            continue
+def long_option(word):
+    """The git push option a word that starts with -- names, as (name,
+    negated), or None when git would refuse the word, as an option it does
+    not know or a start of more than one, and push nothing."""
+    name = word[2:].split("=", 1)[0]
+    if name in PUSH_OPTIONS:
+        return name, False
+    if name.startswith("no-") and name[3:] in PUSH_OPTIONS and name[3:] not in NOT_NEGATED:
+        return name[3:], True
+    found = {(option, False) for option in PUSH_OPTIONS if option.startswith(name)}
+    found |= {(option, True) for option in PUSH_OPTIONS
+              if option not in NOT_NEGATED and f"no-{option}".startswith(name)}
+    return found.pop() if len(found) == 1 else None
+
+
+def short_options(bundle, options):
+    """Put in options what a bundle of short ones names, -fu being -f and
+    -u; 1 when the last one takes the next word as its value, as -o does,
+    else 0. A letter git does not know makes it refuse the push."""
+    for at, letter in enumerate(bundle):
+        name = PUSH_LETTERS.get(letter)
+        if name is None:
+            return 0
+        options.pop(name, None)
+        options[name] = True
+        if PUSH_OPTIONS[name] == VALUE:
+            return 1 if at == len(bundle) - 1 else 0
+    return 0
+
+
+def push_words(args):
+    """git push's arguments read as git reads them: the options in force,
+    by name, in the order they were last given, and the positional words,
+    the remote and then the refspecs."""
+    options, positionals, i = {}, [], 0
+    while i < len(args):
+        word = args[i]
+        i += 1
+        if word == "--":
+            positionals += args[i:]
+            break
+        if word.startswith("--"):
+            found = long_option(word)
+            if found is None:
+                continue
+            name, negated = found
+            options.pop(name, None)
+            if not negated:
+                options[name] = True
+                if PUSH_OPTIONS[name] == VALUE and "=" not in word:
+                    i += 1
+        elif word.startswith("-") and word != "-":
+            i += short_options(word[1:], options)
         else:
-            positionals.append(arg)
-    # A refspec's leading + forces that one ref, as --force forces them all;
-    # the first word is the remote, never a refspec, and under --delete
-    # each refspec is a name to delete, the + in it part of the name.
-    force = force or (not deleting and any(spec.startswith("+") for spec in positionals[1:]))
-    if wholesale:
-        return (f"a push with {wholesale} moves branches wholesale; "
-                "push your own claim branch alone (.claude/rules/board.md)")
-    if force:
-        return ("--force overwrites history another account may hold; the one forced push "
-                "the protocol allows is --force-with-lease on your own claude/ branch "
-                "after a rebase (.claude/rules/board.md)")
+            positionals.append(word)
+    return options, positionals
+
+
+def moves_many(spec):
+    """Whether a refspec pushes many branches: the matching refspec :,
+    which updates every branch both sides have, or a pattern with a *."""
+    return spec.lstrip("+") == ":" or "*" in spec
+
+
+def destinations_of(refspecs, current_branch):
+    """The branches a push writes: a refspec's destination, after the colon
+    when it has one, and the current branch for HEAD or no refspec at all."""
     destinations = []
-    for spec in positionals[1:]:
+    for spec in refspecs:
         name = spec.lstrip("+")
         if ":" in name:
             name = name.split(":", 1)[1]
@@ -246,8 +349,36 @@ def refusal(args, current_branch, default_branch):
             name = current_branch
         if name:
             destinations.append(name)
-    if not positionals[1:] and current_branch:
+    if not refspecs and current_branch:
         destinations.append(current_branch)
+    return destinations
+
+
+def refusal(args, current_branch, default_branch):
+    """Why this push is refused, or None when it is allowed."""
+    options, positionals = push_words(args)
+    refspecs, deleting = positionals[1:], "delete" in options
+    wholesale = [name for name in options if name in WHOLESALE]
+    if wholesale:
+        return (f"a push with --{wholesale[-1]} moves branches wholesale; "
+                "push your own claim branch alone (.claude/rules/board.md)")
+    many = [spec for spec in refspecs if moves_many(spec)]
+    if many:
+        return (f"a push with the refspec {many[0]} moves branches wholesale; "
+                "push your own claim branch alone (.claude/rules/board.md)")
+    if "force" in options:
+        return ("--force overwrites history another account may hold; the one forced push "
+                "the protocol allows is --force-with-lease on your own claude/ branch "
+                "after a rebase (.claude/rules/board.md)")
+    # A refspec's leading + forces that one ref, as --force forces them all,
+    # and git lets it override --force-with-lease; the first word is the
+    # remote, never a refspec, and under --delete each refspec is a name to
+    # delete, the + in it part of the name.
+    if not deleting and any(spec.startswith("+") for spec in refspecs):
+        return ("a + before a refspec forces that ref as --force does, and git lets it override "
+                "--force-with-lease; the one forced push the protocol allows is --force-with-lease "
+                "on your own claude/ branch after a rebase, with no + (.claude/rules/board.md)")
+    destinations = destinations_of(refspecs, current_branch)
     for name in destinations:
         if name == default_branch:
             return (f"a push to {name} is refused: the default branch takes only "
@@ -255,7 +386,7 @@ def refusal(args, current_branch, default_branch):
         if name == "board":
             return ("a push to board is refused: only the board workflow writes that "
                     "branch (.claude/rules/board.md)")
-    if lease:
+    if "force-with-lease" in options:
         strays = [name for name in destinations if not name.startswith("claude/")]
         if strays:
             return (f"--force-with-lease to {', '.join(strays)} is refused: a forced push "
