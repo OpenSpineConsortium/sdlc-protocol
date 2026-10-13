@@ -67,3 +67,14 @@ def overlaps(page):
 
 def pulls(page):
     return sorted(number(r[0]) for r in rows(page, board.PULL_HEADING))
+
+
+def merged(page):
+    """The Recently merged section's pull request numbers, newest first, as
+    the page lists them."""
+    return [number(r[0]) for r in rows(page, board.MERGED_HEADING)]
+
+
+def claim_workers(page):
+    """The Claims section as a map from branch to the worker shown."""
+    return {r[1]: r[2] for r in rows(page, board.CLAIM_HEADING)}

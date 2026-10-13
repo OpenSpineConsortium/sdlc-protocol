@@ -51,7 +51,7 @@ GUARANTEES = {
 # The guarantees this step checks; the rest wait for the steps that build
 # their worlds (G13, the gate's; G14, dealing; G11b, the second fence,
 # which only git and GitHub show).
-CHECKED = frozenset(GUARANTEES) - {"G11b", "G13", "G14"}
+CHECKED = frozenset(GUARANTEES) - {"G11b"}
 # Which guarantee a difference in a run's effects belongs to, by its kind.
 EFFECT_GUARANTEE = {
     "label-off": "G3", "label-on": "G3", "rename": "G3", "delete-ref": "G4",

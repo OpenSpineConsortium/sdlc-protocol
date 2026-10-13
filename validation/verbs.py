@@ -18,6 +18,16 @@ Actors: the workers of the scope, each a person's session that may write
 a writer GitHub shows as a contributor, whom only the permission API
 vouches for; sam, a stranger with no write access; the clock; the board.
 
+Two comments a person can write that look like the coordinator's, offered
+where the scope has more than one issue: a worker's comment that quotes
+an overlap marker on a later line, as a reply does, and a stranger's
+comment whose first line is one, naming the other issues. Neither tells
+the work of anything (spec, Overlaps: the coordinator's own comment, by
+the repository's workflows), so the coordinator still owes its comment;
+a reader that took either for the coordinator's would stay silent. And
+carry-on, the next worker's cherry-pick of a released claim's work after
+its own claim commit (spec, Release: "may carry the released work on").
+
 Every act GitHub tells the board workflow of fires its events, as
 board.yml's triggers name them (a push, a branch made or deleted, a pull
 request opened, pushed to, reopened or closed, an issue closed or
@@ -142,6 +152,12 @@ def pushed(model, worker, ref, sha, command, force=False, lease=False, allowed=T
                    events=events)
 
 
+def overlap_marker(numbers):
+    """The coordinator's overlap marker naming these numbers, as a person
+    or a stranger might write it."""
+    return f"<!-- sdlc-coordinator: overlap {' '.join(str(n) for n in numbers)} -->"
+
+
 def released_refs(model, number):
     return sorted(r for r in model.refs if r.startswith(f"{RELEASED_PREFIX}{number}-"))
 
@@ -252,6 +268,33 @@ def push_old_head(model, worker, number, released_ref):
     """After a release, push the released head again as claude/<n>."""
     ref = claim_ref(number)
     return pushed(model, worker, ref, model.refs[released_ref], f"git push origin {released_ref}:{ref}")
+
+
+def carry_on(model, worker, number, released_ref):
+    """The next worker carries a released claim's work on: it cherry-picks
+    the released branch's commits after its own claim commit, all but the
+    old claim file, which its own claim file replaces (.claude/skills/claim
+    in the template), and pushes."""
+    ref = claim_ref(number)
+    head, main = model.refs[ref], model.refs[MAIN]
+    own = model.in_order(model.ancestors(model.refs[released_ref]) - model.ancestors(main))
+    claim_path = f"{CLAIM_DIR}/{number}.md"
+    tip = head
+    for sha in own:
+        record, parent = model.commits[sha], (model.commits[sha].parents or ("",))[0]
+        changed = [p for p in model.changed(parent, sha) if p != claim_path]
+        if not changed:
+            continue
+        tree = model.tree(tip)
+        for path in changed:
+            if path in dict(record.tree):
+                tree[path] = dict(record.tree)[path]
+            else:
+                tree.pop(path, None)
+        tip = model.commit((tip,), worker, tree, record.message)
+    if tip == head:
+        return Outcome(True, "nothing to carry on")
+    return touch_pull(model, ref, pushed(model, worker, ref, tip, f"git push origin {ref}"))
 
 
 def touch_pull(model, ref, outcome):
@@ -428,6 +471,12 @@ def act(model, verb, scope):
         return comment(model, actor, number, "finished; ready to mark")
     if name == "marker":
         return comment(model, actor, number, oracle.RELEASE_MARKER + "\nreleased by hand")
+    if name == "overlap-marker":
+        return comment(model, actor, number, overlap_marker(args[1]) + "\ntold by hand")
+    if name == "overlap-quote":
+        return comment(model, actor, number, "about the overlap, quoting it:\n" + overlap_marker(args[1]))
+    if name == "carry-on":
+        return carry_on(model, actor, number, args[1])
     if name == "open-draft":
         return open_draft(model, actor, number)
     if name == "mark-ready":
@@ -494,6 +543,8 @@ def issue_verbs(model, scope, number):
     for person in scope.people:
         if ref in model.refs and issue.state == "open":
             found.append(Verb("marker", person, (number,)))
+            if person == SAM and len(scope.issues) > 1:
+                found.append(Verb("overlap-marker", person, (number, others(scope, number))))
     if OWNER in scope.people:
         found += owner_verbs(model, number, pull)
         misnamed = f"{CLAIM_PREFIX}0{number}"
@@ -532,11 +583,19 @@ def worker_verbs(model, scope, number, worker, pull):
     if oracle.IN_REVIEW not in issue.labels:
         found.append(Verb("label-on", worker, (number, oracle.IN_REVIEW)))
     found.append(Verb("plan", worker, (number,)))
+    if len(scope.issues) > 1:
+        found.append(Verb("overlap-quote", worker, (number, others(scope, number))))
     if pull is None:
         found.append(Verb("open-draft", worker, (number,)))
     elif pull.author == worker and pull.draft:
         found += [Verb("mark-ready", worker, (pull.number,)), Verb("finished", worker, (pull.number,))]
     return found
+
+
+def others(scope, number):
+    """The scope's other issues, as the numbers an overlap marker on this
+    issue would name."""
+    return tuple(n for n in scope.issues if n != number)
 
 
 def owner_verbs(model, number, pull):

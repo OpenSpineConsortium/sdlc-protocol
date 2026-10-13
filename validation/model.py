@@ -395,7 +395,23 @@ class RepoModel:
         return hashlib.sha256(repr(self.canonical()).encode("utf-8")).digest()[:16]
 
     def clone(self):
-        return copy.deepcopy(self)
+        """A copy no verb on it changes this one through. The commits, the
+        comments and the label events are immutable records, so they are
+        shared; the issues, the pull requests and the maps are copied one
+        level deep, which is every level a verb writes. A run between its
+        halves holds a client over this model, so a model with one is
+        copied whole."""
+        if self.running is not None:
+            return copy.deepcopy(self)
+        return RepoModel(
+            now=self.now, commits=dict(self.commits), refs=dict(self.refs),
+            issues={n: copy.copy(i) for n, i in self.issues.items()},
+            pulls={n: copy.copy(p) for n, p in self.pulls.items()},
+            next_pull=self.next_pull, writers=self.writers, ever_heads=self.ever_heads,
+            label_events=self.label_events, creators=dict(self.creators), created=dict(self.created),
+            tracking={w: dict(refs) for w, refs in self.tracking.items()}, board_text=self.board_text,
+            queued=self.queued, pending=self.pending, running=None,
+        )
 
 
 # --- setting a world up -------------------------------------------------------
