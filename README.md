@@ -127,7 +127,7 @@ Some changes are meant to change what a consumer sees: a rendered string that a 
 
 ## The owner's one-time setup for releases
 
-Until the environment `release` has you as its required reviewer, a release that is due fails its run, tags nothing and says in the run's summary what to set up. GitHub makes an environment that a job names and that does not exist yet, with no protection rule, so if a run got there first, `release` is already listed and only needs its rules. Once, at https://github.com/OpenSpineConsortium/symphony-protocol/settings/environments:
+Until the environment `release` has you as its required reviewer, a release that is due fails its run, tags nothing and says in the run's summary what to set up; once it is, re-run that run, which GitHub allows for 30 days after it began, or run Release by hand from main, whose plan lists every version still untagged. GitHub makes an environment that a job names and that does not exist yet, with no protection rule, so if a run got there first, `release` is already listed and only needs its rules. Once, at https://github.com/OpenSpineConsortium/symphony-protocol/settings/environments:
 
 1. Click New environment, name it `release` and click Configure environment; or open `release`, if a run made it already.
 2. Tick Required reviewers and add yourself. Leave Prevent self-review unticked: the run you approve is usually one your own merge started, and with it ticked GitHub would not let you approve it.

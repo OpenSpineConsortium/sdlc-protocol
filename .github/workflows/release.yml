@@ -143,7 +143,7 @@ jobs:
               | select(any((.environments // [])[]; (.name // "" | ascii_downcase) == "release"))
               | .user.login // "a reviewer"] | unique | join(", ")')"
           if [ -z "$approvers" ]; then
-            echo "Nothing was released: this run has no approval in the environment release. Set that environment up once at https://github.com/$REPO/settings/environments, with yourself as its required reviewer and main as its one deployment branch (README.md, \"The owner's one-time setup for releases\"), then re-run this run and approve it with Approve and deploy." | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "Nothing was released: this run has no approval in the environment release. Set that environment up once at https://github.com/$REPO/settings/environments, with yourself as its required reviewer and main as its one deployment branch (README.md, \"The owner's one-time setup for releases\"), then re-run this run, which GitHub allows for 30 days after it began, or run Release by hand from main, and approve it with Review deployments, then Approve and deploy." | tee -a "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
           echo "Approved in the environment release by $approvers." | tee -a "$GITHUB_STEP_SUMMARY"

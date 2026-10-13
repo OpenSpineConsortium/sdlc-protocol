@@ -4,7 +4,8 @@ The workflows only run git, gh and this script, so what they decide is
 tested here: the matrix they run a leg per consumer from, read from the
 release the sync carries; what the run's summary tells the owner when the
 App is not set up, the run was started off main, the Release run before it
-published nothing or was not main's own, or there is no release yet;
+did not succeed or was not main's own, the newest release does not stand
+where release.yml makes one, or there is no release yet;
 which release is the newest, the highest version and never one marked
 latest by hand; what a consumer's reviewer reads in the sync's pull
 request (the title, the commit message, the body with the release it
@@ -138,14 +139,19 @@ class AfterARelease(unittest.TestCase):
     def test_names_the_repository_whatever_the_case(self):
         self.assertIsNone(sync.after_release_text(release_run(), ECO["library"].upper()))
 
-    def test_a_run_that_did_not_succeed_published_nothing_to_carry(self):
+    def test_a_run_that_did_not_succeed_is_not_followed(self):
         """A rejected approval, one that expired, or a run cancelled while it
-        waited all conclude short of success, and none published a release."""
+        waited all conclude short of success. Was: the text said such a run
+        published no release, but one that failed partway may have
+        published the releases ahead of the one GitHub refused, which the
+        next sync carries."""
         for conclusion in ("failure", "cancelled", "timed_out", "action_required"):
             with self.subTest(conclusion=conclusion):
                 text = sync.after_release_text(release_run(conclusion=conclusion), ECO["library"])
                 self.assertIn(f"concluded `{conclusion}` rather than `success`", text)
                 self.assertIn("changed nothing in any consumer", text)
+                self.assertIn("may have published some of its releases before it stopped", text)
+                self.assertNotIn("published no release", text)
 
     def test_a_conclusion_it_cannot_name_is_not_written_into_the_summary(self):
         for conclusion in (None, "", "a `b`", 3):

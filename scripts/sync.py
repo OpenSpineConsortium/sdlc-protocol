@@ -24,14 +24,15 @@ history the commands read (by default this repository's own). ci.yml's
 downstream job runs each consumer's own check on a pull request's copy
 before it merges here. The workflows only run git, gh and these commands,
 so what they decide is here, where it is tested: the matrix of consumers,
-what the owner must set up when the sync cannot run, why a run off main
-or after a Release run that published nothing vendors nothing, which
-release is the newest, whether its tag stands where release.yml makes one
-(scripts/release.py decides), the commit message, the title and the body of a
-consumer's pull request, built from the consumer's record before and
-after the release's scripts/vendor.py ran in its checkout, the comment
-that closes a sync pull request main has made stale, and each consumer's
-row in the run's summary. The body is written for the person who reviews
+what the owner must set up when the sync cannot run, why a run off main,
+or after a Release run that did not succeed or that main did not start,
+vendors nothing, which release is the newest, whether its tag stands
+where release.yml makes one (scripts/release.py decides), the commit
+message, the title and the body of a consumer's pull request, built from
+the consumer's record before and after the release's scripts/vendor.py
+ran in its checkout, the comment that closes a sync pull request main
+has made stale, and each consumer's row in the run's summary. The body
+is written for the person who reviews
 the pull request there: which release it brings, what changed in the
 library since the commit the copy named before, which files of the copy
 moved, what the consumer uses the library for, the release it makes
@@ -136,9 +137,10 @@ def after_release_text(run, repository):
         ended = f"concluded `{conclusion}` rather than `success`" if named else "ended with no conclusion"
         return (
             "## The sync did not run\n\n"
-            f"The Release run that started it {ended}, so it published no release, and the sync changed nothing "
-            "in any consumer: a release the owner has not approved reaches no copy. The sync runs again when a "
-            "Release run succeeds, every week and by hand, and carries the newest release then.\n")
+            f"The Release run that started it {ended}, so the sync went no further and changed nothing in any "
+            "consumer. That run may have published some of its releases before it stopped; the newest published "
+            "release reaches the consumers with the next sync, after a Release run that succeeds, every week, or "
+            "by hand from main.\n")
     head = (run.get("head_repository") or {}).get("full_name") or ""
     if (run.get("event") not in RELEASE_EVENTS or run.get("head_branch") != "main"
             or head.lower() != repository.lower()):

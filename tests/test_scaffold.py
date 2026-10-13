@@ -405,16 +405,17 @@ class SyncWorkflow(unittest.TestCase):
                       self.jobs["sync"])
 
     def test_a_run_off_main_vendors_nothing_and_says_why(self):
-        """A run by hand can name any branch, and the sync would vendor
-        that branch, unreviewed, into every consumer. The ref is compared
-        by name: a scheduled run's event carries no repository to read the
-        default branch from."""
+        """A run by hand can name any branch, whose own scripts/sync.py
+        would then choose what the sync carries and write the consumers'
+        pull requests with the App's token. The ref is compared by name: a
+        scheduled run's event carries no repository to read the default
+        branch from."""
         self.assertIn("REF: ${{ github.ref }}", self.text)
         self.assertRegex(self.text, r'if \[ "\$REF" != "refs/heads/main" \]; then\n'
                                     r'\s+echo "enabled=false" >> "\$GITHUB_OUTPUT"\n'
                                     r'\s+python3 scripts/sync.py off-main --ref "\$REF"')
 
-    def test_one_sync_at_a_time_and_a_newer_push_waits(self):
+    def test_one_sync_at_a_time_and_a_newer_one_waits(self):
         self.assertIn("concurrency:\n  group: sync\n  cancel-in-progress: false\n", self.text)
 
     def test_reads_with_its_own_token_and_writes_with_the_apps(self):
@@ -891,6 +892,8 @@ class TheApprovalRuns(StepsRun):
         summary = self.read(self.summary)
         self.assertTrue(summary.startswith("Nothing was released: this run has no approval in the environment release."))
         self.assertIn("https://github.com/octo/library/settings/environments", summary)
+        self.assertIn("re-run this run, which GitHub allows for 30 days after it began, or run Release by hand "
+                      "from main", summary)
         self.assertEqual(summary.count("\n"), 1)
 
     def test_it_asks_for_this_runs_review_history(self):

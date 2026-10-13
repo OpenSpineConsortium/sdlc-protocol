@@ -39,7 +39,8 @@ name: Sync
 # the variable SDLC_APP_ID is not set, the plan says in the run's summary
 # what the owner sets up (README.md, "The owner's one-time setup for the
 # sync") and the sync is skipped, so the run stays green; so it is when no
-# release is published yet, or the Release run before it published none.
+# release is published yet, or after a Release run that did not succeed
+# or that main did not start.
 # Values reach a shell only through env:, never through an expression
 # inside run:, so nothing a value holds runs as code. One sync runs at a
 # time and a newer one waits for it rather than cancelling it, so a
