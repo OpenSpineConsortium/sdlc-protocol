@@ -130,6 +130,44 @@ class TheReadme(unittest.TestCase):
         self.assertIn("raise the version from the start, before any consumer vendors it", first)
         self.assertNotIn("raising the version", merge)
 
+    def test_the_owners_setup_for_releases_is_where_the_refusal_sends_the_owner(self):
+        """release.yml's refusal names this section by its heading and its
+        link, and the job's first step holds only with the environment set
+        as it says, in GitHub's own words for each control: Configure
+        environment, Save protection rules after each rule, and Add rule for
+        the branch (github/docs, manage-environments.md)."""
+        named = re.findall(r'README\.md, \\"([^\\]+)\\"', workflow("release.yml"))
+        self.assertEqual(named, ["The owner's one-time setup for releases"])
+        setup = self.section(f"## {named[0]}")
+        self.assertIn("https://github.com/OpenSpineConsortium/symphony-protocol/settings/environments", setup)
+        for words in ("click Configure environment", "Tick Required reviewers, add yourself and click Save protection "
+                      "rules", "Leave Prevent self-review unticked", "Untick Allow administrators to bypass configured "
+                      "protection rules and click Save protection rules", "choose Selected branches and tags",
+                      "choose Branch in the Ref type menu, enter `main` and click Add rule"):
+            with self.subTest(words=words):
+                self.assertIn(words, setup)
+        self.assertNotIn("after each of these", setup)
+
+    def test_the_approval_is_the_owners_own_act_in_the_browser(self):
+        """The review history records only a login, and sessions act under
+        the owner's, so the first step cannot tell their approval apart."""
+        setup = self.section("## The owner's one-time setup for releases")
+        self.assertIn("No session approves or rejects a deployment", setup)
+        self.assertIn("is not yet measured", setup)
+
+    def test_says_what_the_approval_does_not_hold(self):
+        """A writer can publish a release by hand, a branch's workflow can
+        read the App's key, the template's copies take bare tags, and the
+        gate's own files run from main once merged: the page says so rather
+        than promising more than GitHub gives."""
+        releases = self.section("## Releases")
+        self.assertIn("What the approval holds, and what it does not.", releases)
+        for words in ("A release published by hand", "The App's key is a repository secret",
+                      "take the newest tag `v<version>` by their own `protocol.yml`, a release or not",
+                      "is therefore the owner's own merge, never a session's"):
+            with self.subTest(words=words):
+                self.assertIn(words, releases)
+
     def test_says_the_one_way_a_change_reaches_a_consumer_before_its_release(self):
         """A consumer that must answer a change takes the branch by a pull
         request of its own, before the release exists, so the page may not

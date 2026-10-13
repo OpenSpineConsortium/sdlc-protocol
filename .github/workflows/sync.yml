@@ -35,12 +35,14 @@ name: Sync
 # pull request still open there is stale, and the job closes it.
 #
 # A run started by hand from another branch says so in its summary and
-# stops, so a branch nobody reviewed never runs with the App's key. Where
-# the variable SDLC_APP_ID is not set, the plan says in the run's summary
-# what the owner sets up (README.md, "The owner's one-time setup for the
-# sync") and the sync is skipped, so the run stays green; so it is when no
-# release is published yet, or after a Release run that did not succeed
-# or that main did not start.
+# stops, so this workflow never runs a branch's scripts with the App's
+# key; a workflow a branch carries is that branch's own file, though, and
+# the key, a repository secret, is readable by it (README.md, Releases,
+# says what that leaves open). Where the variable SDLC_APP_ID is not set,
+# the plan says in the run's summary what the owner sets up (README.md,
+# "The owner's one-time setup for the sync") and the sync is skipped, so
+# the run stays green; so it is when no release is published yet, or
+# after a Release run that did not succeed or that main did not start.
 # Values reach a shell only through env:, never through an expression
 # inside run:, so nothing a value holds runs as code. One sync runs at a
 # time and a newer one waits for it rather than cancelling it, so a

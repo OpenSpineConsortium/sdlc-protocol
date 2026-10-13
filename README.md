@@ -129,13 +129,14 @@ Some changes are meant to change what a consumer sees: a rendered string that a 
 
 Until the environment `release` has you as its required reviewer, a release that is due fails its run, tags nothing and says in the run's summary what to set up; once it is, re-run that run, which GitHub allows for 30 days after it began, or run Release by hand from main, whose plan lists every version still untagged. GitHub makes an environment that a job names and that does not exist yet, with no protection rule, so if a run got there first, `release` is already listed and only needs its rules. Once, at https://github.com/OpenSpineConsortium/symphony-protocol/settings/environments:
 
-1. Click New environment, name it `release` and click Configure environment; or open `release`, if a run made it already.
-2. Tick Required reviewers and add yourself. Leave Prevent self-review unticked: the run you approve is usually one your own merge started, and with it ticked GitHub would not let you approve it.
-3. Untick Allow administrators to bypass configured protection rules, so the job never starts without an approval, which is what its first step checks for.
-4. Under Deployment branches and tags, choose Selected branches and tags, click Add deployment branch or tag rule, and add the branch `main`.
-5. Click Save protection rules after each of these.
+1. Click New environment, name it `release` and click Configure environment; or click `release`, if a run made it already.
+2. Tick Required reviewers, add yourself and click Save protection rules. Leave Prevent self-review unticked: the run you approve is usually one your own merge started, and with it ticked GitHub would not let you approve it.
+3. Untick Allow administrators to bypass configured protection rules and click Save protection rules, so the job never starts without an approval, which is what its first step checks for.
+4. In the Deployment branches dropdown, choose Selected branches and tags, click Add deployment branch or tag rule, choose Branch in the Ref type menu, enter `main` and click Add rule.
 
 Required reviewers are offered on a public repository on every plan, and this one is public. From then on each release waits on its run's page: Review deployments, then Approve and deploy, or Reject, which fails the run and tags nothing. A run nobody reviews fails by itself after 30 days, and a newer Release run waits behind it; rejecting the older one lets the newer one go on, and it lists every version still untagged.
+
+The approval is yours, given in the browser. No session approves or rejects a deployment, by any tool or through the REST API's "Review pending deployments for a workflow run", even one that acts under your login: the review history the job reads records only the login, so its first step cannot tell a session's approval from yours. Whether the tokens the sessions hold may call that endpoint, which asks for Deployments write, is not yet measured.
 
 ## The owner's one-time setup for the sync
 
@@ -170,7 +171,16 @@ The job's first step asks GitHub for the run's review history (the REST API's "G
 
 Approve a release before another change under `.github/workflows/` merges: GitHub refuses `GITHUB_TOKEN` a tag at a commit whose workflow files differ from main's (the note on the REST API's "Create a release"), so such a run fails once approved and says so. You approved that release already, so publish it yourself, from a terminal of your own and never from a session, with the commit the run's summary named: `gh release create v<version> --repo OpenSpineConsortium/symphony-protocol --target <commit> --title "sdlc-protocol <version>" --generate-notes`, which makes the tag and the release at once; GitHub asks your token for the `workflow` scope there, which `gh auth refresh --scopes workflow` adds. Then run Sync by hand from main. Do not push the tag alone: the repositories made from symphony-template take the newest tag, release or not, and would take it before its release.
 
-Each release reaches the consumers by the sync (How a change reaches the other repositories, above), and only a release does: a change merged without a new version waits for the next one.
+Each release reaches the consumers by the sync (How a change reaches the other repositories, above), and only a release does, but for a consumer that took this repository's branch to answer a change: a change merged without a new version waits for the next one.
+
+What the approval holds, and what it does not. A release reaches a consumer only once it is published and only from the commit that raised main to its version, checked out by that commit, so neither code main never held, nor a tag moved after its release, nor a branch named like a release reaches one. It does not hold against a person who may write here, nor against what such a person's branch may run:
+
+- A release published by hand, or by a workflow pushed on a branch with `GITHUB_TOKEN`, at the commit that raised main to a version, is carried by the sync with no approval; it can carry only what main already holds.
+- The App's key is a repository secret, so any workflow in this repository can read it, a branch's own and a pull request's own `ci.yml` from a branch here among them (github/docs, secure-use.md: "Any user with write access to your repository has read access to all secrets configured in your repository"), and use it to push to a consumer's sync branch and arm auto-merge there.
+- The repositories made from symphony-template take the newest tag `v<version>` by their own `protocol.yml`, a release or not, so a tag pushed by hand reaches them before any approval.
+- The gate is `.github/workflows/release.yml` and `.github/workflows/sync.yml`, with `scripts/release.py` and `scripts/sync.py`, which run from main the moment a change to them merges, so a merge that weakens them takes effect at once. A pull request that changes `.github/workflows/`, `scripts/release.py` or `scripts/sync.py` is therefore the owner's own merge, never a session's (CLAUDE.md).
+
+Closing these takes settings only the owner can make, none of them made yet: a tag ruleset on `refs/tags/v*` that restricts creations, updates and deletions and that only a GitHub App whose key is a secret of the environment `release` may bypass, with the job `release` making the tags with that App's token; the App's key moved into an environment of its own that only main deploys to, with a read-only credential for `ci.yml`'s downstream jobs, which now read the private consumers with that key; and a code owner's review required for the gate's files.
 
 ## Installing
 
