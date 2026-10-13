@@ -150,10 +150,12 @@ class TheReadme(unittest.TestCase):
 
     def test_the_approval_is_the_owners_own_act_in_the_browser(self):
         """The review history records only a login, and sessions act under
-        the owner's, so the first step cannot tell their approval apart."""
+        the owner's, so the first step cannot tell their approval apart; the
+        page says what was measured of a session's reach, not a guess."""
         setup = self.section("## The owner's one-time setup for releases")
         self.assertIn("No session approves or rejects a deployment", setup)
-        self.assertIn("is not yet measured", setup)
+        self.assertIn("so GitHub answers 403", setup)
+        self.assertNotIn("is not yet measured", setup)
 
     def test_says_what_the_approval_does_not_hold(self):
         """A writer can publish a release by hand, a branch's workflow can
@@ -164,7 +166,7 @@ class TheReadme(unittest.TestCase):
         self.assertIn("What the approval holds, and what it does not.", releases)
         for words in ("A release published by hand", "The App's key is a repository secret",
                       "take the newest tag `v<version>` by their own `protocol.yml`, a release or not",
-                      "is therefore the owner's own merge, never a session's"):
+                      "on the owner's standing permission of 2026-10-13 (CLAUDE.md)"):
             with self.subTest(words=words):
                 self.assertIn(words, releases)
 
