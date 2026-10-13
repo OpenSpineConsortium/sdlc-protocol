@@ -245,18 +245,22 @@ def starts_with_release_marker(comment):
 
 def is_release_comment(comment, trusted=None):
     """Whether an issue comment releases a claim: its first line is the
-    marker and the repository trusts its author, by GitHub's
-    author_association (RELEASERS), as the repository's own workflows
-    (RELEASING_BOTS), or, for an author neither vouches for, by trusted, a
-    callable given the author's login that an adapter answers from the
-    author's permission on the repository: GitHub may show a private member
-    of the organization to a workflow's token as a mere contributor. A
+    marker and the repository trusts its author (is_trusted_author). A
     comment by anyone else cannot take a claim away from its holder."""
-    if not starts_with_release_marker(comment):
-        return False
-    if comment.get("author_association") in RELEASERS:
+    return starts_with_release_marker(comment) and is_trusted_author(comment, trusted)
+
+
+def is_trusted_author(comment, trusted=None):
+    """Whether the repository trusts the author of a comment, as the API
+    gives it, to speak for the coordinator: by GitHub's author_association
+    (RELEASERS), as the repository's own workflows (RELEASING_BOTS), or, for
+    an author neither vouches for, by trusted, a callable given the author's
+    login that an adapter answers from the author's permission on the
+    repository: GitHub may show a private member of the organization to a
+    workflow's token as a mere contributor."""
+    if (comment or {}).get("author_association") in RELEASERS:
         return True
-    login = (comment.get("user") or {}).get("login")
+    login = ((comment or {}).get("user") or {}).get("login")
     if login in RELEASING_BOTS:
         return True
     return bool(trusted and login and trusted(login))

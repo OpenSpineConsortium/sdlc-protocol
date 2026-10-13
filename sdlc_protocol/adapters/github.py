@@ -567,13 +567,15 @@ def landed_release(api, key, release):
 
 def tell_overlaps(api, snap):
     """Post each overlap comment that is due, reading only the comments of
-    the work that meets other work; work whose comments GitHub would not
-    give is told nothing this run, so it is never told twice. The lines say
-    what was posted."""
-    lines, told = [], {}
+    the work that meets other work, and counting only the markers of
+    authors the repository trusts (coordinator.told_numbers); work whose
+    comments GitHub would not give is told nothing this run, so it is never
+    told twice. The lines say what was posted."""
+    lines, told, trusted = [], {}, may_write(api)
     for number in coordinator.meeting(snap):
         try:
-            told[number] = coordinator.told_numbers(api.get_all(f"/repos/{api.repo}/issues/{number}/comments"))
+            comments = api.get_all(f"/repos/{api.repo}/issues/{number}/comments")
+            told[number] = coordinator.told_numbers(comments, trusted)
         except GitHubError as problem:
             lines.append(f"#{number}: overlaps not told, its comments were not read: {problem}{github_words(problem)}")
     for number, marker, text in coordinator.overlap_comments_due(snap, told):

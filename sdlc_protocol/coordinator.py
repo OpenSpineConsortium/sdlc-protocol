@@ -207,16 +207,23 @@ def meeting(snapshot):
             for number, others in sorted(found.items())}
 
 
-def told_numbers(comments):
+def told_numbers(comments, trusted=None):
     """Every number an overlap comment among these has told of, read from
     the marker on its first line: a comment that quotes a marker further
-    down talks about an overlap and told nothing."""
+    down talks about an overlap and told nothing. A marker counts only from
+    an author the repository trusts (claims.is_trusted_author; trusted as
+    there), as the coordinator writes as the repository's own workflows, so
+    nobody else can keep a piece of work from being told, and only when
+    every number in it is an issue's or a pull request's (claims.number_in):
+    anyone may comment, and a number of thousands of digits would raise,
+    stopping every board run."""
     told = set()
     for comment in comments:
         lines = ((comment or {}).get("body") or "").strip().splitlines()
         match = OVERLAP_LINE.fullmatch(lines[0].strip()) if lines else None
-        if match:
-            told.update(int(number) for number in match.group(1).split())
+        numbers = [claims.number_in(number) for number in match.group(1).split()] if match else []
+        if numbers and None not in numbers and claims.is_trusted_author(comment, trusted):
+            told.update(numbers)
     return told
 
 

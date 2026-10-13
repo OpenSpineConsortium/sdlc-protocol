@@ -15,6 +15,8 @@ from sdlc_protocol import board, claims, coordinator  # noqa: E402
 
 NOW = datetime(2026, 9, 20, 12, 0, tzinfo=timezone.utc)
 HEAD = "aaaaaaa1111111"
+# Who the coordinator's comments are by: the repository's own workflows.
+BOT = {"author_association": "NONE", "user": {"login": "github-actions[bot]"}}
 CLAIM_TEXT = ("# Claim: #12\n\n- Issue: https://github.com/octo/widgets/issues/12\n- Worker: nightly\n"
               "- Branch: claude/12\n\n## Plan\n\nDescribe the board,\nsection by section.\n\n"
               "## Files to touch\n\n- docs/agents/README.md\n")
@@ -197,10 +199,29 @@ class Overlaps(unittest.TestCase):
         self.assertIn("Land them in this order: #17, #40, #42:", due[42].text)
 
     def test_told_numbers_read_every_overlap_marker_and_nothing_else(self):
-        comments = [{"body": "<!-- sdlc-coordinator: overlap 17 40 -->\noverlap: ..."},
-                    {"body": "a person quoting <!-- sdlc-coordinator: overlap 3 -->"},
-                    {"body": "<!-- sdlc-board: idle -->\nidle"}, {"body": None}, {}]
+        comments = [dict(BOT, body="<!-- sdlc-coordinator: overlap 17 40 -->\noverlap: ..."),
+                    dict(BOT, body="a person quoting <!-- sdlc-coordinator: overlap 3 -->"),
+                    dict(BOT, body="<!-- sdlc-board: idle -->\nidle"), {"body": None}, {}]
         self.assertEqual(coordinator.told_numbers(comments), {17, 40})
+
+    def test_a_marker_counts_only_from_an_author_the_repository_trusts(self):
+        # Anyone may comment on a public repository's issues; a marker by a
+        # stranger naming the other work would keep it from being told.
+        stranger = {"body": "<!-- sdlc-coordinator: overlap 42 -->", "author_association": "NONE",
+                    "user": {"login": "stranger"}}
+        member = dict(stranger, author_association="MEMBER", body="<!-- sdlc-coordinator: overlap 17 -->")
+        writer = dict(stranger, user={"login": "writer"}, body="<!-- sdlc-coordinator: overlap 40 -->")
+        self.assertEqual(coordinator.told_numbers([stranger, member, writer]), {17})
+        self.assertEqual(coordinator.told_numbers([stranger, member, writer], lambda login: login == "writer"),
+                         {17, 40})
+
+    def test_a_marker_whose_numbers_name_no_issue_counts_for_nothing_and_never_raises(self):
+        # int() refuses more than 4,300 digits, and one such comment stopped
+        # every board run before STATE.md was written.
+        comments = [dict(BOT, body="<!-- sdlc-coordinator: overlap " + "1" * 4301 + " -->"),
+                    dict(BOT, body="<!-- sdlc-coordinator: overlap 17 042 -->"),
+                    dict(BOT, body="<!-- sdlc-coordinator: overlap 40 -->")]
+        self.assertEqual(coordinator.told_numbers(comments), {40})
 
 
 if __name__ == "__main__":

@@ -732,7 +732,8 @@ class Coordinate(unittest.TestCase):
         answers = {
             "/repos/o/r/issues/40/comments?per_page=100": FakeAnswer([]),
             "/repos/o/r/issues/41/comments?per_page=100": FakeAnswer(
-                [{"body": "<!-- sdlc-coordinator: overlap 40 -->\noverlap: told before"}]),
+                [{"body": "<!-- sdlc-coordinator: overlap 40 -->\noverlap: told before",
+                  "author_association": "NONE", "user": {"login": "github-actions[bot]"}}]),
             "POST /repos/o/r/issues/40/comments": FakeAnswer({}),
         }
         api, opener = client(answers)
@@ -740,6 +741,26 @@ class Coordinate(unittest.TestCase):
         body = opener.sent("POST")[0]["body"]
         self.assertTrue(body.startswith("<!-- sdlc-coordinator: overlap 41 -->\noverlap: other open work"), body)
         self.assertIn("- #41, a pull request marked ready: `docs/agents/README.md`", body)
+
+    def test_a_strangers_marker_neither_silences_the_work_nor_stops_the_run(self):
+        # The permission GitHub gives for the stranger is asked once, and
+        # says no; a marker of 4,301 digits raised in int() before.
+        answers = {
+            "/repos/o/r/issues/40/comments?per_page=100": FakeAnswer([
+                {"body": "<!-- sdlc-coordinator: overlap 41 -->", "author_association": "NONE",
+                 "user": {"login": "stranger"}},
+                {"body": "<!-- sdlc-coordinator: overlap " + "4" * 4301 + " -->", "author_association": "NONE",
+                 "user": {"login": "stranger"}}]),
+            "/repos/o/r/issues/41/comments?per_page=100": FakeAnswer([]),
+            "/repos/o/r/collaborators/stranger/permission": FakeAnswer({"permission": "read"}),
+            "POST /repos/o/r/issues/40/comments": FakeAnswer({}),
+            "POST /repos/o/r/issues/41/comments": FakeAnswer({}),
+        }
+        api, opener = client(answers)
+        self.assertEqual(github.coordinate(api, self.overlapping(), NOW),
+                         ["#40: overlap comment posted", "#41: overlap comment posted"])
+        asked = [c.full_url.replace(github.API, "") for c in opener.calls]
+        self.assertEqual(asked.count("/repos/o/r/collaborators/stranger/permission"), 1)
 
     def test_work_whose_comments_github_will_not_give_is_told_nothing(self):
         answers = {
