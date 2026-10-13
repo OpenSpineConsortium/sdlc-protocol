@@ -269,17 +269,20 @@ def cycle_checks(before, after, record, known=oracle.AS_BUILT):
     start = record.started_from if split else before
     planned = record.planned if split else after
     problems = []
-    actual = effects_of(record.calls)
     if not injected(record.calls):
         expected = kept_renames(oracle.expected_effects(start, record.event, record.ref_name, known), start, before)
         if split:
-            expected, actual = [e for e in expected if not of_first_half(e)], [e for e in actual if not of_first_half(e)]
-        problems += differences(expected, actual)
+            # The second half's writes are the calls after the first half's,
+            # whatever their kind, so a label or a release comment it wrote
+            # is made and not owed, since the first half's share is judged
+            # at its end by first_half_checks.
+            expected = [e for e in expected if not of_first_half(e)]
+        problems += differences(expected, effects_of(record.calls[record.first_calls:] if split else record.calls))
         if not split:
             problems += [Violation("G3L", f"a release no rule completes: #{n}") for n in oracle.half_released(after)]
         if not split or before.repository_key() == planned.repository_key():
             problems += quiet_second_run(after, record)
-        actual = effects_of(record.calls)
+    actual = effects_of(record.calls)
     problems += rename_refused_said(before, record, actual)
     if not split:
         problems += release_order(actual)

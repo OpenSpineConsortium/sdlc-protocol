@@ -54,6 +54,12 @@ def moment(minute):
     return T0 + timedelta(minutes=minute)
 
 
+def skipped(run):
+    """Whether the run, as (event, ref name), is one board.yml's job skips:
+    a push to any branch but the default."""
+    return run[0] == "push" and run[1] != MAIN
+
+
 @dataclass(frozen=True)
 class Commit:
     parents: tuple
@@ -307,7 +313,7 @@ class RepoModel:
 
     # --- the board workflow's queue -------------------------------------------
 
-    def fire(self, events):
+    def fire(self, events, skipped_runs=False):
         """The last act's events, as (event, ref name), reached the board
         workflow, which queues a run for each (board.yml's push, create,
         delete, pull_request and issues). With the group idle the first
@@ -317,9 +323,17 @@ class RepoModel:
         Which of several fired at once starts, and which of the rest is the
         one left pending, is not known, so all are kept as candidates until
         one starts. A push to any branch but the default queues a run whose
-        job is skipped (board.yml's condition), which takes the pending
-        slot and does nothing; with the group idle it runs and is gone."""
-        runs = tuple(sorted(e for e in set(events) if not (e[0] == "push" and e[1] != MAIN)))
+        job is skipped (board.yml's condition): it holds the group for the
+        seconds the skip takes and does nothing. With skipped_runs, which
+        the split scope sets, it is kept as a run like any other, since
+        something can happen while it holds the group; without, it is left
+        out, which is exact for a run made whole, since nothing happens
+        while one is in progress: with the group idle it runs and is gone,
+        and with the group busy it takes the pending slot, so whatever
+        waited is cancelled."""
+        runs = tuple(sorted(set(events)))
+        if not skipped_runs:
+            runs = tuple(e for e in runs if not skipped(e))
         if self.running is None and not self.queued:
             self.queued = runs
             self.pending = runs if len(runs) > 1 else ()
@@ -328,10 +342,11 @@ class RepoModel:
 
     def starts(self, event, ref_name):
         """A board run for the event starts: the one queued leaves the queue
-        and its fellows are the candidates for the run pending behind it;
-        the pending one leaves its fellows cancelled; any other, the
-        schedule's or one a trace names, came as a newer event and replaced
-        what waited."""
+        and its fellows are the candidates for the run pending behind it,
+        since nothing fires between a run's queuing and its start (the
+        verbs offer no other act while a run is queued); the pending one
+        leaves its fellows cancelled; any other, the schedule's or one a
+        trace names, came as a newer event and replaced what waited."""
         run = (event, ref_name)
         if run in self.queued:
             self.queued = ()

@@ -26,6 +26,11 @@ def board_with(*faults, event=cycle.SCHEDULE, ref_name=""):
     return Verb("board", "board", (event, ref_name, faults))
 
 
+def run(event, ref_name=""):
+    """A run in two halves with nothing between them."""
+    return [Verb("board-start", "board", (event, ref_name)), Verb("board-finish", "board")]
+
+
 def violations(steps, scope=Scope(), known=oracle.AS_BUILT, issues=(1,), labels=("todo",)):
     model = M.seeded(issues or scope.issues, writers=("a", "b", "c", verbs.CAROL, verbs.DANA), labels=labels)
     cycle.board_run(model)
@@ -139,7 +144,9 @@ class ARunInTwoHalves(unittest.TestCase):
 
     def test_a_second_run_s_quiet_is_asked_only_when_nothing_changed_between_the_halves(self):
         """A draft opened between the halves makes the next run owe the
-        overlap comments the first half could not know of."""
+        overlap comments the first half could not know of; with nothing
+        between the halves, a second run that writes again is red as a
+        whole one is."""
         steps = [Verb("claim", "a", (1,)), Verb("claim", "b", (2,)), Verb("board-start", "board", (cycle.SCHEDULE, "")),
                  Verb("open-draft", "a", (1,)), Verb("board-finish", "board")]
         scope = SHARED._replace(split_board=True)
@@ -151,6 +158,31 @@ class ARunInTwoHalves(unittest.TestCase):
 
         with mock.patch.object(invariants, "cycle_checks", asked_anyway):
             self.assertEqual(guarantees(violations(steps, scope, issues=None)), ["G9"])
+        told_again = mutants.MUTANTS["overlaps told on every run"]
+        quiet = steps[:3] + [Verb("board-finish", "board"), Verb("board-start", "board", (cycle.SCHEDULE, "")),
+                             Verb("board-finish", "board")]
+        with mock.patch.object(told_again.module, told_again.name, told_again.replacement):
+            self.assertIn("G9", guarantees(violations(quiet, scope, issues=None)))
+
+    def test_the_second_half_s_writes_are_judged_whatever_their_kind(self):
+        """The second half's writes are the calls after the first half's,
+        so a label it takes off, the first half's kind of write, is made
+        and not owed (G3), where a split by kind would judge it by neither
+        half."""
+        steps = [Verb("claim", "a", (1,)), Verb("label-on", "a", (1, "claimed")),
+                 Verb("board-start", "board", (cycle.SCHEDULE, "")), Verb("board-finish", "board")]
+        self.assertEqual(violations(steps, self.SPLIT), [])
+        releases = github.release_claims
+
+        def claimed_off_too(api, snapshot):
+            lines = releases(api, snapshot)
+            api.remove_label(1, "claimed")
+            return lines
+
+        with mock.patch.object(github, "release_claims", claimed_off_too):
+            found = violations(steps, self.SPLIT)
+        self.assertIn(("G3", "made and not owed: ('label-off', 1, 'claimed')"), [(v.guarantee, v.detail) for v in found])
+        self.assertEqual(guarantees(found), ["G3", "G9"])
 
     def test_the_first_half_is_judged_when_it_is_made(self):
         """A search judges a first half at its last level as it judges a
@@ -183,16 +215,18 @@ class TheOpenFindingsShow(unittest.TestCase):
         self.assertEqual(violations(steps), [])
         self.assertEqual(guarantees(violations(steps, known=oracle.AS_BUILT - {"F12"})), ["G10"])
 
-    def test_f12_the_run_of_the_push_to_main_is_cancelled_by_the_next_event_s(self):
-        """The mechanism (DESIGN.md, F12): main moves while a run is in
-        progress, a worker pushes to a claim branch, whose run takes the
-        waiting run's place, and the run that follows owes nothing as
-        built; reading the spec, it owes the pull request the word."""
+    def test_f12_the_run_of_the_push_to_main_is_cancelled_behind_the_worker_s_own_push(self):
+        """The mechanism (DESIGN.md, F12): the worker's push to the claim
+        branch, with its pull request marked ready, holds the group while
+        its job is skipped, main moves behind it, the worker's next push
+        replaces the run that waited, and the runs that follow owe nothing
+        as built; reading the spec, the pull request is owed the word."""
         scope = Scope(events=cycle.EVENTS, split_board=True)
-        steps = [Verb("claim", "a", (1,)), Verb("open-draft", "a", (1,)), Verb("mark-ready", "a", (100,)),
-                 Verb("board-start", "board", (cycle.CREATE, "claude/1")), Verb("move-main", M.OWNER),
-                 Verb("commit", "a", (1,)), Verb("board-finish", "board"),
-                 Verb("board-start", "board", (cycle.PULL_REQUEST, "")), Verb("board-finish", "board")]
+        steps = ([Verb("claim", "a", (1,))] + run(cycle.CREATE, "claude/1") + run(cycle.PUSH, "claude/1")
+                 + [Verb("open-draft", "a", (1,))] + run(cycle.PULL_REQUEST) + [Verb("mark-ready", "a", (100,)),
+                 Verb("commit", "a", (1,)), Verb("board-start", "board", (cycle.PUSH, "claude/1")),
+                 Verb("move-main", M.OWNER), Verb("commit", "a", (1,)), Verb("board-finish", "board")]
+                 + run(cycle.PULL_REQUEST) + run(cycle.PUSH, "claude/1"))
         self.assertEqual(violations(steps, scope), [])
         self.assertEqual(guarantees(violations(steps, scope, known=oracle.AS_BUILT - {"F12"})), ["G10"])
 

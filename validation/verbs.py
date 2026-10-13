@@ -33,7 +33,7 @@ from typing import NamedTuple
 
 from sdlc_protocol import guard
 
-from . import cycle, oracle
+from . import cycle, model as M, oracle
 from .fake_github import Fault
 from .model import CLAIM_PREFIX, HOUR, MAIN, OWNER, RELEASED_PREFIX, Comment, PullRequest, claim_text
 
@@ -336,16 +336,25 @@ def reopen(model, number):
 
 def board(model, event, ref_name="", faults=()):
     """A board run made whole for the event, which leaves the queue if it
-    was there and replaces what waited if not."""
+    was there and replaces what waited if not; a run the job skips, a push
+    to a claim branch, holds the group for a moment and does nothing."""
     model.starts(event, ref_name)
+    if M.skipped((event, ref_name)):
+        model.finished()
+        return Outcome(True, "a run of nothing")
     record = cycle.board_run(model, event, ref_name, tuple(FAULTS[f] for f in faults))
     return Outcome(True, f"exit {record.exit_code}", run=record)
 
 
 def board_start(model, event, ref_name="", faults=()):
     """The first half of a board run, which the checks judge at once; the
-    run goes on in model.running."""
+    run goes on in model.running. A run the job skips goes on there too,
+    reading and writing nothing, so that what happens while it holds the
+    group is seen."""
     model.starts(event, ref_name)
+    if M.skipped((event, ref_name)):
+        model.running = cycle.SkippedRun(event, ref_name)
+        return Outcome(True, "a run of nothing in progress")
     half = cycle.start_run(model, event, ref_name, tuple(FAULTS[f] for f in faults))
     return Outcome(True, "first half done", half=half)
 
@@ -353,6 +362,10 @@ def board_start(model, event, ref_name="", faults=()):
 def board_finish(model):
     """The second half of the run in progress, whose record the checks
     judge, with the states it started from."""
+    if isinstance(model.running, cycle.SkippedRun):
+        model.running = None
+        model.finished()
+        return Outcome(True, "the run of nothing done")
     record = cycle.finish_run(model)
     return Outcome(True, f"exit {record.exit_code}", run=record)
 
@@ -365,7 +378,7 @@ def apply(model, verb, scope=Scope()):
     outcome = act(model, verb, scope)
     fired = tuple(e for e in outcome.events if e[0] in scope.events)
     if fired:
-        model.fire(fired)
+        model.fire(fired, skipped_runs=scope.split_board)
     return outcome
 
 
@@ -436,16 +449,20 @@ def act(model, verb, scope):
 # --- what a scope allows ------------------------------------------------------
 
 def enabled(model, scope):
-    """Every verb the scope allows in this state, in a fixed order. While a
+    """Every verb the scope allows in this state, in a fixed order. A run
+    queued into an idle group starts within seconds, before anything else
+    happens, so while one is queued the only verbs are its starts; while a
     run is between its halves the clock stands, since a run takes half a
     minute, and no other run starts, since the concurrency group runs one
     at a time."""
     found = []
-    if model.running is None:
+    if model.running is not None:
+        found.append(Verb("board-finish", BOARD))
+    elif model.queued:
+        return board_verbs(model, scope)
+    else:
         found += [Verb("wait", CLOCK, (hours,)) for hours in scope.waits]
         found += board_verbs(model, scope)
-    else:
-        found.append(Verb("board-finish", BOARD))
     if OWNER in scope.people:
         found.append(Verb("move-main", OWNER))
     for number in scope.issues:

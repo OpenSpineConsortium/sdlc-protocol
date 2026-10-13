@@ -206,8 +206,27 @@ class TheWorkflowsQueue(unittest.TestCase):
         self.model.fire((("push", "claude/1"),))
         self.assertEqual((self.model.queued, self.model.pending), ((), ()))
         self.model.fire((("push", "main"),))
+        self.model.starts("push", "main")
+        self.model.running = "the push's run, between its halves"
+        self.model.fire((("issues", ""),))
+        self.assertEqual(self.model.pending, (("issues", ""),))
         self.model.fire((("push", "claude/1"),))
-        self.assertEqual((self.model.queued, self.model.pending), ((("push", "main"),), ()))
+        self.assertEqual(self.model.pending, ())
+
+    def test_a_skipped_push_is_a_run_where_the_scope_can_start_it(self):
+        """With skipped_runs, which the split scope sets, the skipped run is
+        kept, since it holds the group while it is in progress: fired with
+        the claim's create event it may be the one that starts, leaving
+        the create run pending, and a newer event's run replaces that."""
+        self.model.fire((("push", "claude/1"), ("create", "claude/1")), skipped_runs=True)
+        self.assertEqual(self.model.queued, (("create", "claude/1"), ("push", "claude/1")))
+        self.model.starts("push", "claude/1")
+        self.assertEqual((self.model.queued, self.model.pending), ((), (("create", "claude/1"),)))
+        self.model.running = "the skipped run, in progress"
+        self.model.fire((("push", "main"),), skipped_runs=True)
+        self.assertEqual(self.model.pending, (("push", "main"),))
+        self.model.fire((("push", "claude/1"),), skipped_runs=True)
+        self.assertEqual(self.model.pending, (("push", "claude/1"),))
 
     def test_of_the_events_of_one_act_one_starts_and_one_of_the_rest_waits(self):
         self.model.fire((("create", "claude/1"), ("pull_request", "")))

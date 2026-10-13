@@ -47,7 +47,9 @@ class RunRecord(NamedTuple):
     in order, the snapshot it rendered, and, for a run made in two halves
     with other verbs between them, the model as the run found it and as its
     first half left it (None for a run made whole, whose caller holds the
-    state before it) and which half raised."""
+    state before it), which half raised, and how many of its calls the
+    first half made, so the second half's writes are judged by position,
+    whatever their kind."""
 
     event: str
     ref_name: str
@@ -61,6 +63,21 @@ class RunRecord(NamedTuple):
     started_from: object = None
     planned: object = None
     raised_in: str | None = None
+    first_calls: int = 0
+
+
+@dataclass(frozen=True)
+class SkippedRun:
+    """A run board.yml's job skips, a push to any branch but the default,
+    while it is in progress: it holds the concurrency group for the
+    seconds the skip takes, so a run queued behind it is pending and the
+    next event's replaces it, and it reads and writes nothing."""
+
+    event: str
+    ref_name: str
+
+    def key(self):
+        return (self.event, self.ref_name)
 
 
 @dataclass
@@ -83,6 +100,8 @@ class HalfRun:
     raised_in: str | None = None
     started_from: object = None
     planned: object = None
+    # How many calls the first half made: the second half's are the rest.
+    first_calls: int = 0
 
     def key(self):
         """What the state key holds of the run: what its first half did,
@@ -117,6 +136,7 @@ def start_run(model, event=SCHEDULE, ref_name="", faults=(), keep_states=True):
         raise
     except Exception as problem:  # the workflow's step fails on any exception, as Python exits 1
         failed(half, problem, "plan")
+    half.first_calls = len(fake.calls)
     if keep_states:
         half.planned = copy.deepcopy(model)
     model.running = half
@@ -141,7 +161,8 @@ def finish_run(model, half=None):
     if exit_code == 0:
         model.board_text = half.page
     return RunRecord(half.event, half.ref_name, half.now, exit_code, half.raised, half.page, tuple(half.lines),
-                     tuple(half.fake.calls), half.snapshot, half.started_from, half.planned, half.raised_in)
+                     tuple(half.fake.calls), half.snapshot, half.started_from, half.planned, half.raised_in,
+                     half.first_calls)
 
 
 def board_run(model, event=SCHEDULE, ref_name="", faults=()):

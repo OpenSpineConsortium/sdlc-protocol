@@ -32,9 +32,9 @@ class TheSearch(unittest.TestCase):
         self.assertEqual([(f.guarantee, f.detail, f.trace) for f in found.found], [])
 
     def test_the_runs_the_events_queue_and_the_runs_in_two_halves_break_nothing(self):
-        for scope in (verbs.Scope(events=cycle.EVENTS), verbs.Scope(split_board=True)):
+        for scope, depth in ((verbs.Scope(events=cycle.EVENTS), 4), (verbs.Scope(split_board=True), 3)):
             with self.subTest(scope=scope):
-                found = explore.explore(start(), scope, 3)
+                found = explore.explore(start(), scope, depth)
                 self.assertGreater(found.states, 200)
                 self.assertEqual([(f.guarantee, f.detail, f.trace) for f in found.found], [])
 

@@ -76,8 +76,12 @@ class TheEventsAnActFires(unittest.TestCase):
 
 class WhatAScopeListensFor(unittest.TestCase):
     def test_a_claim_queues_the_run_for_the_branch_made(self):
+        """The push's own run, which the job skips, is a run only where the
+        scope can start it and leave it in progress."""
         model, _ = after([CLAIM])
         self.assertEqual(model.queued, (("create", "claude/1"),))
+        model, _ = after([CLAIM], LISTENING._replace(split_board=True))
+        self.assertEqual(model.queued, (("create", "claude/1"), ("push", "claude/1")))
 
     def test_the_default_scope_queues_nothing(self):
         model, _ = after([CLAIM, Verb("open-draft", "a", (1,))], Scope())
@@ -89,18 +93,51 @@ class WhatAScopeListensFor(unittest.TestCase):
         model, _ = after([Verb("move-main", M.OWNER), CLAIM], Scope(events=("schedule", "create")))
         self.assertEqual((model.queued, model.pending), ((("create", "claude/1"),), ()))
 
-    def test_a_workers_push_replaces_the_run_waiting_behind_one_in_progress(self):
-        """F12's mechanism: main moves while a run is in progress, and the
-        run its push queued is cancelled by the next event's, here a push to
-        a claim branch with a draft, whose own run is skipped."""
+    def test_a_newer_event_s_run_replaces_the_one_waiting_behind_the_run_in_progress(self):
+        """Main moves while the claim's run is in progress; the worker's
+        push to the claim branch, with its pull request marked ready,
+        fires the push's own run, which the job skips, and the pull
+        request's synchronize run, one of which takes the waiting run's
+        place; so the run that the push to main queued never runs."""
         scope = LISTENING._replace(split_board=True)
-        model, _ = after([CLAIM, Verb("open-draft", "a", (1,)), Verb("mark-ready", "a", (100,)),
-                          Verb("board-start", "board", ("create", "claude/1")), Verb("move-main", M.OWNER)], scope)
+        model, _ = after([CLAIM, Verb("board-start", "board", ("create", "claude/1"))], scope)
+        self.assertEqual(model.pending, (("push", "claude/1"),))
+        verbs.apply(model, Verb("board-finish", "board"), scope)
+        verbs.apply(model, Verb("board-start", "board", ("push", "claude/1")), scope)
+        self.assertEqual((model.queued, model.pending), ((), ()))
+        for step in (Verb("board-finish", "board"), Verb("open-draft", "a", (1,)),
+                     Verb("board-start", "board", ("pull_request", "")), Verb("board-finish", "board"),
+                     Verb("mark-ready", "a", (100,)), Verb("board-start", "board", ("schedule", ""))):
+            verbs.apply(model, step, scope)
+        verbs.apply(model, Verb("move-main", M.OWNER), scope)
         self.assertEqual(model.pending, (("push", "main"),))
         verbs.apply(model, Verb("commit", "a", (1,)), scope)
-        self.assertEqual(model.pending, (("pull_request", ""),))
+        self.assertEqual(model.pending, (("pull_request", ""), ("push", "claude/1")))
         verbs.apply(model, Verb("board-finish", "board"), scope)
-        self.assertEqual((model.queued, model.pending), ((("pull_request", ""),), ()))
+        self.assertEqual((model.queued, model.pending), ((("pull_request", ""), ("push", "claude/1")), ()))
+
+    def test_a_skipped_push_holds_the_group_while_the_run_behind_it_is_replaced(self):
+        """F12's commonest mechanism, with no board run in progress: the
+        worker's own push holds the group for the seconds its skip takes,
+        main moves behind it, and the worker's next push replaces the run
+        that would have told the pull request."""
+        scope = LISTENING._replace(split_board=True)
+        model, _ = after([CLAIM, Verb("board-start", "board", ("create", "claude/1")), Verb("board-finish", "board"),
+                          Verb("board-start", "board", ("push", "claude/1")), Verb("board-finish", "board"),
+                          Verb("open-draft", "a", (1,)), Verb("board-start", "board", ("pull_request", "")),
+                          Verb("board-finish", "board"), Verb("mark-ready", "a", (100,)), Verb("commit", "a", (1,))],
+                         scope)
+        self.assertEqual(model.queued, (("pull_request", ""), ("push", "claude/1")))
+        outcome = verbs.apply(model, Verb("board-start", "board", ("push", "claude/1")), scope)
+        self.assertEqual((outcome.half, outcome.run, model.running), (None, None, cycle.SkippedRun("push", "claude/1")))
+        self.assertEqual(model.pending, (("pull_request", ""),))
+        verbs.apply(model, Verb("move-main", M.OWNER), scope)
+        self.assertEqual(model.pending, (("push", "main"),))
+        verbs.apply(model, Verb("commit", "a", (1,)), scope)
+        self.assertEqual(model.pending, (("pull_request", ""), ("push", "claude/1")))
+        outcome = verbs.apply(model, Verb("board-finish", "board"), scope)
+        self.assertEqual((outcome.run, model.running, model.queued, model.pending),
+                         (None, None, (("pull_request", ""), ("push", "claude/1")), ()))
 
 
 class TheBoardVerbs(unittest.TestCase):
@@ -123,9 +160,20 @@ class TheBoardVerbs(unittest.TestCase):
         model, outcome = after([CLAIM, Verb("board", "board", ("create", "claude/1"))])
         self.assertEqual((model.queued, model.pending, outcome.run.event), ((), (), "create"))
 
-    def test_the_schedule_s_run_replaces_what_waited_behind_the_run_queued(self):
-        model, _ = after([CLAIM, Verb("open-draft", "a", (1,)), Verb("board", "board", ("schedule", ""))])
-        self.assertEqual((model.queued, model.pending), ((("create", "claude/1"),), ()))
+    def test_the_run_queued_starts_before_anything_else(self):
+        """A run into an idle group starts within seconds, so no other verb
+        is offered while one is queued; once it is in progress, the split
+        scope offers the rest again."""
+        model, _ = after([CLAIM])
+        self.assertEqual(names(verbs.enabled(model, LISTENING)), ["board board create claude/1"])
+        scope = LISTENING._replace(split_board=True)
+        model, _ = after([CLAIM], scope)
+        self.assertEqual(names(verbs.enabled(model, scope)),
+                         ["board-start board create claude/1", "board-start board push claude/1"])
+        verbs.apply(model, Verb("board-start", "board", ("create", "claude/1")), scope)
+        found = names(verbs.enabled(model, scope))
+        self.assertEqual(found[0], "board-finish board")
+        self.assertIn("commit a 1", found)
 
     def test_a_split_scope_offers_the_first_half_then_only_the_second(self):
         scope = Scope(split_board=True)
