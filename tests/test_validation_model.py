@@ -185,33 +185,54 @@ class TheKey(unittest.TestCase):
 
 
 class TheWorkflowsQueue(unittest.TestCase):
-    """board.yml's concurrency group (DESIGN.md, 3.3): one run waits at
-    most, a newer one replaces it, and of several fired at once any may be
-    the one left."""
+    """board.yml's concurrency group (DESIGN.md, 3.3): the run that starts
+    first is never cancelled, one run waits behind it at most, a newer one
+    replaces it, and of several fired at once any may be the one that
+    starts or the one left waiting."""
 
     def setUp(self):
         self.model = M.seeded()
 
-    def test_the_events_of_one_act_wait_together_and_replace_what_waited(self):
+    def test_the_first_run_into_an_idle_group_is_never_cancelled(self):
         self.model.fire((("push", "main"),))
         self.model.fire((("create", "claude/1"), ("push", "claude/1"), ("pull_request", "")))
+        self.assertEqual(self.model.queued, (("push", "main"),))
         self.assertEqual(self.model.pending, (("create", "claude/1"), ("pull_request", "")))
 
     def test_a_push_to_another_branch_takes_the_slot_and_runs_nothing(self):
         """board.yml's job skips a push to any branch but the default, and
         whether the skipped run still cancels the one waiting is inferred,
-        not measured (canary C2)."""
+        not measured (canary C2); into an idle group it runs and is gone."""
+        self.model.fire((("push", "claude/1"),))
+        self.assertEqual((self.model.queued, self.model.pending), ((), ()))
         self.model.fire((("push", "main"),))
         self.model.fire((("push", "claude/1"),))
-        self.assertEqual(self.model.pending, ())
+        self.assertEqual((self.model.queued, self.model.pending), ((("push", "main"),), ()))
 
-    def test_a_queued_run_that_starts_leaves_its_fellows_waiting(self):
+    def test_of_the_events_of_one_act_one_starts_and_one_of_the_rest_waits(self):
         self.model.fire((("create", "claude/1"), ("pull_request", "")))
         self.model.starts("create", "claude/1")
-        self.assertEqual(self.model.pending, (("pull_request", ""),))
+        self.assertEqual((self.model.queued, self.model.pending), ((), (("pull_request", ""),)))
+        self.model.finished()
+        self.assertEqual((self.model.queued, self.model.pending), ((("pull_request", ""),), ()))
+        self.model.starts("pull_request", "")
+        self.model.finished()
+        self.assertEqual((self.model.queued, self.model.pending), ((), ()))
+
+    def test_the_pending_run_that_starts_was_the_one_left_of_its_fellows(self):
+        self.model.fire((("push", "main"),))
+        self.model.starts("push", "main")
+        self.model.running = "the push's run, between its halves"
+        self.model.fire((("create", "claude/1"), ("pull_request", "")))
+        self.model.running = None
+        self.model.finished()
+        self.model.starts("pull_request", "")
+        self.assertEqual((self.model.queued, self.model.pending), ((), ()))
 
     def test_a_run_from_elsewhere_replaced_what_waited(self):
         self.model.fire((("create", "claude/1"), ("pull_request", "")))
+        self.model.starts("create", "claude/1")
+        self.model.fire((("issues", ""),))
         self.model.starts("schedule", "")
         self.assertEqual(self.model.pending, ())
 

@@ -47,7 +47,7 @@ class RunRecord(NamedTuple):
     in order, the snapshot it rendered, and, for a run made in two halves
     with other verbs between them, the model as the run found it and as its
     first half left it (None for a run made whole, whose caller holds the
-    state before it)."""
+    state before it) and which half raised."""
 
     event: str
     ref_name: str
@@ -60,6 +60,7 @@ class RunRecord(NamedTuple):
     snapshot: object
     started_from: object = None
     planned: object = None
+    raised_in: str | None = None
 
 
 @dataclass
@@ -74,10 +75,12 @@ class HalfRun:
     faults: tuple
     api: object
     fake: object
-    snap: object = None
+    snapshot: object = None
     page: str = ""
     lines: list = field(default_factory=list)
     raised: str | None = None
+    # Which half raised: "plan" or "act", None while none did.
+    raised_in: str | None = None
     started_from: object = None
     planned: object = None
 
@@ -93,8 +96,8 @@ def api_for(model, faults=()):
     return github.GitHub(TOKEN, REPO, opener=fake, sleep=lambda seconds: None), fake
 
 
-def failed(half, problem):
-    half.raised = f"{type(problem).__name__}: {problem}"
+def failed(half, problem, where):
+    half.raised, half.raised_in = f"{type(problem).__name__}: {problem}", where
 
 
 def start_run(model, event=SCHEDULE, ref_name="", faults=(), keep_states=True):
@@ -108,11 +111,12 @@ def start_run(model, event=SCHEDULE, ref_name="", faults=(), keep_states=True):
     if keep_states:
         half.started_from = copy.deepcopy(model)
     try:
-        half.snap, half.page = cli.plan_board(api, model.refs[MAIN], MAIN, moment(model.now), say=half.lines.append)
+        half.snapshot, half.page = cli.plan_board(api, model.refs[MAIN], MAIN, moment(model.now),
+                                                  say=half.lines.append)
     except Unserved:
         raise
     except Exception as problem:  # the workflow's step fails on any exception, as Python exits 1
-        failed(half, problem)
+        failed(half, problem, "plan")
     if keep_states:
         half.planned = copy.deepcopy(model)
     model.running = half
@@ -125,17 +129,19 @@ def finish_run(model, half=None):
     half = half or model.running
     if half.raised is None:
         try:
-            cli.act_on_board(half.api, half.snap, half.event, half.ref_name, moment(half.now), say=half.lines.append)
+            cli.act_on_board(half.api, half.snapshot, half.event, half.ref_name, moment(half.now),
+                             say=half.lines.append)
         except Unserved:
             raise
         except Exception as problem:
-            failed(half, problem)
+            failed(half, problem, "act")
     model.running = None
+    model.finished()
     exit_code = 0 if half.raised is None else 1
     if exit_code == 0:
         model.board_text = half.page
     return RunRecord(half.event, half.ref_name, half.now, exit_code, half.raised, half.page, tuple(half.lines),
-                     tuple(half.fake.calls), half.snap, half.started_from, half.planned)
+                     tuple(half.fake.calls), half.snapshot, half.started_from, half.planned, half.raised_in)
 
 
 def board_run(model, event=SCHEDULE, ref_name="", faults=()):
@@ -143,4 +149,4 @@ def board_run(model, event=SCHEDULE, ref_name="", faults=()):
     model is changed by its writes. The record carries no states, since
     the caller holds the state before the run and the state after it is
     the model."""
-    return finish_run(model, start_run(model, event, ref_name, faults, keep_states=False))
+    return finish_run(model, start_run(model, event, ref_name, faults, keep_states=False))._replace(raised_in=None)

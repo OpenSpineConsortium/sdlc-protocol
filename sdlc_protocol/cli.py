@@ -98,11 +98,13 @@ def board_dry_run(args):
 def plan_board(api, sha, default_branch, now, render_only=False, say=print):
     """The first half of a board run: read the repository as GitHub holds
     it, release the claims due and tell overlapping work (the coordinator),
-    and render the page. The snapshot as the coordinator left it, which the
-    second half acts on, and the page. The run is in two halves so that the
-    validation harness can run them on its own clock with other work
-    between them, as the half-minute of a workflow run allows; say takes
-    each log line as it is made."""
+    and render the page; with render_only, the command's --render-only,
+    the coordinator is skipped and the half only reads and renders. The
+    snapshot as the coordinator left it, which the second half acts on,
+    and the page. The run is in two halves so that the validation harness
+    can run them on its own clock with other work between them, as the
+    half-minute of a workflow run allows; say takes each log line as it is
+    made."""
     github = github_adapter()
     snap = github.snapshot(api, sha, default_branch, now)
     for line in github.unread_claim_lines(snap):

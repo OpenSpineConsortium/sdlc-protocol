@@ -135,10 +135,13 @@ class RepoModel:
     tracking: dict = field(default_factory=dict)
     # The board branch's STATE.md: written only by a board run that exits 0.
     board_text: str = ""
-    # The board workflow's concurrency group (DESIGN.md, 3.3): the runs the
-    # last events queued, as (event, ref name), any one of which may be the
-    # one that starts next; and the run in progress between its two halves,
-    # a cycle.HalfRun, while one is.
+    # The board workflow's concurrency group (DESIGN.md, 3.3), each run as
+    # (event, ref name): the run that starts next, which GitHub never
+    # cancels, as the candidates one of which it is; the run waiting behind
+    # it, as the candidates one of which it is, which the next event
+    # replaces; and the run in progress between its two halves, a
+    # cycle.HalfRun, while one is.
+    queued: tuple = ()
     pending: tuple = ()
     running: object = None
 
@@ -307,20 +310,40 @@ class RepoModel:
     def fire(self, events):
         """The last act's events, as (event, ref name), reached the board
         workflow, which queues a run for each (board.yml's push, create,
-        delete, pull_request and issues). In its concurrency group a newer
-        queued run replaces the one waiting, so whatever waited is
-        cancelled; which of several queued at once is left is not known,
-        so all are kept as candidates until one starts. A push to any
-        branch but the default queues a run whose job is skipped
-        (board.yml's condition), which takes the slot and does nothing."""
-        self.pending = tuple(sorted(e for e in set(events) if not (e[0] == "push" and e[1] != MAIN)))
+        delete, pull_request and issues). With the group idle the first
+        starts, and GitHub cancels no run in progress; a run queued behind
+        one is pending, and a newer pending run replaces it, so whatever
+        waited is cancelled (github/docs, actions-group-concurrency.md).
+        Which of several fired at once starts, and which of the rest is the
+        one left pending, is not known, so all are kept as candidates until
+        one starts. A push to any branch but the default queues a run whose
+        job is skipped (board.yml's condition), which takes the pending
+        slot and does nothing; with the group idle it runs and is gone."""
+        runs = tuple(sorted(e for e in set(events) if not (e[0] == "push" and e[1] != MAIN)))
+        if self.running is None and not self.queued:
+            self.queued = runs
+            self.pending = runs if len(runs) > 1 else ()
+        else:
+            self.pending = runs
 
     def starts(self, event, ref_name):
-        """A board run for the event starts: a queued one leaves the queue,
-        its fellows still waiting; any other, the schedule's or one a trace
-        names, came as a newer event and replaced what waited."""
-        self.pending = tuple(e for e in self.pending if e != (event, ref_name)) if (event, ref_name) in self.pending \
-            else ()
+        """A board run for the event starts: the one queued leaves the queue
+        and its fellows are the candidates for the run pending behind it;
+        the pending one leaves its fellows cancelled; any other, the
+        schedule's or one a trace names, came as a newer event and replaced
+        what waited."""
+        run = (event, ref_name)
+        if run in self.queued:
+            self.queued = ()
+            self.pending = tuple(e for e in self.pending if e != run)
+        else:
+            self.pending = ()
+
+    def finished(self):
+        """The run in progress is done: the one pending behind it starts,
+        unless one a trace started out of turn left the queued run waiting."""
+        if not self.queued:
+            self.queued, self.pending = self.pending, ()
 
     # --- the key ------------------------------------------------------------
 
@@ -329,9 +352,13 @@ class RepoModel:
         value: the repository, the runs queued, and the run in progress by
         what it started from, since what its first half did and what its
         second will do follow from that."""
-        return self.repository_key() + (self.pending, self.running.key() if self.running else None)
+        return self.repository_key() + (self.queued, self.pending, self.running.key() if self.running else None)
 
     def repository_key(self):
+        """The repository alone, without the runs queued or the run in
+        progress: HalfRun.key and the checks of a run in two halves compare
+        the model before and after a run starts, when the queue has moved
+        but nothing the run reads has."""
         return (
             self.now,
             tuple(sorted(self.refs.items())),

@@ -20,13 +20,18 @@ dealing (G14) are later steps' (section 14), and G11a's grammar judged by
 git is step 4's.
 
 A run made in two halves with other verbs between them (DESIGN.md, 3.3)
-is judged by the states it read: its writes against the state it started
-from, since that is what its first half read, with the renames its second
-half rightly left alone, of branches that moved between the halves
-(spec, Release: "a commit pushed to the branch before the rename, its
-holder coming back, keeps the claim"); its labels and its page against the
-state its first half left; and its renames against the state its second
-half found. The record of such a run carries those states.
+is judged by the states it read, half by half, so a search judges a first
+half at its last level as it judges a whole run. The first half is judged
+when it is made (first_half_checks): its writes, the labels off and the
+comments of the coordinator, against the state it started from, its
+labels and its page against the state it left. The second half is judged
+when it is made (cycle_checks, with the record carrying the states): its
+renames and its comments against the state the run started from, less
+the renames of branches that moved between the halves, which it rightly
+leaves alone (spec, Release: "a commit pushed to the branch before the
+rename, its holder coming back, keeps the claim"), and against the state
+it found; and a second run's quiet only when nothing changed between the
+halves.
 """
 
 import re
@@ -208,49 +213,90 @@ def command_checks(outcome):
 
 # --- cycles -----------------------------------------------------------------
 
+def of_first_half(effect):
+    """Whether a write is the first half's, the coordinator's: a label off
+    or put back, a release comment, an overlap comment. The rest, the
+    renames and the comments on pull requests, are the second half's."""
+    return effect.kind in ("label-off", "label-on") or (effect.kind == "comment"
+                                                        and effect.detail in ("claim-released", "overlap"))
+
+
+def injected(calls):
+    """Whether an injected fault touched the run, read from its calls,
+    since a verb may name a fault that never fires; the writes are
+    compared with the oracle's, and a half release or a noisy second run
+    counted, only for a run no fault touched, while the release order, the
+    rename refused and the rest hold under faults too."""
+    return any(c.injected for c in calls)
+
+
+def first_half_checks(before, after, half, known=oracle.AS_BUILT):
+    """The guarantees a run's first half answers by itself, given the state
+    it started from and the state it left: its writes are the
+    coordinator's share of what the oracle owes, each release due and in
+    the spec's order, the labels put back where a release failed, no label
+    left on a released claim, and the page the state's."""
+    if half.raised is not None:
+        return [] if reads_failed(half.fake.calls) else [Violation("G15", f"the run's first half raised: {half.raised}")]
+    actual = effects_of(half.fake.calls)
+    problems = []
+    if not injected(half.fake.calls):
+        expected = oracle.expected_effects(before, half.event, half.ref_name, known)
+        problems += differences([e for e in expected if of_first_half(e)], actual)
+        problems += [Violation("G3L", f"a release no rule completes: #{n}") for n in oracle.half_released(after)]
+    problems += release_order(actual)
+    problems += releases_only_due(before, actual)
+    problems += labels_put_back(before, after, half.fake.calls, actual)
+    problems += labels_name_the_holder(after, actual)
+    problems += board_renders_the_state(after, half, known)
+    return problems
+
+
 def cycle_checks(before, after, record, known=oracle.AS_BUILT):
-    """Every cycle guarantee for one board run, given the state before the
-    verb that completed it and the state after. The writes are compared
-    with the oracle's, and a half release or a noisy second run counted,
-    only for a run no injected fault touched, read from the calls, since
-    a verb may name a fault that never fires; the release order, the
-    rename refused and the rest hold under faults too. For a run made
-    whole, before is the state it started from, and after the state its
-    first half left, as far as labels and the page go, since the second
-    half changes neither; a run made in two halves carries the states its
-    halves read (cycle.RunRecord), and before is what its second half
-    found."""
+    """Every cycle guarantee for one board run made whole, given the state
+    before it and the state after; for a run made in two halves, judged
+    by first_half_checks when its first half was made, the guarantees its
+    second half answers, given the state it found and the state it left,
+    with the record carrying the states the run started from and its
+    first half left (cycle.RunRecord). For a run made whole, after is the
+    state its first half left as far as labels and the page go, since the
+    second half changes neither."""
+    split = record.started_from is not None
     if record.exit_code != 0:
-        if reads_failed(record.calls):
+        if (split and record.raised_in == "plan") or reads_failed(record.calls):
             return []
         return [Violation("G15", f"the run exited {record.exit_code}: {record.raised}")]
-    start = record.started_from if record.started_from is not None else before
-    planned = record.planned if record.planned is not None else after
+    start = record.started_from if split else before
+    planned = record.planned if split else after
     problems = []
     actual = effects_of(record.calls)
-    if not any(c.injected for c in record.calls):
-        problems += effects_agree(start, before, record, actual, known)
-        problems += [Violation("G3L", f"a release no rule completes: #{n}") for n in oracle.half_released(after)]
-        if record.planned is None or before.repository_key() == record.planned.repository_key():
+    if not injected(record.calls):
+        expected = kept_renames(oracle.expected_effects(start, record.event, record.ref_name, known), start, before)
+        if split:
+            expected, actual = [e for e in expected if not of_first_half(e)], [e for e in actual if not of_first_half(e)]
+        problems += differences(expected, actual)
+        if not split:
+            problems += [Violation("G3L", f"a release no rule completes: #{n}") for n in oracle.half_released(after)]
+        if not split or before.repository_key() == planned.repository_key():
             problems += quiet_second_run(after, record)
-    problems += release_order(actual)
+        actual = effects_of(record.calls)
     problems += rename_refused_said(before, record, actual)
-    problems += releases_only_due(start, actual)
-    problems += labels_put_back(start, planned, record, actual)
+    if not split:
+        problems += release_order(actual)
+        problems += releases_only_due(start, actual)
+        problems += labels_put_back(start, planned, record.calls, actual)
+        problems += labels_name_the_holder(planned, actual)
+        problems += board_renders_the_state(planned, record, known)
     problems += nothing_lost(start, planned, before, after, actual)
-    problems += labels_name_the_holder(planned, actual)
-    problems += board_renders_the_state(planned, record, known)
     if after.board_text != record.page:
         problems.append(Violation("G15", "the run exited 0 and its board did not reach the branch board"))
     return problems
 
 
-def effects_agree(start, found, record, actual, known):
-    """The run's writes are the oracle's, computed from the state the run
-    started from, less the renames of claim branches that had moved by the
-    time its second half found them, which the run rightly leaves alone,
-    each with the word on the issue that would have followed it."""
-    expected = kept_renames(oracle.expected_effects(start, record.event, record.ref_name, known), start, found)
+def differences(expected, actual):
+    """The writes owed and not made, and made and not owed, as a
+    multiset, each under the guarantee its kind belongs to; a rename said
+    refused is judged by rename_refused_said."""
     made = [e for e in actual if e != oracle.Effect("comment", e.target, "rename-refused")]
     problems = []
     missing, extra = Counter(expected) - Counter(made), Counter(made) - Counter(expected)
@@ -345,7 +391,7 @@ def releases_only_due(before, actual):
     return problems
 
 
-def labels_put_back(before, after, record, actual):
+def labels_put_back(before, after, calls, actual):
     """A run that fails between the labels and the comment puts back what it
     took off (spec, Release), unless GitHub refused the putting back too;
     and one whose comment was written, its answer lost or not, puts back
@@ -358,7 +404,7 @@ def labels_put_back(before, after, record, actual):
                                                  f"were put back"))
             continue
         put_back_refused = any(c.method == "POST" and c.path == f"/issues/{number}/labels" and not c.applied
-                               for c in record.calls)
+                               for c in calls)
         if not put_back_refused and after.issues[number].labels != before.issues[number].labels:
             problems.append(Violation("G3L", f"#{number}: the release failed and its labels were not put back"))
     return problems
@@ -425,8 +471,11 @@ def quiet_second_run(after, record):
 # --- one step -----------------------------------------------------------------
 
 def step_checks(before, after, verb, outcome, known=oracle.AS_BUILT):
-    """Every check one step owes: the state's, the command's, the cycle's."""
+    """Every check one step owes: the state's, the command's, and a board
+    run's, whole or by the half the step made."""
     problems = state_checks(after) + command_checks(outcome)
+    if outcome.half is not None:
+        problems += first_half_checks(before, after, outcome.half, known)
     if outcome.run is not None:
         problems += cycle_checks(before, after, outcome.run, known)
     return problems

@@ -137,6 +137,31 @@ class ARunInTwoHalves(unittest.TestCase):
         steps = self.HELD + [Verb("move-main", M.OWNER), Verb("board-finish", "board")]
         self.assertEqual(violations(steps, self.SPLIT), [])
 
+    def test_a_second_run_s_quiet_is_asked_only_when_nothing_changed_between_the_halves(self):
+        """A draft opened between the halves makes the next run owe the
+        overlap comments the first half could not know of."""
+        steps = [Verb("claim", "a", (1,)), Verb("claim", "b", (2,)), Verb("board-start", "board", (cycle.SCHEDULE, "")),
+                 Verb("open-draft", "a", (1,)), Verb("board-finish", "board")]
+        scope = SHARED._replace(split_board=True)
+        self.assertEqual(violations(steps, scope, issues=None), [])
+        checks = invariants.cycle_checks
+
+        def asked_anyway(before, after, record, known=oracle.AS_BUILT):
+            return checks(before, after, record, known) + invariants.quiet_second_run(after, record)
+
+        with mock.patch.object(invariants, "cycle_checks", asked_anyway):
+            self.assertEqual(guarantees(violations(steps, scope, issues=None)), ["G9"])
+
+    def test_the_first_half_is_judged_when_it_is_made(self):
+        """A search judges a first half at its last level as it judges a
+        whole run: a release made at exactly 24 hours is red on the
+        board-start step, not two steps later."""
+        steps = [Verb("claim", "a", (1,)), Verb("wait", "clock", (24,)),
+                 Verb("board-start", "board", (cycle.SCHEDULE, ""))]
+        self.assertEqual(violations(steps, self.SPLIT), [])
+        with mock.patch.object(github.claims, "is_idle", mutants.MUTANTS["idle at exactly 24 hours"].replacement):
+            self.assertEqual(guarantees(violations(steps, self.SPLIT)), ["G2", "G3", "G5"])
+
 
 class TheOpenFindingsShow(unittest.TestCase):
     """With its switch off the oracle reads the spec, and the finding is red."""
@@ -159,13 +184,15 @@ class TheOpenFindingsShow(unittest.TestCase):
         self.assertEqual(guarantees(violations(steps, known=oracle.AS_BUILT - {"F12"})), ["G10"])
 
     def test_f12_the_run_of_the_push_to_main_is_cancelled_by_the_next_event_s(self):
-        """The mechanism (DESIGN.md, F12): main moves, a worker pushes to a
-        claim branch, whose skipped run takes the waiting run's place, and
-        the run that follows owes nothing as built; reading the spec, it
-        owes the pull request the word."""
-        scope = Scope(events=cycle.EVENTS)
+        """The mechanism (DESIGN.md, F12): main moves while a run is in
+        progress, a worker pushes to a claim branch, whose run takes the
+        waiting run's place, and the run that follows owes nothing as
+        built; reading the spec, it owes the pull request the word."""
+        scope = Scope(events=cycle.EVENTS, split_board=True)
         steps = [Verb("claim", "a", (1,)), Verb("open-draft", "a", (1,)), Verb("mark-ready", "a", (100,)),
-                 Verb("move-main", M.OWNER), Verb("commit", "a", (1,)), Verb("board", "board", (cycle.PULL_REQUEST, ""))]
+                 Verb("board-start", "board", (cycle.CREATE, "claude/1")), Verb("move-main", M.OWNER),
+                 Verb("commit", "a", (1,)), Verb("board-finish", "board"),
+                 Verb("board-start", "board", (cycle.PULL_REQUEST, "")), Verb("board-finish", "board")]
         self.assertEqual(violations(steps, scope), [])
         self.assertEqual(guarantees(violations(steps, scope, known=oracle.AS_BUILT - {"F12"})), ["G10"])
 

@@ -72,7 +72,8 @@ class Outcome(NamedTuple):
     """What a verb did: taken or not and why; the git command a push ran,
     the guard's refusal of it (None when it passed) and whether the rules
     allow the push's shape, which the guard must then pass; a board run's
-    record; and the workflow events the act fired, as (event, ref name)."""
+    record, or the first half of one (a cycle.HalfRun) when the run goes
+    on; and the workflow events the act fired, as (event, ref name)."""
 
     taken: bool
     note: str = ""
@@ -82,6 +83,7 @@ class Outcome(NamedTuple):
     allowed_shape: bool = True
     guarded: bool = True
     events: tuple = ()
+    half: object = None
 
 
 class Scope(NamedTuple):
@@ -341,10 +343,11 @@ def board(model, event, ref_name="", faults=()):
 
 
 def board_start(model, event, ref_name="", faults=()):
-    """The first half of a board run; the run goes on in model.running."""
+    """The first half of a board run, which the checks judge at once; the
+    run goes on in model.running."""
     model.starts(event, ref_name)
-    cycle.start_run(model, event, ref_name, tuple(FAULTS[f] for f in faults))
-    return Outcome(True, "first half done")
+    half = cycle.start_run(model, event, ref_name, tuple(FAULTS[f] for f in faults))
+    return Outcome(True, "first half done", half=half)
 
 
 def board_finish(model):
@@ -451,14 +454,15 @@ def enabled(model, scope):
 
 
 def board_verbs(model, scope):
-    """The runs that can start: the schedule's, whenever the checker likes,
-    and each run queued; the faults the scope names are met on the first
-    of them."""
+    """The runs that can start: the run queued, which GitHub starts before
+    anything else, or, with the group idle, the schedule's, whenever the
+    checker likes; the faults the scope names are met on each. The schedule
+    fires only into an idle group: arriving behind a run it would do what
+    any other event does, replace the run pending."""
     name = "board-start" if scope.split_board else "board"
-    starts = [(cycle.SCHEDULE, "")] if cycle.SCHEDULE in scope.events else []
-    starts += [e for e in model.pending if e[0] != cycle.SCHEDULE]
+    starts = list(model.queued) or ([(cycle.SCHEDULE, "")] if cycle.SCHEDULE in scope.events else [])
     found = [Verb(name, BOARD, start) for start in starts]
-    found += [Verb(name, BOARD, starts[0] + ((fault,),)) for fault in scope.faults] if starts else []
+    found += [Verb(name, BOARD, start + ((fault,),)) for start in starts for fault in scope.faults]
     return found
 
 

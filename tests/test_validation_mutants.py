@@ -2,7 +2,7 @@
 check: the lane's size, every mutant's target still in the library, and
 each mutant caught on its shortest trace, which the library itself passes.
 The lane proper, every mutant against every search, runs in validate.yml
-(python3 -m validation.mutants), since it takes about 90 seconds; these traces are
+(python3 -m validation.mutants), since it takes about 100 seconds; these traces are
 what the lane found, kept so a change that stops the harness catching a
 mutant fails here too, naming the rule."""
 

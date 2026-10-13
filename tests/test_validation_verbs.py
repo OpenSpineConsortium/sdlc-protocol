@@ -77,7 +77,7 @@ class TheEventsAnActFires(unittest.TestCase):
 class WhatAScopeListensFor(unittest.TestCase):
     def test_a_claim_queues_the_run_for_the_branch_made(self):
         model, _ = after([CLAIM])
-        self.assertEqual(model.pending, (("create", "claude/1"),))
+        self.assertEqual(model.queued, (("create", "claude/1"),))
 
     def test_the_default_scope_queues_nothing(self):
         model, _ = after([CLAIM, Verb("open-draft", "a", (1,))], Scope())
@@ -85,44 +85,55 @@ class WhatAScopeListensFor(unittest.TestCase):
 
     def test_a_scope_hears_only_the_events_it_names(self):
         model, _ = after([Verb("move-main", M.OWNER), CLAIM], Scope(events=("schedule", "push")))
-        self.assertEqual(model.pending, ())
+        self.assertEqual((model.queued, model.pending), ((("push", "main"),), ()))
         model, _ = after([Verb("move-main", M.OWNER), CLAIM], Scope(events=("schedule", "create")))
-        self.assertEqual(model.pending, (("create", "claude/1"),))
+        self.assertEqual((model.queued, model.pending), ((("create", "claude/1"),), ()))
 
-    def test_a_workers_push_replaces_the_run_of_the_push_to_main(self):
-        """F12's mechanism: the run the push to main queued is cancelled by
-        the next event's, here a push to a claim branch whose own run is
-        skipped."""
+    def test_a_workers_push_replaces_the_run_waiting_behind_one_in_progress(self):
+        """F12's mechanism: main moves while a run is in progress, and the
+        run its push queued is cancelled by the next event's, here a push to
+        a claim branch with a draft, whose own run is skipped."""
+        scope = LISTENING._replace(split_board=True)
         model, _ = after([CLAIM, Verb("open-draft", "a", (1,)), Verb("mark-ready", "a", (100,)),
-                          Verb("move-main", M.OWNER)])
+                          Verb("board-start", "board", ("create", "claude/1")), Verb("move-main", M.OWNER)], scope)
         self.assertEqual(model.pending, (("push", "main"),))
-        verbs.apply(model, Verb("commit", "a", (1,)), LISTENING)
+        verbs.apply(model, Verb("commit", "a", (1,)), scope)
         self.assertEqual(model.pending, (("pull_request", ""),))
+        verbs.apply(model, Verb("board-finish", "board"), scope)
+        self.assertEqual((model.queued, model.pending), ((("pull_request", ""),), ()))
 
 
 class TheBoardVerbs(unittest.TestCase):
-    def test_the_schedule_and_each_run_queued_with_the_faults_on_the_first(self):
+    def test_the_run_queued_comes_before_the_schedule_and_meets_every_fault(self):
         model, _ = after([CLAIM, Verb("open-draft", "a", (1,))])
-        scope = LISTENING._replace(faults=("rename-403",))
+        scope = LISTENING._replace(faults=("rename-403", "comment-500"))
         self.assertEqual(names(verbs.board_verbs(model, scope)),
-                         ["board board schedule ", "board board pull_request ",
-                          "board board schedule  ('rename-403',)"])
+                         ["board board create claude/1", "board board create claude/1 ('rename-403',)",
+                          "board board create claude/1 ('comment-500',)"])
+        verbs.apply(model, Verb("board", "board", ("create", "claude/1")), scope)
+        self.assertEqual(names(verbs.board_verbs(model, scope)), ["board board pull_request ",
+                                                                  "board board pull_request  ('rename-403',)",
+                                                                  "board board pull_request  ('comment-500',)"])
+        verbs.apply(model, Verb("board", "board", ("pull_request", "")), scope)
+        self.assertEqual(names(verbs.board_verbs(model, scope)), ["board board schedule ",
+                                                                  "board board schedule  ('rename-403',)",
+                                                                  "board board schedule  ('comment-500',)"])
 
     def test_a_queued_run_that_runs_leaves_the_queue(self):
         model, outcome = after([CLAIM, Verb("board", "board", ("create", "claude/1"))])
-        self.assertEqual((model.pending, outcome.run.event), ((), "create"))
+        self.assertEqual((model.queued, model.pending, outcome.run.event), ((), (), "create"))
 
-    def test_the_schedule_s_run_replaces_what_waited(self):
-        model, _ = after([CLAIM, Verb("board", "board", ("schedule", ""))])
-        self.assertEqual(model.pending, ())
+    def test_the_schedule_s_run_replaces_what_waited_behind_the_run_queued(self):
+        model, _ = after([CLAIM, Verb("open-draft", "a", (1,)), Verb("board", "board", ("schedule", ""))])
+        self.assertEqual((model.queued, model.pending), ((("create", "claude/1"),), ()))
 
     def test_a_split_scope_offers_the_first_half_then_only_the_second(self):
         scope = Scope(split_board=True)
         model, _ = after([CLAIM], scope)
         self.assertEqual([v for v in names(verbs.enabled(model, scope)) if v.startswith(("board", "wait"))],
                          ["wait clock 24", "wait clock 25", "board-start board schedule "])
-        verbs.apply(model, Verb("board-start", "board", ("schedule", "")), scope)
-        self.assertIsNotNone(model.running)
+        outcome = verbs.apply(model, Verb("board-start", "board", ("schedule", "")), scope)
+        self.assertIs(outcome.half, model.running)
         found = names(verbs.enabled(model, scope))
         self.assertEqual([v for v in found if v.startswith(("board", "wait"))], ["board-finish board"])
         self.assertIn("commit a 1", found)
