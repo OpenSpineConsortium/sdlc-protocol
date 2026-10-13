@@ -52,6 +52,14 @@ class CutAnswer(FakeAnswer):
         raise http.client.IncompleteRead(b'{"id"', 96)
 
 
+class RawAnswer(FakeAnswer):
+    """An answer whose body is these bytes, JSON or not."""
+
+    def __init__(self, raw, headers=None):
+        super().__init__(None, headers)
+        self.body = raw
+
+
 class Refusal:
     """An HTTP error GitHub would answer, with its JSON body."""
 
@@ -79,11 +87,16 @@ class CutRefusal(Refusal):
 
 
 def send_line(call):
-    """Write a request's line as http.client writes it before it connects,
-    which refuses a path it cannot send as ASCII (UnicodeEncodeError), or
-    one holding a space or a control character (InvalidURL), so a fake
-    fails where a live run fails."""
-    http.client.HTTPConnection("api.github.com").putrequest(call.get_method(), call.selector)
+    """Write a request's line and headers as http.client writes them before
+    it connects, which refuses a path it cannot send as ASCII
+    (UnicodeEncodeError), or one holding a space or a control character
+    (InvalidURL), and a header value outside Latin-1 (UnicodeEncodeError)
+    or holding a bare line break (ValueError), so a fake fails where a live
+    run fails."""
+    connection = http.client.HTTPConnection("api.github.com")
+    connection.putrequest(call.get_method(), call.selector)
+    for name, value in call.header_items():
+        connection.putheader(name, value)
 
 
 class FakeOpener:
@@ -381,6 +394,45 @@ class Token(unittest.TestCase):
         self.assertEqual(str(caught.exception),
                          "GET /repos/o/r/git/ref/heads/caf\u00e9: the path holds a character outside ASCII, "
                          "which http.client does not send")
+
+    def test_a_token_http_client_cannot_send_is_said_as_the_token_and_never_shown(self):
+        # http.client writes a header in Latin-1 and refuses one with a bare
+        # line break, as it refuses a path outside ASCII, before it connects.
+        # A token pasted with curly quotes was said as a path outside ASCII
+        # of a path that was plain ASCII, and one ending in a newline as an
+        # answer that was not JSON, of a call that was never sent; the fake
+        # refuses both as http.client does, and the message holds neither.
+        for token, raised in (("ghs_\u201cpasted\u201d", UnicodeEncodeError), ("ghs_token\n", ValueError)):
+            connection = http.client.HTTPConnection("api.github.com")
+            connection.putrequest("GET", "/repos/o/r")
+            with self.assertRaises(raised):
+                connection.putheader("Authorization", f"Bearer {token}")
+            api = github.GitHub(token, "o/r", opener=FakeOpener({"/repos/o/r": FakeAnswer({})}),
+                                sleep=lambda seconds: None)
+            with self.assertRaises(github.GitHubError) as caught:
+                api.get("/repos/o/r")
+            self.assertEqual(str(caught.exception),
+                             "GET /repos/o/r: the token holds a character http.client does not send in a "
+                             "header, such as a curly quote or a line break")
+            self.assertNotIn("ghs_", str(caught.exception))
+
+    def test_a_call_urllib_will_not_send_for_another_reason_is_said_so_and_quotes_nothing(self):
+        # urllib raises ValueError for a proxy setting it cannot read, and
+        # its words quote the setting, which may hold a password.
+        opener = mock.Mock()
+        opener.open.side_effect = ValueError("proxy URL with no authority: 'http:user:secret'")
+        api = github.GitHub("t", "o/r", opener=opener, sleep=lambda seconds: None)
+        with self.assertRaises(github.GitHubError) as caught:
+            api.get("/repos/o/r")
+        self.assertEqual(str(caught.exception), "GET /repos/o/r: urllib would not send the call")
+
+    def test_an_answer_that_is_not_json_is_said_so(self):
+        api, _ = client({"/repos/o/r": RawAnswer(b"<html>busy</html>")})
+        with self.assertRaises(github.GitHubError) as caught:
+            api.get("/repos/o/r")
+        self.assertEqual(str(caught.exception), "GET /repos/o/r: the answer was not JSON")
+        api, _ = client({"/repos/o/r": RawAnswer(b"")})
+        self.assertIsNone(api.get("/repos/o/r"))
 
     def test_an_error_is_a_client_error_the_clerk_can_tolerate(self):
         self.assertTrue(issubclass(github.GitHubError, team.ClientError))

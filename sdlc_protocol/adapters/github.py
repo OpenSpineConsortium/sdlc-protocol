@@ -107,6 +107,24 @@ def quoted(name):
     return urllib.parse.quote(name, safe="/")
 
 
+def unsent(call, token):
+    """Why a call was refused before it was sent, in words that quote no
+    header, since one holds the token. http.client writes the request line
+    in ASCII and refuses any other path, and every path here quotes what a
+    person names (quoted), so such a path is a call built wrong; it writes a
+    header in Latin-1 with no bare line break, and the token is the one
+    header whose value comes from outside the adapter, so a token pasted
+    with a curly quote or a newline is said as the token. Anything else
+    urllib refuses to send, a proxy setting it cannot read for one, is said
+    in no more words than that, since urllib's own may quote a password."""
+    if not call.selector.isascii():
+        return "the path holds a character outside ASCII, which http.client does not send"
+    if not (token.isascii() and token.isprintable()):
+        return ("the token holds a character http.client does not send in a header, such as a curly quote or a "
+                "line break")
+    return "urllib would not send the call"
+
+
 class GitHub:
     """The REST calls the package makes, through urllib, and the methods
     team.Client lists.
@@ -138,14 +156,17 @@ class GitHub:
     def request(self, method, url, body=None, missing_ok=False):
         """One call; the decoded JSON and the answer's headers. A 404 is
         (None, headers) when missing_ok says absence is an answer. Every
-        failure is a GitHubError, whichever part of urllib raised it. An
-        answer cut short (IncompleteRead) and one that is no HTTP
-        (BadStatusLine) are http.client's own exceptions, no OSError, which
-        urllib passes on as they are, past every caller that turns a
-        refusal into a line. A path holding a character outside ASCII is
-        never sent: http.client writes the request line in ASCII, and every
-        path here quotes what a person names (quoted), so such a path is a
-        call built wrong, said as one."""
+        failure of the call, whether GitHub, the connection or http.client
+        refused it, is a GitHubError, whichever part of urllib raised it;
+        the URL is always the adapter's own or the next page a Link header
+        names, which has the scheme urllib asks of it before trying
+        anything. An answer cut short (IncompleteRead) and one that is no
+        HTTP (BadStatusLine) are http.client's own exceptions, no OSError,
+        which urllib passes on as they are, past every caller that turns a
+        refusal into a line. A call http.client will not send is said by
+        what holds the character it refuses (unsent), and the answer is read
+        as JSON only once the call is done, so a call never sent is never
+        said to have had an answer that was not JSON."""
         data = json.dumps(body).encode("utf-8") if body is not None else None
         headers = self.headers()
         if data is not None:
@@ -154,8 +175,7 @@ class GitHub:
         where = f"{method} {urllib.parse.urlsplit(url).path}"
         try:
             with self.opener.open(call, timeout=TIMEOUT) as answer:
-                raw = answer.read()
-                return (json.loads(raw) if raw else None), answer.headers
+                raw, answered = answer.read(), answer.headers
         except urllib.error.HTTPError as problem:
             if problem.code == 404 and missing_ok:
                 return None, problem.headers
@@ -164,9 +184,10 @@ class GitHub:
             raise GitHubError(f"{where}: {getattr(problem, 'reason', problem)}") from None
         except http.client.HTTPException as problem:
             raise GitHubError(f"{where}: {problem!r}") from None
-        except UnicodeEncodeError:
-            raise GitHubError(f"{where}: the path holds a character outside ASCII, which http.client does not "
-                              "send") from None
+        except ValueError:
+            raise GitHubError(f"{where}: {unsent(call, self.token)}") from None
+        try:
+            return (json.loads(raw) if raw else None), answered
         except ValueError:
             raise GitHubError(f"{where}: the answer was not JSON") from None
 
