@@ -493,26 +493,76 @@ def holding(api, default_branch, sha):
 
 def release_one(api, snap, key, now):
     """Release one claim: the labels first, then the comment, in the
-    protocol's order. The board counts a release only once both are done,
-    so a claim is never taken off its holder without the comment that says
-    why, and a run that fails between them leaves no release comment, so
-    the claim is still due and the next run releases it again, a label
-    already gone counting as taken off (GitHub.remove_label). What was
-    done, in a line."""
-    release = snap.releases[key]
-    taken_off = coordinator.labels_released(snap, key)
+    protocol's order, and the board counts a release only once both are
+    done. A run that fails between them puts back the labels it took off,
+    so the issue is as the run found it and the next run starts the
+    release over, unless the comment turns out to be there after all, one
+    GitHub wrote and lost its answer to, which makes the release whole.
+    Only when GitHub refuses the putting back too are the labels left off
+    with no comment, until a run releases the claim or a person puts them
+    back. What was done, in a line."""
+    release, names, taken_off = snap.releases[key], coordinator.labels_released(snap, key), []
     try:
-        for name in taken_off:
-            api.remove_label(int(key), name)
+        for name in names:
+            if take_label_off(api, key, name):
+                taken_off.append(name)
     except GitHubError as problem:
-        return f"#{key}: not released, taking the labels off failed: {problem}{github_words(problem)}"
+        return (f"#{key}: not released, taking the labels off failed: {problem}{github_words(problem)}"
+                + put_back(api, key, taken_off))
     text = coordinator.release_text(snap, key, holding(api, snap.default_branch, release.sha))
+    lost = ""
     try:
-        posted = api.post(f"/repos/{api.repo}/issues/{key}/comments", {"body": text}) or {}
+        released_at = (api.post(f"/repos/{api.repo}/issues/{key}/comments", {"body": text}) or {}).get("created_at")
     except GitHubError as problem:
-        return f"#{key}: not released, the labels are off but the comment failed: {problem}{github_words(problem)}"
-    coordinator.after_release(snap, key, posted.get("created_at") or now.isoformat(), taken_off)
-    return f"#{key}: claim released, idle since {release.committed_at}"
+        released_at = landed_release(api, key, release)
+        if not released_at:
+            return (f"#{key}: not released, the comment failed: {problem}{github_words(problem)}"
+                    + put_back(api, key, taken_off))
+        lost = f" (GitHub's answer to the comment was lost, {problem}, but the comment is there)"
+    coordinator.after_release(snap, key, released_at or now.isoformat(), names)
+    return f"#{key}: claim released, idle since {release.committed_at}{lost}"
+
+
+def take_label_off(api, key, name):
+    """Take one label off a claim's issue: True when it came off, False when
+    GitHub answered 404, for an issue that no longer carried it, which is
+    the label being off too, so a release goes on and puts back, if a later
+    step fails, only what it took off."""
+    try:
+        api.delete(f"/repos/{api.repo}/issues/{key}/labels/{urllib.parse.quote(name, safe='')}")
+    except GitHubError as problem:
+        if problem.status == 404:
+            return False
+        raise
+    return True
+
+
+def put_back(api, key, names):
+    """Put the labels a release took off back on its issue once a later step
+    failed, so the claim stays its holder's until a run releases it whole;
+    what was done, as the end of the release's line."""
+    if not names:
+        return ""
+    listed = ", ".join(names)
+    try:
+        api.post(f"/repos/{api.repo}/issues/{key}/labels", {"labels": names})
+    except GitHubError as problem:
+        return f"; putting {listed} back failed too, so they stay off: {problem}{github_words(problem)}"
+    return f"; {listed} put back"
+
+
+def landed_release(api, key, release):
+    """When the comment that releases this claim was made, by the rule the
+    next run reads it with (claims.was_released), or "" when none stands:
+    a call that GitHub answered with an error, a 502 or a timeout, may
+    still have written the comment, and once it stands the release is done.
+    A read GitHub refuses finds none."""
+    try:
+        comments = api.get_all(f"/repos/{api.repo}/issues/{key}/comments")
+    except GitHubError:
+        return ""
+    released_at = claims.latest_release(comments, may_write(api))
+    return released_at if claims.was_released(released_at, release.committed_at) else ""
 
 
 def tell_overlaps(api, snap):

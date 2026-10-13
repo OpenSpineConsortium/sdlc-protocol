@@ -768,8 +768,8 @@ class ReleasedClaimReturns(unittest.TestCase):
         self.assertIn("| #5 | claude/5 | alice | (no pull request yet) | src/alice.py |", page)
         self.assertNotIn("| #5 |", section(page, board.QUEUE_HEADING, board.BLOCKER_HEADING))
 
-        # The coordinator releases the idle claim: the release comment, then
-        # claimed and alice's label off. The board shows the issue free.
+        # The coordinator releases the idle claim: claimed and alice's label
+        # off, then the release comment. The board shows the issue free.
         released_at = "2026-09-20T09:00:00Z"
         before_rename = self.snapshot(["todo"], released_at)
         self.assertEqual(board.released_keys(before_rename), {"5"})

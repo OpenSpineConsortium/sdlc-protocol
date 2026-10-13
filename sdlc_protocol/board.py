@@ -193,10 +193,15 @@ class ClaimIssue:
 @dataclass
 class Release:
     """What the release rule reads about one claim: when the latest release
-    comment on its issue was made (claims.latest_release), and the head of
-    its branch, the commit and when it was committed. An adapter fills it
-    only for a claim whose issue is open, no longer labelled claimed and
-    holds a release comment, the only claims a release can have freed."""
+    comment on its issue was made (claims.latest_release), "" when none
+    stands, and the head of its branch, the commit and when it was
+    committed. An adapter fills it for every claim a release can be due on
+    or can have freed (adapters.github.releases): one gone more than a day
+    without a commit, whose issue is open and not labelled in-review, and
+    whose pull request, if it has one, is a draft its author has not called
+    finished. The coordinator releases those that no release comment has
+    released yet (coordinator.releases_due), and the board counts a
+    release once the label claimed is off too (released_keys)."""
 
     released_at: str = ""
     sha: str = ""

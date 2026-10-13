@@ -619,6 +619,7 @@ def idle_snapshot():
 COMPARE_12 = f"/repos/o/r/compare/main...{HEAD_12}"
 LABEL_CLAIMED_12 = "DELETE /repos/o/r/issues/12/labels/claimed"
 LABEL_WORKER_12 = "DELETE /repos/o/r/issues/12/labels/worker%3Anightly"
+LABELS_12 = "POST /repos/o/r/issues/12/labels"
 
 
 def release_answers():
@@ -650,18 +651,57 @@ class Coordinate(unittest.TestCase):
         self.assertEqual(snap.releases["12"].released_at, "2026-09-20T12:00:05Z")
         self.assertIn("| #12 | Describe the board | todo |", board.render(snap).split(board.QUEUE_HEADING)[1])
 
-    def test_a_comment_github_refuses_after_the_labels_releases_nothing_yet(self):
-        # With no release comment the claim is still due, and the next run
-        # posts it (ReleaseAcrossRuns).
+    def test_a_comment_github_refuses_after_the_labels_puts_them_back(self):
+        # With no release comment and the labels back, the issue is as the
+        # run found it and the next run starts the release over
+        # (ReleaseAcrossRuns); the comments are read first, in case GitHub
+        # wrote the comment and lost its answer.
         answers = release_answers()
         answers["POST /repos/o/r/issues/12/comments"] = Refusal(403, {"message": "Resource not accessible"})
+        answers[COMMENTS_12] = FakeAnswer([])
+        answers[LABELS_12] = FakeAnswer([])
         snap = idle_snapshot()
         api, opener = client(answers)
         self.assertEqual(github.coordinate(api, snap, NOW), [
-            "#12: not released, the labels are off but the comment failed: POST /repos/o/r/issues/12/comments: "
-            "HTTP 403: Resource not accessible"])
-        self.assertEqual([c.get_method() for c in opener.calls], ["DELETE", "DELETE", "GET", "POST"])
+            "#12: not released, the comment failed: POST /repos/o/r/issues/12/comments: HTTP 403: "
+            "Resource not accessible; claimed, worker:nightly put back"])
+        self.assertEqual([c.get_method() for c in opener.calls], ["DELETE", "DELETE", "GET", "POST", "GET", "POST"])
+        self.assertEqual(opener.sent("POST")[1], {"labels": ["claimed", "worker:nightly"]})
         self.assertEqual(board.released_keys(snap), set())
+
+    def test_a_second_label_github_refuses_puts_the_first_back(self):
+        answers = release_answers()
+        answers[LABEL_WORKER_12] = Refusal(502)
+        answers[LABELS_12] = FakeAnswer([])
+        api, opener = client(answers)
+        self.assertEqual(github.coordinate(api, idle_snapshot(), NOW), [
+            "#12: not released, taking the labels off failed: DELETE /repos/o/r/issues/12/labels/worker%3Anightly: "
+            "HTTP 502; claimed put back"])
+        self.assertEqual(opener.sent("POST"), [{"labels": ["claimed"]}])
+
+    def test_a_label_already_gone_is_not_put_back(self):
+        # GitHub's 404 says the issue no longer carries the label, so a
+        # release that fails later puts back only what it took off.
+        answers = release_answers()
+        answers[LABEL_WORKER_12] = Refusal(404, {"message": "Label does not exist"})
+        answers["POST /repos/o/r/issues/12/comments"] = Refusal(502)
+        answers[COMMENTS_12] = FakeAnswer([])
+        answers[LABELS_12] = FakeAnswer([])
+        api, opener = client(answers)
+        line, = github.coordinate(api, idle_snapshot(), NOW)
+        self.assertTrue(line.endswith("HTTP 502; claimed put back"), line)
+        self.assertEqual(opener.sent("POST")[1], {"labels": ["claimed"]})
+
+    def test_labels_github_will_not_put_back_are_said(self):
+        answers = release_answers()
+        answers["POST /repos/o/r/issues/12/comments"] = Refusal(502)
+        answers[COMMENTS_12] = Refusal(502)
+        answers[LABELS_12] = Refusal(403, {"message": "Resource not accessible"})
+        api, _ = client(answers)
+        self.assertEqual(github.coordinate(api, idle_snapshot(), NOW), [
+            "#12: not released, the comment failed: POST /repos/o/r/issues/12/comments: HTTP 502; putting claimed, "
+            "worker:nightly back failed too, so they stay off: POST /repos/o/r/issues/12/labels: HTTP 403: "
+            "Resource not accessible"])
 
     def test_a_label_github_refuses_is_a_line_and_posts_no_comment(self):
         answers = release_answers()
@@ -725,23 +765,25 @@ class Repository(FakeOpener):
     with its labels and comments, claimed by nightly, whose branch claude/12
     has had no commit since two days before NOW and no pull request. The
     calls that change it change it: a comment is posted at the clock's
-    time, a label taken off (404 for one that is gone, as GitHub answers),
-    a branch renamed. A call named in refuse gets its refusal once and then
-    works, as a failure that passes does."""
+    time, a label taken off (404 for one that is gone, as GitHub answers)
+    or put on, a branch renamed. A call named in refuse gets its refusal
+    once and then works, as a failure that passes does; one named in lose
+    is made and then answered with the refusal, once, as when GitHub writes
+    a comment and its answer is lost."""
 
-    def __init__(self, refuse=None):
+    def __init__(self, refuse=None, lose=None, claim=IDLE_CLAIM):
         super().__init__({
             "/repos/o/r/pulls?state=open&per_page=100": FakeAnswer([]),
             CLOSED_FIRST: FakeAnswer([]),
             f"/repos/o/r/git/commits/{HEAD_12}": FakeAnswer({"committer": {"date": "2026-09-18T12:00:00Z"}}),
             "/repos/o/r/contents/docs/agents/claims/12.md?ref=claude%2F12": FakeAnswer(
-                {"content": base64.b64encode(IDLE_CLAIM.encode()).decode()}),
+                {"content": base64.b64encode(claim.encode()).decode()}),
             COMPARE_12: release_answers()[COMPARE_12],
         })
         self.labels = ["claimed", "todo", "worker:nightly"]
         self.comments = []
         self.branches = {"main": "0123abc", "claude/12": HEAD_12}
-        self.refuse = dict(refuse or {})
+        self.refuse, self.lose = dict(refuse or {}), dict(lose or {})
         self.clock = NOW
 
     def open(self, call, timeout=None):
@@ -751,6 +793,9 @@ class Repository(FakeOpener):
             self.calls.append(call)
             raise self.refuse.pop(asked).raised(call.full_url)
         answer = self.answer(asked, call)
+        if asked in self.lose:
+            self.calls.append(call)
+            raise self.lose.pop(asked).raised(call.full_url)
         if answer is None:
             return super().open(call, timeout)
         self.calls.append(call)
@@ -769,10 +814,16 @@ class Repository(FakeOpener):
         if asked == COMMENTS_12:
             return FakeAnswer(self.comments)
         if asked == "POST /repos/o/r/issues/12/comments":
-            posted = {"body": json.loads(call.data)["body"], "created_at": self.clock.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            body = json.loads(call.data)["body"]
+            if len(body) > 65536:
+                return Refusal(422, {"message": "Body is too long (maximum is 65536 characters)"})
+            posted = {"body": body, "created_at": self.clock.strftime("%Y-%m-%dT%H:%M:%SZ"),
                       "author_association": "NONE", "user": {"login": "github-actions[bot]"}}
             self.comments.append(posted)
             return FakeAnswer(posted)
+        if asked == LABELS_12:
+            self.labels += [name for name in json.loads(call.data)["labels"] if name not in self.labels]
+            return FakeAnswer([{"name": name} for name in self.labels])
         if asked.startswith("DELETE /repos/o/r/issues/12/labels/"):
             name = urllib.parse.unquote(asked.rsplit("/", 1)[1])
             if name not in self.labels:
@@ -805,8 +856,9 @@ def board_run(api, repository, now):
 
 class ReleaseAcrossRuns(unittest.TestCase):
     """A release is two acts, the labels and the comment; a run that fails
-    between them leaves a claim the next run with no failure releases
-    whole, and a release a person undid stays undone."""
+    between them puts back what it took off, so the next run with no
+    failure releases the claim whole, and a holder who comes back first
+    keeps it as it was; a release a person undid stays undone."""
 
     def runs(self, refuse=None):
         repository = Repository(refuse)
@@ -840,6 +892,68 @@ class ReleaseAcrossRuns(unittest.TestCase):
             {"POST /repos/o/r/issues/12/comments": Refusal(502)})
         self.assertIn("HTTP 502", first[0])
         self.assert_released(repository, snap, page)
+
+    def test_a_release_whose_labels_did_not_go_back_on_is_finished_by_the_next_run(self):
+        repository, snap, page, first, second = self.runs(
+            {"POST /repos/o/r/issues/12/comments": Refusal(502), LABELS_12: Refusal(502)})
+        self.assertIn("back failed too, so they stay off", first[0])
+        self.assert_released(repository, snap, page)
+
+    def test_a_holder_who_comes_back_after_a_failed_comment_keeps_the_claim_and_its_labels(self):
+        # Had the labels stayed off, the claim would be held with none, and
+        # the clerk, which finds a worker's claim by its label, would not
+        # send nightly to it again.
+        repository = Repository({"POST /repos/o/r/issues/12/comments": Refusal(502)})
+        repository.answers["/repos/o/r/git/commits/bbbbbbb2222222"] = FakeAnswer(
+            {"committer": {"date": "2026-09-20T12:30:00Z"}})
+        repository.answers["/repos/o/r/pulls?state=open&head=o%3Aclaude%2F12"] = FakeAnswer([])
+        api = github.GitHub("t", "o/r", opener=repository, sleep=lambda seconds: None)
+        _, _, first = board_run(api, repository, NOW)
+        self.assertEqual(first, ["#12: not released, the comment failed: POST /repos/o/r/issues/12/comments: "
+                                 "HTTP 502; claimed, worker:nightly put back"])
+        repository.branches["claude/12"] = "bbbbbbb2222222"
+        snap, page, second = board_run(api, repository, NOW + timedelta(hours=1))
+        self.assertEqual(second, [])
+        self.assertEqual(sorted(repository.labels), ["claimed", "todo", "worker:nightly"])
+        self.assertEqual(repository.release_comments(), [])
+        self.assertIn("| #12 | claude/12 | nightly |", page)
+        self.assertEqual(team.next_for(api, "nightly"), "carry 12")
+
+    def test_a_comment_github_wrote_and_lost_the_answer_to_is_a_whole_release(self):
+        repository = Repository(lose={"POST /repos/o/r/issues/12/comments": Refusal(502)})
+        api = github.GitHub("t", "o/r", opener=repository, sleep=lambda seconds: None)
+        snap, page, lines = board_run(api, repository, NOW)
+        self.assertEqual(lines, [
+            "#12: claim released, idle since 2026-09-18T12:00:00Z (GitHub's answer to the comment was lost, "
+            "POST /repos/o/r/issues/12/comments: HTTP 502, but the comment is there)",
+            "#12: claim released; claude/12 renamed to released/12-aaaaaaa"])
+        self.assert_released(repository, snap, page)
+
+    def test_a_plan_longer_than_github_takes_in_a_comment_is_cut_and_the_claim_released(self):
+        # Quoted whole, the plan made a comment GitHub refuses with 422, so
+        # the claim was never released.
+        plan = IDLE_CLAIM.replace("Describe the board.", "Describe the board. " + "word " * 14000)
+        repository = Repository(claim=plan)
+        api = github.GitHub("t", "o/r", opener=repository, sleep=lambda seconds: None)
+        snap, page, lines = board_run(api, repository, NOW)
+        self.assertEqual(lines[0], "#12: claim released, idle since 2026-09-18T12:00:00Z")
+        self.assert_released(repository, snap, page)
+        comment, = repository.release_comments()
+        self.assertIn("The claim's plan, cut short (docs/agents/claims/12.md on released/12-aaaaaaa has it whole): "
+                      "Describe the board. word word", comment["body"])
+        self.assertLess(len(comment["body"]), 8000)
+
+    def test_a_release_by_hand_comment_first_is_the_one_release_comment(self):
+        # Taking a label off starts a board run; the comment made first
+        # keeps that run's coordinator from releasing the claim again.
+        repository = Repository()
+        repository.comments.append({"body": claims.RELEASE_MARKER + "\nreleased by hand", "created_at":
+                                    "2026-09-20T11:59:00Z", "author_association": "MEMBER", "user": {"login": "owner"}})
+        repository.labels = ["todo"]
+        api = github.GitHub("t", "o/r", opener=repository, sleep=lambda seconds: None)
+        snap, page, lines = board_run(api, repository, NOW)
+        self.assertEqual(lines, ["#12: claim released; claude/12 renamed to released/12-aaaaaaa"])
+        self.assertEqual([c["user"]["login"] for c in repository.release_comments()], ["owner"])
 
     def test_a_label_already_gone_counts_as_taken_off(self):
         # A person took worker:nightly off between the snapshot and the

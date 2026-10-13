@@ -114,6 +114,20 @@ class ReleaseText(unittest.TestCase):
         self.assertIn("9 commits ahead of main; it changes `f00.md`", text)
         self.assertIn("`f19.md` and 5 more.", text)
 
+    def test_what_a_release_quotes_is_cut_so_github_takes_the_comment_whatever_the_claim_holds(self):
+        # GitHub refuses a comment over 65,536 characters, and a release
+        # whose comment is refused never happens.
+        huge = "x" * 100000
+        snap = idle_claim(claims={"12": f"- Worker: {huge}\n\n## Plan\n\n{huge}\n"})
+        holding = coordinator.Holding(3, huge, tuple(f"{n:02d}{huge}" for n in range(25)))
+        text = coordinator.release_text(snap, "12", holding)
+        self.assertLess(len(text), 65536 // 5)
+        self.assertIn(f"held by {'x' * 200}..., has had no commit", text)
+        self.assertIn(f'the newest "{"x" * 200}..."', text)
+        self.assertIn(f"`00{'x' * 198}...`", text)
+        self.assertIn("The claim's plan, cut short (docs/agents/claims/12.md on released/12-aaaaaaa has it whole): ",
+                      text)
+
     def test_the_labels_taken_off_are_claimed_and_every_workers(self):
         snap = idle_claim()
         snap.claim_issues["12"].labels = ["account:main", "blocker", "claimed", "todo", "worker:nightly"]

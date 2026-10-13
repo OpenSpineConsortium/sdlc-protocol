@@ -19,9 +19,9 @@ claims.RELEASE_MARKER, saying why, whose the claim was, what its branch
 holds and what its plan was, so the next worker can carry the work on or
 start over, and the board renames the branch in the same run. The board
 counts a release only once both are done, and a run that fails between
-them leaves no release comment, so the claim is still due and the next run
-releases it again. Like the board, this module only decides and words;
-adapters/github.py makes the calls.
+them puts back the labels it took off, so the issue is as it was and the
+next run starts the release over. Like the board, this module only decides
+and words; adapters/github.py makes the calls.
 """
 
 import re
@@ -37,6 +37,14 @@ OVERLAP_LINE = re.compile(r"<!-- sdlc-coordinator: overlap ([0-9 ]+) -->")
 # How many commit subjects and files a release note names before it counts
 # the rest, so a long-lived branch does not bury the comment.
 FILES_NAMED = 20
+# How much of the claim's plan, and of each name (the worker, the newest
+# commit's subject, a file), a release note quotes before it cuts the rest:
+# GitHub refuses a comment of more than 65,536 characters, a refused comment
+# releases nothing, and the claim file, the branch and its history keep the
+# whole. With these the comment stays far under that limit, whatever the
+# claim file and the branch hold.
+PLAN_QUOTED = 4000
+NAME_QUOTED = 200
 
 
 # --- releases -----------------------------------------------------------------
@@ -88,9 +96,15 @@ def holder(snap, key):
     return labels.worker_of({"labels": issue.labels} if issue else None) or "a worker nobody named"
 
 
+def cut(text, limit):
+    """The text, or its first limit characters and "..." when it is longer."""
+    return text if len(text) <= limit else text[:limit].rstrip() + "..."
+
+
 def named_files(files):
-    """Up to FILES_NAMED files, in code spans, and how many more there are."""
-    shown = ", ".join(f"`{path}`" for path in files[:FILES_NAMED])
+    """Up to FILES_NAMED files, in code spans, each cut to NAME_QUOTED
+    characters, and how many more there are."""
+    shown = ", ".join(f"`{cut(path, NAME_QUOTED)}`" for path in files[:FILES_NAMED])
     rest = len(files) - FILES_NAMED
     return shown + (f" and {rest} more" if rest > 0 else "")
 
@@ -103,7 +117,7 @@ def holding_text(holding, default_branch):
     else:
         held = f"{holding.ahead} commit{'s' if holding.ahead != 1 else ''} ahead of {default_branch}"
         if holding.last_subject:
-            held += f", the newest \"{holding.last_subject}\""
+            held += f", the newest \"{cut(holding.last_subject, NAME_QUOTED)}\""
     if files:
         return f"{held}; it changes {named_files(files)}."
     if holding.ahead is not None:
@@ -114,27 +128,40 @@ def holding_text(holding, default_branch):
 def release_text(snapshot, key, holding, idle_after=claims.IDLE_AFTER):
     """The comment that releases the claim with this key: the marker as
     its first line, then why, whose, what the branch holds, what the plan
-    was, and how to carry the work on or undo the release."""
+    was, and how to carry the work on or undo the release. What it quotes
+    is cut to PLAN_QUOTED and NAME_QUOTED, so GitHub never refuses it for
+    its length."""
     snap = board.as_snapshot(snapshot)
     release = snap.releases[key]
     old, new = claims.branch_of(key), claims.released_branch(key, release.sha)
     hours = int(idle_after.total_seconds() // 3600)
     pull = next((p for p in snap.pulls if p.branch == old), None)
     pull_clause = f"its pull request #{pull.number} is still a draft" if pull else "it has no pull request"
-    plan = claims.claim_plan(snap.claims.get(key) or "")
     return "\n".join([
         claims.RELEASE_MARKER,
-        f"released: the claim on this issue, held by {holder(snap, key)}, has had no commit on {old} since "
-        f"{release.committed_at}, more than {hours} hours, and {pull_clause}, so the coordinator released it. "
-        f"The board renames the branch to {new}, which keeps the work, and the issue goes back to the queue.",
+        f"released: the claim on this issue, held by {cut(holder(snap, key), NAME_QUOTED)}, has had no commit on "
+        f"{old} since {release.committed_at}, more than {hours} hours, and {pull_clause}, so the coordinator "
+        f"released it. The board renames the branch to {new}, which keeps the work, and the issue goes back to "
+        f"the queue.",
         "",
         f"What the branch holds: {holding_text(holding, snap.default_branch)}",
-        f"The claim's plan: {plan}" if plan else "The claim file states no plan.",
+        plan_line(snap.claims.get(key) or "", key, new),
         "",
         f"To carry the work on, claim the issue anew, a new {old} from {snap.default_branch}, and bring the "
         f"commits in from {new} after the claim commit; or start over. To undo the release, put the label "
         f"claimed back on the issue.",
     ]) + "\n"
+
+
+def plan_line(text, key, new):
+    """The release note's line on the claim's plan, cut to PLAN_QUOTED with
+    a word on where the rest is, the claim file the branch keeps."""
+    plan = claims.claim_plan(text)
+    if not plan:
+        return "The claim file states no plan."
+    if len(plan) <= PLAN_QUOTED:
+        return f"The claim's plan: {plan}"
+    return f"The claim's plan, cut short ({claims.claim_path(key)} on {new} has it whole): {cut(plan, PLAN_QUOTED)}"
 
 
 def labels_released(snapshot, key):
