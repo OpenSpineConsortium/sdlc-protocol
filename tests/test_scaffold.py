@@ -398,7 +398,7 @@ class SyncWorkflow(unittest.TestCase):
         would take its place; a ref of 40 hex digits it checks out as that
         commit."""
         refs = re.findall(r"(?m)^\s+ref: (.*)$", self.text)
-        self.assertEqual(refs, ["${{ steps.plan.outputs.commit }}", "${{ needs.plan.outputs.commit }}"])
+        self.assertEqual(refs, ["${{ needs.plan.outputs.commit }}"])
 
     def test_the_newest_release_counts_only_where_its_tag_stands(self):
         """Its tag must name the commit that raised main's first-parent line
@@ -448,18 +448,25 @@ class SyncWorkflow(unittest.TestCase):
                                             r'\s+exit 0\n')
 
     def test_the_consumers_are_the_ones_the_release_names(self):
+        """The plan reads the release's ecosystem.json from the history it
+        holds, by the release's commit, and checks nothing of the release
+        out: a job of the default branch's own that ran a step beside a
+        checkout of another commit is what CodeQL's cache poisoning query
+        (actions/cache-poisoning/poisonable-step) reports."""
         plan = self.jobs["plan"]
         self.assertIn("      matrix: ${{ steps.consumers.outputs.matrix }}\n", plan)
-        self.assertIn('matrix="$(python3 scripts/sync.py --library release matrix)"', plan)
-        self.assertIn("          ref: ${{ steps.plan.outputs.commit }}\n          path: release\n"
-                      "          persist-credentials: false\n", plan)
+        self.assertIn("          COMMIT: ${{ steps.plan.outputs.commit }}\n", plan)
+        self.assertIn('git show "$COMMIT:ecosystem.json" > "$RUNNER_TEMP/release/ecosystem.json"', plan)
+        self.assertIn('matrix="$(python3 scripts/sync.py --library "$RUNNER_TEMP/release" matrix)"', plan)
+        self.assertNotIn("path: release", plan)
+        self.assertEqual(plan.count("uses: actions/checkout@"), 1)
 
     def test_only_the_consumers_checkout_keeps_a_credential(self):
         """Nothing is pushed from this repository's checkouts, so none of
         them keeps a token in its git configuration; the consumer's is the
         one the job pushes to."""
         checkouts = [step for job in self.jobs.values() for step in steps_of(job) if "uses: actions/checkout@" in step]
-        self.assertEqual(len(checkouts), 5)
+        self.assertEqual(len(checkouts), 4)
         for step in checkouts:
             with self.subTest(step=step.splitlines()[1:3]):
                 if "repository: ${{ matrix.repository }}" in step:

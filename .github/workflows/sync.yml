@@ -144,22 +144,21 @@ jobs:
           echo "commit=$commit" >> "$GITHUB_OUTPUT"
           python3 scripts/sync.py carrying --tag "$tag" --commit "$commit" >> "$GITHUB_STEP_SUMMARY"
 
-      # The release's own ecosystem.json says which consumers take it. A
-      # run that stops lists none: GitHub reads the job sync's if before
-      # its matrix, so that job is skipped without one.
-      - uses: actions/checkout@v7
-        if: steps.plan.outputs.enabled == 'true'
-        with:
-          ref: ${{ steps.plan.outputs.commit }}
-          path: release
-          persist-credentials: false
-
+      # The release's own ecosystem.json says which consumers take it. It is
+      # read from the release's commit in the history this job already holds,
+      # so nothing of the release is checked out or run here, in a job of the
+      # default branch's own. A run that stops lists none: GitHub reads the
+      # job sync's if before its matrix, so that job is skipped without one.
       - name: List the consumers the release names
         id: consumers
         if: steps.plan.outputs.enabled == 'true'
+        env:
+          COMMIT: ${{ steps.plan.outputs.commit }}
         run: |
           set -eu
-          matrix="$(python3 scripts/sync.py --library release matrix)"
+          mkdir -p "$RUNNER_TEMP/release"
+          git show "$COMMIT:ecosystem.json" > "$RUNNER_TEMP/release/ecosystem.json"
+          matrix="$(python3 scripts/sync.py --library "$RUNNER_TEMP/release" matrix)"
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 
   sync:
