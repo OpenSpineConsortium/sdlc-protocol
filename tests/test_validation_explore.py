@@ -31,6 +31,13 @@ class TheSearch(unittest.TestCase):
         self.assertGreater(found.states, 1000)
         self.assertEqual([(f.guarantee, f.detail, f.trace) for f in found.found], [])
 
+    def test_the_runs_the_events_queue_and_the_runs_in_two_halves_break_nothing(self):
+        for scope, depth in ((verbs.Scope(events=cycle.EVENTS), 4), (verbs.Scope(split_board=True), 3)):
+            with self.subTest(scope=scope):
+                found = explore.explore(start(), scope, depth)
+                self.assertGreater(found.states, 200)
+                self.assertEqual([(f.guarantee, f.detail, f.trace) for f in found.found], [])
+
     def test_a_mutant_is_found_on_a_shortest_trace(self):
         with mock.patch.object(claims, "is_idle", at_exactly_24_hours):
             found = explore.explore(start(), verbs.Scope(), 3)

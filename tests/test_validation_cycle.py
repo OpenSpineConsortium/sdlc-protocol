@@ -1,9 +1,10 @@
-"""The harness's board run (validation/cycle.py): the same calls, in the same
-order, as cli.board_live_run makes against the same fake, so a change of
-order in cli.py fails here until cli.py is split in two (DESIGN.md, 3.3);
-the board branch written only when the run exits 0; and a board run that
-neither a refused comment nor a hand-made branch name stops (G15, F6 and
-F11, fixed in 0.4.1)."""
+"""The harness's board run (validation/cycle.py): the library's own two
+halves, cli.plan_board and cli.act_on_board, making the same calls in the
+same order as cli.board_live_run against the same fake (DESIGN.md, 3.3);
+the halves apart, with the holder coming back between them; the board
+branch written only when the run exits 0; and a board run that neither a
+refused comment nor a hand-made branch name stops (G15, F6 and F11, fixed
+in 0.4.1)."""
 
 import contextlib
 import io
@@ -83,12 +84,79 @@ class SameOrderAsTheCli(unittest.TestCase):
                 two.board_text = page
                 self.assertEqual(one.canonical(), two.canonical())
 
+    def test_the_cycle_runs_the_cli_s_own_halves(self):
+        """A copy of the lines in cycle.py would let a change of order in
+        cli.py past the harness unseen."""
+        called = []
+        plan, act = cli.plan_board, cli.act_on_board
+
+        def planning(*args, **kw):
+            called.append("plan")
+            return plan(*args, **kw)
+
+        def acting(*args, **kw):
+            called.append("act")
+            return act(*args, **kw)
+
+        with mock.patch.object(cli, "plan_board", planning), mock.patch.object(cli, "act_on_board", acting):
+            cycle.board_run(busy(), cycle.PUSH, M.MAIN)
+        self.assertEqual(called, ["plan", "act"])
+
     def test_the_busy_state_has_every_kind_of_write_in_it(self):
         record = cycle.board_run(busy(), cycle.PUSH, M.MAIN)
         writes = {(c.method, c.path.split("/")[1]) for c in record.calls if c.method != "GET"}
         self.assertEqual(writes, {("DELETE", "issues"), ("POST", "issues"), ("POST", "branches")})
         self.assertTrue(any("main moved" in str(c.body) for c in record.calls))
         self.assertTrue(any("overlap" in str(c.body) for c in record.calls))
+
+
+class TheRunInTwoHalves(unittest.TestCase):
+    def test_with_nothing_between_them_is_the_run_made_whole(self):
+        one, two = busy(), busy()
+        whole = cycle.board_run(one, cycle.PUSH, M.MAIN)
+        half = cycle.start_run(two, cycle.PUSH, M.MAIN)
+        self.assertIs(two.running, half)
+        self.assertEqual((half.page, half.raised), (whole.page, None))
+        self.assertEqual(two.board_text, "", "the branch waits for the run to end")
+        record = cycle.finish_run(two)
+        self.assertIsNone(two.running)
+        self.assertEqual(record[:9], whole[:9])
+        self.assertEqual(one.canonical(), two.canonical())
+
+    def test_carries_the_states_its_halves_read(self):
+        model = busy()
+        before = model.clone()
+        record = cycle.finish_run(model, cycle.start_run(model, cycle.PUSH, M.MAIN))
+        self.assertEqual(record.started_from.canonical(), before.canonical())
+        self.assertEqual(record.planned.issues[1].labels, model.issues[1].labels)
+        self.assertIn("claude/1", record.planned.refs, "the first half renames nothing")
+        self.assertNotIn("claude/1", model.refs)
+        self.assertIsNone(cycle.board_run(busy()).started_from)
+
+    def test_the_holder_back_between_the_halves_keeps_the_claim(self):
+        """S09: the release comment is posted and the labels come off in
+        the first half; a commit lands; the second half reads the branch
+        again and leaves its name alone (spec, Release)."""
+        model = M.seeded()
+        for verb in (Verb("claim", "a", (1,)), Verb("label-on", "a", (1, "claimed")), Verb("wait", "clock", (25,))):
+            verbs.apply(model, verb)
+        cycle.start_run(model)
+        self.assertEqual(model.issues[1].labels, frozenset({"todo"}))
+        verbs.apply(model, Verb("commit", "a", (1,)))
+        record = cycle.finish_run(model)
+        self.assertEqual(record.exit_code, 0)
+        self.assertIn("claude/1: no longer at", " ".join(record.lines))
+        self.assertEqual(sorted(model.refs), ["claude/1", "main"])
+        self.assertEqual([c.path for c in record.calls if c.method == "POST" and "rename" in c.path], [])
+
+    def test_a_first_half_that_raises_leaves_the_second_undone(self):
+        model = M.seeded()
+        with mock.patch.object(board, "render", side_effect=ValueError("broken")):
+            half = cycle.start_run(model)
+        record = cycle.finish_run(model, half)
+        self.assertEqual((record.exit_code, model.board_text), (1, ""))
+        self.assertIn("ValueError: broken", record.raised)
+        self.assertEqual([c for c in record.calls if c.method != "GET"], [])
 
 
 class TheBoardBranch(unittest.TestCase):

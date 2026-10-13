@@ -1,8 +1,9 @@
 """The harness's guarantees (validation/invariants.py) on hand-written
 traces: an honest release and reclaim breaks none; the 0.4.1 fixes hold;
-the open findings F2, F7, F9 and F12 show as soon as the oracle reads the
-spec. The mutants, the prototype's among them, are
-tests/test_validation_mutants.py's."""
+a run in two halves is judged by the states its halves read; the open
+findings F2, F7, F9 and F12 show as soon as the oracle reads the spec,
+F12 by the run the concurrency group cancels. The mutants, the prototype's
+among them, are tests/test_validation_mutants.py's."""
 
 import re
 import sys
@@ -23,6 +24,11 @@ SHARED = Scope(issues=(1, 2), files=((1, ("src/shared.py",)), (2, ("src/shared.p
 
 def board_with(*faults, event=cycle.SCHEDULE, ref_name=""):
     return Verb("board", "board", (event, ref_name, faults))
+
+
+def run(event, ref_name=""):
+    """A run in two halves with nothing between them."""
+    return [Verb("board-start", "board", (event, ref_name)), Verb("board-finish", "board")]
 
 
 def violations(steps, scope=Scope(), known=oracle.AS_BUILT, issues=(1,), labels=("todo",)):
@@ -110,6 +116,85 @@ class TheFixesOf041Hold(unittest.TestCase):
         self.assertEqual(violations(steps), [])
 
 
+class ARunInTwoHalves(unittest.TestCase):
+    HELD = [Verb("claim", "a", (1,)), Verb("label-on", "a", (1, "claimed")), Verb("label-on", "a", (1, "worker:a")),
+            Verb("wait", "clock", (25,)), Verb("board-start", "board", (cycle.SCHEDULE, ""))]
+    SPLIT = Scope(split_board=True)
+
+    def test_the_holder_back_between_the_halves_keeps_the_claim_and_breaks_nothing(self):
+        """S09: the rename the oracle owes from the state the run started
+        from is rightly left alone, with the word on the issue."""
+        steps = self.HELD + [Verb("commit", "a", (1,)), Verb("board-finish", "board")]
+        self.assertEqual(violations(steps, self.SPLIT), [])
+        with mock.patch.object(github, "free_name", mutants.renamed_unread):
+            self.assertEqual(sorted({(v.guarantee, v.detail) for v in violations(steps, self.SPLIT)}),
+                             [("G10", "made and not owed: ('comment', 1, 'released')"),
+                              ("G3", "made and not owed: ('rename', 'claude/1', 'released/1-6d6ae03')")])
+
+    def test_a_release_undone_between_the_halves_is_the_holder_s_not_the_run_s(self):
+        """The holder puts claimed back after the first half took it off:
+        the run released the claim, and what the issue carries at the end
+        is not the run's doing (G8)."""
+        steps = self.HELD + [Verb("label-on", "a", (1, "claimed")), Verb("board-finish", "board")]
+        self.assertEqual(violations(steps, self.SPLIT), [])
+
+    def test_main_moved_between_the_halves_owes_the_next_run_nothing_new_as_built(self):
+        steps = self.HELD + [Verb("move-main", M.OWNER), Verb("board-finish", "board")]
+        self.assertEqual(violations(steps, self.SPLIT), [])
+
+    def test_a_second_run_s_quiet_is_asked_only_when_nothing_changed_between_the_halves(self):
+        """A draft opened between the halves makes the next run owe the
+        overlap comments the first half could not know of; with nothing
+        between the halves, a second run that writes again is red as a
+        whole one is."""
+        steps = [Verb("claim", "a", (1,)), Verb("claim", "b", (2,)), Verb("board-start", "board", (cycle.SCHEDULE, "")),
+                 Verb("open-draft", "a", (1,)), Verb("board-finish", "board")]
+        scope = SHARED._replace(split_board=True)
+        self.assertEqual(violations(steps, scope, issues=None), [])
+        checks = invariants.cycle_checks
+
+        def asked_anyway(before, after, record, known=oracle.AS_BUILT):
+            return checks(before, after, record, known) + invariants.quiet_second_run(after, record)
+
+        with mock.patch.object(invariants, "cycle_checks", asked_anyway):
+            self.assertEqual(guarantees(violations(steps, scope, issues=None)), ["G9"])
+        told_again = mutants.MUTANTS["overlaps told on every run"]
+        quiet = steps[:3] + [Verb("board-finish", "board"), Verb("board-start", "board", (cycle.SCHEDULE, "")),
+                             Verb("board-finish", "board")]
+        with mock.patch.object(told_again.module, told_again.name, told_again.replacement):
+            self.assertIn("G9", guarantees(violations(quiet, scope, issues=None)))
+
+    def test_the_second_half_s_writes_are_judged_whatever_their_kind(self):
+        """The second half's writes are the calls after the first half's,
+        so a label it takes off, the first half's kind of write, is made
+        and not owed (G3), where a split by kind would judge it by neither
+        half."""
+        steps = [Verb("claim", "a", (1,)), Verb("label-on", "a", (1, "claimed")),
+                 Verb("board-start", "board", (cycle.SCHEDULE, "")), Verb("board-finish", "board")]
+        self.assertEqual(violations(steps, self.SPLIT), [])
+        releases = github.release_claims
+
+        def claimed_off_too(api, snapshot):
+            lines = releases(api, snapshot)
+            api.remove_label(1, "claimed")
+            return lines
+
+        with mock.patch.object(github, "release_claims", claimed_off_too):
+            found = violations(steps, self.SPLIT)
+        self.assertIn(("G3", "made and not owed: ('label-off', 1, 'claimed')"), [(v.guarantee, v.detail) for v in found])
+        self.assertEqual(guarantees(found), ["G3", "G9"])
+
+    def test_the_first_half_is_judged_when_it_is_made(self):
+        """A search judges a first half at its last level as it judges a
+        whole run: a release made at exactly 24 hours is red on the
+        board-start step, not two steps later."""
+        steps = [Verb("claim", "a", (1,)), Verb("wait", "clock", (24,)),
+                 Verb("board-start", "board", (cycle.SCHEDULE, ""))]
+        self.assertEqual(violations(steps, self.SPLIT), [])
+        with mock.patch.object(github.claims, "is_idle", mutants.MUTANTS["idle at exactly 24 hours"].replacement):
+            self.assertEqual(guarantees(violations(steps, self.SPLIT)), ["G2", "G3", "G5"])
+
+
 class TheOpenFindingsShow(unittest.TestCase):
     """With its switch off the oracle reads the spec, and the finding is red."""
 
@@ -129,6 +214,21 @@ class TheOpenFindingsShow(unittest.TestCase):
                  Verb("move-main", M.OWNER), board_with(event=cycle.PULL_REQUEST)]
         self.assertEqual(violations(steps), [])
         self.assertEqual(guarantees(violations(steps, known=oracle.AS_BUILT - {"F12"})), ["G10"])
+
+    def test_f12_the_run_of_the_push_to_main_is_cancelled_behind_the_worker_s_own_push(self):
+        """The mechanism (DESIGN.md, F12): the worker's push to the claim
+        branch, with its pull request marked ready, holds the group while
+        its job is skipped, main moves behind it, the worker's next push
+        replaces the run that waited, and the runs that follow owe nothing
+        as built; reading the spec, the pull request is owed the word."""
+        scope = Scope(events=cycle.EVENTS, split_board=True)
+        steps = ([Verb("claim", "a", (1,))] + run(cycle.CREATE, "claude/1") + run(cycle.PUSH, "claude/1")
+                 + [Verb("open-draft", "a", (1,))] + run(cycle.PULL_REQUEST) + [Verb("mark-ready", "a", (100,)),
+                 Verb("commit", "a", (1,)), Verb("board-start", "board", (cycle.PUSH, "claude/1")),
+                 Verb("move-main", M.OWNER), Verb("commit", "a", (1,)), Verb("board-finish", "board")]
+                 + run(cycle.PULL_REQUEST) + run(cycle.PUSH, "claude/1"))
+        self.assertEqual(violations(steps, scope), [])
+        self.assertEqual(guarantees(violations(steps, scope, known=oracle.AS_BUILT - {"F12"})), ["G10"])
 
     def test_f7_a_lease_after_a_fetch_takes_another_s_claim(self):
         found = violations([Verb("claim", "a", (1,)), Verb("lease-onto", "b", (1,))], Scope(careless=True))

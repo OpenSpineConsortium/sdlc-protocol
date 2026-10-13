@@ -17,13 +17,23 @@ Actors: the workers of the scope, each a person's session that may write
 (author_association COLLABORATOR); the owner; carol, a collaborator; dana,
 a writer GitHub shows as a contributor, whom only the permission API
 vouches for; sam, a stranger with no write access; the clock; the board.
+
+Every act GitHub tells the board workflow of fires its events, as
+board.yml's triggers name them (a push, a branch made or deleted, a pull
+request opened, pushed to, reopened or closed, an issue closed or
+labelled; a comment fires none, and neither does marking a pull request
+ready), and the model queues a run for each the scope listens for
+(RepoModel.fire). The board verb starts one of the runs queued, or the
+schedule's, which replaces them; with the scope's split_board on, a run is
+two verbs, board-start and board-finish, with any verb but the clock's
+between them.
 """
 
 from typing import NamedTuple
 
 from sdlc_protocol import guard
 
-from . import cycle, oracle
+from . import cycle, model as M, oracle
 from .fake_github import Fault
 from .model import CLAIM_PREFIX, HOUR, MAIN, OWNER, RELEASED_PREFIX, Comment, PullRequest, claim_text
 
@@ -62,7 +72,8 @@ class Outcome(NamedTuple):
     """What a verb did: taken or not and why; the git command a push ran,
     the guard's refusal of it (None when it passed) and whether the rules
     allow the push's shape, which the guard must then pass; a board run's
-    record."""
+    record, or the first half of one (a cycle.HalfRun) when the run goes
+    on; and the workflow events the act fired, as (event, ref name)."""
 
     taken: bool
     note: str = ""
@@ -71,15 +82,20 @@ class Outcome(NamedTuple):
     run: object = None
     allowed_shape: bool = True
     guarded: bool = True
+    events: tuple = ()
+    half: object = None
 
 
 class Scope(NamedTuple):
     """What the checker may do (DESIGN.md, 6.2): which workers, issues and
     people act, which faults a board run may meet, how long the clock may
-    wait, which events start a board run, whether workers may be careless
-    (a lease onto another's claim, a misnamed claim, and the owner's push
-    of one by hand, which meets no guard), and the files each issue's claim
-    lists, by issue."""
+    wait, which events start a board run (the schedule, which the checker
+    fires when it likes, and the events the verbs fire, which queue runs
+    only when listed here), whether a board run is made in two halves with
+    other verbs between them, whether workers may be careless (a lease
+    onto another's claim, a misnamed claim, and the owner's push of one by
+    hand, which meets no guard), and the files each issue's claim lists,
+    by issue."""
 
     workers: tuple = ("a", "b")
     issues: tuple = (1,)
@@ -89,6 +105,7 @@ class Scope(NamedTuple):
     events: tuple = (cycle.SCHEDULE,)
     careless: bool = False
     files: tuple = ()
+    split_board: bool = False
 
     def files_of(self, number):
         return dict(self.files).get(number, (f"src/{number}.py",))
@@ -113,12 +130,16 @@ def guard_says(command, current_branch):
 
 def pushed(model, worker, ref, sha, command, force=False, lease=False, allowed=True, guarded=True):
     """Run one push through the guard, unless it is made by hand outside a
-    session, then git's rule."""
+    session, then git's rule. A push taken fires push, and create when it
+    made the branch."""
     refused = guard_says(command, ref) if guarded else None
     if refused:
         return Outcome(False, "refused by the guard", command, refused, allowed_shape=allowed)
+    created = ref not in model.refs
     answer = model.push(worker, ref, sha, force=force, lease=lease)
-    return Outcome(answer.taken, answer.why or "taken", command, allowed_shape=allowed, guarded=guarded)
+    events = ((cycle.PUSH, ref),) + (((cycle.CREATE, ref),) if created else ()) if answer.taken else ()
+    return Outcome(answer.taken, answer.why or "taken", command, allowed_shape=allowed, guarded=guarded,
+                   events=events)
 
 
 def released_refs(model, number):
@@ -159,9 +180,7 @@ def commit(model, worker, number, files, skew=0):
     ref = claim_ref(number)
     head = model.refs[ref]
     sha = model.commit((head,), worker, edited(model, head, worker, files), f"Work on #{number}", skew)
-    outcome = pushed(model, worker, ref, sha, f"git push origin {ref}")
-    touch_pull(model, ref, outcome)
-    return outcome
+    return touch_pull(model, ref, pushed(model, worker, ref, sha, f"git push origin {ref}"))
 
 
 def drop_claim_file(model, worker, number):
@@ -169,10 +188,8 @@ def drop_claim_file(model, worker, number):
     head = model.refs[ref]
     tree = model.tree(head)
     tree.pop(f"{CLAIM_DIR}/{number}.md", None)
-    outcome = pushed(model, worker, ref, model.commit((head,), worker, tree, f"Finish #{number}"),
-                     f"git push origin {ref}")
-    touch_pull(model, ref, outcome)
-    return outcome
+    return touch_pull(model, ref, pushed(model, worker, ref, model.commit((head,), worker, tree, f"Finish #{number}"),
+                                         f"git push origin {ref}"))
 
 
 def merged_tree(model, head, main):
@@ -195,9 +212,7 @@ def merge_main(model, worker, number):
     ref = claim_ref(number)
     head, main = model.refs[ref], model.refs[MAIN]
     sha = model.commit((head, main), worker, merged_tree(model, head, main), f"Merge {MAIN} into {ref}")
-    outcome = pushed(model, worker, ref, sha, f"git push origin {ref}")
-    touch_pull(model, ref, outcome)
-    return outcome
+    return touch_pull(model, ref, pushed(model, worker, ref, sha, f"git push origin {ref}"))
 
 
 def rebase_main(model, worker, number):
@@ -218,9 +233,8 @@ def rebase_main(model, worker, number):
             else:
                 tree.pop(path, None)
         tip = model.commit((tip,), record.author, tree, record.message)
-    outcome = pushed(model, worker, ref, tip, f"git push --force-with-lease origin {ref}", lease=True)
-    touch_pull(model, ref, outcome)
-    return outcome
+    return touch_pull(model, ref, pushed(model, worker, ref, tip, f"git push --force-with-lease origin {ref}",
+                                         lease=True))
 
 
 def lease_onto(model, worker, number, files):
@@ -241,9 +255,14 @@ def push_old_head(model, worker, number, released_ref):
 
 
 def touch_pull(model, ref, outcome):
+    """A push taken to a branch with an open pull request moves the pull
+    request too, and GitHub tells the workflow of it (pull_request
+    synchronize)."""
     pull = model.open_pull_from(ref)
     if outcome.taken and pull is not None:
         apply_pull_change(model, pull)
+        return outcome._replace(events=outcome.events + ((cycle.PULL_REQUEST, ""),))
+    return outcome
 
 
 def comment(model, author, number, body):
@@ -257,7 +276,7 @@ def open_draft(model, worker, number):
                        opened_at=model.now, updated_at=model.now)
     model.pulls[pull.number] = pull
     model.next_pull += 1
-    return Outcome(True, f"opened #{pull.number}")
+    return Outcome(True, f"opened #{pull.number}", events=((cycle.PULL_REQUEST, ""),))
 
 
 def mark_ready(model, number):
@@ -269,7 +288,8 @@ def mark_ready(model, number):
 
 def merge(model, number):
     """The owner merges a pull request: main gets a merge commit, the issue
-    its body closes is closed, and the repository deletes the head."""
+    its body closes is closed, and the repository deletes the head; GitHub
+    fires the four events at once (DESIGN.md, F12)."""
     pull = model.pulls[number]
     head, main = model.refs[pull.head], model.refs[MAIN]
     model.refs[MAIN] = model.commit((main, head), OWNER, merged_tree(model, head, main), f"Merge #{number}")
@@ -279,19 +299,21 @@ def merge(model, number):
     if closed in model.issues:
         model.issues[closed].state = "closed"
     model.delete_ref(pull.head)
-    return Outcome(True, "merged")
+    return Outcome(True, "merged", events=((cycle.PUSH, MAIN), (cycle.PULL_REQUEST, ""), (cycle.ISSUES, ""),
+                                           (cycle.DELETE, MAIN)))
 
 
 def move_main(model, path="README.md"):
     """Someone else lands a change on main."""
     main = model.refs[MAIN]
     model.refs[MAIN] = model.commit((main,), OWNER, edited(model, main, OWNER, (path,)), "Elsewhere")
-    return Outcome(True, "main moved")
+    return Outcome(True, "main moved", events=((cycle.PUSH, MAIN),))
 
 
 def tidy(model, number):
     """The tidy workflow: a closed issue loses claude/<n>, once no open pull
-    request uses it, and every released/<n>-<sha> a release left."""
+    request uses it, and every released/<n>-<sha> a release left. Its
+    deletes are made with GITHUB_TOKEN, which starts no workflow run."""
     for ref in [claim_ref(number)] + released_refs(model, number):
         if ref in model.refs and model.open_pull_from(ref) is None:
             model.delete_ref(ref)
@@ -299,32 +321,78 @@ def tidy(model, number):
 
 
 def rename_back(model, number, released_ref):
+    """A person renames the branch back by hand: a branch made and one
+    deleted, as GitHub tells the workflow of a rename."""
     model.rename_ref(released_ref, claim_ref(number))
-    return Outcome(True, "renamed back")
+    return Outcome(True, "renamed back", events=((cycle.CREATE, claim_ref(number)), (cycle.DELETE, MAIN)))
 
 
 def reopen(model, number):
     pull = model.pulls[number]
     pull.state = "open"
     apply_pull_change(model, pull)
-    return Outcome(True, "reopened")
+    return Outcome(True, "reopened", events=((cycle.PULL_REQUEST, ""),))
 
 
 def board(model, event, ref_name="", faults=()):
+    """A board run made whole for the event, which leaves the queue if it
+    was there and replaces what waited if not; a run the job skips, a push
+    to a claim branch, holds the group for a moment and does nothing."""
+    model.starts(event, ref_name)
+    if M.skipped((event, ref_name)):
+        model.finished()
+        return Outcome(True, "a run of nothing")
     record = cycle.board_run(model, event, ref_name, tuple(FAULTS[f] for f in faults))
+    return Outcome(True, f"exit {record.exit_code}", run=record)
+
+
+def board_start(model, event, ref_name="", faults=()):
+    """The first half of a board run, which the checks judge at once; the
+    run goes on in model.running. A run the job skips goes on there too,
+    reading and writing nothing, so that what happens while it holds the
+    group is seen."""
+    model.starts(event, ref_name)
+    if M.skipped((event, ref_name)):
+        model.running = cycle.SkippedRun(event, ref_name)
+        return Outcome(True, "a run of nothing in progress")
+    half = cycle.start_run(model, event, ref_name, tuple(FAULTS[f] for f in faults))
+    return Outcome(True, "first half done", half=half)
+
+
+def board_finish(model):
+    """The second half of the run in progress, whose record the checks
+    judge, with the states it started from."""
+    if isinstance(model.running, cycle.SkippedRun):
+        model.running = None
+        model.finished()
+        return Outcome(True, "the run of nothing done")
+    record = cycle.finish_run(model)
     return Outcome(True, f"exit {record.exit_code}", run=record)
 
 
 # --- one verb on the model ----------------------------------------------------
 
 def apply(model, verb, scope=Scope()):
-    """Apply the verb to the model in place; what happened."""
+    """Apply the verb to the model in place; what happened. The events the
+    act fired queue board runs when the scope listens for them."""
+    outcome = act(model, verb, scope)
+    fired = tuple(e for e in outcome.events if e[0] in scope.events)
+    if fired:
+        model.fire(fired, skipped_runs=scope.split_board)
+    return outcome
+
+
+def act(model, verb, scope):
     name, actor, args = verb
     if name == "wait":
         model.now += args[0] * HOUR
         return Outcome(True, "waited")
     if name == "board":
         return board(model, *args)
+    if name == "board-start":
+        return board_start(model, *args)
+    if name == "board-finish":
+        return board_finish(model)
     if name == "move-main":
         return move_main(model, *args)
     number = args[0] if args else None
@@ -347,10 +415,13 @@ def apply(model, verb, scope=Scope()):
     if name == "push-old-head":
         return push_old_head(model, actor, number, args[1])
     if name == "label-on":
+        if args[1] in model.issues[number].labels:
+            return Outcome(True, "labelled already")
         model.add_label(number, actor, args[1])
-        return Outcome(True, "labelled")
+        return Outcome(True, "labelled", events=((cycle.ISSUES, ""),))
     if name == "label-off":
-        return Outcome(model.remove_label(number, actor, args[1]), "label taken off")
+        taken = model.remove_label(number, actor, args[1])
+        return Outcome(taken, "label taken off", events=((cycle.ISSUES, ""),) if taken else ())
     if name == "plan":
         return comment(model, actor, number, f"Plan for #{number}: do it in small commits.")
     if name == "finished":
@@ -365,7 +436,7 @@ def apply(model, verb, scope=Scope()):
         return merge(model, number)
     if name == "close-issue":
         model.issues[number].state = "closed"
-        return Outcome(True, "closed")
+        return Outcome(True, "closed", events=((cycle.ISSUES, ""),))
     if name == "tidy":
         return tidy(model, number)
     if name == "rename-back":
@@ -378,15 +449,37 @@ def apply(model, verb, scope=Scope()):
 # --- what a scope allows ------------------------------------------------------
 
 def enabled(model, scope):
-    """Every verb the scope allows in this state, in a fixed order."""
-    found = [Verb("wait", CLOCK, (hours,)) for hours in scope.waits]
-    found += [Verb("board", BOARD, (event, MAIN if event == cycle.PUSH else "")) for event in scope.events]
-    found += [Verb("board", BOARD, (scope.events[0], MAIN if scope.events[0] == cycle.PUSH else "", (fault,)))
-              for fault in scope.faults]
+    """Every verb the scope allows in this state, in a fixed order. A run
+    queued into an idle group starts within seconds, before anything else
+    happens, so while one is queued the only verbs are its starts; while a
+    run is between its halves the clock stands, since a run takes half a
+    minute, and no other run starts, since the concurrency group runs one
+    at a time."""
+    found = []
+    if model.running is not None:
+        found.append(Verb("board-finish", BOARD))
+    elif model.queued:
+        return board_verbs(model, scope)
+    else:
+        found += [Verb("wait", CLOCK, (hours,)) for hours in scope.waits]
+        found += board_verbs(model, scope)
     if OWNER in scope.people:
         found.append(Verb("move-main", OWNER))
     for number in scope.issues:
         found += issue_verbs(model, scope, number)
+    return found
+
+
+def board_verbs(model, scope):
+    """The runs that can start: the run queued, which GitHub starts before
+    anything else, or, with the group idle, the schedule's, whenever the
+    checker likes; the faults the scope names are met on each. The schedule
+    fires only into an idle group: arriving behind a run it would do what
+    any other event does, replace the run pending."""
+    name = "board-start" if scope.split_board else "board"
+    starts = list(model.queued) or ([(cycle.SCHEDULE, "")] if cycle.SCHEDULE in scope.events else [])
+    found = [Verb(name, BOARD, start) for start in starts]
+    found += [Verb(name, BOARD, start + ((fault,),)) for start in starts for fault in scope.faults]
     return found
 
 

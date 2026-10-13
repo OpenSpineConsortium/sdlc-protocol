@@ -2,7 +2,7 @@
 check: the lane's size, every mutant's target still in the library, and
 each mutant caught on its shortest trace, which the library itself passes.
 The lane proper, every mutant against every search, runs in validate.yml
-(python3 -m validation.mutants), since it takes about 90 seconds; these traces are
+(python3 -m validation.mutants), since it takes about 100 seconds; these traces are
 what the lane found, kept so a change that stops the harness catching a
 mutant fails here too, naming the rule."""
 
@@ -54,6 +54,9 @@ TRACES = {
                                           Scope(careless=True)),
     "the guard passes a misnamed claim": ([CLAIM, CLAIMED, Verb("claim-misnamed", "a", (1, "claude/01"))],
                                           Scope(careless=True)),
+    "the rename made without reading the head again": (HELD + [WAIT, Verb("board-start", "board", (cycle.SCHEDULE, "")),
+                                                               Verb("commit", "a", (1,)), Verb("board-finish", "board")],
+                                                       Scope(split_board=True)),
 }
 
 
@@ -82,7 +85,7 @@ class TheLane(unittest.TestCase):
                 self.assertIn(mutant.guarantee, invariants.GUARANTEES)
 
     def test_the_searches_are_cheapest_first_and_each_says_what_it_knows(self):
-        self.assertEqual(mutants.SEARCHES[-1].name, "a held claim, the clock and a release by hand")
+        self.assertEqual(mutants.SEARCHES[-1].name, "the holder back between the halves of a run")
         self.assertEqual([s.known for s in mutants.SEARCHES if s.known], [(mutants.F7,)])
 
 

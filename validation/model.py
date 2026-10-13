@@ -54,6 +54,12 @@ def moment(minute):
     return T0 + timedelta(minutes=minute)
 
 
+def skipped(run):
+    """Whether the run, as (event, ref name), is one board.yml's job skips:
+    a push to any branch but the default."""
+    return run[0] == "push" and run[1] != MAIN
+
+
 @dataclass(frozen=True)
 class Commit:
     parents: tuple
@@ -135,6 +141,15 @@ class RepoModel:
     tracking: dict = field(default_factory=dict)
     # The board branch's STATE.md: written only by a board run that exits 0.
     board_text: str = ""
+    # The board workflow's concurrency group (DESIGN.md, 3.3), each run as
+    # (event, ref name): the run that starts next, which GitHub never
+    # cancels, as the candidates one of which it is; the run waiting behind
+    # it, as the candidates one of which it is, which the next event
+    # replaces; and the run in progress between its two halves, a
+    # cycle.HalfRun, while one is.
+    queued: tuple = ()
+    pending: tuple = ()
+    running: object = None
 
     # --- commits ------------------------------------------------------------
 
@@ -296,10 +311,69 @@ class RepoModel:
         found = self.target(number)
         return found.comments if found else ()
 
+    # --- the board workflow's queue -------------------------------------------
+
+    def fire(self, events, skipped_runs=False):
+        """The last act's events, as (event, ref name), reached the board
+        workflow, which queues a run for each (board.yml's push, create,
+        delete, pull_request and issues). With the group idle the first
+        starts, and GitHub cancels no run in progress; a run queued behind
+        one is pending, and a newer pending run replaces it, so whatever
+        waited is cancelled (github/docs, actions-group-concurrency.md).
+        Which of several fired at once starts, and which of the rest is the
+        one left pending, is not known, so all are kept as candidates until
+        one starts. A push to any branch but the default queues a run whose
+        job is skipped (board.yml's condition): it holds the group for the
+        seconds the skip takes and does nothing. With skipped_runs, which
+        the split scope sets, it is kept as a run like any other, since
+        something can happen while it holds the group; without, it is left
+        out, which is exact for a run made whole, since nothing happens
+        while one is in progress: with the group idle it runs and is gone,
+        and with the group busy it takes the pending slot, so whatever
+        waited is cancelled."""
+        runs = tuple(sorted(set(events)))
+        if not skipped_runs:
+            runs = tuple(e for e in runs if not skipped(e))
+        if self.running is None and not self.queued:
+            self.queued = runs
+            self.pending = runs if len(runs) > 1 else ()
+        else:
+            self.pending = runs
+
+    def starts(self, event, ref_name):
+        """A board run for the event starts: the one queued leaves the queue
+        and its fellows are the candidates for the run pending behind it,
+        since nothing fires between a run's queuing and its start (the
+        verbs offer no other act while a run is queued); the pending one
+        leaves its fellows cancelled; any other, the schedule's or one a
+        trace names, came as a newer event and replaced what waited."""
+        run = (event, ref_name)
+        if run in self.queued:
+            self.queued = ()
+            self.pending = tuple(e for e in self.pending if e != run)
+        else:
+            self.pending = ()
+
+    def finished(self):
+        """The run in progress is done: the one pending behind it starts,
+        unless one a trace started out of turn left the queued run waiting."""
+        if not self.queued:
+            self.queued, self.pending = self.pending, ()
+
     # --- the key ------------------------------------------------------------
 
     def canonical(self):
-        """Everything any guarantee or the oracle reads, as one hashable value."""
+        """Everything any guarantee or the oracle reads, as one hashable
+        value: the repository, the runs queued, and the run in progress by
+        what it started from, since what its first half did and what its
+        second will do follow from that."""
+        return self.repository_key() + (self.queued, self.pending, self.running.key() if self.running else None)
+
+    def repository_key(self):
+        """The repository alone, without the runs queued or the run in
+        progress: HalfRun.key and the checks of a run in two halves compare
+        the model before and after a run starts, when the queue has moved
+        but nothing the run reads has."""
         return (
             self.now,
             tuple(sorted(self.refs.items())),
