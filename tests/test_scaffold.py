@@ -194,6 +194,29 @@ def steps_of(job):
     return ["\n".join(step) + "\n" for step in steps]
 
 
+def step_ids(job):
+    """Each step of a job that has an id, by that id."""
+    found = {}
+    for step in steps_of(job):
+        match = re.search(r"(?m)^ {6}(?:- | {2})id: ([\w-]+)$", step)
+        if match:
+            found[match.group(1)] = step
+    return found
+
+
+def job_outputs(job):
+    """The names of the outputs a job declares."""
+    block = re.search(r"(?m)^    outputs:\n((?: {6}.*\n)+)", job)
+    return set(re.findall(r"(?m)^ {6}([\w-]+): ", block.group(1))) if block else set()
+
+
+def keys_that_skip_or_forgive(job):
+    """Each step's if: or continue-on-error: in a job, and the job's own
+    continue-on-error:, the keys that let a step run after a failure or
+    let a failure pass."""
+    return re.findall(r"(?m)^(?: {6}(?:- | {2})(?:if|continue-on-error)| {4}continue-on-error):.*$", job)
+
+
 def shell_script(step):
     """The script a run: step hands bash: the rest of the key's line, or
     the block under it, dedented."""
@@ -250,6 +273,12 @@ class SyncWorkflow(unittest.TestCase):
         self.assertNotIn("push:", self.on)
         self.assertNotIn("paths:", self.on)
 
+    def test_follows_the_release_workflow_by_the_name_release_yml_gives_itself(self):
+        """workflow_run matches a workflow by its name, so renaming Release
+        alone would leave the sync to its weekly run, saying nothing."""
+        name = re.match(r"name: (.+)\n", workflow("release.yml")).group(1)
+        self.assertEqual(re.findall(r"(?m)^    workflows: \[(.*)\]$", self.on), [name])
+
     def test_runs_by_hand_and_weekly_off_the_hour(self):
         self.assertIn("  workflow_dispatch:\n", self.text)
         minute = re.search(r'- cron: "(\d+) ', self.text).group(1)
@@ -259,9 +288,12 @@ class SyncWorkflow(unittest.TestCase):
         """A pull request can make a run of its own named Release, a fork's
         too, and that run's completion starts this workflow with the App's
         key at hand: scripts/sync.py reads the run from GitHub's event file
-        and the plan stops unless main started it and it succeeded."""
+        and the plan stops unless main started it and it succeeded. The run
+        is compared with this repository, github.repository, never with a
+        name the event carries, which a fork's run would make its own."""
         plan = self.jobs["plan"]
         self.assertIn("EVENT: ${{ github.event_name }}", plan)
+        self.assertIn("          REPO: ${{ github.repository }}\n", plan)
         self.assertRegex(plan, r'if \[ "\$EVENT" = "workflow_run" \]; then\n'
                                r'\s+why="\$\(python3 scripts/sync.py after-release "\$GITHUB_EVENT_PATH" '
                                r'--repository "\$REPO"\)"\n'
@@ -346,7 +378,27 @@ class SyncWorkflow(unittest.TestCase):
         plan = self.jobs["plan"]
         self.assertIn("      matrix: ${{ steps.consumers.outputs.matrix }}\n", plan)
         self.assertIn('matrix="$(python3 scripts/sync.py --library release matrix)"', plan)
-        self.assertIn("          ref: ${{ steps.plan.outputs.commit }}\n          path: release\n", plan)
+        self.assertIn("          ref: ${{ steps.plan.outputs.commit }}\n          path: release\n"
+                      "          persist-credentials: false\n", plan)
+
+    def test_only_the_consumers_checkout_keeps_a_credential(self):
+        """Nothing is pushed from this repository's checkouts, so none of
+        them keeps a token in its git configuration; the consumer's is the
+        one the job pushes to."""
+        checkouts = [step for job in self.jobs.values() for step in steps_of(job) if "uses: actions/checkout@" in step]
+        self.assertEqual(len(checkouts), 5)
+        for step in checkouts:
+            with self.subTest(step=step.splitlines()[1:3]):
+                if "repository: ${{ matrix.repository }}" in step:
+                    self.assertNotIn("persist-credentials", step)
+                else:
+                    self.assertIn("          persist-credentials: false\n", step)
+
+    def test_nothing_in_a_leg_is_skipped_or_may_fail_quietly(self):
+        """The guard before the App's key stops a leg only while no step
+        there is told to run anyway or to let a failure pass."""
+        self.assertEqual(keys_that_skip_or_forgive(self.jobs["sync"]), [])
+        self.assertNotIn("continue-on-error", self.text)
 
     def test_the_pull_requests_words_read_the_releases_ecosystem_and_history(self):
         self.assertIn('sync="python3 $GITHUB_WORKSPACE/scripts/sync.py --library $GITHUB_WORKSPACE/release"',
@@ -475,6 +527,16 @@ class ReleaseWorkflow(unittest.TestCase):
         self.assertIn('| tee -a "$GITHUB_STEP_SUMMARY"\n            exit 1\n          fi\n', refusal)
         self.assertNotIn("gh release", first)
 
+    def test_nothing_in_the_job_that_tags_is_skipped_or_may_fail_quietly(self):
+        """A failed approval step stops the job only while no step there is
+        told to run anyway or to let a failure pass: continue-on-error on
+        the approval step, or an if such as always() on the tagging step,
+        would tag with no approval. The job's one if is the one that runs
+        it only when something is due."""
+        self.assertEqual(keys_that_skip_or_forgive(self.release), [])
+        self.assertEqual(re.findall(r"(?m)^    if: .*$", self.release), ["    if: needs.plan.outputs.due != ''"])
+        self.assertNotIn("continue-on-error", self.text)
+
     def test_the_job_that_tags_runs_nothing_from_the_repository(self):
         """It holds the token that writes contents, so it checks nothing out
         and runs no script: the plan's list reaches it as a value."""
@@ -586,6 +648,27 @@ class EveryWorkflow(unittest.TestCase):
                     done = subprocess.run(["bash", "-n"], input=shell_script(step), capture_output=True,
                                           text=True, timeout=30)
                     self.assertEqual(done.returncode, 0, done.stderr)
+
+    def test_every_output_a_job_reads_is_one_a_step_or_a_job_writes(self):
+        """steps.<id>.outputs.<name> must name a step of the same job by its
+        id, one that writes that name to GITHUB_OUTPUT unless an action
+        writes it, and needs.<job>.outputs.<name> an output that job
+        declares. A name that matches nothing reads as an empty string, and
+        an empty ref makes actions/checkout take the run's own commit."""
+        for path in sorted(WORKFLOWS.glob("*.yml")):
+            jobs = jobs_of(path.read_text(encoding="ascii"))
+            for name, job in jobs.items():
+                ids = step_ids(job)
+                for step_id, output in re.findall(r"steps\.([\w-]+)\.outputs\.([\w-]+)", job):
+                    with self.subTest(workflow=path.name, job=name, step=step_id, output=output):
+                        self.assertIn(step_id, ids)
+                        if "uses: " not in ids[step_id]:
+                            self.assertRegex(ids[step_id], rf'echo "{re.escape(output)}(=|<<)')
+                            self.assertIn('"$GITHUB_OUTPUT"', ids[step_id])
+                for needed, output in re.findall(r"needs\.([\w-]+)\.outputs\.([\w-]+)", job):
+                    with self.subTest(workflow=path.name, job=name, needs=needed, output=output):
+                        self.assertIn(needed, jobs)
+                        self.assertIn(output, job_outputs(jobs[needed]))
 
     def test_every_action_is_pinned_to_a_major_tag_and_the_same_one_everywhere(self):
         seen = {}
