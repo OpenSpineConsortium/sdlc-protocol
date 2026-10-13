@@ -104,6 +104,41 @@ class Spec(unittest.TestCase):
             self.assertIn(name, readme)
 
 
+class TheReadme(unittest.TestCase):
+    """What README.md tells the people who change the library and the owner
+    who approves its releases, where the workflows depend on it."""
+
+    def setUp(self):
+        self.text = (ROOT / "README.md").read_text(encoding="ascii")
+
+    def section(self, heading):
+        """The section under heading, up to the next heading of any level."""
+        start = self.text.index(f"\n{heading}\n") + 1
+        end = self.text.find("\n#", start)
+        return self.text[start:] if end == -1 else self.text[start:end]
+
+    def test_a_change_a_consumer_must_answer_raises_the_version_before_the_consumer_vendors_it(self):
+        """scripts/vendor.py records the last commit that changed the
+        package, so a raise made after the consumer vendored the branch
+        moves the release past that copy, and the sync then brings the
+        consumer the raise in a pull request of its own, where the steps
+        promise it up to date. Was: step 3 raised the version at the
+        merge, after step 2's copy."""
+        steps = self.section("### A change a consumer must answer")
+        first = steps[steps.index("\n1. "):steps.index("\n2. ")]
+        merge = steps[steps.index("\n3. "):steps.index("\n4. ")]
+        self.assertIn("raise the version from the start, before any consumer vendors it", first)
+        self.assertNotIn("raising the version", merge)
+
+    def test_says_the_one_way_a_change_reaches_a_consumer_before_its_release(self):
+        """A consumer that must answer a change takes the branch by a pull
+        request of its own, before the release exists, so the page may not
+        promise that nothing reaches a consumer before the approval."""
+        opening = self.section("## How a change reaches the other repositories").split("\n1. ")[0]
+        self.assertNotIn("nothing reaches a consumer before that approval", opening)
+        self.assertIn("One way runs ahead of a release, on purpose: a change a consumer must answer", opening)
+
+
 class Pyproject(unittest.TestCase):
     def setUp(self):
         self.data = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))

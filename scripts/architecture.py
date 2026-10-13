@@ -209,10 +209,12 @@ def travel(eco):
         "A change a consumer must answer, such as a rendered string its test pins or a function it calls "
         "differently, turns that consumer's `downstream (<consumer>)` job red, and the sync cannot carry "
         f"it: it rebuilds `{sync.BRANCH}` from the consumer's main on every run, so a fix pushed there is "
-        "lost. The consumer goes first: a pull request of its own vendors this repository's branch and "
-        "answers the change, and merges; the downstream job here then turns green, this pull request "
-        "merges, raising the version, and once the owner approves that release the sync finds that consumer "
-        "up to date. README.md, \"How a change reaches the other repositories\", has the steps.",
+        "lost. The consumer goes first: this pull request raises the version from the start, a pull request "
+        "of the consumer's own vendors its branch and answers the change, and merges, ahead of the release, "
+        "which is the one way a change reaches a consumer before the owner's approval; the downstream job "
+        "here then turns green, this pull request merges, and once the owner approves its release the sync "
+        "finds that consumer up to date. README.md, \"How a change reaches the other repositories\", has "
+        "the steps.",
     ]
 
 

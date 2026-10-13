@@ -95,6 +95,15 @@ class ThePage(unittest.TestCase):
         self.assertIn("carries the newest published release, never main's head", self.text)
         self.assertNotIn("vendors the new main", self.text)
 
+    def test_a_consumer_that_goes_first_takes_the_raised_version_and_is_the_one_exception(self):
+        """A raise made after the consumer vendored the branch moves the
+        release past its copy, so the pull request raises the version from
+        the start; and the consumer's copy has the change before the
+        release, which the page says rather than promising otherwise."""
+        self.assertIn("this pull request raises the version from the start", self.text)
+        self.assertIn("the one way a change reaches a consumer before the owner's approval", self.text)
+        self.assertNotIn("this pull request merges, raising the version", self.text)
+
 
 class Words(unittest.TestCase):
     def test_a_summary_is_the_docstrings_first_sentence_on_one_line(self):
