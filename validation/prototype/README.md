@@ -15,7 +15,7 @@ python3 validation/prototype/<file> [arguments]
 
 Each script finds the library at the repository's root from its own path, so it measures the library as the checkout holds it, and finds the prototype's other modules beside it. The scripts that make git repositories make them in a temporary directory, remove it at the end, and do not read the host's git configuration. Only the three property files need something more: CrossHair, from a scratch virtual environment (below).
 
-The outputs below were printed on 2026-10-13, from a checkout at cf3bdb0 (the package at a996ec9), on 4 CPUs shared with other work, Python 3.12.3 and git 2.43.0. State counts, traces and verdicts reproduce; times move with the load. Characters outside ASCII that a script prints are written here as `\u` escapes.
+The outputs below were printed on 2026-10-13, from a checkout at cf3bdb0 (the package at a996ec9), on 4 CPUs shared with other work, Python 3.12.3 and git 2.43.0. State counts, traces and verdicts reproduce; times move with the load, and CrossHair can report another counterexample of the same kind from one run to the next. Characters outside ASCII that a script prints are written here as `\u` escapes; unicode_classes.py prints its names through `ascii()`, so its output is shown as it prints.
 
 ## How these copies differ from the ones measured
 
@@ -434,9 +434,9 @@ exit code: 1 | STATE.md written locally: True
 ```
 $ python3 validation/prototype/unicode_classes.py
 Unicode 15.0.0: 128 code points isdigit but not isdecimal, 670 isdecimal outside ASCII
-  ordering claims never raises: broken by '\u00b2'
-  the board renders any branch: broken by '\u00b2'
-  a + refspec is refused: broken by '\u00b2'
+  ordering claims never raises: broken by '\xb2'
+  the board renders any branch: broken by '\xb2'
+  a + refspec is refused: broken by '\xb2'
   a claim branch names one issue: broken by '\u0660'
 classes built in 666 ms, 2403 names tried in 130 ms
 ```
