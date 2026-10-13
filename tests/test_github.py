@@ -63,6 +63,21 @@ class Refusal:
         return urllib.error.HTTPError(url, self.code, "refused", {}, io.BytesIO(raw))
 
 
+class CutBody(io.BytesIO):
+    """A refusal's body whose connection closed before it was whole."""
+
+    def read(self, *_):
+        raise http.client.IncompleteRead(b'{"message"', 90)
+
+
+class CutRefusal(Refusal):
+    """An HTTP error whose body was cut short, which http.client tells by
+    raising IncompleteRead when the body is read for GitHub's words."""
+
+    def raised(self, url):
+        return urllib.error.HTTPError(url, self.code, "refused", {}, CutBody())
+
+
 def send_line(call):
     """Write a request's line as http.client writes it before it connects,
     which refuses a path it cannot send as ASCII (UnicodeEncodeError), or
@@ -337,6 +352,19 @@ class Token(unittest.TestCase):
                 api.get("/repos/o/r/issues")
             self.assertEqual(str(caught.exception), f"GET /repos/o/r/issues: {said}")
 
+    def test_a_refusal_whose_body_was_cut_short_is_a_github_error_without_githubs_words(self):
+        # The body is read for GitHub's words inside the handler of the
+        # refusal, where the handler of http.client's exceptions beside it
+        # never sees what is raised, so the IncompleteRead left request as
+        # it was, past every caller that turns a refusal into a line.
+        for code in (403, 422, 500):
+            api, _ = client({"POST /repos/o/r/issues/40/comments": CutRefusal(code)})
+            with self.assertRaises(github.GitHubError) as caught:
+                api.post("/repos/o/r/issues/40/comments", {"body": "x"})
+            self.assertEqual(str(caught.exception), f"POST /repos/o/r/issues/40/comments: HTTP {code}")
+            self.assertEqual((caught.exception.status, caught.exception.detail), (code, ""))
+        self.assertEqual(github.error_detail(CutRefusal(500).raised(github.API + "/repos/o/r")), "")
+
     def test_a_path_http_client_cannot_send_is_refused_by_the_fake_as_by_http_client(self):
         # http.client writes the request line in ASCII and refuses any
         # other path before it connects; the fake every test here talks to
@@ -456,6 +484,32 @@ class Collect(unittest.TestCase):
         snap, answers = fixture_answers()
         answers["/repos/o/r/issues/40/comments?per_page=100"] = FakeAnswer([])
         answers["POST /repos/o/r/issues/40/comments"] = Refusal(500)
+        answers["/repos/o/r/issues/41/comments?per_page=100"] = FakeAnswer([])
+        answers["POST /repos/o/r/issues/41/comments"] = FakeAnswer({})
+        api, _ = client(answers)
+        environ = {"GITHUB_TOKEN": "t", "GITHUB_REPOSITORY": "o/r", "GITHUB_EVENT_NAME": "push",
+                   "GITHUB_REF_NAME": "main"}
+        with tempfile.TemporaryDirectory() as folder:
+            out = Path(folder) / "STATE.md"
+            printed, said = io.StringIO(), io.StringIO()
+            with mock.patch.object(github, "GitHub", lambda token, repo: api), \
+                 redirect_stdout(printed), redirect_stderr(said):
+                code = cli.run_board(["--sha", snap["sha"], "--out", str(out)], environ)
+            self.assertEqual((code, said.getvalue()), (0, ""))
+            self.assertEqual(out.read_bytes(), (FIXTURES / "board-STATE.md").read_bytes())
+            self.assertEqual(printed.getvalue().splitlines(), [
+                f"{out.as_posix()}: rewritten",
+                "PR #40: main-moved comment failed: POST /repos/o/r/issues/40/comments: HTTP 500",
+                "PR #40: idle comment failed: POST /repos/o/r/issues/40/comments: HTTP 500",
+                "PR #41: idle comment posted"])
+
+    def test_a_board_run_whose_refused_comment_came_with_a_cut_body_writes_the_board_and_exits_0(self):
+        # The refusal's body, read for GitHub's words, raised IncompleteRead,
+        # which ended the run after STATE.md was written, so the workflow
+        # wrote no board to its branch and #41's comment was never tried.
+        snap, answers = fixture_answers()
+        answers["/repos/o/r/issues/40/comments?per_page=100"] = FakeAnswer([])
+        answers["POST /repos/o/r/issues/40/comments"] = CutRefusal(500)
         answers["/repos/o/r/issues/41/comments?per_page=100"] = FakeAnswer([])
         answers["POST /repos/o/r/issues/41/comments"] = FakeAnswer({})
         api, _ = client(answers)

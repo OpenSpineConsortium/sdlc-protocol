@@ -89,10 +89,14 @@ def next_link(headers):
 
 def error_detail(problem):
     """GitHub's message from a refused call's JSON body, or "" when the
-    body is empty, unreadable or not GitHub's shape."""
+    body is empty, unreadable or not GitHub's shape. A body cut short
+    raises http.client's IncompleteRead, which is no OSError, when it is
+    read, and GitHub.request reads it inside its handler of the refusal,
+    whose neighbours never catch what a handler raises: only this except
+    keeps it from ending the run."""
     try:
         body = json.loads(problem.read() or b"null")
-    except (AttributeError, OSError, TypeError, ValueError):
+    except (AttributeError, OSError, TypeError, ValueError, http.client.HTTPException):
         return ""
     return str(body.get("message") or "") if isinstance(body, dict) else ""
 
