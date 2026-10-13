@@ -772,6 +772,26 @@ class Releases(unittest.TestCase):
             self.assertEqual(coordinator.releases_due(snap, NOW), [], comments)
             self.assertEqual(board.released_keys(snap), set(), comments)
 
+    def test_a_finished_draft_whose_labels_alone_came_off_is_held_until_a_person_posts_the_release(self):
+        # The spec's Release section: a finished draft is released by hand
+        # only with the release comment, since no coordinator's comment
+        # follows the labels coming off, as it does for any other claim.
+        _, answers = released_answers()
+        answers[DRAFT_COMMENTS_40] = FakeAnswer([FINISHED])
+        answers[COMMENTS_12] = FakeAnswer([])
+        api, _ = client(answers)
+        snap = github.snapshot(api, "abc", "main")
+        page = board.render(snap)
+        self.assertIn("| #12 | claude/12 |", page)
+        self.assertNotIn("| #12 |", page.split(board.QUEUE_HEADING)[1])
+        self.assertEqual(coordinator.releases_due(snap, NOW), [])
+        answers[COMMENTS_12] = FakeAnswer([RELEASE_COMMENT])
+        api, _ = client(answers)
+        snap = github.snapshot(api, "abc", "main")
+        self.assertEqual(board.released_keys(snap), {"12"})
+        self.assertIn("| #12 | Describe the board | todo |", board.render(snap).split(board.QUEUE_HEADING)[1])
+        self.assertEqual(coordinator.releases_due(snap, NOW), [])
+
     def test_a_finished_claim_costs_no_call(self):
         ready, answers = released_answers()
         answers["/repos/o/r/pulls/40"] = FakeAnswer({k: v for k, v in ready["pulls"][0].items() if k != "files"})

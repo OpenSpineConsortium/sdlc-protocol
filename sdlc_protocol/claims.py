@@ -47,7 +47,9 @@ RELEASED_PREFIX = "released/"
 # What a worker that may not mark its pull request ready, a cloud session
 # whose gh pr calls are refused, comments on its draft when the work is
 # done, for a maintainer to mark: a draft whose author's latest comment
-# starts with it is finished, and waits for review as a ready one does.
+# starts with it is finished, and waits for its review, which the
+# coordinator never cuts short with a release; a person who may write
+# can still release it by hand, and that release counts.
 FINISHED_SIGNAL = "finished; ready to mark"
 
 # The line that names the claim's worker: "- Worker: name", or the older
@@ -289,8 +291,9 @@ def is_trusted_author(comment, trusted=None):
 
 def said_finished(comments, author):
     """Whether the author's latest comment among a pull request's comments
-    starts with FINISHED_SIGNAL, so the draft is finished and its claim is
-    never released however long it waits."""
+    starts with FINISHED_SIGNAL, so the draft is finished, and the
+    coordinator never releases its claim however long it waits; a
+    person's release of it still counts."""
     theirs = [c for c in comments if (c.get("user") or {}).get("login") == author and author]
     if not theirs:
         return False

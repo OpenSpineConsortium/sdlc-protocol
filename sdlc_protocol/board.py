@@ -363,29 +363,30 @@ def claimed_numbers(branches, released=()):
 
 
 def released_keys(snapshot, idle_after=IDLE_AFTER):
-    """The claims the coordinator released, by issue key: a claim branch
-    whose issue is open and no longer labelled claimed, whose latest
-    release comment came after the branch had gone without a commit for
-    more than idle_after, and which nothing has been committed to since
-    (claims.was_released). It takes both of the coordinator's acts, the
-    comment and the label it takes off, so a stray comment frees nothing;
-    a commit after the release, its holder's or a new claim's, ends it;
-    and putting the label claimed back undoes it. A finished claim is never
-    released, however long it waits for review: one whose issue is labelled
-    in-review or whose pull request is marked ready; a draft its author
-    called finished only by a person, since the coordinator never releases
-    one. The board leaves a released claim off the page and puts its issue
-    back in the queue, and the GitHub adapter renames its branch, so the
-    name is free for the next claim; the page reads the same before the
-    rename and after it, so one release rewrites the board once."""
+    """The claims released, by the coordinator or by a person who may
+    write, by issue key: a claim branch whose issue is open and no longer
+    labelled claimed, whose latest release comment came after the branch
+    had gone without a commit for more than idle_after, and which nothing
+    has been committed to since (claims.was_released). It takes both acts
+    of a release, the comment and the label claimed taken off, so a stray
+    comment frees nothing; a commit after the release, its holder's or a
+    new claim's, ends it; and putting the label claimed back undoes it. A
+    finished claim is never released, however long it waits for review:
+    one whose issue is labelled in-review or whose pull request is marked
+    ready; a draft its author called finished only by a person, since the
+    coordinator never releases one. The board leaves a released claim off
+    the page and puts its issue back in the queue, and the GitHub adapter
+    renames its branch, so the name is free for the next claim; the page
+    reads the same before the rename and after it, so one release rewrites
+    the board once."""
     snap = as_snapshot(snapshot)
     return {key_of(b) for b in claim_branches(snap.branches) if is_released(snap, key_of(b), idle_after)}
 
 
 def is_released(snap, key, idle_after=IDLE_AFTER):
-    """Whether the coordinator released the claim with this key, by
-    released_keys' rule; a claim with no head commit known is not, since
-    its branch could not be renamed."""
+    """Whether the claim with this key was released, by the coordinator
+    or by a person who may write, by released_keys' rule; a claim with no
+    head commit known is not, since its branch could not be renamed."""
     release, issue = snap.releases.get(key), snap.claim_issues.get(key)
     if release is None or issue is None or not release.sha:
         return False
