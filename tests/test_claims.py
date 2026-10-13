@@ -74,6 +74,24 @@ class Branches(unittest.TestCase):
         keys = ["x", "100", "9", "a", "12"]
         self.assertEqual(sorted(keys, key=claims.by_number), ["9", "12", "100", "a", "x"])
 
+    def test_a_key_in_digits_int_cannot_read_sorts_as_a_name_and_never_raises(self):
+        # A superscript or a circled digit passes isdigit() but not int();
+        # the board sorts its claims by this key, so one such branch name
+        # stopped the whole page.
+        keys = ["10", "\u00b2", "3", "\u27800", "x"]
+        self.assertEqual(sorted(keys, key=claims.by_number), ["3", "10", "x", "\u00b2", "\u27800"])
+        branches = ["claude/\u27800", "claude/9", "claude/\u00b2"]
+        self.assertEqual(sorted(branches, key=claims.issue_order), ["claude/9", "claude/\u00b2", "claude/\u27800"])
+
+    def test_only_ascii_digits_name_an_issue_and_no_branch_name_raises(self):
+        # Another script's digits, which int() reads as a number, name no
+        # issue either, and a run of digits longer than int() reads is no
+        # number rather than an error.
+        for name in ("claude/\u00b2", "claude/\u27800", "claude/\u0663", "claude/1234567890", "claude/" + "9" * 5000):
+            self.assertIsNone(claims.number_of(name), name[:20])
+            claims.issue_order(name)
+        self.assertEqual(claims.number_of("claude/123456789"), 123456789)
+
 
 class ClaimFile(unittest.TestCase):
     def test_claim_account_spellings(self):

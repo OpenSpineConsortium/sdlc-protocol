@@ -63,6 +63,13 @@ ISSUE_FILES_HEADING = re.compile(r"^#+\s*(?:files likely touched|files to touch)
 NO_RESPONSE = "_No response_"
 LIST_ITEM = re.compile(r"^\s*[-*]\s+(.+?)\s*$")
 UNNAMED = "unnamed"
+# An issue number as a claim branch's key spells it: one to nine ASCII
+# digits. str.isdigit would also take a superscript, which int() refuses,
+# and str.isdecimal another script's digits, which int() reads as a number;
+# a run of digits longer than int() reads would raise where an answer
+# belongs. Nine digits is far more than any queue has issues, as the gate
+# reads an issue too (gate.ISSUE_TEXT).
+NUMBER = re.compile(r"[0-9]{1,9}")
 
 
 def branch_of(number, prefix=PREFIX):
@@ -82,13 +89,20 @@ def key_of(branch, prefix=PREFIX):
     return branch[len(prefix):] if is_claim_branch(branch, prefix) else None
 
 
+def number_in(key):
+    """The issue number a claim branch's key spells, or None when it spells
+    none (NUMBER): every place that reads a branch name as an issue number
+    reads it here, so no branch name can raise there."""
+    text = str(key)
+    return int(text) if NUMBER.fullmatch(text) else None
+
+
 def number_of(branch, prefix=PREFIX):
     """The issue number a claim branch names, or None when the branch is no
-    claim or what follows claude/ is not a number. Decimal digits only, as
-    the template's check matched them with \\d: a superscript passes
-    isdigit() but not int(), and a branch name must never raise."""
+    claim or what follows claude/ is no number (number_in): a branch name
+    must never raise."""
     key = key_of(branch, prefix)
-    return int(key) if key is not None and key.isdecimal() else None
+    return None if key is None else number_in(key)
 
 
 def claim_path(number):
@@ -98,9 +112,10 @@ def claim_path(number):
 
 def by_number(value):
     """A sort key that puts numbers in order and anything else after them,
-    so claude/9 comes before claude/100 and claude/x after both."""
-    text = str(value)
-    return (0, int(text), "") if text.isdigit() else (1, 0, text)
+    so claude/9 comes before claude/100 and claude/x after both; a key that
+    spells no number (number_in) sorts by its text, and never raises."""
+    number = number_in(value)
+    return (0, number, "") if number is not None else (1, 0, str(value))
 
 
 def claim_worker(text):

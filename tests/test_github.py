@@ -4,6 +4,7 @@ and the gate's World. No network: a fake opener stands in for urllib,
 answers by method, path and query, and remembers every request."""
 
 import base64
+import http.client
 import io
 import json
 import os
@@ -59,7 +60,7 @@ class FakeOpener:
 
     def open(self, call, timeout=None):
         self.calls.append(call)
-        path = call.full_url.replace(github.API, "")
+        path = self.path_of(call)
         method = call.get_method()
         answer = self.answers.get(path if method == "GET" else f"{method} {path}")
         if answer is None:
@@ -68,9 +69,28 @@ class FakeOpener:
             raise answer.raised(call.full_url)
         return answer
 
+    def path_of(self, call):
+        """The path and query a request is answered by."""
+        return call.full_url.replace(github.API, "")
+
     def sent(self, method):
         """The decoded bodies of the requests made with this method."""
         return [json.loads(c.data) for c in self.calls if c.get_method() == method]
+
+
+class HttpClientOpener(FakeOpener):
+    """A FakeOpener that sends what a live run's urllib sends: it writes
+    the request line as http.client does, which refuses a path it cannot
+    send as ASCII before anything is sent, and answers by that line's path
+    and query, the selector, which leaves out whatever follows a # in the
+    URL. The plain FakeOpener answers either such path 404."""
+
+    def open(self, call, timeout=None):
+        http.client.HTTPConnection("api.github.com").putrequest(call.get_method(), call.selector)
+        return super().open(call, timeout)
+
+    def path_of(self, call):
+        return call.selector
 
 
 def client(answers, waits=None):
@@ -166,6 +186,35 @@ class Client(unittest.TestCase):
             "14": {"state": "open", "labels": ["todo"]},
         })
         self.assertEqual(len(opener.calls), 1)
+
+    def test_a_branch_whose_key_is_no_ascii_number_costs_no_issue_call_and_stops_no_run(self):
+        # http.client refuses a path it cannot send as ASCII, and the client
+        # reads that as an answer that was not JSON: one branch named with
+        # a superscript stopped every board run, the coordinator's with it,
+        # before STATE.md was written.
+        snap, answers = fixture_answers()
+        branches = snap["branches"] + ["claude/\u00b2", "claude/\u27800"]
+        answers["/repos/o/r/branches?per_page=100"] = FakeAnswer([{"name": b} for b in branches])
+        opener = HttpClientOpener(answers)
+        api = github.GitHub("t", "o/r", opener=opener, sleep=lambda seconds: None)
+        page = board.render(github.snapshot(api, snap["sha"], snap["default_branch"]))
+        self.assertIn("| #12 | claude/12 | main | #40 |", page)
+        asked = [c.full_url.replace(github.API, "") for c in opener.calls]
+        self.assertIn("/repos/o/r/contents/docs/agents/claims/%C2%B2.md?ref=claude%2F%C2%B2", asked)
+        self.assertFalse(any(path.startswith("/repos/o/r/issues/%") for path in asked), asked)
+
+    def test_a_claim_key_with_a_hash_asks_for_its_own_file_and_not_the_folder(self):
+        # Unquoted, the # began the URL's fragment, so the request asked for
+        # the claims folder on the default branch, GitHub answered with its
+        # listing, and reading that list as a file raised in every run.
+        snap, answers = fixture_answers()
+        answers["/repos/o/r/branches?per_page=100"] = FakeAnswer([{"name": b} for b in snap["branches"] + ["claude/#3"]])
+        answers["/repos/o/r/contents/docs/agents/claims/"] = FakeAnswer([{"name": "12.md", "type": "file"}])
+        opener = HttpClientOpener(answers)
+        api = github.GitHub("t", "o/r", opener=opener, sleep=lambda seconds: None)
+        self.assertIsNone(github.collect(api, snap["sha"], snap["default_branch"])["claims"]["#3"])
+        asked = [c.selector for c in opener.calls]
+        self.assertIn("/repos/o/r/contents/docs/agents/claims/%233.md?ref=claude%2F%233", asked)
 
     def test_next_link(self):
         headers = {"Link": '<https://api.github.com/repos/o/r/issues?page=2>; rel="next", <https://api.github.com/repos/o/r/issues?page=3>; rel="last"'}

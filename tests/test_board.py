@@ -466,6 +466,23 @@ class Leniency(unittest.TestCase):
         self.assertEqual(list(snap.claims), ["4"])
         self.assertIn("| #4 | claude/4 | main | (no pull request yet) | - |", board.render(snap))
 
+    def test_a_branch_named_in_digits_int_cannot_read_stops_neither_the_page_nor_the_queue(self):
+        # A superscript or a circled digit passes isdigit() but not int(): a
+        # single such branch raised in the claims' sort, the queue's claimed
+        # numbers and the overlaps' open work, so no board was written.
+        snap = Snapshot.from_dict({
+            "branches": ["claude/3", "claude/\u00b2", "claude/\u27800", "claude/\u0663"],
+            "claims": {"3": "- Worker: alice\n\n## Files to touch\n\n- a.md\n",
+                       "\u00b2": "- Worker: bob\n\n## Files to touch\n\n- a.md\n"},
+            "issues": [{"number": 2, "title": "Two", "labels": ["todo"]}],
+        })
+        page = board.render(snap)
+        self.assertIn("| #3 | claude/3 | alice | (no pull request yet) | a.md |", page)
+        self.assertIn("| #2 | Two | todo |", section(page, board.QUEUE_HEADING, board.GIVEN_HEADING))
+        self.assertEqual(board.claimed_numbers(snap.branches), {3})
+        self.assertEqual([w.number for w in board.open_work(snap)], [3])
+        self.assertEqual(board.overlaps(snap), {})
+
     def test_a_pull_with_no_update_time_is_not_idle(self):
         pulls = [Pull(1, updated_at=""), {"number": 2, "updated_at": "2026-09-20T00:00:00Z"}]
         self.assertEqual([board.as_pull(p).number for p in board.idle_pulls(pulls, self.NOW)], [2])

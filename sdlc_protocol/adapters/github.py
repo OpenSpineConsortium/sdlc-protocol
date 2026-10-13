@@ -264,10 +264,13 @@ def pull_with_detail(api, number):
 
 
 def claim_text(api, branch):
-    """The claim file on a claude/<issue> branch, or None when there is none yet."""
+    """The claim file on a claude/<issue> branch, or None when there is none
+    yet. The key is quoted, as a hand-made branch may put anything after
+    claude/: http.client refuses a path it cannot send as ASCII, and a #
+    would begin the URL's fragment, which asks for the claims folder."""
     name = board.branch_name(branch)
     found = api.get(
-        f"/repos/{api.repo}/contents/{claims.CLAIM_DIR}/{claims.key_of(name)}.md",
+        f"/repos/{api.repo}/contents/{claims.CLAIM_DIR}/{quoted(claims.key_of(name))}.md",
         {"ref": name}, missing_ok=True,
     )
     if found is None:
@@ -293,12 +296,14 @@ def claim_issues(api, branches, open_issues):
     """The issue behind each claim branch, by its key: the state and the
     label names. An open issue comes from the list already read; any other
     takes one call, so the board can say that a branch outlived its issue.
-    A branch whose key is not a number has none."""
+    A branch whose key is no number (claims.number_in) has none and costs
+    no call: a key such as a superscript would put a path in the URL that
+    http.client refuses, and that refusal stopped the whole run."""
     by_number = {str(i["number"]): i for i in open_issues}
     found = {}
     for branch in board.claim_branches(branches):
         key = claims.key_of(branch)
-        if not key.isdigit():
+        if claims.number_of(branch) is None:
             continue
         issue = by_number.get(key) or api.get(f"/repos/{api.repo}/issues/{key}", missing_ok=True)
         if issue is not None:

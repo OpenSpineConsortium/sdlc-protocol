@@ -26,7 +26,7 @@ from typing import NamedTuple
 from . import labels
 from .claims import (
     CLAIM_DIR, IDLE_AFTER, PREFIX, RELEASED_PREFIX, branch_of, by_number, claim_files, claim_worker,
-    is_claim_branch, is_idle, key_of, was_released,
+    is_claim_branch, is_idle, key_of, number_in, number_of, was_released,
 )
 
 RECENT_MERGED = 5
@@ -313,7 +313,7 @@ def short_sha(sha):
 
 
 def issue_ref(key):
-    return f"#{key}" if key.isdigit() else key
+    return f"#{key}" if number_in(key) is not None else key
 
 
 def claim_branches(branches):
@@ -322,8 +322,10 @@ def claim_branches(branches):
 
 def claimed_numbers(branches, released=()):
     """The issue numbers that have a claim branch, leaving out the claims
-    named in released, by key, since a released claim holds nothing."""
-    return {int(key_of(b)) for b in claim_branches(branches) if key_of(b).isdigit() and key_of(b) not in released}
+    named in released, by key, since a released claim holds nothing; a
+    branch whose key is no number (claims.number_in) claims none."""
+    numbers = (number_of(b) for b in claim_branches(branches) if key_of(b) not in released)
+    return {number for number in numbers if number is not None}
 
 
 def released_keys(snapshot, idle_after=IDLE_AFTER):
@@ -628,11 +630,11 @@ def open_work(snapshot):
         files = own_files(pull.files) or (own_files(claim_files(snap.claims.get(key) or "")) if key else ())
         work.append(Work(pull.number, files, not pull.draft, bool(key) and is_blocker(snap, key)))
     for branch in claim_branches(snap.branches):
-        key = key_of(branch)
-        if branch in pulls or key in released or not key.isdigit():
+        key, number = key_of(branch), number_of(branch)
+        if branch in pulls or key in released or number is None:
             continue
         files = own_files(claim_files(snap.claims.get(key) or ""))
-        work.append(Work(int(key), files, False, is_blocker(snap, key), False))
+        work.append(Work(number, files, False, is_blocker(snap, key), False))
     return sorted(work, key=lambda w: w.number)
 
 
