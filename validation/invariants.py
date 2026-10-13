@@ -183,11 +183,17 @@ def state_checks(model):
 # --- commands ---------------------------------------------------------------
 
 def command_checks(outcome):
-    """G11a for the shapes the verbs run, each one the rules allow: a plain
-    push of a claim branch, a lease on one's own claim branch, a released
-    head pushed again under its claim name."""
-    if outcome.command and outcome.refused_by_guard and outcome.allowed_shape:
+    """G11a for the shapes the verbs run through the guard: those the rules
+    allow (a plain push of a claim branch, a lease on one's own claim
+    branch, a released head pushed again under its claim name) pass, and
+    those they forbid that the command shows (a name that reads as a claim
+    and claims nothing) are refused. A push by hand meets no guard."""
+    if not outcome.command or not outcome.guarded:
+        return []
+    if outcome.refused_by_guard and outcome.allowed_shape:
         return [Violation("G11a", f"the guard refused {outcome.command}: {outcome.refused_by_guard}")]
+    if not outcome.refused_by_guard and not outcome.allowed_shape:
+        return [Violation("G11a", f"the guard passed {outcome.command}, which the rules forbid")]
     return []
 
 
@@ -239,9 +245,7 @@ def effects_agree(before, record, actual, known):
 def rename_refused_said(before, record, actual):
     """G10: a rename GitHub refused for good is said once on the issue, in
     the run it was refused, and said at no other time."""
-    refused = [(c.path[len("/branches/"):-len("/rename")], c.body["new_name"], c.status) for c in record.calls
-               if c.method == "POST" and c.path.endswith("/rename") and not c.applied]
-    owed = oracle.rename_refused_effects(before, refused)
+    owed = oracle.rename_refused_effects(before, names_not_freed(before, record))
     said = [e for e in actual if e == oracle.Effect("comment", e.target, "rename-refused")]
     problems = []
     for effect in sorted(Counter(owed) - Counter(said), key=repr):
@@ -249,6 +253,31 @@ def rename_refused_said(before, record, actual):
     for effect in sorted(Counter(said) - Counter(owed), key=repr):
         problems.append(Violation("G10", f"a rename said refused on #{effect.target} with none refused for good"))
     return problems
+
+
+def names_not_freed(before, record):
+    """Each claim name a run failed to free, as (old name, new name, status).
+    A rename GitHub refused with 422 because the new name keeps the old
+    name's commit already is not one: the branch was pushed again at the
+    head a release kept, and the run deletes it instead (spec, Release:
+    "A branch pushed again at the head a release already kept is deleted
+    instead"); a refusal of that delete leaves the name taken, as a refused
+    rename does."""
+    found = []
+    for call in record.calls:
+        if call.applied:
+            continue
+        if call.method == "POST" and call.path.endswith("/rename"):
+            old, new = call.path[len("/branches/"):-len("/rename")], call.body["new_name"]
+            if not (call.status == 422 and before.refs.get(new) is not None
+                    and before.refs.get(new) == before.refs.get(old)):
+                found.append((old, new, call.status))
+        elif call.method == "DELETE" and call.path.startswith("/git/refs/heads/" + oracle.CLAIM_PREFIX):
+            old = call.path[len("/git/refs/heads/"):]
+            number = oracle.claim_number(old)
+            if number is not None and old in before.refs:
+                found.append((old, oracle.released_name(number, before.refs[old]), call.status))
+    return found
 
 
 def release_order(actual):
@@ -280,15 +309,20 @@ def releases_only_due(before, actual):
 
 def labels_put_back(before, after, record, actual):
     """A run that fails between the labels and the comment puts back what it
-    took off (spec, Release), unless GitHub refused the putting back too."""
+    took off (spec, Release), unless GitHub refused the putting back too;
+    and one whose comment was written, its answer lost or not, puts back
+    nothing, since the comment makes the release whole (G3L)."""
     problems = []
     for number in sorted({e.target for e in actual if e.kind == "label-off"}):
         if oracle.Effect("comment", number, "claim-released") in actual:
+            if any(e.kind == "label-on" and e.target == number for e in actual):
+                problems.append(Violation("G3L", f"#{number}: the release comment stands and its labels "
+                                                 f"were put back"))
             continue
         put_back_refused = any(c.method == "POST" and c.path == f"/issues/{number}/labels" and not c.applied
                                for c in record.calls)
         if not put_back_refused and after.issues[number].labels != before.issues[number].labels:
-            problems.append(Violation("G3", f"#{number}: the release failed and its labels were not put back"))
+            problems.append(Violation("G3L", f"#{number}: the release failed and its labels were not put back"))
     return problems
 
 

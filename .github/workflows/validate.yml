@@ -1,0 +1,45 @@
+name: Validate
+
+# The validation harness's lanes that take too long for the required check
+# (validation/DESIGN.md, section 12). For now the one lane built, the
+# mutation lane: every mutant of validation/mutants.py run against every
+# search there, each of which must catch it, so a change to the harness
+# that stops it seeing a broken rule goes red. It runs on a pull request
+# that changes the harness or the library, whose rules the mutants change
+# by name, weekly, so a lane that slowed or rotted is seen, and by hand.
+# It reads the checkout and writes nothing, so its token reads contents
+# and nothing else. It is not a required check: the required check,
+# "check", runs each mutant on its shortest trace
+# (tests/test_validation_mutants.py).
+
+on:
+  pull_request:
+    paths:
+      - "validation/**"
+      - "sdlc_protocol/**"
+      - "tests/test_validation_*.py"
+      - ".github/workflows/validate.yml"
+  schedule:
+    - cron: "37 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mutants:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Run the mutation lane
+        run: python3 -m validation.mutants

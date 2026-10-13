@@ -21,7 +21,7 @@ The claim protocol for pull-request-gated Claude agents, as one Python package w
 
 The rules are plain functions and dataclasses over what they are handed, and the clock is an argument. Only `adapters/` calls GitHub or changes a git repository, and `cli.py` reads the environment and the event; the two other places that look outside are small and named: `guard.branches` asks the local git which branch is checked out, and `board.write_if_changed` writes STATE.md. That is what lets the same rules run in a GitHub workflow, in a benchmark's hub and in a test.
 
-Beside the package, [validation/](validation/README.md) holds the design of a harness that validates these rules against the spec, with the findings it turned up, and the prototype that design measured; nothing there is part of the package, vendored into a consumer or run by the test suite.
+Beside the package, [validation/](validation/README.md) holds the design of a harness that validates these rules against the spec, with the findings it turned up, and the prototype that design measured; nothing there is part of the package or vendored into a consumer; its tests, tests/test_validation_*.py, run in the required check, and .github/workflows/validate.yml runs its mutation lane.
 
 ## The four consumers
 

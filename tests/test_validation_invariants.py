@@ -1,24 +1,20 @@
 """The harness's guarantees (validation/invariants.py) on hand-written
 traces: an honest release and reclaim breaks none; the 0.4.1 fixes hold;
 the open findings F2, F7, F9 and F12 show as soon as the oracle reads the
-spec; and the mutants the prototype missed (DESIGN.md, 7) are caught,
-because the run's effects are compared with the oracle's and both waits
-sit on the threshold."""
+spec. The mutants, the prototype's among them, are
+tests/test_validation_mutants.py's."""
 
-import contextlib
 import re
 import sys
 import unittest
-from datetime import timedelta
 from pathlib import Path
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from sdlc_protocol import board, claims, coordinator  # noqa: E402
 from sdlc_protocol.adapters import github  # noqa: E402
-from validation import cycle, invariants, model as M, oracle, verbs  # noqa: E402
+from validation import cycle, invariants, model as M, mutants, oracle, verbs  # noqa: E402
 from validation.verbs import Scope, Verb  # noqa: E402
 
 BOARD = Verb("board", "board", (cycle.SCHEDULE, ""))
@@ -158,36 +154,6 @@ class TheOpenFindingsShow(unittest.TestCase):
                          [("G9", "Given to workers is {}, the oracle's {1: ['a']}")])
 
 
-ORIGINAL_IS_IDLE = claims.is_idle
-ORIGINAL_LABELS_RELEASED = coordinator.labels_released
-
-
-def comment_then_labels(api, snap, key, now):
-    """release_one with the spec's order reversed, as cf3bdb0 had it (F1)."""
-    release = snap.releases[key]
-    text = coordinator.release_text(snap, key, github.holding(api, snap.default_branch, release.sha))
-    api.post(f"/repos/{api.repo}/issues/{key}/comments", {"body": text})
-    names = coordinator.labels_released(snap, key)
-    for name in names:
-        github.take_label_off(api, key, name)
-    coordinator.after_release(snap, key, now.isoformat(), names)
-    return f"#{key}: claim released"
-
-
-MUTANTS = {
-    "idle at exactly 24 hours": (claims, "is_idle", lambda last, now, idle_after=claims.IDLE_AFTER:
-                                 now - claims.parse_time(last) >= idle_after),
-    "a 12-hour idle time": (claims, "is_idle", lambda last, now, idle_after=claims.IDLE_AFTER:
-                            ORIGINAL_IS_IDLE(last, now, timedelta(hours=12))),
-    "the worker label left on at release": (coordinator, "labels_released", lambda snap, key:
-                                            [n for n in ORIGINAL_LABELS_RELEASED(snap, key) if n == "claimed"]),
-    "a release comment accepted from any author": (claims, "is_trusted_author", lambda comment, trusted=None: True),
-    "an idle comment to a released claim's pull request": (board, "released_branches", lambda snap: set()),
-    "the comment before the labels": (github, "release_one", comment_then_labels),
-    "a refused rename never said": (github, "explain_refusal", lambda *a, **k: ""),
-}
-
-
 class TheChecksHoldUnderAFaultThatNeverFires(unittest.TestCase):
     """The review of this step found the whole effects comparison skipped
     for any board verb that named a fault, fired or not."""
@@ -196,34 +162,8 @@ class TheChecksHoldUnderAFaultThatNeverFires(unittest.TestCase):
         steps = [Verb("claim", "a", (1,)), Verb("label-on", "a", (1, "claimed")), Verb("wait", "clock", (25,)),
                  board_with("label-post-500")]
         self.assertEqual(violations(steps), [])
-        with mock.patch.object(github, "release_one", comment_then_labels):
+        with mock.patch.object(github, "release_one", mutants.comment_then_labels):
             self.assertEqual(guarantees(violations(steps)), ["G3"])
-
-
-class TheMutantsThePrototypeMissedAreCaught(unittest.TestCase):
-    def caught(self, mutant, steps, scope=Scope(people=(M.OWNER, verbs.SAM))):
-        module, name, replacement = MUTANTS[mutant]
-        with contextlib.ExitStack() as stack:
-            stack.enter_context(mock.patch.object(module, name, replacement))
-            return violations(steps, scope)
-
-    def test_each_on_a_short_trace(self):
-        claim, labelled, draft = Verb("claim", "a", (1,)), Verb("label-on", "a", (1, "worker:a")), \
-            Verb("open-draft", "a", (1,))
-        traces = {
-            "idle at exactly 24 hours": [claim, Verb("wait", "clock", (24,)), BOARD],
-            "a 12-hour idle time": [claim, Verb("wait", "clock", (24,)), BOARD],
-            "the worker label left on at release": [claim, labelled, Verb("wait", "clock", (25,)), BOARD],
-            "a release comment accepted from any author": [claim, Verb("wait", "clock", (25,)),
-                                                           Verb("marker", verbs.SAM, (1,)), BOARD],
-            "an idle comment to a released claim's pull request": [claim, draft, Verb("wait", "clock", (25,)), BOARD],
-            "the comment before the labels": [claim, labelled, Verb("wait", "clock", (25,)), BOARD],
-            "a refused rename never said": [claim, Verb("wait", "clock", (25,)), board_with("rename-403")],
-        }
-        for mutant, steps in traces.items():
-            with self.subTest(mutant=mutant):
-                self.assertEqual(violations(steps), [], "the library itself passes the trace")
-                self.assertNotEqual(self.caught(mutant, steps), [])
 
 
 if __name__ == "__main__":

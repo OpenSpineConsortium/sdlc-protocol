@@ -70,14 +70,16 @@ class Outcome(NamedTuple):
     refused_by_guard: str | None = None
     run: object = None
     allowed_shape: bool = True
+    guarded: bool = True
 
 
 class Scope(NamedTuple):
     """What the checker may do (DESIGN.md, 6.2): which workers, issues and
     people act, which faults a board run may meet, how long the clock may
     wait, which events start a board run, whether workers may be careless
-    (a lease onto another's claim, a misnamed claim), and the files each
-    issue's claim lists, by issue."""
+    (a lease onto another's claim, a misnamed claim, and the owner's push
+    of one by hand, which meets no guard), and the files each issue's claim
+    lists, by issue."""
 
     workers: tuple = ("a", "b")
     issues: tuple = (1,)
@@ -116,7 +118,7 @@ def pushed(model, worker, ref, sha, command, force=False, lease=False, allowed=T
     if refused:
         return Outcome(False, "refused by the guard", command, refused, allowed_shape=allowed)
     answer = model.push(worker, ref, sha, force=force, lease=lease)
-    return Outcome(answer.taken, answer.why or "taken", command, allowed_shape=allowed)
+    return Outcome(answer.taken, answer.why or "taken", command, allowed_shape=allowed, guarded=guarded)
 
 
 def released_refs(model, number):
@@ -401,6 +403,9 @@ def issue_verbs(model, scope, number):
             found.append(Verb("marker", person, (number,)))
     if OWNER in scope.people:
         found += owner_verbs(model, number, pull)
+        misnamed = f"{CLAIM_PREFIX}0{number}"
+        if scope.careless and issue.state == "open" and misnamed not in model.refs:
+            found.append(Verb("push-by-hand", OWNER, (number, misnamed)))
     return found
 
 
