@@ -39,7 +39,7 @@ from datetime import datetime, timedelta, timezone
 from typing import NamedTuple
 from unittest import mock
 
-from sdlc_protocol import board, claims, coordinator, guard, labels, team
+from sdlc_protocol import board, claims, coordinator, guard, team
 from sdlc_protocol.adapters import github
 from sdlc_protocol.workers import fits
 
@@ -329,6 +329,9 @@ MUTANTS = {
     "a sort key that calls int after isdigit": Mutant(
         claims, "by_number", sort_key_with_int_after_isdigit,
         "G15", "a branch name never raises, so one hand-made name cannot stop the board (F6)"),
+    "a branch name sent unquoted": Mutant(
+        github, "quoted", lambda name: name,
+        "G15", "a branch name is quoted into the request path, so a hand-made name cannot stop a live run (F6)"),
     "a finished draft's release by hand not seen": Mutant(
         github, "releases", releases_skipping_finished,
         "G9", "a person's release of a finished draft counts, and the board shows it (F10)"),
@@ -465,8 +468,9 @@ def judge(name, baselines, searches=CATCHERS):
 
 
 def baselines(searches=CATCHERS):
-    """What each search meets on the library as it stands; the lane
-    expects nothing, since the open findings are read as built."""
+    """What each search meets on the library as it stands: nothing, since
+    the open findings are read as built, but what a search or lane knows
+    (F7 under careless workers, F4 from differing looks)."""
     return {search.name: violations(search) for search in searches}
 
 

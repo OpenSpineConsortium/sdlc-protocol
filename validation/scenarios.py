@@ -45,6 +45,7 @@ class Expect(NamedTuple):
     queue: list | None = None
     given: dict | None = None
     claims: dict | None = None
+    not_claims: list | None = None
     holders: dict | None = None
     pulls: list | None = None
     overlaps: dict | None = None

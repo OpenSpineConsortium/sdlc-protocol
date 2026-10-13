@@ -22,15 +22,17 @@ from validation import invariants, known, mutants, oracle, replay, scenarios  # 
 DESIGN = (ROOT / "validation" / "DESIGN.md").read_text(encoding="ascii")
 FINDINGS_IN_DESIGN = set(re.findall(r"^\*\*(F\d+)\. ", DESIGN, re.M))
 BUDGET_SECONDS = 10
-# A fixed finding, the mutant of validation/mutants.py that undoes its fix,
-# and where DESIGN.md's table says the trace then breaks.
+# A fixed finding, each mutant of validation/mutants.py that undoes a part
+# of its fix, the step the trace then goes red at (numbered as played, an
+# announce counting as three) and the guarantee DESIGN.md's table names;
+# F6's fix has two parts, the render's sort key and the quoted path.
 UNDONE = {
-    "F1": ("the comment before the labels", 5, "G3L"),
-    "F3": ("the guard passes --force", 1, "G11a"),
-    "F5": ("a claim number with leading zeros", 2, "G1"),
-    "F6": ("a sort key that calls int after isdigit", 1, "G15"),
-    "F10": ("a finished draft's release by hand not seen", 9, "G5"),
-    "F11": ("a refused comment stops the run", 6, "G15"),
+    "F1": [("the comment before the labels", 5, "G3L")],
+    "F3": [("the guard passes --force", 1, "G11a")],
+    "F5": [("a claim number with leading zeros", 2, "G1")],
+    "F6": [("a sort key that calls int after isdigit", 1, "G15"), ("a branch name sent unquoted", 3, "G15")],
+    "F10": [("a finished draft's release by hand not seen", 9, "G5")],
+    "F11": [("a refused comment stops the run", 6, "G15")],
 }
 FIXED = ("F1", "F3", "F5", "F6", "F10", "F11")
 RED_AS_BUILT = ("F4", "F7")
@@ -88,14 +90,15 @@ class TheTraces(unittest.TestCase):
         """So a trace recorded green from the start is known to bite: the
         step and the guarantee are the design's table's (DESIGN.md, 5.3)."""
         self.assertEqual(sorted(UNDONE), sorted(FIXED))
-        for finding, (mutant, step, guarantee) in UNDONE.items():
-            with self.subTest(finding=finding, mutant=mutant):
-                trace = self.traces[finding]
-                self.assertEqual(replay.results(replay.replay(trace)), set())
-                with mutants.switched_on(mutants.MUTANTS[mutant]):
-                    record = replay.replay(trace)
-                self.assertIn((step, guarantee), replay.results(record), "\n".join(record.timeline))
-                self.assertIn(guarantee, trace.breaks)
+        for finding, undoings in UNDONE.items():
+            for mutant, step, guarantee in undoings:
+                with self.subTest(finding=finding, mutant=mutant):
+                    trace = self.traces[finding]
+                    self.assertEqual(replay.results(replay.replay(trace)), set())
+                    with mutants.switched_on(mutants.MUTANTS[mutant]):
+                        record = replay.replay(trace)
+                    self.assertIn((step, guarantee), replay.results(record), "\n".join(record.timeline))
+                    self.assertIn(guarantee, trace.breaks)
 
     def test_f7_s_red_is_the_careless_search_s_and_f4_s_the_dealing_lane_s(self):
         """The two findings red as built name the same violations the

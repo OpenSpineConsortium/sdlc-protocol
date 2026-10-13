@@ -128,7 +128,7 @@ RUNNERS = {"scenarios": run_scenarios, "traces": run_traces, "explore": run_expl
 
 def main(argv=None, out=sys.stdout):
     args = list(sys.argv[1:] if argv is None else argv)
-    if not args or args[0] not in LANES + ("fast", "mutants", "replay") or (args[0] == "replay") != (len(args) == 2):
+    if not args or args[0] not in LANES + ("fast", "mutants", "replay") or (args[0] == "replay" and len(args) != 2):
         print(__doc__, file=out)
         return 2
     lane, options = args[0], args[1:]

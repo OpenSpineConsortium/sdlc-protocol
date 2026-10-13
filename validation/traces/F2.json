@@ -14,6 +14,6 @@
     {"at": 1, "verb": "open-draft", "actor": "a", "args": [1], "expect": {"pulls": [100]}},
     {"verb": "board", "event": "pull_request", "shows": "F2",
      "expect": {"overlaps": {"src/shared.py": [2, 100]}, "comments": {"100": {"overlap": 1}, "2": {"overlap": 2}}},
-     "note": "as built the work is numbered by its pull request now and told again, and #2 hears of #100 as if it were new work; reading the spec, both were told already (the order shown is F13's, the lowest number first)"}
+     "note": "as built the work is numbered by its pull request now and told again, and #2 hears of #100 as if it were new work; reading the spec, both were told already (the order shown, the lower number first, is a tie by age broken by number, which the spec reads the same way)"}
   ]
 }

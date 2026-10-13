@@ -13,8 +13,9 @@ mismatches and a timeline a person reads; scripts/validate.py replay
 <file> prints it.
 
 A trace of a finding fixed in 0.4.1 (F1, F3, F5, F6, F10, F11) is green,
-and the mutant that undoes its fix turns it red at the step the table
-names, which tests/test_validation_traces.py holds it to. A trace of an
+and the mutant that undoes its fix turns it red at the step where the
+finding showed, for the guarantee the table names, which
+tests/test_validation_traces.py holds it to. A trace of an
 open finding is red where known.json records it: as built for F4 and F7,
 which no rule of the board answers, and with the finding's switch off in
 the oracle for the ones the oracle reads as built (F2, F9, F12, F13 and
@@ -28,8 +29,11 @@ without the model), "actor" (the board's and the clock's need none),
 out, "skew", hours added to a claim's or a commit's committer date,
 "event", "ref" and "faults" for a board verb, "expect" in Expect's shape
 with lists for its sets and numbers for its keys where JSON has strings,
-"shows", the finding the step is red for, and "note", read by nobody.
-Every file is ASCII: a character outside it is written as a \\u escape.
+"shows", the finding the step is red for, and "note" and the file's
+"world", read by nobody. A step is numbered, in known.json, in the tests
+and in a replay's report, by its place among the steps as played, from
+zero, where an "announce" counts as its three verbs. Every file is ASCII:
+a character outside it is written as a \\u escape.
 """
 
 import json
@@ -45,7 +49,6 @@ TRACES = Path(__file__).resolve().parent / "traces"
 FINDINGS = tuple(f"F{n}" for n in range(1, 15))
 SET_FIELDS = ("labels", "told")
 BOARD_VERBS = ("board", "board-start", "board-finish")
-ANNOUNCE = ("claimed", "worker:{actor}", "plan")
 
 
 class Trace(NamedTuple):
@@ -53,7 +56,6 @@ class Trace(NamedTuple):
     title: str
     status: str
     breaks: tuple  # the guarantees DESIGN.md's table says the finding breaks
-    world: str
     scenario: Scenario
     path: Path
 
@@ -61,7 +63,7 @@ class Trace(NamedTuple):
 def numbered(mapping):
     """JSON's string keys as the numbers Expect's fields are keyed by, where
     they are numbers."""
-    return {int(k) if isinstance(k, str) and k.isdigit() else k: v for k, v in mapping.items()}
+    return {int(k) if isinstance(k, str) and k.isascii() and k.isdigit() else k: v for k, v in mapping.items()}
 
 
 def expectation(raw):
@@ -109,9 +111,9 @@ def scenario_of(data):
 
 
 def load(path):
-    data = json.loads(Path(path).read_text(encoding="ascii"))
-    return Trace(data["finding"], data["title"], data["status"], tuple(data.get("breaks", ())),
-                 data.get("world", "memory"), scenario_of(data), Path(path))
+    path = Path(path).resolve()
+    data = json.loads(path.read_text(encoding="ascii"))
+    return Trace(data["finding"], data["title"], data["status"], tuple(data.get("breaks", ())), scenario_of(data), path)
 
 
 def traces(folder=TRACES):

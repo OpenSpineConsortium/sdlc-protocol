@@ -6,8 +6,10 @@ build step 5 on): with such a finding's switch on, the oracle reads its
 rule as built and nothing is red; with the switch off, the oracle reads
 the spec and the finding shows. "red" lists each result that is red on
 purpose: a step of a regression trace (validation/traces/<finding>.json,
-played by replay.py) or of a scenario (scenarios.py), with the guarantee
-it breaks and the finding that breaks it. An entry for a finding in
+played by replay.py) or of a scenario (scenarios.py), numbered from zero
+by its place among the steps as played, an "announce" of a trace counting
+as its three verbs, with the guarantee it breaks and the finding that
+breaks it. An entry for a finding in
 "as_built" is red when that finding's switch is off and green as built;
 an entry for any other finding (F4, dealing from differing looks; F7, a
 careless lease) is red as built, since no rule of the board answers it.

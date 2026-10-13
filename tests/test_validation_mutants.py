@@ -69,6 +69,7 @@ TRACES = {
                                                    Verb("overlap-marker", SAM, (1, (2,))), BOARD],
                                                   SHARED._replace(people=(SAM,))),
     "a sort key that calls int after isdigit": "the regression traces",
+    "a branch name sent unquoted": "the regression traces",
     "a finished draft's release by hand not seen": "the regression traces",
     "a refused comment stops the run": "the regression traces",
 }
@@ -89,10 +90,10 @@ def violations(steps, scope):
 class TheLane(unittest.TestCase):
     def test_it_holds_10_to_30_mutants_each_with_a_trace(self):
         """Section 7 asks for 10 to 20; step 4 added five for the rules its
-        lanes judge, and step 5 three that undo fixes of 0.4.1, so the
+        lanes judge, and step 5 four that undo fixes of 0.4.1, so the
         bound is widened to 30 and the count noted."""
         self.assertTrue(10 <= len(mutants.MUTANTS) <= 30)
-        self.assertEqual(len(mutants.MUTANTS), 28)
+        self.assertEqual(len(mutants.MUTANTS), 29)
         self.assertEqual(sorted(TRACES), sorted(mutants.MUTANTS))
 
     def test_every_mutant_names_a_rule_the_library_still_has(self):

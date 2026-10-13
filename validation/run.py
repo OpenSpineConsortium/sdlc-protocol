@@ -127,6 +127,7 @@ def observed(model, expect, outcomes, scenario, step):
     yield "queue", expect.queue, page.queue(shown)
     yield "given", expect.given, page.given(shown)
     yield "claims", expect.claims, page.claim_workers(shown)
+    yield "not_claims", expect.not_claims, page.not_claims(shown)
     yield "overlaps", expect.overlaps, page.overlaps(shown)
     yield "merged", expect.merged, page.merged(shown)
     yield "pulls", expect.pulls, open_pulls(model)
