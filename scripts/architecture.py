@@ -153,7 +153,8 @@ def travel_chart(eco):
         "flowchart LR",
         "  pr[\"pull request on symphony-protocol\"] --> checks[\"check, and downstream for each consumer\"]",
         "  checks --> merge[\"merge to main\"]",
-        f"  merge --> pulls[\"sync: the pull request {sync.BRANCH} in each consumer\"]",
+        "  merge --> release[\"a release, once the owner approves it\"]",
+        f"  release --> pulls[\"sync: the pull request {sync.BRANCH} in each consumer\"]",
         "  pulls --> theirs[\"the consumer's own check\"]",
         "  theirs --> lands[\"auto-merge, or the owner where there is none\"]",
     ]
@@ -186,27 +187,34 @@ def travel(eco):
         "`downstream (<consumer>)` job per consumer: the change vendored into a checkout of that "
         "consumer and the consumer's own check run on it, so a change that would break one is red "
         "before it merges.",
-        "2. The owner merges it to main.",
-        f"3. The sync workflow (`.github/workflows/sync.yml`) vendors the new main into each consumer "
-        f"({names}) and opens the pull request `{sync.BRANCH}` there, or updates the one already open, "
-        "with the GitHub App's token, so the consumer's own CI runs on it; where the consumer's main "
-        "already holds the copy, it closes a sync pull request still open there." + "".join(raising),
+        "2. The owner merges it to main. Where it raises the version, its merge is a release: "
+        "`.github/workflows/release.yml` tags it and publishes it once the owner approves the run in the "
+        "environment `release`, and not before.",
+        "3. The sync workflow (`.github/workflows/sync.yml`) follows each Release run that succeeds, and runs "
+        "weekly and by hand; every run carries the newest published release, never main's head, into each "
+        f"consumer ({names}) with that release's own `scripts/vendor.py`, and opens the pull request "
+        f"`{sync.BRANCH}` there, or updates the one already open, with the GitHub App's token, so the "
+        "consumer's own CI runs on it; where the consumer's main already holds the copy, it closes a sync pull "
+        "request still open there." + "".join(raising),
         "4. The consumer's own check runs on that pull request; part of it is `vendoring.py verify`, "
         "which holds the copy to its record.",
         "5. Where ecosystem.json gives a consumer auto_merge, its pull request lands by auto-merge once "
         "that check is green; the others wait for their owner.",
         *reaching,
         "",
-        "A consumer never edits its copy: the change is made here and comes back by the next sync. To "
-        "vendor by hand, `python3 scripts/vendor.py <consumer checkout>` from a clone of this repository.",
+        "A consumer never edits its copy: the change is made here and comes back with the next release, by "
+        "the sync. To vendor by hand, `python3 scripts/vendor.py <consumer checkout>` from a clone of this "
+        "repository.",
         "",
         "A change a consumer must answer, such as a rendered string its test pins or a function it calls "
         "differently, turns that consumer's `downstream (<consumer>)` job red, and the sync cannot carry "
         f"it: it rebuilds `{sync.BRANCH}` from the consumer's main on every run, so a fix pushed there is "
-        "lost. The consumer goes first: a pull request of its own vendors this repository's branch and "
-        "answers the change, and merges; the downstream job here then turns green, this pull request "
-        "merges, and the sync finds that consumer up to date. README.md, \"How a change reaches the "
-        "other repositories\", has the steps.",
+        "lost. The consumer goes first: this pull request raises the version from the start, a pull request "
+        "of the consumer's own vendors its branch and answers the change, and merges, ahead of the release, "
+        "which is the one way a change reaches a consumer before the owner's approval; the downstream job "
+        "here then turns green, this pull request merges, and once the owner approves its release the sync "
+        "finds that consumer up to date. README.md, \"How a change reaches the other repositories\", has "
+        "the steps.",
     ]
 
 

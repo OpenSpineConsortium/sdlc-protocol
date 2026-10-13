@@ -1,27 +1,39 @@
 """The sync's logic, which .github/workflows/sync.yml and ci.yml call.
 
-  python3 scripts/sync.py matrix [--public-only]
+  python3 scripts/sync.py [--library DIR] matrix [--public-only]
   python3 scripts/sync.py setup
   python3 scripts/sync.py off-main --ref REF
-  python3 scripts/sync.py title   <consumer checkout> --consumer OWNER/NAME
-  python3 scripts/sync.py message <consumer checkout> --consumer OWNER/NAME
-  python3 scripts/sync.py body    <consumer checkout> --consumer OWNER/NAME
-  python3 scripts/sync.py closing --consumer OWNER/NAME
-  python3 scripts/sync.py summary --consumer OWNER/NAME --state STATE [--url URL]
-                                  [--auto-merge on|refused] [--reason TEXT]
+  python3 scripts/sync.py after-release EVENT_FILE --repository OWNER/NAME
+  python3 scripts/sync.py newest-release < tags
+  python3 scripts/sync.py no-release
+  python3 scripts/sync.py misplaced --tag TAG --commit COMMIT
+  python3 scripts/sync.py carrying --tag TAG --commit COMMIT
+  python3 scripts/sync.py [--library DIR] title   <consumer checkout> --consumer OWNER/NAME
+  python3 scripts/sync.py [--library DIR] message <consumer checkout> --consumer OWNER/NAME
+  python3 scripts/sync.py [--library DIR] body    <consumer checkout> --consumer OWNER/NAME
+  python3 scripts/sync.py [--library DIR] closing --consumer OWNER/NAME
+  python3 scripts/sync.py [--library DIR] summary --consumer OWNER/NAME --state STATE [--url URL]
+                                                  [--auto-merge on|refused] [--reason TEXT]
 
-A push to main that changes the package makes sync.yml vendor it into
-every consumer ecosystem.json lists and open, or update, the pull request
-symphony-protocol/sync there; ci.yml's downstream job runs each consumer's
-own check on a pull request's copy before it merges here. The workflows
-only run git, gh and these commands, so what they decide is here, where
-it is tested: the matrix of consumers, what the owner must set up when
-the sync cannot run, why a run off main vendors nothing, the commit
+Each release of the library, once the owner has approved it, makes
+sync.yml vendor it into every consumer the release's ecosystem.json lists
+and open, or update, the pull request symphony-protocol/sync there; the
+sync carries the newest published release and never main's head, and
+--library names the checkout of that release, whose ecosystem.json and
+history the commands read (by default this repository's own). ci.yml's
+downstream job runs each consumer's own check on a pull request's copy
+before it merges here. The workflows only run git, gh and these commands,
+so what they decide is here, where it is tested: the matrix of consumers,
+what the owner must set up when the sync cannot run, why a run off main,
+or after a Release run that did not succeed or that main did not start,
+vendors nothing, which release is the newest, whether its tag stands
+where release.yml makes one (scripts/release.py decides), the commit
 message, the title and the body of a consumer's pull request, built from
-the consumer's record before and after scripts/vendor.py ran in its
-checkout, the comment that closes a sync pull request main has made
-stale, and each consumer's row in the run's summary. The body is written
-for the person who reviews the pull request there: what changed in the
+the consumer's record before and after the release's scripts/vendor.py
+ran in its checkout, the comment that closes a sync pull request main
+has made stale, and each consumer's row in the run's summary. The body
+is written for the person who reviews
+the pull request there: which release it brings, what changed in the
 library since the commit the copy named before, which files of the copy
 moved, what the consumer uses the library for, the release it makes
 where the consumer names a version file (the plugin's version, which
@@ -37,12 +49,18 @@ import sys
 from pathlib import Path
 
 import ecosystem
+import release
 from ecosystem import vendoring  # the package's vendoring.py, loaded by its path alone
 
 LIBRARY = ecosystem.ROOT
 BRANCH = "symphony-protocol/sync"
 SHA = re.compile(r"[0-9a-f]{40}")
 APP_REPOSITORY = "OpenSpineConsortium/symphony-app"
+# A release's tag, as .github/workflows/release.yml makes it.
+RELEASE_TAG = re.compile(r"v([0-9]+)\.([0-9]+)\.([0-9]+)")
+# The events of a Release run the sync follows: main's own, a push or a run
+# by hand, which only someone who may write here can start.
+RELEASE_EVENTS = ("push", "workflow_dispatch")
 
 # What became of a consumer's pull request in one run, as its row in the
 # summary says it: {url} is the pull request's.
@@ -102,22 +120,100 @@ def off_main_text(ref):
     the run's summary."""
     return (
         "## The sync did not run\n\n"
-        f"The sync vendors only the library's main, and this run was started from `{ref}`, so it changed "
-        "nothing in any consumer. A branch's change reaches the consumers through its pull request: the "
-        "downstream jobs run each consumer's check on it, and the sync carries it once it merges.\n")
+        f"The sync runs only from main, and this run was started from `{ref}`, so it changed nothing in any "
+        "consumer. Wherever it runs from, it carries only the newest release, which waits for the owner's "
+        "approval: a branch's change reaches the consumers through its pull request, whose downstream jobs "
+        "run each consumer's check on it, and then through the release that carries it.\n")
+
+
+def after_release_text(run, repository):
+    """Why the sync does not follow the Release run that started it, for the
+    run's summary, or None when it follows it: a run that concluded success
+    and that main started in this repository, by a push or by hand. A pull
+    request's run, a fork's above all, never starts one that goes on."""
+    conclusion = run.get("conclusion")
+    if conclusion != "success":
+        named = isinstance(conclusion, str) and conclusion.isidentifier()
+        ended = f"concluded `{conclusion}` rather than `success`" if named else "ended with no conclusion"
+        return (
+            "## The sync did not run\n\n"
+            f"The Release run that started it {ended}, so the sync went no further and changed nothing in any "
+            "consumer. That run may have published some of its releases before it stopped; the newest published "
+            "release reaches the consumers with the next sync, after a Release run that succeeds, every week, or "
+            "by hand from main.\n")
+    head = (run.get("head_repository") or {}).get("full_name") or ""
+    if (run.get("event") not in RELEASE_EVENTS or run.get("head_branch") != "main"
+            or head.lower() != repository.lower()):
+        return (
+            "## The sync did not run\n\n"
+            "The Release run that started it was not one that main started, by a push or by hand, so the sync "
+            "changed nothing in any consumer: only main's own Release runs publish what the owner approved.\n")
+    return None
+
+
+def newest_release(tags):
+    """The tag of the newest release among tags: the highest version of the
+    form v<major>.<minor>.<patch>, or None when there is none. The highest,
+    not the release GitHub marks latest, which a person can move to an older
+    one by hand: the sync never takes the consumers back to it."""
+    found = [(tuple(int(part) for part in match.groups()), tag)
+             for tag in (line.strip() for line in tags) if (match := RELEASE_TAG.fullmatch(tag))]
+    return max(found)[1] if found else None
+
+
+def no_release_text(eco):
+    """Why a run found nothing to carry, for the run's summary."""
+    return (
+        "## The sync did not run\n\n"
+        f"{eco['library']} has no published release yet, and the sync carries only a published release, so it "
+        "changed nothing in any consumer. The first is made by .github/workflows/release.yml once the owner "
+        "approves its run.\n")
+
+
+def misplaced_text(eco, tag, commit, history=None):
+    """Why the sync does not carry the newest release, for the run's
+    summary, or None when it carries it: its tag must stand at a commit of
+    main's first-parent line that raised it to the tag's version, where
+    release.yml makes one, so a release published by hand anywhere else,
+    or one whose tag was moved, never reaches a consumer. history is the
+    checkout of main the plan runs in, this repository by default."""
+    why = release.misplaced(tag, commit, history or release.ROOT)
+    if why is None:
+        return None
+    return (
+        "## The sync did not run\n\n"
+        f"The newest published release of {eco['library']}, {tag}, does not stand where the release workflow makes "
+        f"a release: {why}. The sync carries a release only from the commit that raised main's first-parent line to "
+        "its version, so it changed nothing in any consumer, and every run stops here until that release is put "
+        "right. If it was published by hand, or its tag was moved, delete it on the repository's Releases page; the "
+        "next run then carries the newest release that stands.\n")
+
+
+def carrying_text(eco, tag, commit):
+    """The run's summary's first words when the sync goes on."""
+    return (
+        f"## The sync carries {tag}\n\n"
+        f"The newest published release of {eco['library']}, at {commit}, the commit that raised main to its version, "
+        "made into each consumer's copy by that release's own scripts/vendor.py; each consumer's job adds its row.\n")
 
 
 def title(version, commit):
     return f"Vendor symphony-protocol {version} ({vendoring.short_commit(commit)})"
 
 
+def release_tag(version):
+    """The tag of the release a copy's record names by its version."""
+    return f"v{version}"
+
+
 def message(eco, consumer, version, commit, release=None):
     """The sync's commit message in the consumer: the title, then why."""
     text = (f"{title(version, commit)}\n\n"
-            f"Made by {eco['library']}'s sync workflow, which copies the library\n"
-            f"into {consumer['vendor_dir']}/sdlc_protocol as ecosystem.json says and records the copy in\n"
-            f"{consumer['vendor_dir']}/VENDORED. The copy is never edited here; a change to it\n"
-            "is made in the library and comes back by the next sync.\n")
+            f"Made by {eco['library']}'s sync workflow, which copies the library's\n"
+            f"release {release_tag(version)} into {consumer['vendor_dir']}/sdlc_protocol as that release's\n"
+            f"ecosystem.json says and records the copy in {consumer['vendor_dir']}/VENDORED.\n"
+            "The copy is never edited here; a change to it is made in the library\n"
+            "and comes back with the library's next release.\n")
     if is_new_release(release):
         old, new = release
         text += (f"\nIt raises the version in {consumer['version_file']} from {old or 'none'}\n"
@@ -220,10 +316,12 @@ def body(eco, consumer, version, commit, old, log, changes, release=None):
     vendor_dir = consumer["vendor_dir"]
     sha = commit.partition("-")[0]
     link = f"https://github.com/{eco['library']}/commit/{sha}" if SHA.fullmatch(sha) else eco["library"]
+    tag = release_tag(version)
     return "\n".join([
         f"This pull request brings symphony-protocol {version} at {vendoring.short_commit(commit)} ({link}) "
         f"into `{vendor_dir}/sdlc_protocol`, as {eco['library']}'s sync workflow made it from the library's "
-        f"main. This repository uses it for {consumer['uses']}.",
+        f"release {tag} (https://github.com/{eco['library']}/releases/tag/{tag}). This repository uses it "
+        f"for {consumer['uses']}.",
         "",
         "## What changed in the library",
         "",
@@ -236,8 +334,8 @@ def body(eco, consumer, version, commit, old, log, changes, release=None):
         *release_section(consumer, release),
         "## How it lands",
         "",
-        "Nothing in the copy is edited here: a change to it is made in the library, and the next sync "
-        f"brings it. This repository's own check decides, `{consumer['check']}`, which runs "
+        "Nothing in the copy is edited here: a change to it is made in the library, and comes back with "
+        f"the library's next release. This repository's own check decides, `{consumer['check']}`, which runs "
         f"`vendoring.py verify` to hold the copy to `{vendor_dir}/VENDORED`. {landing_sentence(consumer)}",
         "",
     ])
@@ -248,7 +346,7 @@ def closing_comment(eco):
     to hold the copy by another way, a consumer's own pull request that
     vendored the library's branch, and nothing is left to land."""
     return (f"Closed by {eco['library']}'s sync workflow: this repository's main already holds the copy "
-            "this pull request would bring, so it has nothing left to land. The next change to the library "
+            "this pull request would bring, so it has nothing left to land. The library's next release "
             "opens a new one.\n")
 
 
@@ -340,15 +438,31 @@ def version_and_commit(target, consumer):
 
 def arguments(argv):
     parser = argparse.ArgumentParser(prog="python3 scripts/sync.py", description="The sync workflow's logic.")
+    parser.add_argument("--library", type=Path, default=LIBRARY, metavar="DIR",
+                        help="the checkout of the release the sync carries, whose ecosystem.json and history "
+                             "the commands read (default: this repository)")
     sub = parser.add_subparsers(dest="command", required=True)
     planning = sub.add_parser("matrix", help="the consumers as a matrix, as JSON on one line")
     planning.add_argument("--public-only", action="store_true")
     sub.add_parser("setup", help="what the owner sets up before the sync can run")
     elsewhere = sub.add_parser("off-main", help="why a run off main vendored nothing")
     elsewhere.add_argument("--ref", required=True)
+    following = sub.add_parser("after-release", help="why the sync does not follow the Release run that "
+                                                     "started it; nothing when it does")
+    following.add_argument("event", type=Path, help="the workflow_run event's payload, GITHUB_EVENT_PATH")
+    following.add_argument("--repository", required=True, metavar="OWNER/NAME", help="this repository")
+    sub.add_parser("newest-release", help="the newest release's tag among the tags on stdin; nothing when none")
+    sub.add_parser("no-release", help="why a run with no published release vendored nothing")
+    placing = sub.add_parser("misplaced", help="why the newest release's tag does not stand where release.yml "
+                                               "makes one; nothing when it does")
+    placing.add_argument("--tag", required=True)
+    placing.add_argument("--commit", required=True, help="the commit the tag names here, or an empty word")
+    carrying = sub.add_parser("carrying", help="the summary's first words when the sync goes on")
+    carrying.add_argument("--tag", required=True)
+    carrying.add_argument("--commit", required=True)
     for name in ("title", "message", "body"):
         pull = sub.add_parser(name, help=f"the consumer's pull request {name}")
-        pull.add_argument("target", help="the consumer's checkout, after scripts/vendor.py ran in it")
+        pull.add_argument("target", help="the consumer's checkout, after the release's scripts/vendor.py ran in it")
         pull.add_argument("--consumer", required=True, metavar="OWNER/NAME")
     closing = sub.add_parser("closing", help="the comment that closes a stale sync pull request")
     closing.add_argument("--consumer", required=True, metavar="OWNER/NAME")
@@ -368,13 +482,25 @@ def answer(args, eco):
         return setup_text(eco)
     if args.command == "off-main":
         return off_main_text(args.ref)
+    if args.command == "after-release":
+        run = json.loads(args.event.read_text(encoding="utf-8")).get("workflow_run") or {}
+        return after_release_text(run, args.repository) or ""
+    if args.command == "newest-release":
+        tag = newest_release(sys.stdin.read().splitlines())
+        return f"{tag}\n" if tag else ""
+    if args.command == "no-release":
+        return no_release_text(eco)
+    if args.command == "misplaced":
+        return misplaced_text(eco, args.tag, args.commit) or ""
+    if args.command == "carrying":
+        return carrying_text(eco, args.tag, args.commit)
     consumer = ecosystem.consumer_named(eco, args.consumer)
     if args.command == "closing":
         return closing_comment(eco)
     if args.command == "summary":
         return summary(consumer["repository"], args.state, args.url, args.auto_merge, args.reason)
     if args.command == "body":
-        return body_for(eco, consumer, args.target)
+        return body_for(eco, consumer, args.target, args.library)
     version, commit = version_and_commit(args.target, consumer)
     if args.command == "title":
         return title(version, commit) + "\n"
@@ -384,7 +510,7 @@ def answer(args, eco):
 def main(argv=None):
     args = arguments(sys.argv[1:] if argv is None else argv)
     try:
-        sys.stdout.write(answer(args, ecosystem.load(LIBRARY / "ecosystem.json")))
+        sys.stdout.write(answer(args, ecosystem.load(args.library / "ecosystem.json")))
     except (ecosystem.EcosystemError, OSError, ValueError) as problem:
         print(f"sync: {problem}", file=sys.stderr)
         return 1
