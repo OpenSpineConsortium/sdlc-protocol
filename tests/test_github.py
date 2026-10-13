@@ -1,7 +1,8 @@
 """The GitHub adapter makes the same REST calls the template's board and
 clerk made, and reads them into the board's Snapshot, the clerk's Client
 and the gate's World. No network: a fake opener stands in for urllib,
-answers by method, path and query, and remembers every request."""
+writes each request line as http.client does, answers by method, path and
+query, and remembers every request."""
 
 import base64
 import http.client
@@ -13,6 +14,7 @@ import tempfile
 import unittest
 import urllib.error
 import urllib.parse
+import urllib.request
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -61,17 +63,30 @@ class Refusal:
         return urllib.error.HTTPError(url, self.code, "refused", {}, io.BytesIO(raw))
 
 
+def send_line(call):
+    """Write a request's line as http.client writes it before it connects,
+    which refuses a path it cannot send as ASCII (UnicodeEncodeError), or
+    one holding a space or a control character (InvalidURL), so a fake
+    fails where a live run fails."""
+    http.client.HTTPConnection("api.github.com").putrequest(call.get_method(), call.selector)
+
+
 class FakeOpener:
     """Answers by path and query for GET and by "METHOD path" otherwise, 404
-    for anything it was not given, and remembers every request."""
+    for anything it was not given, and remembers every request. It sends
+    what a live run's urllib sends: the request line as http.client writes
+    it (send_line), answered by its path and query, the selector, which
+    leaves out whatever follows a # in the URL, so a path built from a name
+    a person writes and left unquoted fails here as it fails a live run."""
 
     def __init__(self, answers):
         self.answers = answers
         self.calls = []
 
     def open(self, call, timeout=None):
+        send_line(call)
         self.calls.append(call)
-        path = self.path_of(call)
+        path = call.selector
         method = call.get_method()
         answer = self.answers.get(path if method == "GET" else f"{method} {path}")
         if answer is None:
@@ -80,28 +95,9 @@ class FakeOpener:
             raise answer.raised(call.full_url)
         return answer
 
-    def path_of(self, call):
-        """The path and query a request is answered by."""
-        return call.full_url.replace(github.API, "")
-
     def sent(self, method):
         """The decoded bodies of the requests made with this method."""
         return [json.loads(c.data) for c in self.calls if c.get_method() == method]
-
-
-class HttpClientOpener(FakeOpener):
-    """A FakeOpener that sends what a live run's urllib sends: it writes
-    the request line as http.client does, which refuses a path it cannot
-    send as ASCII before anything is sent, and answers by that line's path
-    and query, the selector, which leaves out whatever follows a # in the
-    URL. The plain FakeOpener answers either such path 404."""
-
-    def open(self, call, timeout=None):
-        http.client.HTTPConnection("api.github.com").putrequest(call.get_method(), call.selector)
-        return super().open(call, timeout)
-
-    def path_of(self, call):
-        return call.selector
 
 
 def client(answers, waits=None):
@@ -206,7 +202,7 @@ class Client(unittest.TestCase):
         snap, answers = fixture_answers()
         branches = snap["branches"] + ["claude/\u00b2", "claude/\u27800"]
         answers["/repos/o/r/branches?per_page=100"] = FakeAnswer([{"name": b} for b in branches])
-        opener = HttpClientOpener(answers)
+        opener = FakeOpener(answers)
         api = github.GitHub("t", "o/r", opener=opener, sleep=lambda seconds: None)
         page = board.render(github.snapshot(api, snap["sha"], snap["default_branch"]))
         self.assertIn("| #12 | claude/12 | main | #40 |", page)
@@ -221,7 +217,7 @@ class Client(unittest.TestCase):
         snap, answers = fixture_answers()
         answers["/repos/o/r/branches?per_page=100"] = FakeAnswer([{"name": b} for b in snap["branches"] + ["claude/#3"]])
         answers["/repos/o/r/contents/docs/agents/claims/"] = FakeAnswer([{"name": "12.md", "type": "file"}])
-        opener = HttpClientOpener(answers)
+        opener = FakeOpener(answers)
         api = github.GitHub("t", "o/r", opener=opener, sleep=lambda seconds: None)
         self.assertIsNone(github.collect(api, snap["sha"], snap["default_branch"])["claims"]["#3"])
         asked = [c.selector for c in opener.calls]
@@ -236,7 +232,7 @@ class Client(unittest.TestCase):
         for found in ([{"name": "notes.txt", "path": "docs/agents/claims/13.md/notes.txt", "type": "file"}],
                       {"type": "submodule", "name": "13.md"}, {"type": "symlink", "target": "nowhere"}):
             answers[path] = FakeAnswer(found)
-            api = github.GitHub("t", "o/r", opener=HttpClientOpener(answers), sleep=lambda seconds: None)
+            api = github.GitHub("t", "o/r", opener=FakeOpener(answers), sleep=lambda seconds: None)
             collected = github.collect(api, snap["sha"], snap["default_branch"])
             self.assertIsNone(collected["claims"]["13"], found)
             self.assertIn("| #13 | claude/13 | no claim file yet |", board.render(board.Snapshot.from_dict(collected)))
@@ -292,6 +288,23 @@ class Token(unittest.TestCase):
             with self.assertRaises(github.GitHubError) as caught:
                 api.get("/repos/o/r/issues")
             self.assertEqual(str(caught.exception), f"GET /repos/o/r/issues: {said}")
+
+    def test_a_path_http_client_cannot_send_is_refused_by_the_fake_as_by_http_client(self):
+        # http.client writes the request line in ASCII and refuses any
+        # other path before it connects; the fake every test here talks to
+        # must refuse it the same way, so that a path built from a name a
+        # person writes, unquoted, fails a test as it fails a live run.
+        line = "/repos/o/r/git/ref/heads/caf\u00e9"
+        with self.assertRaises(UnicodeEncodeError):
+            http.client.HTTPConnection("api.github.com").putrequest("GET", line)
+        with self.assertRaises(UnicodeEncodeError):
+            FakeOpener({line: FakeAnswer({})}).open(urllib.request.Request(github.API + line))
+        api, _ = client({line: FakeAnswer({})})
+        with self.assertRaises(github.GitHubError) as caught:
+            api.get(line)
+        self.assertEqual(str(caught.exception),
+                         "GET /repos/o/r/git/ref/heads/caf\u00e9: the path holds a character outside ASCII, "
+                         "which http.client does not send")
 
     def test_an_error_is_a_client_error_the_clerk_can_tolerate(self):
         self.assertTrue(issubclass(github.GitHubError, team.ClientError))
@@ -966,7 +979,8 @@ class Repository(FakeOpener):
         self.clock = NOW
 
     def open(self, call, timeout=None):
-        where = call.full_url.replace(github.API, "")
+        send_line(call)
+        where = call.selector
         asked = where if call.get_method() == "GET" else f"{call.get_method()} {where}"
         if asked in self.refuse:
             self.calls.append(call)
@@ -1343,6 +1357,99 @@ class World(unittest.TestCase):
         outcome = gate.mark_ready(policy, place, queue, 7, "w1")
         self.assertEqual((outcome.result, outcome.main, outcome.exit_code), (gate.MERGED, "m1", gate.EXIT_DONE))
         self.assertEqual(len(opener.sent("PUT")), 1)
+
+
+# Names a person writes, with characters outside ASCII and the characters
+# a URL reads as its own (#, %, &, +, =, ;) where git allows them: a branch,
+# a default branch, a label and a login (GitHub keeps logins to ASCII
+# letters, digits and dashes, and the path quotes one anyway).
+BRANCH = "feat/caf\u00e9#1%&+=;"
+DEFAULT = "d\u00e9veloppement"
+LABEL = "worker:caf\u00e9 #1/2%"
+LOGIN = "caf\u00e9"
+
+
+def quote_all(name):
+    return urllib.parse.quote(name, safe="")
+
+
+def quote_path(name):
+    return urllib.parse.quote(name, safe="/")
+
+
+class PathsFromNames(unittest.TestCase):
+    """Every path the adapter builds from a name a person writes goes out as
+    ASCII and names that thing exactly, through the fake that writes the
+    request line as http.client does. The other paths hold numbers and
+    commits GitHub itself gave: an issue's or a pull request's number from
+    its answers, or a claim key claims.number_in read as ASCII digits; a
+    commit's sha from a branch list, a ref or a pull request; a ruleset's
+    id; the repository's own name; and the next page's URL from GitHub's
+    Link header."""
+
+    def assert_ascii(self, opener):
+        self.assertTrue(opener.calls)
+        for call in opener.calls:
+            self.assertTrue(call.selector.isascii(), call.selector)
+
+    def test_a_branch_a_default_branch_a_label_and_a_login_are_quoted_wherever_a_path_holds_one(self):
+        ref, compare = REF + quote_path(BRANCH), f"/repos/o/r/compare/{quote_path(DEFAULT)}...s1"
+        api, opener = client({
+            ref: FakeAnswer({"object": {"sha": "s1"}}),
+            f"POST /repos/o/r/branches/{quote_all(BRANCH)}/rename": FakeAnswer({}),
+            compare: FakeAnswer({"ahead_by": 1, "behind_by": 2, "commits": [{"commit": {"message": "x"}}],
+                                 "files": [{"filename": "a.md"}]}),
+            f"/repos/o/r/rules/branches/{quote_all(BRANCH)}?per_page=100": FakeAnswer([]),
+            f"DELETE /repos/o/r/issues/12/labels/{quote_all(LABEL)}": FakeAnswer(None),
+            f"/repos/o/r/collaborators/{quote_all(LOGIN)}/permission": FakeAnswer({"permission": "write"}),
+            "/repos/o/r/pulls?" + urllib.parse.urlencode({"state": "open", "head": f"o:{BRANCH}"}):
+                FakeAnswer([{"number": 5}]),
+            "/repos/o/r/pulls/5": FakeAnswer({"number": 5, "mergeable": True, "mergeable_state": "clean"}),
+            "POST /repos/o/r/labels": FakeAnswer({}),
+            "POST /repos/o/r/issues/12/labels": FakeAnswer([]),
+        })
+        self.assertEqual(github.branch_sha(api, BRANCH), "s1")
+        self.assertEqual(github.free_name(api, BRANCH, "released/9-s1", "s1"),
+                         f"claim released; {BRANCH} renamed to released/9-s1")
+        self.assertEqual(github.holding(api, DEFAULT, "s1"), coordinator.Holding(1, "x", ("a.md",)))
+        self.assertEqual(github.GitHubWorld(api, gate.Policy()).behind_by({"base": {"ref": DEFAULT},
+                                                                           "head": {"sha": "s1"}}), 2)
+        self.assertEqual(github.rulesets_on(api, (BRANCH,)), [])
+        self.assertTrue(github.take_label_off(api, "12", LABEL))
+        api.remove_label(12, LABEL)
+        self.assertTrue(github.may_write(api)(LOGIN))
+        self.assertEqual(api.open_pull(BRANCH)["number"], 5)
+        api.create_label(LABEL, "ededed")
+        self.assertEqual(github.put_back(api, "12", [LABEL]), f"; {LABEL} put back")
+        self.assert_ascii(opener)
+        self.assertEqual(opener.sent("POST")[-1], {"labels": [LABEL]})
+
+    def test_a_rename_refused_for_a_kept_head_deletes_the_branch_by_its_quoted_name(self):
+        api, opener = client({
+            REF + quote_path(BRANCH): FakeAnswer({"object": {"sha": "s1"}}),
+            f"POST /repos/o/r/branches/{quote_all(BRANCH)}/rename": Refusal(422),
+            REF + "released/9-s1": FakeAnswer({"object": {"sha": "s1"}}),
+            f"DELETE /repos/o/r/git/refs/heads/{quote_path(BRANCH)}": FakeAnswer(None),
+        })
+        self.assertEqual(github.free_name(api, BRANCH, "released/9-s1", "s1"),
+                         f"claim released; released/9-s1 already keeps s1, so {BRANCH} was deleted")
+        self.assert_ascii(opener)
+
+    def test_a_branch_list_of_names_that_claim_nothing_is_read_with_every_request_line_in_ascii(self):
+        # Each branch here has a head, so the release rule reads it too;
+        # none of them names an issue, so none costs an issue's call.
+        snap, answers = fixture_answers()
+        names = ["main", "claude/12", "claude/13", "claude/caf\u00e9#1", "claude/\u00b2", "claude/03", "claude/%41"]
+        answers["/repos/o/r/branches?per_page=100"] = FakeAnswer(
+            [{"name": name, "commit": {"sha": f"s{at}"}} for at, name in enumerate(names)])
+        api, opener = client(answers)
+        found = github.collect(api, snap["sha"], snap["default_branch"])
+        self.assertEqual(sorted(found["claims"]), sorted(claims.key_of(name) for name in names[1:]))
+        self.assert_ascii(opener)
+        asked = [c.selector for c in opener.calls]
+        self.assertIn("/repos/o/r/contents/docs/agents/claims/caf%C3%A9%231.md?ref=claude%2Fcaf%C3%A9%231", asked)
+        self.assertIn("/repos/o/r/contents/docs/agents/claims/%2541.md?ref=claude%2F%2541", asked)
+        self.assertFalse([path for path in asked if path.startswith("/repos/o/r/issues/") and "%" in path], asked)
 
 
 if __name__ == "__main__":

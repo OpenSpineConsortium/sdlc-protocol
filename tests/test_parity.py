@@ -37,6 +37,7 @@ import atexit
 import base64
 import copy
 import functools
+import http.client
 import io
 import json
 import os
@@ -223,10 +224,12 @@ def found(thing):
 class FakeRepo:
     """GitHub's REST API for one repository, held in dictionaries and served
     as an opener. Both clients send it the requests they would send to
-    api.github.com; it answers from its state as GitHub would (a JSON copy,
-    404 for what is not there, 422 for a label that exists) and keeps every
-    write, so two runs compare by what they changed as well as by what they
-    answered. The setters are the template's FakeGitHub's."""
+    api.github.com, each request line written as http.client writes it, so
+    a path it would refuse fails here too; it answers from its state as
+    GitHub would (a JSON copy, 404 for what is not there, 422 for a label
+    that exists) and keeps every write, so two runs compare by what they
+    changed as well as by what they answered. The setters are the
+    template's FakeGitHub's."""
 
     def __init__(self):
         self.issues, self.pulls, self.files, self.contents = {}, {}, {}, {}
@@ -253,6 +256,7 @@ class FakeRepo:
                 "comments": self.comments}
 
     def open(self, request, timeout=None):
+        http.client.HTTPConnection("api.github.com").putrequest(request.get_method(), request.selector)
         url = urllib.parse.urlsplit(request.full_url)
         method = request.get_method()
         body = json.loads(request.data) if request.data else None

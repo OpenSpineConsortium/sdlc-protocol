@@ -134,11 +134,14 @@ class GitHub:
     def request(self, method, url, body=None, missing_ok=False):
         """One call; the decoded JSON and the answer's headers. A 404 is
         (None, headers) when missing_ok says absence is an answer. Every
-        failure is a GitHubError, whichever part of urllib raised it:
-        http.client's own, an answer cut short (IncompleteRead) or one that
-        is no HTTP (BadStatusLine), are no OSError, and urllib passes them
-        on as they are, past every caller that turns a refusal into a
-        line."""
+        failure is a GitHubError, whichever part of urllib raised it. An
+        answer cut short (IncompleteRead) and one that is no HTTP
+        (BadStatusLine) are http.client's own exceptions, no OSError, which
+        urllib passes on as they are, past every caller that turns a
+        refusal into a line. A path holding a character outside ASCII is
+        never sent: http.client writes the request line in ASCII, and every
+        path here quotes what a person names (quoted), so such a path is a
+        call built wrong, said as one."""
         data = json.dumps(body).encode("utf-8") if body is not None else None
         headers = self.headers()
         if data is not None:
@@ -157,6 +160,9 @@ class GitHub:
             raise GitHubError(f"{where}: {getattr(problem, 'reason', problem)}") from None
         except http.client.HTTPException as problem:
             raise GitHubError(f"{where}: {problem!r}") from None
+        except UnicodeEncodeError:
+            raise GitHubError(f"{where}: the path holds a character outside ASCII, which http.client does not "
+                              "send") from None
         except ValueError:
             raise GitHubError(f"{where}: the answer was not JSON") from None
 
