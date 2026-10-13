@@ -1,24 +1,53 @@
 name: Release
 
-# Tags each release of the library and publishes it, with nobody's hands
-# on it. A release is the version in sdlc_protocol/__init__.py, raised by
-# the pull request that changes it; once that version reaches main, this
-# run tags the first commit of main's first-parent line that carries it,
-# the pull request's merge, and publishes the GitHub release for the tag,
-# with GitHub's own notes on what merged since the last one; GitHub makes
-# the tag with the release, so nothing is pushed. scripts/release.py says
-# what to tag: every version back to the newest one already tagged, oldest
-# first, so a release that a burst of merges or a failed run left untagged
-# is made by the next run, and no tag is ever moved. The version main
-# carries gets its release even when its tag was pushed by hand. Consumers
-# that install name a tag (README.md, Installing), so a release is out the
-# moment its version reaches main.
+# Tags each release of the library and publishes it, once the owner has
+# approved it in the browser. A release is the version in
+# sdlc_protocol/__init__.py, raised by the pull request that changes it.
+# Once that version reaches main, the job plan lists what this run would
+# release: scripts/release.py names every version back to the newest one
+# already tagged, oldest first, each at the first commit of main's
+# first-parent line that carries it, the pull request's merge, so a release
+# that a burst of merges or a failed run left untagged is made by the next
+# run, and no tag is ever moved; the version main carries gets its release
+# even when its tag was made by hand, but only where this workflow would
+# have made it, at the commit that raised main's first-parent line to that
+# version (scripts/release.py check-tag), and a tag anywhere else stops the
+# run. The plan writes that list into the run's summary, each release with
+# its commit, where the owner reads what an approval would release, and
+# hands it to the job release; when nothing is due, the job release does
+# not run and nobody is asked.
+#
+# The job release runs in the environment release, whose required reviewer
+# is the owner and whose one deployment branch is main (README.md, "The
+# owner's one-time setup for releases"), so GitHub starts it only once the
+# owner approves this run. It fails closed: GitHub creates an environment a
+# job names that does not exist yet, with no protection rule, and runs the
+# job at once, so the job's first step asks GitHub for this run's review
+# history and, unless the environment release was approved in it, tags
+# nothing, fails the run and says in the run's summary what to set up.
+# Then GitHub makes each tag with its release, at the commit the plan
+# named, with GitHub's own notes on what merged since the last one, so
+# nothing is pushed; GitHub makes no tag where one exists already, so the
+# job reads each tag on GitHub first and stops at one made since the plan
+# at another commit. The sync (.github/workflows/sync.yml) follows a
+# Release run that succeeded and carries the newest release into every
+# consumer, from the commit its tag stands at, so a release reaches the
+# copies once it is published; README.md, Releases, says what the approval
+# does not hold.
 #
 # It runs when the version file, the script or this file changes on main,
-# so its own merge makes up any release still untagged, and by hand; a run
-# by hand from another branch tags nothing. GITHUB_TOKEN with contents:
-# write is all it needs. The loop reads the list on its own descriptor, so
-# no command inside it can take the list's place as its input.
+# and by hand; a run by hand from another branch tags nothing, and the
+# environment's deployment branch would refuse it too. The plan reads with
+# GITHUB_TOKEN; only the job release writes contents, to make the tags and
+# the releases, and reads actions, for the review history, and it runs
+# nothing from the repository. GitHub refuses GITHUB_TOKEN a tag at a
+# commit whose .github/workflows/ differs from main's, so a release still
+# waiting when a change to a workflow merges fails once approved, and the
+# owner then publishes it by hand (README.md, Releases). While a run waits
+# for its approval, the next one waits behind it, and lists whatever is
+# still untagged when it starts. The loops read their list on its own
+# descriptor, so no command inside one can take the list's place as its
+# input.
 
 on:
   push:
@@ -30,15 +59,17 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release
   cancel-in-progress: false
 
 jobs:
-  release:
+  plan:
     runs-on: ubuntu-latest
+    outputs:
+      due: ${{ steps.plan.outputs.due }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -49,7 +80,8 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Tag each version main carries without a tag, and publish its release
+      - name: List each version main carries without a release, for the owner to approve
+        id: plan
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -57,22 +89,116 @@ jobs:
         run: |
           set -eu
           if [ "$REF" != "refs/heads/main" ]; then
-            echo "releases are made from main only; $REF tags nothing"
+            echo "releases are made from main only; $REF tags nothing" | tee -a "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           list="$RUNNER_TEMP/release.txt"
+          due="$RUNNER_TEMP/due.txt"
           python3 scripts/release.py missing > "$list"
           version="$(python3 scripts/release.py version)"
-          echo "v$version tagged" >> "$list"
-          while read -r tag commit <&3; do
+          if tagged_at="$(git rev-parse --verify -q "refs/tags/v$version^{commit}")"; then
+            echo "v$version $tagged_at tagged" >> "$list"
+          fi
+          : > "$due"
+          while read -r tag commit tagged <&3; do
+            if gh release view "$tag" --repo "$REPO" > /dev/null 2>&1; then
+              echo "$tag is released already"
+            elif cut -d ' ' -f 1 "$due" | grep -q -x -F -e "$tag"; then
+              echo "$tag is listed already, at the commit that first carries it"
+            elif [ -n "$tagged" ] && ! why="$(python3 scripts/release.py check-tag "$tag" "$commit")"; then
+              echo "Nothing was listed for approval: $why. A tag made by hand gets its release only at the commit that raised main to its version, where this workflow would have made it; if the tag is a mistake, delete it from a clone of your own (git push origin :refs/tags/$tag) and run Release again from main." | tee -a "$GITHUB_STEP_SUMMARY"
+              exit 1
+            else
+              echo "$tag $commit${tagged:+ $tagged}" >> "$due"
+            fi
+          done 3< "$list"
+          python3 scripts/release.py summary < "$due" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "due<<END_OF_DUE"
+            cat "$due"
+            echo "END_OF_DUE"
+          } >> "$GITHUB_OUTPUT"
+
+  release:
+    needs: plan
+    if: needs.plan.outputs.due != ''
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      # GitHub matches an environment's name whatever its case, and so does
+      # this step. Anything it cannot read, a failed call or an answer of
+      # another shape, stops the job before a tag is made.
+      - name: Go on only if the owner approved this run in the environment release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -eu
+          approvers="$(gh api "repos/$REPO/actions/runs/$RUN_ID/approvals" --jq '
+            [.[] | select(.state == "approved")
+              | select(any((.environments // [])[]; (.name // "" | ascii_downcase) == "release"))
+              | .user.login // "a reviewer"] | unique | join(", ")')"
+          if [ -z "$approvers" ]; then
+            echo "Nothing was released: this run has no approval in the environment release. Set that environment up once at https://github.com/$REPO/settings/environments, with yourself as its required reviewer and main as its one deployment branch (README.md, \"The owner's one-time setup for releases\"), then re-run this run, which GitHub allows for 30 days after it began, or run Release by hand from main, and approve it with Review deployments, then Approve and deploy." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "Approved in the environment release by $approvers." | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # Each release is made at the commit the plan listed and the owner
+      # approved, and nowhere else: GitHub makes no tag where one exists
+      # and releases whatever that one names, so the tag is read on GitHub
+      # just before each release, and one made elsewhere since the plan
+      # stops the job.
+      - name: Tag each version the plan listed, and publish its release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          DUE: ${{ needs.plan.outputs.due }}
+        run: |
+          set -eu
+          # The commit a tag names on GitHub, an annotated tag followed to
+          # its commit, or nothing when there is no such tag. GitHub lists
+          # every tag whose name begins with this one, so only the very
+          # name counts.
+          tag_commit() {
+            local refs ref type sha object depth=0
+            refs="$(gh api "repos/$REPO/git/matching-refs/tags/$1" --jq '.[] | "\(.ref) \(.object.type) \(.object.sha)"')" || return 1
+            while read -r ref type sha; do
+              [ "$ref" = "refs/tags/$1" ] || continue
+              while [ "$type" = "tag" ] && [ "$depth" -lt 5 ]; do
+                object="$(gh api "repos/$REPO/git/tags/$sha" --jq '"\(.object.type) \(.object.sha)"')" || return 1
+                read -r type sha <<< "$object"
+                depth=$((depth + 1))
+              done
+              [ "$type" = "commit" ] || return 1
+              echo "$sha"
+            done <<< "$refs"
+          }
+          list="$RUNNER_TEMP/release.txt"
+          printf '%s\n' "$DUE" > "$list"
+          while read -r tag commit _ <&3; do
+            [ -n "$tag" ] || continue
             title="sdlc-protocol ${tag#v}"
             if gh release view "$tag" --repo "$REPO" > /dev/null 2>&1; then
               echo "$tag is released already"
-            elif [ "$commit" = "tagged" ]; then
-              gh release create "$tag" --repo "$REPO" --verify-tag --title "$title" --generate-notes
-              echo "released $tag, whose tag was made before"
-            else
-              gh release create "$tag" --repo "$REPO" --target "$commit" --title "$title" --generate-notes
+              continue
+            fi
+            at="$(tag_commit "$tag")"
+            if [ -z "$at" ]; then
+              if ! gh release create "$tag" --repo "$REPO" --target "$commit" --title "$title" --generate-notes; then
+                echo "GitHub did not make $tag at $commit. If .github/workflows/ on main has changed since that commit, GITHUB_TOKEN may not make a tag there: publish that release yourself, at that commit (README.md, Releases)." | tee -a "$GITHUB_STEP_SUMMARY"
+                exit 1
+              fi
               echo "tagged $commit as $tag and released it"
+            elif [ "$at" = "$commit" ]; then
+              gh release create "$tag" --repo "$REPO" --verify-tag --title "$title" --generate-notes
+              echo "released $tag, whose tag was made before at $commit"
+            else
+              echo "Nothing more was released: the tag $tag now points at $at, not at $commit, the commit the plan listed for this approval. A tag made since the plan is someone else's; if it is a mistake, delete it from a clone of your own (git push origin :refs/tags/$tag) and run Release again from main." | tee -a "$GITHUB_STEP_SUMMARY"
+              exit 1
             fi
           done 3< "$list"

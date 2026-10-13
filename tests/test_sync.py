@@ -1,17 +1,21 @@
 """scripts/sync.py, the logic the sync and downstream workflows call.
 
 The workflows only run git, gh and this script, so what they decide is
-tested here: the matrix they run a leg per consumer from, what the run's
-summary tells the owner when the App is not set up or the run was started
-off main, what a consumer's reviewer reads in the sync's pull request (the
-title, the commit message, the body with the library's log of the package
-since the commit the copy named before, the files of the copy that moved
-and, for the plugin marketplace, the release the raised version in its
-plugin.json makes), the comment that closes a stale one, and each
-consumer's row in the summary, which gives GitHub's own reason when it
-refuses to arm auto-merge. The body's library log sits in a fenced
-block, where GitHub neither links "#12" to the consumer's own #12 nor reads
-"Closes #12" as closing anything."""
+tested here: the matrix they run a leg per consumer from, read from the
+release the sync carries; what the run's summary tells the owner when the
+App is not set up, the run was started off main, the Release run before it
+did not succeed or was not main's own, the newest release does not stand
+where release.yml makes one, or there is no release yet;
+which release is the newest, the highest version and never one marked
+latest by hand; what a consumer's reviewer reads in the sync's pull
+request (the title, the commit message, the body with the release it
+brings, the library's log of the package since the commit the copy named
+before, the files of the copy that moved and, for the plugin marketplace,
+the release the raised version in its plugin.json makes), the comment
+that closes a stale one, and each consumer's row in the summary, which
+gives GitHub's own reason when it refuses to arm auto-merge. The body's
+library log sits in a fenced block, where GitHub neither links "#12" to
+the consumer's own #12 nor reads "Closes #12" as closing anything."""
 
 import io
 import json
@@ -24,6 +28,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -99,16 +104,199 @@ class TheOwnersSetup(unittest.TestCase):
 
 
 class OffMain(unittest.TestCase):
-    def test_says_the_sync_vendors_only_main_and_names_the_ref(self):
+    def test_says_the_sync_runs_only_from_main_and_carries_only_a_release(self):
+        """The sync no longer vendors main at all; a run from a branch is
+        refused because that branch's own scripts would run with the App's
+        key, and the text says what does reach the consumers."""
         text = sync.off_main_text("refs/heads/claude/7")
-        self.assertIn("vendors only the library's main", text)
+        self.assertIn("The sync runs only from main", text)
         self.assertIn("`refs/heads/claude/7`", text)
         self.assertIn("changed nothing in any consumer", text)
+        self.assertIn("carries only the newest release, which waits for the owner's approval", text)
+        self.assertNotIn("library's main", text)
 
     def test_the_command_prints_it(self):
         code, out = run("off-main", "--ref", "refs/heads/claude/7")
         self.assertEqual(code, 0)
         self.assertEqual(out, sync.off_main_text("refs/heads/claude/7"))
+
+
+def release_run(**changes):
+    """A workflow_run payload's run as GitHub sends it for a Release run main
+    started by a push and that succeeded, with changes on top."""
+    run = {"conclusion": "success", "event": "push", "head_branch": "main",
+           "head_repository": {"full_name": ECO["library"]}, "name": "Release"}
+    run.update(changes)
+    return run
+
+
+class AfterARelease(unittest.TestCase):
+    def test_follows_a_run_main_started_by_a_push_or_by_hand_that_succeeded(self):
+        for event in ("push", "workflow_dispatch"):
+            with self.subTest(event=event):
+                self.assertIsNone(sync.after_release_text(release_run(event=event), ECO["library"]))
+
+    def test_names_the_repository_whatever_the_case(self):
+        self.assertIsNone(sync.after_release_text(release_run(), ECO["library"].upper()))
+
+    def test_a_run_that_did_not_succeed_is_not_followed(self):
+        """A rejected approval, one that expired, or a run cancelled while it
+        waited all conclude short of success. Was: the text said such a run
+        published no release, but one that failed partway may have
+        published the releases ahead of the one GitHub refused, which the
+        next sync carries."""
+        for conclusion in ("failure", "cancelled", "timed_out", "action_required"):
+            with self.subTest(conclusion=conclusion):
+                text = sync.after_release_text(release_run(conclusion=conclusion), ECO["library"])
+                self.assertIn(f"concluded `{conclusion}` rather than `success`", text)
+                self.assertIn("changed nothing in any consumer", text)
+                self.assertIn("may have published some of its releases before it stopped", text)
+                self.assertNotIn("published no release", text)
+
+    def test_a_conclusion_it_cannot_name_is_not_written_into_the_summary(self):
+        for conclusion in (None, "", "a `b`", 3):
+            with self.subTest(conclusion=conclusion):
+                text = sync.after_release_text(release_run(conclusion=conclusion), ECO["library"])
+                self.assertIn("ended with no conclusion", text)
+                self.assertNotIn("`b`", text)
+
+    def test_a_run_main_did_not_start_is_never_followed(self):
+        """A pull request may change release.yml to run on itself, and a
+        fork's pull request runs here too: such a run, from a branch called
+        main or not, never starts a sync that goes on."""
+        for changes in ({"event": "pull_request"}, {"event": "pull_request_target"}, {"event": "schedule"},
+                        {"head_branch": "claude/7"}, {"head_branch": None},
+                        {"head_repository": {"full_name": "someone/symphony-protocol"}},
+                        {"head_repository": None}, {"event": None}):
+            with self.subTest(changes=changes):
+                text = sync.after_release_text(release_run(**changes), ECO["library"])
+                self.assertIn("was not one that main started, by a push or by hand", text)
+
+    def test_the_command_reads_githubs_event_file_and_prints_nothing_to_go_on(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            event = Path(scratch) / "event.json"
+            event.write_text(json.dumps({"action": "completed", "workflow_run": release_run()}), encoding="ascii")
+            self.assertEqual(run("after-release", str(event), "--repository", ECO["library"]), (0, ""))
+            event.write_text(json.dumps({"workflow_run": release_run(conclusion="failure")}), encoding="ascii")
+            code, out = run("after-release", str(event), "--repository", ECO["library"])
+            self.assertEqual(code, 0)
+            self.assertEqual(out, sync.after_release_text(release_run(conclusion="failure"), ECO["library"]))
+
+    def test_an_event_with_no_run_is_not_followed(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            event = Path(scratch) / "event.json"
+            event.write_text("{}", encoding="ascii")
+            code, out = run("after-release", str(event), "--repository", ECO["library"])
+            self.assertEqual(code, 0)
+            self.assertIn("## The sync did not run", out)
+
+
+class TheNewestRelease(unittest.TestCase):
+    def test_is_the_highest_version_by_number_not_by_text(self):
+        self.assertEqual(sync.newest_release(["v0.9.0", "v0.10.0", "v0.4.1"]), "v0.10.0")
+        self.assertEqual(sync.newest_release(["v1.0.0", "v0.99.99"]), "v1.0.0")
+
+    def test_is_the_highest_whatever_order_github_lists_them_in(self):
+        """GitHub's latest is the newest by date, and a person can mark an
+        older release latest by hand; neither sends the consumers back."""
+        self.assertEqual(sync.newest_release(["v0.4.0", "v0.4.1", "v0.3.1"]), "v0.4.1")
+
+    def test_only_a_tag_the_release_workflow_would_make_counts(self):
+        tags = ["v0.5.0-rc1", "0.6.0", "v0.7", "latest", "v0.4.1 ", " ", "V0.8.0", "v0.4.0"]
+        self.assertEqual(sync.newest_release(tags), "v0.4.1")
+
+    def test_none_when_there_is_no_release(self):
+        self.assertIsNone(sync.newest_release([]))
+        self.assertIsNone(sync.newest_release(["nightly", ""]))
+
+    def test_the_command_reads_the_tags_on_stdin_and_prints_the_newest_or_nothing(self):
+        with mock.patch.object(sys, "stdin", io.StringIO("v0.3.1\nv0.4.0\nv0.2.0\n")):
+            self.assertEqual(run("newest-release"), (0, "v0.4.0\n"))
+        with mock.patch.object(sys, "stdin", io.StringIO("")):
+            self.assertEqual(run("newest-release"), (0, ""))
+
+
+class WhatTheSummarySaysOfTheRelease(unittest.TestCase):
+    def test_with_no_release_the_sync_changes_nothing(self):
+        text = sync.no_release_text(ECO)
+        self.assertIn(f"{ECO['library']} has no published release yet", text)
+        self.assertIn("changed nothing in any consumer", text)
+        self.assertEqual(run("no-release"), (0, text))
+
+    def test_it_names_the_release_it_carries_and_its_commit(self):
+        """Was: the tag alone. The sync carries the commit the tag stands
+        at, never the name, so the summary names that commit."""
+        text = sync.carrying_text(ECO, "v0.4.1", NEW)
+        self.assertTrue(text.startswith("## The sync carries v0.4.1\n"))
+        self.assertIn(f"The newest published release of {ECO['library']}, at {NEW}", text)
+        self.assertEqual(run("carrying", "--tag", "v0.4.1", "--commit", NEW), (0, text))
+
+    def test_is_ascii(self):
+        for text in (sync.no_release_text(ECO), sync.carrying_text(ECO, "v0.4.1", NEW),
+                     sync.after_release_text(release_run(event="pull_request"), ECO["library"]),
+                     sync.after_release_text(release_run(conclusion="failure"), ECO["library"])):
+            text.encode("ascii")
+
+
+class TheReleaseThatStands(unittest.TestCase):
+    """The newest release counts only where its tag stands at the commit
+    that raised main's first-parent line to its version, in the plan's
+    checkout of main: scripts/release.py decides, and the summary says why
+    the sync carried nothing."""
+
+    def setUp(self):
+        self.scratch = Path(tempfile.mkdtemp()).resolve()
+        self.addCleanup(shutil.rmtree, self.scratch, True)
+        self.main = self.scratch / "main"
+        (self.main / "sdlc_protocol").mkdir(parents=True)
+        git(self.main, "init", "-q")
+        self.raised = self.version("0.4.1")
+        (self.main / "README.md").write_text("later\n", encoding="ascii")
+        self.later = commit(self.main, "A later commit")
+
+    def version(self, number):
+        (self.main / "sdlc_protocol" / "__init__.py").write_text(f'__version__ = "{number}"\n', encoding="ascii")
+        return commit(self.main, f"Raise the version to {number}")
+
+    def test_a_tag_at_the_commit_that_raised_its_version_is_carried(self):
+        self.assertIsNone(sync.misplaced_text(ECO, "v0.4.1", self.raised, self.main))
+
+    def test_a_tag_anywhere_else_stops_the_sync_and_says_why(self):
+        text = sync.misplaced_text(ECO, "v0.4.1", self.later, self.main)
+        self.assertTrue(text.startswith("## The sync did not run\n"))
+        self.assertIn(f"{ECO['library']}, v0.4.1, does not stand where the release workflow makes a release", text)
+        self.assertIn(f"the tag v0.4.1 points at {self.later[:7]}, but main's first-parent line was raised to 0.4.1 "
+                      f"at {self.raised[:7]}", text)
+        self.assertIn("changed nothing in any consumer", text)
+        text.encode("ascii")
+
+    def test_a_tag_this_checkout_does_not_hold(self):
+        self.assertIn("names no commit this checkout holds", sync.misplaced_text(ECO, "v0.4.1", "", self.main))
+
+    def test_the_command_reads_main_where_the_script_is_and_prints_nothing_to_go_on(self):
+        with mock.patch.object(sync.release, "ROOT", self.main):
+            self.assertEqual(run("misplaced", "--tag", "v0.4.1", "--commit", self.raised), (0, ""))
+            code, out = run("misplaced", "--tag", "v0.4.1", "--commit", self.later)
+        self.assertEqual(code, 0)
+        self.assertEqual(out, sync.misplaced_text(ECO, "v0.4.1", self.later, self.main))
+
+
+class TheLibraryOption(unittest.TestCase):
+    """--library names the checkout of the release the sync carries: the
+    consumers are the ones that release's ecosystem.json lists, not main's,
+    and the body's history is that release's (TheBodyFromGit)."""
+
+    def test_the_matrix_is_the_named_librarys(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            released = dict(ECO, consumers=[c for c in ECO["consumers"] if c["repository"] != APP["repository"]])
+            (Path(scratch) / "ecosystem.json").write_text(json.dumps(released), encoding="ascii")
+            code, out = run("--library", scratch, "matrix")
+            self.assertEqual(code, 0)
+            self.assertEqual(json.loads(out), sync.matrix(released))
+            self.assertNotIn(APP["repository"], out)
+
+    def test_without_it_the_commands_read_this_repository(self):
+        self.assertEqual(json.loads(run("matrix")[1]), sync.matrix(ECO))
 
 
 class TitleAndMessage(unittest.TestCase):
@@ -122,6 +310,14 @@ class TitleAndMessage(unittest.TestCase):
         self.assertEqual(lines[:2], ["Vendor symphony-protocol 0.2.0 (2222222)", ""])
         self.assertIn("tools/VENDORED", " ".join(lines))
         self.assertTrue(all(len(line) <= 90 for line in lines))
+
+    def test_the_message_names_the_release_the_copy_comes_from(self):
+        """The copy is a release now, never main's head, and a change to it
+        comes back with the next release, not with the next push."""
+        text = " ".join(sync.message(ECO, MARKETPLACE, "0.2.0", NEW).split())
+        self.assertIn("copies the library's release v0.2.0 into plugins/sdlc/vendor/sdlc_protocol", text)
+        self.assertIn("comes back with the library's next release", text)
+        self.assertTrue(all(len(line) <= 90 for line in sync.message(ECO, MARKETPLACE, "0.2.0", NEW).splitlines()))
 
     def test_the_message_names_the_release_it_makes(self):
         text = sync.message(ECO, MARKETPLACE, "0.2.0", NEW, ("0.1.0", "0.1.1"))
@@ -171,6 +367,16 @@ class TheBody(unittest.TestCase):
         self.assertIn(f"https://github.com/{ECO['library']}/commit/{NEW}", text)
         self.assertIn("`tools/sdlc_protocol`", text)
         self.assertIn(TEMPLATE["uses"], text)
+
+    def test_names_the_release_it_comes_from_with_its_page(self):
+        """Where the body said the copy came from the library's main, it
+        names the release the owner approved, with the version and the
+        commit as before."""
+        text = self.body()
+        self.assertIn(f"made it from the library's release v0.2.0 (https://github.com/{ECO['library']}/releases/tag/"
+                      "v0.2.0)", text)
+        self.assertNotIn("library's main", text)
+        self.assertIn("comes back with the library's next release", text)
 
     def test_lists_the_librarys_log_in_a_fenced_block(self):
         text = self.body(log=["2222222 Close the gap (#12)", "1234567 Closes #3"])
@@ -234,6 +440,10 @@ class TheClosingComment(unittest.TestCase):
         text = sync.closing_comment(ECO)
         self.assertIn(f"Closed by {ECO['library']}'s sync workflow", text)
         self.assertIn("main already holds the copy", text)
+
+    def test_says_the_next_release_opens_a_new_one(self):
+        """A change to the library opens nothing by itself now: its release does."""
+        self.assertIn("The library's next release opens a new one.", sync.closing_comment(ECO))
 
     def test_the_command_prints_it(self):
         code, out = run("closing", "--consumer", "OpenSpineConsortium/coordbench")
@@ -359,6 +569,17 @@ class TheBodyFromGit(unittest.TestCase):
         self.assertIn(f"```text\n{self.second[:7]} The second guard (#12)\n```", text)
         self.assertNotIn("Say what the library is", text)
         self.assertIn("- Added: `vendoring.py`\n- Changed: `guard.py`\n- Removed: `old.py`", text)
+
+    def test_the_command_reads_the_history_of_the_library_it_is_named(self):
+        """--library names the release's checkout, whose history holds the
+        commit the consumer's copy names; this repository's own history
+        holds none of this test's commits, so the log shows only when the
+        body reads the library it was named, as the sync's job names it."""
+        (self.library / "ecosystem.json").write_text(json.dumps(ECO), encoding="ascii")
+        code, out = run("--library", str(self.library), "body", str(self.target), "--consumer", TEMPLATE["repository"])
+        self.assertEqual(code, 0)
+        self.assertIn(f"Since {self.first[:7]}, the commit the copy named before", out)
+        self.assertIn(f"{self.second[:7]} The second guard (#12)", out)
 
     def test_title_and_message_read_the_new_record(self):
         self.assertEqual(sync.version_and_commit(self.target, TEMPLATE), ("0.2.0", self.second))

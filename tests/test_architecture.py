@@ -87,6 +87,23 @@ class ThePage(unittest.TestCase):
         for words in ("downstream (<consumer>)", "symphony-protocol/sync", "auto-merge", "vendoring.py verify"):
             self.assertIn(words, self.text)
 
+    def test_says_a_change_reaches_the_consumers_only_by_a_release_the_owner_approves(self):
+        """The sync no longer carries main's head: the map draws the release
+        between the merge and the consumers' pull requests, and says so."""
+        self.assertIn("  merge --> release[\"a release, once the owner approves it\"]", self.text)
+        self.assertIn("once the owner approves the run in the environment `release`, and not before", self.text)
+        self.assertIn("carries the newest published release, never main's head", self.text)
+        self.assertNotIn("vendors the new main", self.text)
+
+    def test_a_consumer_that_goes_first_takes_the_raised_version_and_is_the_one_exception(self):
+        """A raise made after the consumer vendored the branch moves the
+        release past its copy, so the pull request raises the version from
+        the start; and the consumer's copy has the change before the
+        release, which the page says rather than promising otherwise."""
+        self.assertIn("this pull request raises the version from the start", self.text)
+        self.assertIn("the one way a change reaches a consumer before the owner's approval", self.text)
+        self.assertNotIn("this pull request merges, raising the version", self.text)
+
 
 class Words(unittest.TestCase):
     def test_a_summary_is_the_docstrings_first_sentence_on_one_line(self):
