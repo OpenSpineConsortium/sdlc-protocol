@@ -477,15 +477,10 @@ def expected_effects(before, event="schedule", ref_name="", known=AS_BUILT):
 def rename_refused_effects(before, refused):
     """SPEC["rename refused"]: for each rename of a claim branch GitHub
     refused for good in a run, given as (old name, new name, status), one
-    comment on the issue, unless one for that new name stands already. A
-    rename refused because the new name keeps the old name's commit already
-    is no refusal for good: the branch was pushed again at the head a
-    release kept, and the run deletes it (SPEC["pushed again"])."""
+    comment on the issue, unless one for that new name stands already."""
     effects = []
     for old, new, status in refused:
         number = claim_number(old)
-        if before.refs.get(new) is not None and before.refs.get(new) == before.refs.get(old):
-            continue
         if status in REFUSED_FOR_GOOD and number is not None \
                 and not has_marker(before, number, BOARD_MARKERS["rename-refused"].format(branch=new)):
             effects.append(Effect("comment", number, "rename-refused"))

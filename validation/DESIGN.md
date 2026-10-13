@@ -531,7 +531,7 @@ Measured on the prototype checker with a sound key, 2 workers, 1 issue, depth 6 
 | an idle comment to a released claim's pull request | no | no | no check read the comments sent to a released claim's pull request |
 | overlaps told on every run (2 issues, depth 5) | yes (T4) | | |
 
-It caught 1 of 8, and 4 of 8 with the extra wait. The harness's answers are the corrections above: effects compared with the oracle's (section 6.5), both waits (section 4.1), atomic verbs (section 4.1), and G8 and G10 reading labels and comments after a release. More mutants to add, so that each guarantee has at least one: labels taken off before the comment is posted; an overlap marker read from any line; a release comment accepted from any author; `comment_once` without its marker check; "main moved" posted after any event; the rename skipped; a claim branch from a fork accepted by the protocol check; the clerk dealing without its taken set; the guard accepting `--force`.
+It caught 1 of 8, and 4 of 8 with the extra wait. The harness's answers are the corrections above: effects compared with the oracle's (section 6.5), both waits (section 4.1), atomic verbs (section 4.1), and G8 and G10 reading labels and comments after a release. More mutants to add, so that each guarantee has at least one: labels taken off before the comment is posted; an overlap marker read from any line; a release comment accepted from any author; `comment_once` without its marker check; "main moved" posted after any event; the rename skipped; a claim branch from a fork accepted by the protocol check; the clerk dealing without its taken set; the guard accepting `--force`. Build step 2 added the order of the labels and the comment, the release comment from any author, `comment_once` without its marker check (`has_marker`), "main moved" after any event and the rename skipped, with others (validation/README.md); the overlap marker read from any line, the fork's claim branch, the clerk and `--force` wait for worlds and verbs of later steps.
 
 ## 8. The guard grammar, with git as its oracle
 
@@ -738,7 +738,7 @@ Every file is ASCII with LF endings and a final newline; a hostile character app
 | Lane | Command | Where | When | Budget |
 | --- | --- | --- | --- | --- |
 | fast | `python3 -m unittest discover -s tests`, which picks up tests/test_validation_*.py | the job named "check" (.github/workflows/ci.yml:40-50) | every pull request and every push to main | at most 60 s added to the suite, which ran 661 tests in 35 s on this branch, and took 35 to 44 s in three measurements on 2026-10-13 |
-| mutation | `python3 scripts/validate.py mutants` | validate.yml | weekly, by hand, and on every pull request that changes `validation/` | a few minutes |
+| mutation | `python3 -m validation.mutants` | validate.yml | weekly, by hand, and on every pull request that changes `validation/`, the library or the harness's tests | about 90 seconds |
 | deep | `python3 scripts/validate.py deep --out validation-out` | validate.yml | weekly, by hand, and on a pull request labelled `deep validation` | 20 to 40 minutes |
 | CrossHair | `crosshair check --analysis_kind=asserts --report_all ...` (section 9.4) | a person's own scratch environment | by hand, after a rule changes | 1 to 5 minutes |
 | canary | `python3 scripts/canary.py` | canary.yml | monthly, and by hand | 10 to 15 minutes |

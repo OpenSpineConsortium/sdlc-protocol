@@ -2,7 +2,7 @@
 check: the lane's size, every mutant's target still in the library, and
 each mutant caught on its shortest trace, which the library itself passes.
 The lane proper, every mutant against every search, runs in validate.yml
-(python3 -m validation.mutants), since it takes minutes; these traces are
+(python3 -m validation.mutants), since it takes about 90 seconds; these traces are
 what the lane found, kept so a change that stops the harness catching a
 mutant fails here too, naming the rule."""
 
@@ -30,7 +30,7 @@ def board_with(fault):
 # Each mutant's shortest trace, as the lane found it, with the scope it needs.
 TRACES = {
     "idle at exactly 24 hours": (HELD + [Verb("wait", "clock", (24,)), BOARD], Scope()),
-    "a 12-hour idle time": (HELD + [Verb("wait", "clock", (24,)), BOARD], Scope()),
+    "a 36-hour idle time": (HELD + [WAIT, BOARD], Scope()),
     "the worker label left on at release": (HELD + [WAIT, BOARD], Scope()),
     "a release comment accepted from any author": (HELD + [WAIT, Verb("marker", SAM, (1,)), BOARD], Scope()),
     "an idle comment to a released claim's pull request": (HELD + [Verb("open-draft", "a", (1,)), WAIT, BOARD],
@@ -83,7 +83,7 @@ class TheLane(unittest.TestCase):
 
     def test_the_searches_are_cheapest_first_and_each_says_what_it_knows(self):
         self.assertEqual(mutants.SEARCHES[-1].name, "a held claim, the clock and a release by hand")
-        self.assertEqual([s.known for s in mutants.SEARCHES if s.known], [("G1",)])
+        self.assertEqual([s.known for s in mutants.SEARCHES if s.known], [(mutants.F7,)])
 
 
 class EachMutantIsCaught(unittest.TestCase):
@@ -103,6 +103,15 @@ class TheHarnessFixesTheLaneAskedFor(unittest.TestCase):
         that is no refusal for good to say on the issue."""
         steps, scope = TRACES["a board comment posted again"]
         self.assertEqual(violations(steps, scope), [])
+
+    def test_a_head_pushed_again_whose_rename_or_delete_is_refused_for_good_is_said(self):
+        """Only the 422 the library answers by deleting is excused: a 403 on
+        the rename, or a refused delete, leaves the name taken, and the
+        issue hears so once."""
+        steps, scope = TRACES["a board comment posted again"]
+        for fault in ("rename-403", "ref-delete-422"):
+            with self.subTest(fault=fault):
+                self.assertEqual(violations(steps[:-1] + [board_with(fault)], scope), [])
 
     def test_the_guard_must_refuse_what_the_rules_forbid(self):
         outcome = verbs.Outcome(True, "taken", "git push origin claude/01", None, allowed_shape=False)

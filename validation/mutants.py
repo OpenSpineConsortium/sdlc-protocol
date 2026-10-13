@@ -18,8 +18,11 @@ traces in tests/test_validation_mutants.py are each mutant's shortest
 example, kept so a failure names the rule that broke; the lane is what
 shows the searches bite.
 
-`python3 -m validation.mutants` runs the lane and prints one line per
-mutant, the search that caught it and the first violation it found.
+`python3 -m validation.mutants` runs the lane and prints, for each
+mutant, the search that caught it with the shortest violation it met and
+that violation's trace, then the count caught. The guarantee a mutant
+names is the rule it changes; the violation reported is whatever the
+search met first, often a comment the run owed or made as a result.
 """
 
 import contextlib
@@ -51,7 +54,8 @@ class Mutant(NamedTuple):
 class Search(NamedTuple):
     """One breadth-first search: the verbs that bring the seeded repository
     to its start, the scope searched from there and how deep, and the
-    guarantees the library as it stands is known to break in it."""
+    violations, as (guarantee, detail), the library as it stands is known
+    to meet in it."""
 
     name: str
     prefix: tuple
@@ -68,18 +72,27 @@ ORIGINAL_LABELS_RELEASED = coordinator.labels_released
 ORIGINAL_IS_RELEASED = board.is_released
 ORIGINAL_COMMENTS_DUE = board.comments_due
 ORIGINAL_OVERLAPS_DUE = coordinator.overlap_comments_due
-ORIGINAL_MISNAMED_CLAIM = guard.misnamed_claim
 
 
 def comment_then_labels(api, snap, key, now):
-    """release_one with the spec's order reversed, as cf3bdb0 had it (F1)."""
-    release = snap.releases[key]
+    """release_one with the spec's two steps swapped, the comment first, as
+    before 0.4.1 (F1), and every refusal still handled as release_one
+    handles it, so the order is the one rule changed."""
+    release, names, taken_off = snap.releases[key], coordinator.labels_released(snap, key), []
     text = coordinator.release_text(snap, key, github.holding(api, snap.default_branch, release.sha))
-    api.post(f"/repos/{api.repo}/issues/{key}/comments", {"body": text})
-    names = coordinator.labels_released(snap, key)
-    for name in names:
-        github.take_label_off(api, key, name)
-    coordinator.after_release(snap, key, now.isoformat(), names)
+    try:
+        released_at = (api.post(f"/repos/{api.repo}/issues/{key}/comments", {"body": text}) or {}).get("created_at")
+    except github.GitHubError as problem:
+        released_at = github.landed_release(api, key, release)
+        if not released_at:
+            return f"#{key}: not released, the comment failed: {problem}"
+    try:
+        for name in names:
+            if github.take_label_off(api, key, name):
+                taken_off.append(name)
+    except github.GitHubError as problem:
+        return f"#{key}: taking the labels off failed: {problem}" + github.put_back(api, key, taken_off)
+    coordinator.after_release(snap, key, released_at or now.isoformat(), names)
     return f"#{key}: claim released"
 
 
@@ -122,9 +135,9 @@ MUTANTS = {
     "idle at exactly 24 hours": Mutant(
         claims, "is_idle", lambda last, now, idle_after=claims.IDLE_AFTER: now - claims.parse_time(last) >= idle_after,
         "G2", "spec, Release: idle is more than 24 hours, so a claim at exactly 24 is not yet due"),
-    "a 12-hour idle time": Mutant(
+    "a 36-hour idle time": Mutant(
         claims, "is_idle", lambda last, now, idle_after=claims.IDLE_AFTER:
-        ORIGINAL_IS_IDLE(last, now, timedelta(hours=12)), "G2", "the idle time is the spec's 24 hours"),
+        ORIGINAL_IS_IDLE(last, now, timedelta(hours=36)), "G3", "a claim idle for more than 24 hours is due"),
     "the worker label left on at release": Mutant(
         coordinator, "labels_released", lambda snap, key:
         [n for n in ORIGINAL_LABELS_RELEASED(snap, key) if n == "claimed"],
@@ -175,7 +188,7 @@ MUTANTS = {
         "G1", "claude/01 is no claim on #1 (F5)"),
     "the guard passes a misnamed claim": Mutant(
         guard, "misnamed_claim", lambda name: None,
-        "G1", "the push guard refuses a name that reads as a claim and claims nothing"),
+        "G11a", "the push guard refuses a name that reads as a claim and claims nothing"),
 }
 
 
@@ -188,12 +201,13 @@ SHARED = ("src/shared.py",)
 
 # Cheapest first, since a mutant is judged by the first search that
 # catches it. The careless search meets F7 on the library itself: a lease
-# after a fetch takes another's claim (G1), which no board rule answers.
+# after a fetch takes another's claim, which no board rule answers.
+F7 = ("G1", "the board names b for claude/1, whose holder is a")
 SEARCHES = (
     Search("a released claim under every fault", (CLAIM, CLAIMED, WORKER, Verb("wait", "clock", (25,))),
            Scope(workers=("a",), people=(), waits=(25,), faults=tuple(verbs.FAULTS)), 2),
     Search("careless workers on a held claim", (CLAIM, CLAIMED),
-           Scope(workers=("a", "b"), people=(M.OWNER,), waits=(25,), careless=True), 3, known=("G1",)),
+           Scope(workers=("a", "b"), people=(M.OWNER,), waits=(25,), careless=True), 3, known=(F7,)),
     Search("two claims on one file", (CLAIM, Verb("claim", "b", (2,))),
            Scope(workers=("a", "b"), issues=(1, 2), people=(), waits=(25,),
                  files=((1, SHARED), (2, SHARED))), 3, issues=(1, 2)),
@@ -270,7 +284,7 @@ def surprises(plain, searches=SEARCHES):
     findings: a search that is red on the library cannot tell a mutant."""
     found = {}
     for search in searches:
-        unknown = sorted(key for key in plain[search.name] if key[0] not in search.known)
+        unknown = sorted(key for key in plain[search.name] if key not in search.known)
         if unknown:
             found[search.name] = unknown
     return found
@@ -285,6 +299,10 @@ def main(argv=None):
     names = (argv if argv is not None else sys.argv[1:]) or None
     plain, verdicts = run_lane(names)
     status = 0
+    for search in SEARCHES:
+        for key in search.known:
+            if key in plain[search.name]:
+                print(f"known    on the library itself in {search.name!r}: {key[0]}, {key[1]}")
     for search, unknown in surprises(plain).items():
         status = 1
         print(f"the library itself breaks a guarantee in {search!r}: {unknown[0]}")
