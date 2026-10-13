@@ -18,6 +18,7 @@ PLUS = ("a + before a refspec forces that ref as --force does, and git lets it o
         "one forced push the protocol allows is --force-with-lease on your own claude/ branch after a rebase, with "
         "no + (.claude/rules/board.md)")
 MAIN = "a push to main is refused: the default branch takes only pull requests (.claude/rules/board.md)"
+BOARD = "a push to board is refused: only the board workflow writes that branch (.claude/rules/board.md)"
 
 
 def refusal(args, current="claude/7", default="main"):
@@ -79,6 +80,14 @@ class RefusalTest(unittest.TestCase):
         self.assertEqual(refusal(["--al", "origin"]), refusal(["--all", "origin"]))
         self.assertEqual(refusal(["--br", "origin"]), refusal(["--branches", "origin"]))
         self.assertIsNone(refusal(["--de", "origin", "+claude/7"]), "--de is --delete")
+        # git 2.43 deleted claude/2 on "--delet origin claude/2", as it does
+        # on --delete, which the guard lets through for one's own claim
+        # branch after its merge, and refuses for main.
+        self.assertIsNone(refusal(["--delet", "origin", "claude/2"]))
+        self.assertEqual(refusal(["--delet", "origin", "main"]), MAIN)
+        # git 2.43 answered "git push --forc origin claude/1" with "ambiguous
+        # option: forc (could be --force-with-lease or --force-if-includes)",
+        # exit 129, and pushed nothing.
         for ambiguous in ("--forc", "--d", "--a", "--force-"):
             self.assertIsNone(refusal([ambiguous, "origin", "claude/7"]), ambiguous)
 
@@ -119,6 +128,32 @@ class RefusalTest(unittest.TestCase):
                      ["origin", "claude/03:claude/3"], ["--delete", "origin", "claude/03"], ["origin", ":claude/03"],
                      ["-d", "origin", "claude/\u00b2"]):
             self.assertIsNone(refusal(args), args)
+
+    def test_a_branch_written_as_git_resolves_it_is_that_branch(self):
+        # git reads heads/main as refs/heads/main on both sides of a
+        # refspec, as it reads any name with refs/ left off, and @ alone as
+        # HEAD. Against a bare remote, git 2.43 updated main on "git push
+        # origin heads/main", "HEAD:heads/main", "heads/claude/7:heads/main"
+        # and, from main, "git push origin @"; it deleted board on "git push
+        # origin :heads/board" and "git push --delete origin heads/board";
+        # and the guard let each of them through.
+        for args, current in ((["origin", "heads/main"], "claude/7"), (["origin", "HEAD:heads/main"], "claude/7"),
+                              (["origin", "heads/claude/7:heads/main"], "claude/7"),
+                              (["origin", ":heads/main"], "claude/7"),
+                              (["--delete", "origin", "heads/main"], "claude/7"),
+                              (["origin", "@"], "main"), (["-u", "origin", "@"], "main")):
+            self.assertEqual(refusal(args, current=current), MAIN, args)
+        for args in (["origin", "heads/board"], ["origin", "HEAD:heads/board"], ["origin", ":heads/board"],
+                     ["--delete", "origin", "heads/board"], ["--delet", "origin", "heads/board"]):
+            self.assertEqual(refusal(args), BOARD, args)
+        # refs/heads/ is taken off once: git 2.43 made a branch named
+        # heads/main on "git push origin HEAD:refs/heads/heads/main".
+        self.assertIsNone(refusal(["origin", "HEAD:refs/heads/heads/main"]))
+        self.assertIsNone(refusal(["origin", "refs/tags/main"]), "a tag is no branch")
+        self.assertIsNone(refusal(["origin", "@"]), "@ on a claim branch pushes that branch")
+        # git pushed claude/7 on "--force-with-lease origin heads/claude/7",
+        # one's own claim branch, which the guard refused as another one.
+        self.assertIsNone(refusal(["--force-with-lease", "origin", "heads/claude/7"]))
 
     def test_the_claim_number_is_the_rule_claims_states(self):
         # The guard keeps its own copy, since the marketplace takes guard.py
@@ -301,6 +336,13 @@ class RunTest(unittest.TestCase):
                         "FOO+=1 git push origin main", "env -iu HOME git push origin main"):
             self.assertEqual(self.run_guard(command), (2, MAIN), command)
         self.assertEqual(self.run_guard("timeout 60 git push -u origin claude/7"), (0, ""))
+
+    def test_a_branch_written_as_git_resolves_it_is_judged_as_that_branch(self):
+        for command in ("git push origin heads/main", "git push origin HEAD:heads/main",
+                        "git push --delete origin heads/main"):
+            self.assertEqual(self.run_guard(command), (2, MAIN), command)
+        self.assertEqual(self.run_guard("git push origin :heads/board"), (2, BOARD))
+        self.assertEqual(self.run_guard("git push -u origin heads/claude/7"), (0, ""))
 
     def test_a_command_handed_to_another_shell_as_text_is_out_of_reach(self):
         """The trade the docstring states: what bash -c, eval or env -S runs

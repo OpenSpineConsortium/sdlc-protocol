@@ -24,11 +24,16 @@ its name), and the wrappers env, command, nice, time, exec, nohup and
 timeout, each with its own options. A push is read as git reads its
 arguments: short options in a bundle, as in -fu; a long one by any start
 of its name that names it alone, as --force-w, or taken back with --no-;
-a value that is no refspec; and the refspecs that write many branches,
-the matching refspec : and a pattern with a *. What a command hands to
-another shell or command as text, as bash -c 'git push ...', eval and
-env -S do, is one word to this module and passes, as do a wrapper not
-named here (sudo, xargs) and a git alias for push.
+a value that is no refspec; the refspecs that write many branches, the
+matching refspec : and a pattern with a *; and each branch by the name
+git resolves, refs/heads/main and heads/main both being main, and @
+alone being HEAD. What a command hands to another shell or command as
+text, as bash -c 'git push ...', eval and env -S do, is one word to this
+module and passes, as do a wrapper not named here (sudo, xargs), a git
+alias for push, and a push git's configuration sends where its words do
+not say: with push.default=upstream, or a remote's push refspecs, git
+2.43 pushed a claim branch that tracks origin/main to main on "git push",
+and this module reads no configuration.
 
 shlex reads a newline as whitespace, which would glue a line onto the one
 before it, so a small pass runs first: it turns each unquoted newline into
@@ -347,18 +352,35 @@ def moves_many(spec):
     return spec.lstrip("+") == ":" or "*" in spec
 
 
+def branch_named(name):
+    """The branch one side of a refspec names, as git resolves it: a name
+    with refs/ left off is read as one under refs/, so heads/main is
+    refs/heads/main, which is main, on either side of the colon (git 2.43
+    pushed main on "git push origin heads/main" and on "HEAD:heads/main").
+    refs/heads/ comes off once, so refs/heads/heads/main is the branch
+    heads/main; any other name under refs/, a tag's, is kept whole and is
+    no branch the rules name."""
+    if name.startswith("refs/"):
+        return name.removeprefix("refs/heads/")
+    return name.removeprefix("heads/")
+
+
 def targets_of(refspecs, current_branch, deleting):
     """The branches a push writes, each with whether it deletes it: a
-    refspec's destination, after the colon when it has one, the current
-    branch for HEAD or no refspec at all, and a deletion under --delete or
-    for a refspec with nothing before its colon."""
+    refspec's destination, after the colon when it has one, as git
+    resolves the name (branch_named), the current branch for HEAD, for @
+    alone, which git reads as HEAD, or for no refspec at all, and a
+    deletion under --delete or for a refspec with nothing before its
+    colon."""
     targets = []
     for spec in refspecs:
         name, deleted = spec.lstrip("+"), deleting
         if ":" in name:
             source, name = name.split(":", 1)
             deleted = deleted or not source
-        name = name.removeprefix("refs/heads/")
+        elif name == "@":
+            name = "HEAD"
+        name = branch_named(name)
         if name in ("", "HEAD"):
             name = current_branch
         if name:
