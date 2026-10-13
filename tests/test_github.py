@@ -100,6 +100,20 @@ class FakeOpener:
         return [json.loads(c.data) for c in self.calls if c.get_method() == method]
 
 
+def too_large_to_give(path, ref):
+    """What GitHub answers through the contents API's default media type
+    for a file it gives no text of, as it answered on 2026-10-13 for a
+    file of 1,361,824 bytes (application/vnd.github+json, API version
+    2022-11-28): 200, the file's metadata, an empty content and the
+    encoding "none". Its REST description documents that shape for a file
+    between 1 and 100 MB under the object media type, and GitHub takes no
+    push of a file over 100 MiB."""
+    name = path.rsplit("/", 1)[-1]
+    return FakeAnswer({"name": name, "path": path, "sha": "04e7f66b309c6c2bf217a521399b7e7ed6a22ab0",
+                       "size": 1361824, "url": f"{github.API}/repos/o/r/contents/{path}?ref={ref}",
+                       "type": "file", "content": "", "encoding": "none"})
+
+
 def client(answers, waits=None):
     opener = FakeOpener(answers)
     sleep = waits.append if waits is not None else (lambda seconds: None)
@@ -236,6 +250,40 @@ class Client(unittest.TestCase):
             collected = github.collect(api, snap["sha"], snap["default_branch"])
             self.assertIsNone(collected["claims"]["13"], found)
             self.assertIn("| #13 | claude/13 | no claim file yet |", board.render(board.Snapshot.from_dict(collected)))
+
+    def test_a_claim_file_github_gives_no_text_of_is_read_as_not_read_and_said_so(self):
+        # It was read as an empty claim file, so the board said "no claim
+        # file yet" of a file that is there, and a release would have said
+        # that the claim states no plan.
+        snap, answers = fixture_answers()
+        answers["/repos/o/r/contents/docs/agents/claims/13.md?ref=claude%2F13"] = too_large_to_give(
+            "docs/agents/claims/13.md", "claude/13")
+        api, _ = client(answers)
+        collected = github.collect(api, snap["sha"], snap["default_branch"])
+        self.assertIs(collected["claims"]["13"], board.UNREAD_CLAIM)
+        live = board.Snapshot.from_dict(collected)
+        self.assertIn("| #13 | claude/13 | claim file over 1 MB, not read | #41 |", board.render(live))
+        self.assertEqual(github.unread_claim_lines(live), [
+            "claude/13: GitHub gave no text for docs/agents/claims/13.md, a file over 1 MB, so the board shows "
+            "the claim file as not read"])
+        self.assertEqual(github.unread_claim_lines(board.Snapshot.from_dict(snap)), [])
+
+    def test_a_board_run_says_which_claim_file_github_gave_no_text_of(self):
+        snap, answers = fixture_answers()
+        answers["/repos/o/r/contents/docs/agents/claims/13.md?ref=claude%2F13"] = too_large_to_give(
+            "docs/agents/claims/13.md", "claude/13")
+        api, _ = client(answers)
+        with tempfile.TemporaryDirectory() as folder:
+            out = Path(folder) / "STATE.md"
+            printed = io.StringIO()
+            with mock.patch.object(github, "GitHub", lambda token, repo: api), redirect_stdout(printed):
+                code = cli.run_board(["--render-only", "--sha", snap["sha"], "--out", str(out)],
+                                     {"GITHUB_TOKEN": "t", "GITHUB_REPOSITORY": "o/r"})
+            self.assertEqual(code, 0)
+            self.assertIn("| #13 | claude/13 | claim file over 1 MB, not read |", out.read_text(encoding="ascii"))
+            self.assertEqual(printed.getvalue().splitlines(), [
+                "claude/13: GitHub gave no text for docs/agents/claims/13.md, a file over 1 MB, so the board shows "
+                "the claim file as not read", f"{out.as_posix()}: rewritten"])
 
     def test_a_claim_branch_whose_issue_was_deleted_has_no_issue_and_stops_no_run(self):
         # GitHub answers 410 for an issue someone deleted, and the run

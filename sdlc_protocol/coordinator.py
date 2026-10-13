@@ -147,7 +147,7 @@ def release_text(snapshot, key, holding, idle_after=claims.IDLE_AFTER):
         f"the queue.",
         "",
         f"What the branch holds: {holding_text(holding, snap.default_branch)}",
-        plan_line(snap.claims.get(key) or "", key, new),
+        plan_line(snap.claims.get(key), key, new),
         "",
         f"To carry the work on, claim the issue anew, a new {old} from {snap.default_branch}, and bring the "
         f"commits in from {new} after the claim commit; or start over. To undo the release, put the label "
@@ -157,8 +157,12 @@ def release_text(snapshot, key, holding, idle_after=claims.IDLE_AFTER):
 
 def plan_line(text, key, new):
     """The release note's line on the claim's plan, cut to PLAN_QUOTED with
-    a word on where the rest is, the claim file the branch keeps."""
-    plan = claims.claim_plan(text)
+    a word on where the rest is, the claim file the branch keeps; for a
+    claim file GitHub gave no text of (board.UNREAD_CLAIM), where it is."""
+    if text is board.UNREAD_CLAIM:
+        return (f"The claim file is over 1 MB, more than GitHub gives the text of, so its plan is not quoted; "
+                f"{claims.claim_path(key)} on {new} has it.")
+    plan = claims.claim_plan(text or "")
     if not plan:
         return "The claim file states no plan."
     if len(plan) <= PLAN_QUOTED:

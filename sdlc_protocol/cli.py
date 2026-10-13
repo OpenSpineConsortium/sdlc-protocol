@@ -103,6 +103,8 @@ def board_live_run(args, environ):
     api = github.GitHub(token, repo)
     now = datetime.now(timezone.utc)
     snap = github.snapshot(api, args.sha or environ.get("GITHUB_SHA", ""), args.default_branch, now)
+    for line in github.unread_claim_lines(snap):
+        print(line)
     if not args.render_only:
         for line in github.coordinate(api, snap, now):
             print(line)

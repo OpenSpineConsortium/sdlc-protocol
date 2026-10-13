@@ -286,10 +286,12 @@ def claim_text(api, branch):
     yet, or when what stands at its path is no file: GitHub answers a folder
     with the list of what it holds, and a submodule, or a link to anything
     but a file, with an object of that type, and reading a list as a file
-    raised in every run while the branch stood. The key is quoted, as
-    a hand-made branch may put anything after claude/: http.client refuses
-    a path it cannot send as ASCII, and a # would begin the URL's fragment,
-    which asks for the claims folder."""
+    raised in every run while the branch stood. A file GitHub gives no text
+    of, one over 1 MB, which it answers with an empty content and the
+    encoding "none", is board.UNREAD_CLAIM, never an empty claim file. The
+    key is quoted, as a hand-made branch may put anything after claude/:
+    http.client refuses a path it cannot send as ASCII, and a # would begin
+    the URL's fragment, which asks for the claims folder."""
     name = board.branch_name(branch)
     found = api.get(
         f"/repos/{api.repo}/contents/{claims.CLAIM_DIR}/{quoted(claims.key_of(name))}.md",
@@ -297,7 +299,19 @@ def claim_text(api, branch):
     )
     if not isinstance(found, dict) or found.get("type", "file") != "file":
         return None
+    if found.get("encoding") == "none":
+        return board.UNREAD_CLAIM
     return base64.b64decode(found.get("content") or "").decode("utf-8", "replace")
+
+
+def unread_claim_lines(snapshot):
+    """A line for each claim file GitHub gave no text of, for the workflow's
+    log, since the board can show only that it was not read."""
+    snap = board.as_snapshot(snapshot)
+    return [f"{claims.branch_of(key)}: GitHub gave no text for {claims.claim_path(key)}, a file over 1 MB, so the "
+            f"board shows the claim file as not read"
+            for key, text in sorted(snap.claims.items(), key=lambda item: claims.by_number(item[0]))
+            if text is board.UNREAD_CLAIM]
 
 
 def recent_merged(api):

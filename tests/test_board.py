@@ -82,6 +82,17 @@ class Rendering(unittest.TestCase):
         self.assertIn("| #13 | claude/13 | no claim file yet | #41 | .claude/skills/remember/SKILL.md |", self.text)
         self.assertNotIn("| main |", self.text.split(board.PULL_HEADING)[0].split("| #12")[0])
 
+    def test_a_claim_file_github_gave_no_text_of_is_named_so_unless_a_label_names_the_worker(self):
+        snap = snapshot()
+        snap["claims"]["12"] = board.UNREAD_CLAIM
+        snap["claim_issues"] = {"12": {"state": "open", "labels": ["claimed", "todo"]}}
+        text = board.render(snap)
+        self.assertIn("| #12 | claude/12 | claim file over 1 MB, not read | #40 |", text)
+        snap["claim_issues"]["12"]["labels"].append("worker:nightly")
+        self.assertIn("| #12 | claude/12 | nightly | #40 |", board.render(snap))
+        again = Snapshot.from_json(Snapshot.from_dict(snap).to_json())
+        self.assertIs(again.claims["12"], board.UNREAD_CLAIM)
+
     def test_a_claim_whose_issue_is_closed_says_so_and_asks_for_the_branch_to_go(self):
         snap = snapshot()
         snap["branches"].append("claude/3")

@@ -34,6 +34,13 @@ RECENT_MERGED = 5
 # the current directory, since the workflow checks out the branch "board".
 STATE_PATH = Path("STATE.md")
 NO_CLAIM_FILE = "no claim file yet"
+# A claim file GitHub gave no text of: its contents API gives the text of a
+# file of up to 1 MB, and answers a bigger one with an empty content and
+# the encoding "none". The snapshot holds it as False, where a text is the
+# file's and None is no file yet, and the Worker cell says so when no label
+# names the worker either.
+UNREAD_CLAIM = False
+CLAIM_FILE_NOT_READ = "claim file over 1 MB, not read"
 # A claim branch that outlived its issue: the row stays, and says what to do.
 ISSUE_CLOSED = "issue closed"
 DELETE_BRANCH = "delete the branch"
@@ -226,8 +233,9 @@ class Snapshot:
     the default branch's commit and name, the open issues (pull requests
     left out), the open pull requests with their standing and files, the
     branch names, the claim files by issue key (None for a branch with no
-    file yet), the issue behind each claim branch, what a release reads
-    about a claim by issue key, and the merges last."""
+    file yet, UNREAD_CLAIM for one GitHub gave no text of), the issue
+    behind each claim branch, what a release reads about a claim by issue
+    key, and the merges last."""
 
     sha: str = ""
     default_branch: str = "main"
@@ -525,7 +533,8 @@ def table(columns, rows):
 
 def claim_row(key, branch, text, pull, issue):
     """One claim as the board shows it. The worker is the claim file's, or
-    the issue's label once the finishing pull request has deleted the file.
+    the issue's label once the finishing pull request has deleted the file
+    or when GitHub gave no text of it (UNREAD_CLAIM).
     A branch whose issue is closed is a leftover: the row says so in place
     of the pull request and asks for the branch to go in place of the files.
     A branch whose key names no issue claims nothing, and the row says so in
@@ -550,7 +559,8 @@ def claim_row(key, branch, text, pull, issue):
     if text:
         worker = claim_worker(text)
     else:
-        worker = labels.worker_of({"labels": issue.labels} if issue else None) or NO_CLAIM_FILE
+        missing = CLAIM_FILE_NOT_READ if text is UNREAD_CLAIM else NO_CLAIM_FILE
+        worker = labels.worker_of({"labels": issue.labels} if issue else None) or missing
     return [issue_ref(key), escaped(branch), worker, pull_cell, files_cell]
 
 

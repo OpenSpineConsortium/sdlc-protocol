@@ -107,6 +107,14 @@ class ReleaseText(unittest.TestCase):
         nobody.claim_issues["12"].labels = ["todo"]
         self.assertIn("held by a worker nobody named,", coordinator.release_text(nobody, "12", coordinator.Holding()))
 
+    def test_a_release_of_a_claim_whose_file_github_gave_no_text_of_says_where_the_plan_is(self):
+        snap = idle_claim(claims={"12": board.UNREAD_CLAIM})
+        text = coordinator.release_text(snap, "12", coordinator.Holding())
+        self.assertIn("held by nightly,", text)
+        self.assertIn("The claim file is over 1 MB, more than GitHub gives the text of, so its plan is not quoted; "
+                      "docs/agents/claims/12.md on released/12-aaaaaaa has it.", text)
+        self.assertNotIn("states no plan", text)
+
     def test_a_branch_with_only_its_claim_file_and_a_long_one_are_both_said_plainly(self):
         only = coordinator.Holding(1, "Claim #12", ("docs/agents/claims/12.md",))
         self.assertIn("1 commit ahead of main, the newest \"Claim #12\"; it changes nothing but its claim file.",
