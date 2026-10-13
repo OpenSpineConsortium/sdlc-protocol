@@ -277,7 +277,8 @@ class TheReleaseThatStands(unittest.TestCase):
 
 class TheLibraryOption(unittest.TestCase):
     """--library names the checkout of the release the sync carries: the
-    consumers are the ones that release's ecosystem.json lists, not main's."""
+    consumers are the ones that release's ecosystem.json lists, not main's,
+    and the body's history is that release's (TheBodyFromGit)."""
 
     def test_the_matrix_is_the_named_librarys(self):
         with tempfile.TemporaryDirectory() as scratch:
@@ -562,6 +563,17 @@ class TheBodyFromGit(unittest.TestCase):
         self.assertIn(f"```text\n{self.second[:7]} The second guard (#12)\n```", text)
         self.assertNotIn("Say what the library is", text)
         self.assertIn("- Added: `vendoring.py`\n- Changed: `guard.py`\n- Removed: `old.py`", text)
+
+    def test_the_command_reads_the_history_of_the_library_it_is_named(self):
+        """--library names the release's checkout, whose history holds the
+        commit the consumer's copy names; this repository's own history
+        holds none of this test's commits, so the log shows only when the
+        body reads the library it was named, as the sync's job names it."""
+        (self.library / "ecosystem.json").write_text(json.dumps(ECO), encoding="ascii")
+        code, out = run("--library", str(self.library), "body", str(self.target), "--consumer", TEMPLATE["repository"])
+        self.assertEqual(code, 0)
+        self.assertIn(f"Since {self.first[:7]}, the commit the copy named before", out)
+        self.assertIn(f"{self.second[:7]} The second guard (#12)", out)
 
     def test_title_and_message_read_the_new_record(self):
         self.assertEqual(sync.version_and_commit(self.target, TEMPLATE), ("0.2.0", self.second))
