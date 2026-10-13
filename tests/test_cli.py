@@ -474,6 +474,13 @@ class Workers(unittest.TestCase):
             self.assertEqual((code, out), (1, ""))
             self.assertIn("a worker named nightly exists already", err)
 
+    def test_from_form_refuses_a_number_too_long_for_int_in_one_line(self):
+        with tempfile.TemporaryDirectory() as folder:
+            body = FORM_BODY.replace("\n3\n", "\n" + "9" * 4301 + "\n")
+            self.assertEqual(self.run_workers(["--dir", folder, "from-form"], body),
+                             (1, "", "workers: rounds must be a whole number from 1 to 50\n"))
+            self.assertEqual(list(Path(folder).iterdir()), [])
+
     def test_from_form_refuses_answers_that_do_not_hold_together(self):
         with tempfile.TemporaryDirectory() as folder:
             body = FORM_BODY.replace("\nnightly\n", "\nNight Shift\n").replace("\n3\n", "\nthree\n")
