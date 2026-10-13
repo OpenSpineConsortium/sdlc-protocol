@@ -27,13 +27,24 @@ of its name that names it alone, as --force-w, or taken back with --no-;
 a value that is no refspec; the refspecs that write many branches, the
 matching refspec : and a pattern with a *; and each branch by the name
 git resolves, refs/heads/main and heads/main both being main, and @
-alone being HEAD. What a command hands to another shell or command as
-text, as bash -c 'git push ...', eval and env -S do, is one word to this
-module and passes, as do a wrapper not named here (sudo, xargs), a git
-alias for push, and a push git's configuration sends where its words do
-not say: with push.default=upstream, or a remote's push refspecs, git
-2.43 pushed a claim branch that tracks origin/main to main on "git push",
-and this module reads no configuration.
+alone being HEAD. git reads heads/X after the colon as X only where the
+remote has a branch X, and makes a branch named heads/X where it has
+none. This module cannot see the remote's branches and reads heads/X as X
+wherever it stands: that is exact for the default branch and board, which
+are always there, and a name the remote lacks becomes heads/X, a branch
+no rule names, so the module at worst refuses a push git would have let
+make one, as HEAD:heads/claude/03. What a command hands to another shell
+or command as text, as bash -c 'git push ...', eval and env -S do, is one
+word to this module and passes, as do a wrapper not named here (sudo,
+xargs), a git alias for push, and a push git's configuration sends where
+its words do not say. With push.default=upstream, or its old name
+tracking, git 2.43 sends a branch named alone, as in "git push origin
+claude/7" and "git push -u origin claude/7", and the current branch on a
+bare "git push", to the branch it tracks: a claim branch made with "git
+switch -c claude/7 origin/main", which tracks main, went to main on each
+of the three, where with --no-track the first push made claude/7. A
+remote's push refspecs (remote.<name>.push) send a push elsewhere too.
+This module reads no configuration.
 
 shlex reads a newline as whitespace, which would glue a line onto the one
 before it, so a small pass runs first: it turns each unquoted newline into
@@ -356,7 +367,9 @@ def branch_named(name):
     """The branch one side of a refspec names, as git resolves it: a name
     with refs/ left off is read as one under refs/, so heads/main is
     refs/heads/main, which is main, on either side of the colon (git 2.43
-    pushed main on "git push origin heads/main" and on "HEAD:heads/main").
+    pushed main on "git push origin heads/main" and on "HEAD:heads/main"),
+    after the colon where the remote has the branch, as it always has the
+    default branch and board, git making heads/X of a name it lacks.
     refs/heads/ comes off once, so refs/heads/heads/main is the branch
     heads/main; any other name under refs/, a tag's, is kept whole and is
     no branch the rules name."""
