@@ -38,6 +38,8 @@ WEB = "https://github.com"
 # branch, or a token without the right. A 404 can mean only that the branch
 # went away since it was read, which the next run sees for itself.
 REFUSED_FOR_GOOD = {403, 422}
+# What GitHub answers for an issue someone deleted.
+GONE = 410
 API_VERSION = "2022-11-28"
 USER_AGENT = "sdlc-board"
 TIMEOUT = 60
@@ -267,15 +269,19 @@ def pull_with_detail(api, number):
 
 def claim_text(api, branch):
     """The claim file on a claude/<issue> branch, or None when there is none
-    yet. The key is quoted, as a hand-made branch may put anything after
-    claude/: http.client refuses a path it cannot send as ASCII, and a #
-    would begin the URL's fragment, which asks for the claims folder."""
+    yet, or when what stands at its path is no file: GitHub answers a folder
+    with the list of what it holds, and a submodule, or a link to anything
+    but a file, with an object of that type, and reading a list as a file
+    raised in every run while the branch stood. The key is quoted, as
+    a hand-made branch may put anything after claude/: http.client refuses
+    a path it cannot send as ASCII, and a # would begin the URL's fragment,
+    which asks for the claims folder."""
     name = board.branch_name(branch)
     found = api.get(
         f"/repos/{api.repo}/contents/{claims.CLAIM_DIR}/{quoted(claims.key_of(name))}.md",
         {"ref": name}, missing_ok=True,
     )
-    if found is None:
+    if not isinstance(found, dict) or found.get("type", "file") != "file":
         return None
     return base64.b64decode(found.get("content") or "").decode("utf-8", "replace")
 
@@ -307,10 +313,24 @@ def claim_issues(api, branches, open_issues):
         key = claims.key_of(branch)
         if claims.number_of(branch) is None:
             continue
-        issue = by_number.get(key) or api.get(f"/repos/{api.repo}/issues/{key}", missing_ok=True)
+        issue = by_number.get(key) or issue_or_none(api, key)
         if issue is not None:
             found[key] = {"state": issue.get("state", ""), "labels": labels.label_names(issue)}
     return found
+
+
+def issue_or_none(api, number):
+    """The issue with this number, or None when GitHub has none by it: 404
+    for a number no issue was given, and 410 for an issue someone deleted,
+    whose branch the template's tidy workflow, which runs when an issue
+    closes, leaves standing; the 410 raised, and stopped every run while
+    the branch stood."""
+    try:
+        return api.get(f"/repos/{api.repo}/issues/{number}", missing_ok=True)
+    except GitHubError as problem:
+        if problem.status == GONE:
+            return None
+        raise
 
 
 def claim_heads(listed):

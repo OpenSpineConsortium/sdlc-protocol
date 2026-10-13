@@ -217,6 +217,34 @@ class Client(unittest.TestCase):
         asked = [c.selector for c in opener.calls]
         self.assertIn("/repos/o/r/contents/docs/agents/claims/%233.md?ref=claude%2F%233", asked)
 
+    def test_a_folder_a_submodule_or_a_link_at_the_claim_path_is_no_claim_file_and_stops_no_run(self):
+        # GitHub answers a folder with a list, which raised AttributeError
+        # in every board run while the branch stood; git pushes a branch
+        # whose docs/agents/claims/13.md is a folder.
+        snap, answers = fixture_answers()
+        path = "/repos/o/r/contents/docs/agents/claims/13.md?ref=claude%2F13"
+        for found in ([{"name": "notes.txt", "path": "docs/agents/claims/13.md/notes.txt", "type": "file"}],
+                      {"type": "submodule", "name": "13.md"}, {"type": "symlink", "target": "nowhere"}):
+            answers[path] = FakeAnswer(found)
+            api = github.GitHub("t", "o/r", opener=HttpClientOpener(answers), sleep=lambda seconds: None)
+            collected = github.collect(api, snap["sha"], snap["default_branch"])
+            self.assertIsNone(collected["claims"]["13"], found)
+            self.assertIn("| #13 | claude/13 | no claim file yet |", board.render(board.Snapshot.from_dict(collected)))
+
+    def test_a_claim_branch_whose_issue_was_deleted_has_no_issue_and_stops_no_run(self):
+        # GitHub answers 410 for an issue someone deleted, and the run
+        # exited 1 before STATE.md was written.
+        snap, answers = fixture_answers()
+        answers["/repos/o/r/branches?per_page=100"] = FakeAnswer([{"name": b} for b in snap["branches"] + ["claude/77"]])
+        answers["/repos/o/r/issues/77"] = Refusal(410, {"message": "This issue was deleted"})
+        api = github.GitHub("t", "o/r", opener=FakeOpener(answers), sleep=lambda seconds: None)
+        collected = github.collect(api, snap["sha"], snap["default_branch"])
+        self.assertNotIn("77", collected["claim_issues"])
+        self.assertIn("| #77 | claude/77 |", board.render(board.Snapshot.from_dict(collected)))
+        answers["/repos/o/r/issues/77"] = Refusal(502)
+        with self.assertRaises(github.GitHubError):
+            github.collect(api, snap["sha"], snap["default_branch"])
+
     def test_next_link(self):
         headers = {"Link": '<https://api.github.com/repos/o/r/issues?page=2>; rel="next", <https://api.github.com/repos/o/r/issues?page=3>; rel="last"'}
         self.assertEqual(github.next_link(headers), "https://api.github.com/repos/o/r/issues?page=2")
