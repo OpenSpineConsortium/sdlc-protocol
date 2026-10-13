@@ -5,7 +5,8 @@ A release of the library is the version in sdlc_protocol/__init__.py.
 main's first-parent line that carries it, the merge of the pull request
 that raised it, as v0.2.0 was tagged by hand, and publishes a GitHub
 release for the tag once the owner approves the run, so nobody has to
-remember to and nothing is released without that approval. This script
+remember to and the workflow releases nothing without that approval
+(README.md, Releases, says what else could). This script
 says what to tag: walking that line from the newest commit back until a
 version that has a tag, where the releases already made begin, every
 version met on the way, at the oldest commit that carries it. A release a
