@@ -18,6 +18,15 @@ multiset, with each release in the spec's order. A difference is reported
 under the guarantee its kind belongs to. The gate's guarantee (G13) and
 dealing (G14) are later steps' (section 14), and G11a's grammar judged by
 git is step 4's.
+
+A run made in two halves with other verbs between them (DESIGN.md, 3.3)
+is judged by the states it read: its writes against the state it started
+from, since that is what its first half read, with the renames its second
+half rightly left alone, of branches that moved between the halves
+(spec, Release: "a commit pushed to the branch before the rename, its
+holder coming back, keeps the claim"); its labels and its page against the
+state its first half left; and its renames against the state its second
+half found. The record of such a run carries those states.
 """
 
 import re
@@ -200,38 +209,48 @@ def command_checks(outcome):
 # --- cycles -----------------------------------------------------------------
 
 def cycle_checks(before, after, record, known=oracle.AS_BUILT):
-    """Every cycle guarantee for one board run. The writes are compared
+    """Every cycle guarantee for one board run, given the state before the
+    verb that completed it and the state after. The writes are compared
     with the oracle's, and a half release or a noisy second run counted,
     only for a run no injected fault touched, read from the calls, since
     a verb may name a fault that never fires; the release order, the
-    rename refused and the rest hold under faults too."""
+    rename refused and the rest hold under faults too. For a run made
+    whole, before is the state it started from, and after the state its
+    first half left, as far as labels and the page go, since the second
+    half changes neither; a run made in two halves carries the states its
+    halves read (cycle.RunRecord), and before is what its second half
+    found."""
     if record.exit_code != 0:
         if reads_failed(record.calls):
             return []
         return [Violation("G15", f"the run exited {record.exit_code}: {record.raised}")]
+    start = record.started_from if record.started_from is not None else before
+    planned = record.planned if record.planned is not None else after
     problems = []
     actual = effects_of(record.calls)
     if not any(c.injected for c in record.calls):
-        problems += effects_agree(before, record, actual, known)
+        problems += effects_agree(start, before, record, actual, known)
         problems += [Violation("G3L", f"a release no rule completes: #{n}") for n in oracle.half_released(after)]
-        problems += quiet_second_run(after, record)
+        if record.planned is None or before.repository_key() == record.planned.repository_key():
+            problems += quiet_second_run(after, record)
     problems += release_order(actual)
     problems += rename_refused_said(before, record, actual)
-    problems += releases_only_due(before, actual)
-    problems += labels_put_back(before, after, record, actual)
-    problems += nothing_lost(before, after, actual)
-    problems += labels_name_the_holder(after, actual)
-    problems += board_renders_the_state(after, record, known)
+    problems += releases_only_due(start, actual)
+    problems += labels_put_back(start, planned, record, actual)
+    problems += nothing_lost(start, planned, before, after, actual)
+    problems += labels_name_the_holder(planned, actual)
+    problems += board_renders_the_state(planned, record, known)
     if after.board_text != record.page:
         problems.append(Violation("G15", "the run exited 0 and its board did not reach the branch board"))
     return problems
 
 
-def effects_agree(before, record, actual, known):
-    """The run's writes are the oracle's, and each release keeps the spec's
-    order: the labels off, then the comment, then the rename, then the word
-    on the issue."""
-    expected = oracle.expected_effects(before, record.event, record.ref_name, known)
+def effects_agree(start, found, record, actual, known):
+    """The run's writes are the oracle's, computed from the state the run
+    started from, less the renames of claim branches that had moved by the
+    time its second half found them, which the run rightly leaves alone,
+    each with the word on the issue that would have followed it."""
+    expected = kept_renames(oracle.expected_effects(start, record.event, record.ref_name, known), start, found)
     made = [e for e in actual if e != oracle.Effect("comment", e.target, "rename-refused")]
     problems = []
     missing, extra = Counter(expected) - Counter(made), Counter(made) - Counter(expected)
@@ -240,6 +259,25 @@ def effects_agree(before, record, actual, known):
     for effect in sorted(extra, key=repr):
         problems.append(Violation(guarantee_of(effect), f"made and not owed: {tuple(effect)}"))
     return problems
+
+
+def kept_renames(expected, start, found):
+    """The expected effects without the rename or delete of each claim
+    branch that is not where the run read it, and without the "released"
+    word that the oracle owes right after it."""
+    kept, skipping = [], None
+    for effect in expected:
+        if effect.kind in ("rename", "delete-ref"):
+            skipping = oracle.claim_number(effect.target) if found.refs.get(effect.target) != start.refs.get(
+                effect.target) else None
+            if skipping is not None:
+                continue
+        elif effect == oracle.Effect("comment", skipping, "released"):
+            continue
+        else:
+            skipping = None
+        kept.append(effect)
+    return kept
 
 
 def rename_refused_said(before, record, actual):
@@ -326,15 +364,16 @@ def labels_put_back(before, after, record, actual):
     return problems
 
 
-def nothing_lost(before, after, actual):
-    """G4."""
+def nothing_lost(start, planned, found, after, actual):
+    """G4: neither half made a commit unreachable, and a claim branch the
+    run deleted is kept under its released name."""
     problems = []
-    lost = before.reachable() - after.reachable()
+    lost = (start.reachable() - planned.reachable()) | (found.reachable() - after.reachable())
     if lost:
         problems.append(Violation("G4", f"the run made {len(lost)} commits unreachable"))
     for effect in actual:
         if effect.kind == "delete-ref":
-            number, sha = oracle.claim_number(effect.target), before.refs.get(effect.target, "")
+            number, sha = oracle.claim_number(effect.target), found.refs.get(effect.target, "")
             if number is None or after.refs.get(oracle.released_name(number, sha)) != sha:
                 problems.append(Violation("G4", f"deleted {effect.target} with no released branch keeping it"))
     return problems

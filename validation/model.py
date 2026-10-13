@@ -135,6 +135,12 @@ class RepoModel:
     tracking: dict = field(default_factory=dict)
     # The board branch's STATE.md: written only by a board run that exits 0.
     board_text: str = ""
+    # The board workflow's concurrency group (DESIGN.md, 3.3): the runs the
+    # last events queued, as (event, ref name), any one of which may be the
+    # one that starts next; and the run in progress between its two halves,
+    # a cycle.HalfRun, while one is.
+    pending: tuple = ()
+    running: object = None
 
     # --- commits ------------------------------------------------------------
 
@@ -296,10 +302,36 @@ class RepoModel:
         found = self.target(number)
         return found.comments if found else ()
 
+    # --- the board workflow's queue -------------------------------------------
+
+    def fire(self, events):
+        """The last act's events, as (event, ref name), reached the board
+        workflow, which queues a run for each (board.yml's push, create,
+        delete, pull_request and issues). In its concurrency group a newer
+        queued run replaces the one waiting, so whatever waited is
+        cancelled; which of several queued at once is left is not known,
+        so all are kept as candidates until one starts. A push to any
+        branch but the default queues a run whose job is skipped
+        (board.yml's condition), which takes the slot and does nothing."""
+        self.pending = tuple(sorted(e for e in set(events) if not (e[0] == "push" and e[1] != MAIN)))
+
+    def starts(self, event, ref_name):
+        """A board run for the event starts: a queued one leaves the queue,
+        its fellows still waiting; any other, the schedule's or one a trace
+        names, came as a newer event and replaced what waited."""
+        self.pending = tuple(e for e in self.pending if e != (event, ref_name)) if (event, ref_name) in self.pending \
+            else ()
+
     # --- the key ------------------------------------------------------------
 
     def canonical(self):
-        """Everything any guarantee or the oracle reads, as one hashable value."""
+        """Everything any guarantee or the oracle reads, as one hashable
+        value: the repository, the runs queued, and the run in progress by
+        what it started from, since what its first half did and what its
+        second will do follow from that."""
+        return self.repository_key() + (self.pending, self.running.key() if self.running else None)
+
+    def repository_key(self):
         return (
             self.now,
             tuple(sorted(self.refs.items())),

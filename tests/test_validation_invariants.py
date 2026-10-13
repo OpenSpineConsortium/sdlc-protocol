@@ -1,8 +1,9 @@
 """The harness's guarantees (validation/invariants.py) on hand-written
 traces: an honest release and reclaim breaks none; the 0.4.1 fixes hold;
-the open findings F2, F7, F9 and F12 show as soon as the oracle reads the
-spec. The mutants, the prototype's among them, are
-tests/test_validation_mutants.py's."""
+a run in two halves is judged by the states its halves read; the open
+findings F2, F7, F9 and F12 show as soon as the oracle reads the spec,
+F12 by the run the concurrency group cancels. The mutants, the prototype's
+among them, are tests/test_validation_mutants.py's."""
 
 import re
 import sys
@@ -110,6 +111,33 @@ class TheFixesOf041Hold(unittest.TestCase):
         self.assertEqual(violations(steps), [])
 
 
+class ARunInTwoHalves(unittest.TestCase):
+    HELD = [Verb("claim", "a", (1,)), Verb("label-on", "a", (1, "claimed")), Verb("label-on", "a", (1, "worker:a")),
+            Verb("wait", "clock", (25,)), Verb("board-start", "board", (cycle.SCHEDULE, ""))]
+    SPLIT = Scope(split_board=True)
+
+    def test_the_holder_back_between_the_halves_keeps_the_claim_and_breaks_nothing(self):
+        """S09: the rename the oracle owes from the state the run started
+        from is rightly left alone, with the word on the issue."""
+        steps = self.HELD + [Verb("commit", "a", (1,)), Verb("board-finish", "board")]
+        self.assertEqual(violations(steps, self.SPLIT), [])
+        with mock.patch.object(github, "free_name", mutants.renamed_unread):
+            self.assertEqual(sorted({(v.guarantee, v.detail) for v in violations(steps, self.SPLIT)}),
+                             [("G10", "made and not owed: ('comment', 1, 'released')"),
+                              ("G3", "made and not owed: ('rename', 'claude/1', 'released/1-6d6ae03')")])
+
+    def test_a_release_undone_between_the_halves_is_the_holder_s_not_the_run_s(self):
+        """The holder puts claimed back after the first half took it off:
+        the run released the claim, and what the issue carries at the end
+        is not the run's doing (G8)."""
+        steps = self.HELD + [Verb("label-on", "a", (1, "claimed")), Verb("board-finish", "board")]
+        self.assertEqual(violations(steps, self.SPLIT), [])
+
+    def test_main_moved_between_the_halves_owes_the_next_run_nothing_new_as_built(self):
+        steps = self.HELD + [Verb("move-main", M.OWNER), Verb("board-finish", "board")]
+        self.assertEqual(violations(steps, self.SPLIT), [])
+
+
 class TheOpenFindingsShow(unittest.TestCase):
     """With its switch off the oracle reads the spec, and the finding is red."""
 
@@ -129,6 +157,17 @@ class TheOpenFindingsShow(unittest.TestCase):
                  Verb("move-main", M.OWNER), board_with(event=cycle.PULL_REQUEST)]
         self.assertEqual(violations(steps), [])
         self.assertEqual(guarantees(violations(steps, known=oracle.AS_BUILT - {"F12"})), ["G10"])
+
+    def test_f12_the_run_of_the_push_to_main_is_cancelled_by_the_next_event_s(self):
+        """The mechanism (DESIGN.md, F12): main moves, a worker pushes to a
+        claim branch, whose skipped run takes the waiting run's place, and
+        the run that follows owes nothing as built; reading the spec, it
+        owes the pull request the word."""
+        scope = Scope(events=cycle.EVENTS)
+        steps = [Verb("claim", "a", (1,)), Verb("open-draft", "a", (1,)), Verb("mark-ready", "a", (100,)),
+                 Verb("move-main", M.OWNER), Verb("commit", "a", (1,)), Verb("board", "board", (cycle.PULL_REQUEST, ""))]
+        self.assertEqual(violations(steps, scope), [])
+        self.assertEqual(guarantees(violations(steps, scope, known=oracle.AS_BUILT - {"F12"})), ["G10"])
 
     def test_f7_a_lease_after_a_fetch_takes_another_s_claim(self):
         found = violations([Verb("claim", "a", (1,)), Verb("lease-onto", "b", (1,))], Scope(careless=True))

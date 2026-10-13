@@ -95,28 +95,48 @@ def board_dry_run(args):
     return 0
 
 
+def plan_board(api, sha, default_branch, now, render_only=False, say=print):
+    """The first half of a board run: read the repository as GitHub holds
+    it, release the claims due and tell overlapping work (the coordinator),
+    and render the page. The snapshot as the coordinator left it, which the
+    second half acts on, and the page. The run is in two halves so that the
+    validation harness can run them on its own clock with other work
+    between them, as the half-minute of a workflow run allows; say takes
+    each log line as it is made."""
+    github = github_adapter()
+    snap = github.snapshot(api, sha, default_branch, now)
+    for line in github.unread_claim_lines(snap):
+        say(line)
+    if not render_only:
+        for line in github.coordinate(api, snap, now):
+            say(line)
+    return snap, board.render(snap)
+
+
+def act_on_board(api, snap, event_name, ref_name, now, say=print):
+    """The second half, once the page is written: rename the released
+    claims' branches, then post the comments the event owes the pull
+    requests, both from the snapshot the first half read."""
+    github = github_adapter()
+    for line in github.release_claims(api, snap):
+        say(line)
+    for line in github.post_comments(api, board.comments_due(snap, event_name, ref_name, now)):
+        say(line)
+
+
 def board_live_run(args, environ):
     token, repo = environ.get("GITHUB_TOKEN"), environ.get("GITHUB_REPOSITORY")
     if not token or not repo:
         raise CommandError("GITHUB_TOKEN and GITHUB_REPOSITORY must be set")
-    github = github_adapter()
-    api = github.GitHub(token, repo)
+    api = github_adapter().GitHub(token, repo)
     now = datetime.now(timezone.utc)
-    snap = github.snapshot(api, args.sha or environ.get("GITHUB_SHA", ""), args.default_branch, now)
-    for line in github.unread_claim_lines(snap):
-        print(line)
-    if not args.render_only:
-        for line in github.coordinate(api, snap, now):
-            print(line)
+    snap, page = plan_board(api, args.sha or environ.get("GITHUB_SHA", ""), args.default_branch, now,
+                            args.render_only)
     out = Path(args.out) if args.out else board.STATE_PATH
-    changed = board.write_if_changed(out, board.render(snap))
+    changed = board.write_if_changed(out, page)
     print(f"{out.as_posix()}: {'rewritten' if changed else 'unchanged'}")
     if not args.render_only:
-        for line in github.release_claims(api, snap):
-            print(line)
-        due = board.comments_due(snap, environ.get("GITHUB_EVENT_NAME", ""), environ.get("GITHUB_REF_NAME", ""), now)
-        for line in github.post_comments(api, due):
-            print(line)
+        act_on_board(api, snap, environ.get("GITHUB_EVENT_NAME", ""), environ.get("GITHUB_REF_NAME", ""), now)
     return 0
 
 

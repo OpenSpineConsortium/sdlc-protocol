@@ -28,6 +28,7 @@ search met first, often a comment the run owed or made as a result.
 import contextlib
 import sys
 import time
+import urllib.parse
 from datetime import timedelta
 from typing import NamedTuple
 from unittest import mock
@@ -125,6 +126,23 @@ def nobody_vouched_for(api):
     return lambda login: False
 
 
+def renamed_unread(api, old, new, sha):
+    """github.free_name renaming without reading the branch again, so a
+    holder who came back between the release comment and the rename loses
+    the claim's name (spec, Release: "a commit pushed to the branch before
+    the rename, its holder coming back, keeps the claim"); a name that
+    keeps the released head already is still deleted, as free_name does,
+    so the one rule changed is the reading."""
+    try:
+        api.post(f"/repos/{api.repo}/branches/{urllib.parse.quote(old, safe='')}/rename", {"new_name": new})
+        return f"claim released; {old} renamed to {new}"
+    except github.GitHubError as problem:
+        if problem.status != 422 or github.branch_sha(api, new) != sha:
+            raise
+    api.delete(f"/repos/{api.repo}/git/refs/heads/{github.quoted(old)}")
+    return f"claim released; {new} already keeps {sha[:7]}, so {old} was deleted"
+
+
 def number_with_any_zeros(key):
     """claims.number_in taking leading zeros, as before 0.4.1 (F5)."""
     text = str(key)
@@ -189,6 +207,9 @@ MUTANTS = {
     "the guard passes a misnamed claim": Mutant(
         guard, "misnamed_claim", lambda name: None,
         "G11a", "the push guard refuses a name that reads as a claim and claims nothing"),
+    "the rename made without reading the head again": Mutant(
+        github, "free_name", renamed_unread,
+        "G3", "a commit pushed before the rename, its holder coming back, keeps the claim"),
 }
 
 
@@ -201,7 +222,9 @@ SHARED = ("src/shared.py",)
 
 # Cheapest first, since a mutant is judged by the first search that
 # catches it. The careless search meets F7 on the library itself: a lease
-# after a fetch takes another's claim, which no board rule answers.
+# after a fetch takes another's claim, which no board rule answers. The
+# last search runs each board run in its two halves (DESIGN.md, 3.3), so
+# a rule that reads the repository again in the second half is met.
 F7 = ("G1", "the board names b for claude/1, whose holder is a")
 SEARCHES = (
     Search("a released claim under every fault", (CLAIM, CLAIMED, WORKER, Verb("wait", "clock", (25,))),
@@ -213,6 +236,8 @@ SEARCHES = (
                  files=((1, SHARED), (2, SHARED))), 3, issues=(1, 2)),
     Search("a held claim, the clock and a release by hand", (CLAIM, CLAIMED, WORKER),
            Scope(workers=("a",), people=(M.OWNER, DANA, SAM), waits=(24, 25)), 4),
+    Search("the holder back between the halves of a run", (CLAIM, CLAIMED, WORKER, Verb("wait", "clock", (25,))),
+           Scope(workers=("a",), people=(), waits=(25,), split_board=True), 3),
 )
 
 

@@ -1,7 +1,8 @@
 """The harness's memory world (validation/model.py): git's rule for a push
 as validation/prototype/gitprobe.py measured it, how a branch stands to
-main, the rename GitHub makes, and a state key that keeps everything a
-guarantee reads."""
+main, the rename GitHub makes, the board workflow's queue in its
+concurrency group, and a state key that keeps everything a guarantee
+reads."""
 
 import sys
 import unittest
@@ -10,7 +11,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from validation import model as M, verbs  # noqa: E402
+from validation import cycle, model as M, verbs  # noqa: E402
 from validation.verbs import Verb  # noqa: E402
 
 
@@ -170,6 +171,49 @@ class TheKey(unittest.TestCase):
         other.refs["x"] = "y"
         self.assertNotIn("claimed", self.model.issues[1].labels)
         self.assertNotIn("x", self.model.refs)
+
+    def test_keeps_the_runs_queued_and_the_run_between_its_halves(self):
+        self.assertTrue(self.differs(lambda m: m.fire((("push", "main"),))))
+        self.assertTrue(self.differs(lambda m: cycle.start_run(m)))
+        one, two = self.model.clone(), self.model.clone()
+        cycle.start_run(one)
+        cycle.start_run(two, faults=(verbs.FAULTS["rename-403"],))
+        self.assertNotEqual(one.canonical(), two.canonical())
+        cycle.finish_run(one)
+        cycle.finish_run(two)
+        self.assertEqual(one.canonical(), two.canonical())
+
+
+class TheWorkflowsQueue(unittest.TestCase):
+    """board.yml's concurrency group (DESIGN.md, 3.3): one run waits at
+    most, a newer one replaces it, and of several fired at once any may be
+    the one left."""
+
+    def setUp(self):
+        self.model = M.seeded()
+
+    def test_the_events_of_one_act_wait_together_and_replace_what_waited(self):
+        self.model.fire((("push", "main"),))
+        self.model.fire((("create", "claude/1"), ("push", "claude/1"), ("pull_request", "")))
+        self.assertEqual(self.model.pending, (("create", "claude/1"), ("pull_request", "")))
+
+    def test_a_push_to_another_branch_takes_the_slot_and_runs_nothing(self):
+        """board.yml's job skips a push to any branch but the default, and
+        whether the skipped run still cancels the one waiting is inferred,
+        not measured (canary C2)."""
+        self.model.fire((("push", "main"),))
+        self.model.fire((("push", "claude/1"),))
+        self.assertEqual(self.model.pending, ())
+
+    def test_a_queued_run_that_starts_leaves_its_fellows_waiting(self):
+        self.model.fire((("create", "claude/1"), ("pull_request", "")))
+        self.model.starts("create", "claude/1")
+        self.assertEqual(self.model.pending, (("pull_request", ""),))
+
+    def test_a_run_from_elsewhere_replaced_what_waited(self):
+        self.model.fire((("create", "claude/1"), ("pull_request", "")))
+        self.model.starts("schedule", "")
+        self.assertEqual(self.model.pending, ())
 
 
 if __name__ == "__main__":
