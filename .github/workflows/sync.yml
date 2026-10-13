@@ -1,15 +1,30 @@
 name: Sync
 
-# One push to main that changes the package reaches every repository that
-# runs a copy of it. For each consumer ecosystem.json lists, the job sync
-# vendors main into a checkout of that consumer with scripts/vendor.py and,
-# when anything changed, pushes the result to the branch
-# symphony-protocol/sync there and opens the pull request from it, or updates
-# the one already open; where ecosystem.json gives the consumer auto_merge
-# it then arms auto-merge, so the consumer's own required check is the
-# last word. The commits and pull requests are the GitHub App OpenSpine
-# Symphony's, with a token scoped to the one consumer and to the two
-# permissions the job uses: a push made with GITHUB_TOKEN starts no
+# Each release of the library reaches every repository that runs a copy of
+# it, and nothing else does. A release waits for the owner's approval in
+# the environment release (.github/workflows/release.yml), and the sync
+# carries only a published release: it runs when a run of the Release
+# workflow completes, weekly and by hand, and every run carries the newest
+# published release, by its tag, never main's head, so what reaches a
+# consumer is only what the owner approved, and neither a run by hand nor
+# the schedule is a way around that approval. Release publishes with
+# GITHUB_TOKEN, whose events start no workflow, so the sync follows the
+# Release run itself (workflow_run) rather than the release it published,
+# and goes on only after a Release run that concluded success and that
+# main started, by a push or by hand, never one that a pull request, a
+# fork's above all, could start.
+#
+# For each consumer the release's own ecosystem.json lists, the job sync
+# makes the copy with the release's own scripts/vendor.py, from the
+# release's package, in a checkout of that consumer and, when anything
+# changed, pushes the result to the branch symphony-protocol/sync there and
+# opens the pull request from it, or updates the one already open; where
+# ecosystem.json gives the consumer auto_merge it then arms auto-merge, so
+# the consumer's own required check is the last word. The pull request's
+# words are main's scripts/sync.py's, which reads the release's
+# ecosystem.json and history. The commits and pull requests are the GitHub
+# App OpenSpine Symphony's, with a token scoped to the one consumer and to
+# the two permissions the job uses: a push made with GITHUB_TOKEN starts no
 # workflow in the consumer, and the App's does, so the consumer's CI runs
 # on it. The branch belongs to this workflow alone, which is why it is
 # force-pushed; it is pushed only when the copy differs from what the
@@ -17,27 +32,23 @@ name: Sync
 # consumer's CI. When the consumer's main already holds the copy, a sync
 # pull request still open there is stale, and the job closes it.
 #
-# The sync vendors main and nothing else. A run started by hand from
-# another branch says so in its summary and stops, so a branch nobody
-# reviewed never reaches a consumer. Where the variable SDLC_APP_ID is
-# not set, the plan says in the run's summary what the owner sets up
-# (README.md, "The owner's one-time setup for the sync") and the sync is
-# skipped, so the run stays green. Values reach a shell only through env:,
-# never through an expression inside run:, so nothing a value holds runs
-# as code. One sync runs at a time and a newer push waits for it rather
-# than cancelling it, so a consumer's pull request is never left half
-# made. The weekly run catches a push whose sync failed, or a consumer
-# that moved its copy by hand.
+# A run started by hand from another branch says so in its summary and
+# stops, so a branch nobody reviewed never runs with the App's key. Where
+# the variable SDLC_APP_ID is not set, the plan says in the run's summary
+# what the owner sets up (README.md, "The owner's one-time setup for the
+# sync") and the sync is skipped, so the run stays green; so it is when no
+# release is published yet, or the Release run before it published none.
+# Values reach a shell only through env:, never through an expression
+# inside run:, so nothing a value holds runs as code. One sync runs at a
+# time and a newer one waits for it rather than cancelling it, so a
+# consumer's pull request is never left half made. The weekly run catches
+# a release whose sync failed, or a consumer that moved its copy by hand.
 
 on:
-  push:
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
     branches: [main]
-    paths:
-      - "sdlc_protocol/**"
-      - "ecosystem.json"
-      - "scripts/vendor.py"
-      - "scripts/sync.py"
-      - "scripts/ecosystem.py"
   workflow_dispatch:
   schedule:
     - cron: "17 6 * * 1"
@@ -53,33 +64,80 @@ jobs:
   plan:
     runs-on: ubuntu-latest
     outputs:
-      matrix: ${{ steps.plan.outputs.matrix }}
+      matrix: ${{ steps.consumers.outputs.matrix }}
       enabled: ${{ steps.plan.outputs.enabled }}
+      tag: ${{ steps.plan.outputs.tag }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
-      # The schedule runs on the default branch, main, as a push here
-      # does; only a run by hand can name another ref, and that one stops.
-      - name: List the consumers, and whether the sync may run
+      # A Release run's completion and the schedule run on the default
+      # branch, main; only a run by hand can name another ref, and that one
+      # stops. The releases are listed as GitHub publishes them, drafts and
+      # prereleases left out, and the newest is the highest version.
+      - name: Choose the release to carry, and whether the sync may run
         id: plan
         env:
           APP_ID: ${{ vars.SDLC_APP_ID }}
+          GH_TOKEN: ${{ github.token }}
           REF: ${{ github.ref }}
+          EVENT: ${{ github.event_name }}
+          REPO: ${{ github.repository }}
         run: |
-          echo "matrix=$(python3 scripts/sync.py matrix)" >> "$GITHUB_OUTPUT"
+          set -eu
           if [ "$REF" != "refs/heads/main" ]; then
             echo "enabled=false" >> "$GITHUB_OUTPUT"
             python3 scripts/sync.py off-main --ref "$REF" >> "$GITHUB_STEP_SUMMARY"
-          elif [ -n "$APP_ID" ]; then
-            echo "enabled=true" >> "$GITHUB_OUTPUT"
-          else
+            exit 0
+          fi
+          if [ "$EVENT" = "workflow_run" ]; then
+            why="$(python3 scripts/sync.py after-release "$GITHUB_EVENT_PATH" --repository "$REPO")"
+            if [ -n "$why" ]; then
+              echo "enabled=false" >> "$GITHUB_OUTPUT"
+              printf '%s\n' "$why" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+          fi
+          if [ -z "$APP_ID" ]; then
             echo "enabled=false" >> "$GITHUB_OUTPUT"
             python3 scripts/sync.py setup >> "$GITHUB_STEP_SUMMARY"
+            exit 0
           fi
+          tags="$RUNNER_TEMP/tags.txt"
+          gh api --paginate "repos/$REPO/releases?per_page=100" \
+            --jq '.[] | select((.draft or .prerelease) | not) | .tag_name' > "$tags"
+          tag="$(python3 scripts/sync.py newest-release < "$tags")"
+          if [ -z "$tag" ]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            python3 scripts/sync.py no-release >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          python3 scripts/sync.py carrying --tag "$tag" >> "$GITHUB_STEP_SUMMARY"
+
+      # The release's own ecosystem.json says which consumers take it. A
+      # run that stops lists none: GitHub reads the job sync's if before
+      # its matrix, so that job is skipped without one.
+      - uses: actions/checkout@v7
+        if: steps.plan.outputs.enabled == 'true'
+        with:
+          ref: ${{ steps.plan.outputs.tag }}
+          path: release
+          persist-credentials: false
+
+      - name: List the consumers the release names
+        id: consumers
+        if: steps.plan.outputs.enabled == 'true'
+        run: |
+          set -eu
+          matrix="$(python3 scripts/sync.py --library release matrix)"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 
   sync:
     name: sync (${{ matrix.name }})
@@ -94,11 +152,24 @@ jobs:
       AUTO_MERGE: ${{ matrix.auto_merge }}
       BRANCH: symphony-protocol/sync
     steps:
-      # The whole history, so the pull request's body can list the
-      # library's commits since the one the consumer's copy names.
+      # This repository at the workflow's own commit, main's, for
+      # scripts/sync.py, which writes the pull request; nothing is pushed
+      # from it.
       - uses: actions/checkout@v7
         with:
+          persist-credentials: false
+
+      # The release the plan chose, with its whole history: its own
+      # scripts/vendor.py makes the copy, so the files, the record and the
+      # version a consumer gets are the release's, and the pull request's
+      # body lists the library's commits since the one the consumer's copy
+      # names.
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.plan.outputs.tag }}
+          path: release
           fetch-depth: 0
+          persist-credentials: false
 
       - uses: actions/setup-python@v6
         with:
@@ -122,8 +193,8 @@ jobs:
           token: ${{ steps.app-token.outputs.token }}
           path: consumer
 
-      - name: Vendor main into the consumer
-        run: python3 scripts/vendor.py consumer --consumer "$CONSUMER"
+      - name: Vendor the release into the consumer
+        run: python3 release/scripts/vendor.py consumer --consumer "$CONSUMER"
 
       # The App's bot is the author, as GitHub shows the App's own pushes.
       - name: Who the App commits as
@@ -143,7 +214,7 @@ jobs:
           BOT_NAME: ${{ steps.bot.outputs.name }}
           BOT_EMAIL: ${{ steps.bot.outputs.email }}
         run: |
-          sync="python3 $GITHUB_WORKSPACE/scripts/sync.py"
+          sync="python3 $GITHUB_WORKSPACE/scripts/sync.py --library $GITHUB_WORKSPACE/release"
           report() { $sync summary --consumer "$CONSUMER" "$@" | tee -a "$GITHUB_STEP_SUMMARY"; }
 
           # The sync's own open pull request. gh's --head matches the

@@ -7,8 +7,10 @@ which main's own line does not pass through. Every version back to the
 newest one already tagged is listed, oldest first, so a release a run
 missed is made by the next; a version whose tag exists is never listed
 again, wherever its tag points, so no tag is moved; and the walk stops at
-a commit from before the version file. The workflow's own shape is
-tests/test_scaffold.py's."""
+a commit from before the version file. The words the run's summary shows
+the owner before the approval are here too: each release the run would
+make, or that there is none, when nobody is asked. The workflow's own
+shape is tests/test_scaffold.py's."""
 
 import io
 import os
@@ -161,6 +163,37 @@ class ReadingTheVersion(unittest.TestCase):
 
     def test_the_library_states_one(self):
         self.assertIsNotNone(release.current(ROOT))
+
+
+class WhatTheOwnerApproves(unittest.TestCase):
+    COMMIT = "1111111111111111111111111111111111111111"
+
+    def test_lists_each_release_the_approval_makes_oldest_first(self):
+        text = release.summary([("v0.4.1", self.COMMIT), ("v0.4.2", "tagged")])
+        self.assertTrue(text.startswith("## Waiting for the owner's approval\n"))
+        self.assertIn("approves this run in the environment release", text)
+        self.assertIn(f"- v0.4.1: tags {self.COMMIT} and publishes its release\n"
+                      "- v0.4.2: its tag was made before; it gets its release\n", text)
+
+    def test_with_nothing_due_it_says_nobody_is_asked(self):
+        text = release.summary([])
+        self.assertTrue(text.startswith("## Nothing to release\n"))
+        self.assertIn("asks for no approval and tags nothing", text)
+
+    def test_reads_the_plans_lines_and_leaves_out_blank_ones(self):
+        self.assertEqual(release.due_from(f"v0.4.1 {self.COMMIT}\n\nv0.4.2 tagged\n"),
+                         [("v0.4.1", self.COMMIT), ("v0.4.2", "tagged")])
+        self.assertEqual(release.due_from(""), [])
+
+    def test_is_ascii(self):
+        release.summary([("v0.4.1", self.COMMIT)]).encode("ascii")
+        release.summary([]).encode("ascii")
+
+    def test_the_command_reads_the_list_on_stdin(self):
+        out = io.StringIO()
+        with mock.patch.object(sys, "stdin", io.StringIO("v0.4.1 tagged\n")), redirect_stdout(out):
+            self.assertEqual(release.main(["summary"]), 0)
+        self.assertEqual(out.getvalue(), release.summary([("v0.4.1", "tagged")]))
 
 
 class TheCommandLine(History):
