@@ -9,19 +9,24 @@ workflows are what carry a change to the consumers: the check job must
 keep the name branch protection requires, the downstream job must run a
 leg per consumer and skip the one it cannot read. The release must run on
 a push to main that changes the version or what tags it, never from
-another branch and never two at once; its plan must list what is due and
-tell the owner, and its job release must run in the environment release
-only when something is due, must ask GitHub for the run's approvals as its
-first step and tag nothing without one for release, must run nothing from
-the repository with a token that writes contents and reads actions and
-nothing else, must push nothing and must make a tag only where the script
-found one missing, so none is moved. The sync must follow a Release run
-and never a push, go on only after one that succeeded and that main
-started, carry the newest published release and never main's head, with
-the release's own scripts/vendor.py into the consumers that release names,
-never run from another branch and never two at once, must take as its own
-only a pull request from its own repository, must arm auto-merge without
-ever merging, and must push only what the branch does not already hold.
+another branch and never two at once; its plan must list what is due, each
+release with its commit, tell the owner, and stop at a tag made by hand
+anywhere but where the workflow would have made it, and its job release
+must run in the environment release only when something is due, must ask
+GitHub for the run's approvals as its first step and tag nothing without
+one for release, must run nothing from the repository with a token that
+writes contents and reads actions and nothing else, must push nothing,
+must make a tag only where the script found one missing, so none is moved,
+and must read each tag on GitHub before it releases it, stopping at one
+made elsewhere since the plan. The sync must follow a Release run and
+never a push, go on only after one that succeeded and that main started,
+carry the newest published release and never main's head, and only where
+its tag stands, by that commit and never by the tag's name, with the
+release's own scripts/vendor.py into the consumers that release names,
+never run from another branch and never two at once, must let a leg go on
+only with the commit the plan chose, must take as its own only a pull
+request from its own repository, must arm auto-merge without ever merging,
+and must push only what the branch does not already hold.
 No workflow may put an expression inside a shell step, where a value would
 run as code, and every shell step must at least parse. The copy itself,
 scripts/vendor.py and its record, is tests/test_vendor.py's and
@@ -267,18 +272,57 @@ class SyncWorkflow(unittest.TestCase):
 
     def test_carries_the_newest_published_release_never_mains_head(self):
         """The copy is made by the release's own scripts/vendor.py, in a
-        checkout of the release's tag with its whole history, so the files,
-        the record and its commit are the release's; nothing in the
-        workflow vendors this checkout, main's."""
+        checkout of the release's commit with its whole history, so the
+        files, the record and its commit are the release's; nothing in the
+        workflow vendors this checkout, main's. Was: the checkout named the
+        release's tag; now it names the commit the tag stands at."""
         plan = self.jobs["plan"]
         self.assertIn('gh api --paginate "repos/$REPO/releases?per_page=100"', plan)
         self.assertIn("--jq '.[] | select((.draft or .prerelease) | not) | .tag_name' > \"$tags\"", plan)
         self.assertIn('tag="$(python3 scripts/sync.py newest-release < "$tags")"', plan)
         self.assertIn('echo "tag=$tag" >> "$GITHUB_OUTPUT"', plan)
-        self.assertIn("          ref: ${{ needs.plan.outputs.tag }}\n          path: release\n          fetch-depth: 0\n",
-                      self.jobs["sync"])
+        self.assertIn('echo "commit=$commit" >> "$GITHUB_OUTPUT"', plan)
+        self.assertIn("          ref: ${{ needs.plan.outputs.commit }}\n          path: release\n          fetch-depth: 0\n"
+                      "          persist-credentials: false\n", self.jobs["sync"])
         vendoring = [line.strip() for line in code_lines(self.text) if "vendor.py" in line]
         self.assertEqual(vendoring, ['run: python3 release/scripts/vendor.py consumer --consumer "$CONSUMER"'])
+
+    def test_checks_the_release_out_by_its_commit_never_by_a_name(self):
+        """actions/checkout resolves a ref that is a bare name to a branch
+        of that name before a tag of it, so a branch named like the release
+        would take its place; a ref of 40 hex digits it checks out as that
+        commit."""
+        refs = re.findall(r"(?m)^\s+ref: (.*)$", self.text)
+        self.assertEqual(refs, ["${{ steps.plan.outputs.commit }}", "${{ needs.plan.outputs.commit }}"])
+
+    def test_the_newest_release_counts_only_where_its_tag_stands(self):
+        """Its tag must name the commit that raised main's first-parent line
+        to its version, which needs main's whole history and every tag; a
+        tag anywhere else fails the run before anything is enabled."""
+        plan = self.jobs["plan"]
+        self.assertIn("      - uses: actions/checkout@v7\n        with:\n          fetch-depth: 0\n"
+                      "          persist-credentials: false\n", plan)
+        self.assertIn('commit="$(git rev-parse --verify -q "refs/tags/$tag^{commit}" || true)"', plan)
+        self.assertRegex(plan, r'why="\$\(python3 scripts/sync.py misplaced --tag "\$tag" --commit "\$commit"\)"\n'
+                               r'\s+if \[ -n "\$why" \]; then\n'
+                               r'\s+echo "enabled=false" >> "\$GITHUB_OUTPUT"\n'
+                               r'\s+printf \'%s\\n\' "\$why" >> "\$GITHUB_STEP_SUMMARY"\n'
+                               r'\s+exit 1\n')
+        self.assertLess(plan.index("scripts/sync.py misplaced"), plan.index('echo "enabled=true"'))
+
+    def test_each_leg_goes_on_only_with_the_commit_the_plan_chose(self):
+        """An empty commit would leave the release's checkout at this run's
+        own commit, main's head; the guard comes before the App's key."""
+        steps = steps_of(self.jobs["sync"])
+        firsts = [step.splitlines()[0].strip() for step in steps]
+        guard = firsts.index("- name: Go on only with the commit of the release the plan chose")
+        checkout = next(number for number, step in enumerate(steps) if "path: release" in step)
+        token = next(number for number, step in enumerate(steps) if "create-github-app-token" in step)
+        self.assertLess(checkout, guard)
+        self.assertLess(guard, token)
+        self.assertIn("COMMIT: ${{ needs.plan.outputs.commit }}", steps[guard])
+        self.assertIn('if ! [[ "$COMMIT" =~ ^[0-9a-f]{40}$ ]] || [ "$head" != "$COMMIT" ] || '
+                      '[ "$tagged" != "$COMMIT" ]; then', steps[guard])
 
     def test_a_run_by_hand_or_on_the_schedule_carries_the_newest_release_too(self):
         """Only the step after a Release run looks at the event, and only to
@@ -302,7 +346,7 @@ class SyncWorkflow(unittest.TestCase):
         plan = self.jobs["plan"]
         self.assertIn("      matrix: ${{ steps.consumers.outputs.matrix }}\n", plan)
         self.assertIn('matrix="$(python3 scripts/sync.py --library release matrix)"', plan)
-        self.assertIn("          ref: ${{ steps.plan.outputs.tag }}\n          path: release\n", plan)
+        self.assertIn("          ref: ${{ steps.plan.outputs.commit }}\n          path: release\n", plan)
 
     def test_the_pull_requests_words_read_the_releases_ecosystem_and_history(self):
         self.assertIn('sync="python3 $GITHUB_WORKSPACE/scripts/sync.py --library $GITHUB_WORKSPACE/release"',
@@ -439,13 +483,18 @@ class ReleaseWorkflow(unittest.TestCase):
         self.assertNotIn("scripts/", self.release)
 
     def test_the_plan_lists_what_is_due_tells_the_owner_and_hands_the_list_on(self):
+        """Was: each line held the tag and the commit alone; a tag made
+        before keeps the word tagged after its commit now, and is checked
+        before it is listed (test_a_tag_made_before_gets_its_release_only_
+        where_it_stands)."""
         self.assertIn("      due: ${{ steps.plan.outputs.due }}\n", self.plan)
         self.assertRegex(self.plan, r'if gh release view "\$tag" --repo "\$REPO" > /dev/null 2>&1; then\n'
                                     r'\s+echo "\$tag is released already"\n'
                                     r'\s+elif cut -d \' \' -f 1 "\$due" \| grep -q -x -F -e "\$tag"; then\n'
                                     r'\s+echo "\$tag is listed already, at the commit that first carries it"\n'
+                                    r'\s+elif \[ -n "\$tagged" \] && [^\n]*\n[^\n]*\n\s+exit 1\n'
                                     r'\s+else\n'
-                                    r'\s+echo "\$tag \$commit" >> "\$due"\n')
+                                    r'\s+echo "\$tag \$commit\$\{tagged:\+ \$tagged\}" >> "\$due"\n')
         self.assertIn('python3 scripts/release.py summary < "$due" >> "$GITHUB_STEP_SUMMARY"', self.plan)
         self.assertIn('echo "due<<END_OF_DUE"\n            cat "$due"\n            echo "END_OF_DUE"\n', self.plan)
         self.assertIn("DUE: ${{ needs.plan.outputs.due }}", self.release)
@@ -453,18 +502,47 @@ class ReleaseWorkflow(unittest.TestCase):
 
     def test_pushes_nothing_and_makes_a_tag_only_where_the_script_found_one_missing(self):
         """GitHub makes the tag with the release, at the commit the script
-        names; the version main carries is released only from a tag that
-        is already there. The making of a tag is now the condition of an
-        if, so that a refusal says what to do (TheTaggingRuns)."""
+        names; a tag that is already there is released, not made. The
+        making of a tag is the condition of an if, so that a refusal says
+        what to do (TheTaggingRuns). Was: the job chose between the two by
+        the plan's word "tagged"; now by the tag GitHub holds when it gets
+        there, and a refusal's advice may name git push, so only a command
+        counts here."""
         code = code_lines(self.text)
-        self.assertEqual([line for line in code if "git push" in line or "git tag" in line], [])
+        self.assertEqual([line for line in code if re.search(r"(^|[;&|]\s*)git (push|tag)\b", line.strip())], [])
         self.assertEqual([line.strip() for line in code if "gh release create" in line], [
-            'gh release create "$tag" --repo "$REPO" --verify-tag --title "$title" --generate-notes',
             'if ! gh release create "$tag" --repo "$REPO" --target "$commit" --title "$title" --generate-notes; then',
+            'gh release create "$tag" --repo "$REPO" --verify-tag --title "$title" --generate-notes',
         ])
         self.assertIn('python3 scripts/release.py missing > "$list"', self.plan)
-        self.assertIn('elif [ "$commit" = "tagged" ]; then', self.release)
+        self.assertRegex(self.release, r'if \[ -z "\$at" \]; then\n\s+if ! gh release create "\$tag" --repo "\$REPO" '
+                                       r'--target "\$commit"')
         self.assertNotIn("gh release create", self.plan)
+
+    def test_a_tag_made_before_gets_its_release_only_where_it_stands(self):
+        """Was: the version main carries was listed as "tagged" and released
+        wherever its tag pointed, so a tag made by hand at a commit main
+        never held would have been released by the approval."""
+        self.assertIn('if tagged_at="$(git rev-parse --verify -q "refs/tags/v$version^{commit}")"; then\n'
+                      '            echo "v$version $tagged_at tagged" >> "$list"\n', self.plan)
+        self.assertRegex(self.plan, r'elif \[ -n "\$tagged" \] && ! why="\$\(python3 scripts/release.py check-tag '
+                                    r'"\$tag" "\$commit"\)"; then\n'
+                                    r'\s+echo "Nothing was listed for approval: \$why\. [^\n]*'
+                                    r'\| tee -a "\$GITHUB_STEP_SUMMARY"\n'
+                                    r'\s+exit 1\n')
+
+    def test_reads_each_tag_on_github_before_it_releases_it(self):
+        """GitHub makes no tag where one exists and releases whatever that
+        one names, so a tag made at another commit while the run waited
+        for its approval would be released in place of the one approved."""
+        tagging = step_named(self.text, "release", "Tag each version the plan listed, and publish its release")
+        self.assertIn('refs="$(gh api "repos/$REPO/git/matching-refs/tags/$1" --jq', tagging)
+        self.assertIn('[ "$ref" = "refs/tags/$1" ] || continue', tagging)
+        self.assertLess(tagging.index('at="$(tag_commit "$tag")"'), tagging.index("gh release create"))
+        self.assertRegex(tagging, r'elif \[ "\$at" = "\$commit" \]; then\n'
+                                  r'\s+gh release create "\$tag" --repo "\$REPO" --verify-tag')
+        self.assertRegex(tagging, r'echo "Nothing more was released: the tag \$tag now points at \$at, not at '
+                                  r'\$commit, [^\n]*\| tee -a "\$GITHUB_STEP_SUMMARY"\n\s+exit 1\n')
 
     def test_releases_only_a_tag_that_has_no_release(self):
         """Checked again just before it is made, since the approval may come
@@ -474,15 +552,21 @@ class ReleaseWorkflow(unittest.TestCase):
 
     def test_a_version_it_cannot_read_stops_the_run(self):
         """An assignment takes its command's exit status, so set -e stops
-        the run; inside echo's argument the failure would pass unseen."""
+        the run; inside echo's argument the failure would pass unseen. Was:
+        the version went into the list's "tagged" line; now it names the
+        tag the plan looks for."""
         self.assertIn('version="$(python3 scripts/release.py version)"', self.plan)
-        self.assertIn('echo "v$version tagged" >> "$list"', self.plan)
+        self.assertLess(self.plan.index('version="$(python3 scripts/release.py version)"'),
+                        self.plan.index('"refs/tags/v$version^{commit}"'))
 
     def test_the_loops_read_the_list_on_its_own_descriptor(self):
         """A command inside a loop that reads its standard input would
-        otherwise take the rest of the list in its place."""
+        otherwise take the rest of the list in its place. Was: both loops
+        read two words a line; the plan's now reads the word tagged too,
+        and the job leaves it, deciding by the tag GitHub holds."""
+        self.assertIn("while read -r tag commit tagged <&3; do", self.plan)
+        self.assertIn("while read -r tag commit _ <&3; do", self.release)
         for job in (self.plan, self.release):
-            self.assertIn("while read -r tag commit <&3; do", job)
             self.assertIn('done 3< "$list"', job)
 
 
@@ -517,8 +601,12 @@ class EveryWorkflow(unittest.TestCase):
 # gh as these tests need it: every call is logged, and the answers come from
 # the environment each test sets. A view answers for a tag RELEASED names, a
 # paginated listing prints RELEASE_TAGS, and the review history prints
-# APPROVERS, as the step's own filter would, or fails when API_FAILS is set;
-# a release is made unless CREATE_FAILS is set.
+# APPROVERS, as the step's own filter would, or fails when API_FAILS is set.
+# A listing of tags prints, as the step's filter would, each "<tag>=<type>:
+# <sha>" of ON_GITHUB whose name begins with the one asked for, as GitHub
+# matches them, or fails when REFS_FAIL is set, and an annotated tag's own
+# object comes from ANNOTATED, "<sha>=<type>:<sha>"; a release is made
+# unless CREATE_FAILS is set.
 STUB_GH = """#!/bin/bash
 printf '%s\\n' "$*" >> "$GH_CALLS"
 case "$1 $2" in
@@ -527,15 +615,30 @@ case "$1 $2" in
     exit 1 ;;
   "api --paginate")
     for tag in $RELEASE_TAGS; do printf '%s\\n' "$tag"; done ;;
-  "api repos/"*)
+  "api repos/"*"/approvals")
     [ -n "${API_FAILS:-}" ] && exit 1
     printf '%s\\n' "$APPROVERS" ;;
+  "api repos/"*"/git/matching-refs/tags/"*)
+    [ -n "${REFS_FAIL:-}" ] && exit 1
+    asked="${2##*/matching-refs/tags/}"
+    for entry in $ON_GITHUB; do
+      name="${entry%%=*}" object="${entry#*=}"
+      case "$name" in "$asked"*) printf 'refs/tags/%s %s %s\\n' "$name" "${object%%:*}" "${object#*:}" ;; esac
+    done ;;
+  "api repos/"*"/git/tags/"*)
+    asked="${2##*/git/tags/}"
+    for entry in $ANNOTATED; do
+      object="${entry#*=}"
+      [ "${entry%%=*}" = "$asked" ] && printf '%s %s\\n' "${object%%:*}" "${object#*:}"
+    done ;;
   "release create")
     [ -n "${CREATE_FAILS:-}" ] && exit 1 ;;
 esac
 exit 0
 """
 SHA = "1111111111111111111111111111111111111111"
+OTHER = "3333333333333333333333333333333333333333"
+TAG_OBJECT = "4444444444444444444444444444444444444444"
 
 
 def step_named(text, job, name):
@@ -567,7 +670,7 @@ class StepsRun(unittest.TestCase):
                                 RUNNER_TEMP=str(self.scratch / "runner"), GITHUB_OUTPUT=str(self.output),
                                 GITHUB_STEP_SUMMARY=str(self.summary), GH_CALLS=str(self.calls),
                                 GH_TOKEN="a token of the test's", REPO="octo/library", RELEASED="",
-                                RELEASE_TAGS="", APPROVERS="")
+                                RELEASE_TAGS="", APPROVERS="", ON_GITHUB="", ANNOTATED="")
 
     def run_step(self, step, cwd, **environment):
         script = self.scratch / "step.sh"
@@ -578,24 +681,25 @@ class StepsRun(unittest.TestCase):
     def read(self, file):
         return file.read_text(encoding="ascii")
 
+    def clear(self):
+        """Empty the files GitHub hands a step, for a second run in one test."""
+        for file in (self.output, self.summary, self.calls):
+            file.write_text("", encoding="ascii")
 
-class TheReleasePlanRuns(StepsRun):
-    """The plan's step in a library of the test's own, with this
-    repository's scripts/release.py in it."""
 
-    STEP = "List each version main carries without a release, for the owner to approve"
+class ALibraryRuns(StepsRun):
+    """A step run in a git repository of the test's own, the library as the
+    workflow's checkout holds it, with this repository's scripts in it."""
+
+    SCRIPTS = ()
 
     def setUp(self):
         super().setUp()
         self.library = self.scratch / "library"
         (self.library / "scripts").mkdir(parents=True)
-        shutil.copyfile(ROOT / "scripts" / "release.py", self.library / "scripts" / "release.py")
+        for name in self.SCRIPTS:
+            shutil.copyfile(ROOT / "scripts" / name, self.library / "scripts" / name)
         self.git("init", "-q")
-        self.first = self.commit("0.1.0")
-        self.git("tag", "v0.1.0")
-        self.raised = self.commit("0.2.0")
-        self.later = self.commit("0.2.0", "more.md")
-        self.step = step_named(workflow("release.yml"), "plan", self.STEP)
 
     def git(self, *args):
         done = subprocess.run(["git", "-c", "user.name=release test", "-c", "user.email=release@example.invalid",
@@ -616,9 +720,25 @@ class TheReleasePlanRuns(StepsRun):
         self.git("commit", "-q", "-m", f"at {version}")
         return self.git("rev-parse", "HEAD")
 
-    def plan(self, ref="refs/heads/main", released="v0.1.0"):
+
+class TheReleasePlanRuns(ALibraryRuns):
+    """The plan's step in a library of the test's own, with this
+    repository's scripts/release.py in it."""
+
+    STEP = "List each version main carries without a release, for the owner to approve"
+    SCRIPTS = ("release.py",)
+
+    def setUp(self):
+        super().setUp()
+        self.first = self.commit("0.1.0")
+        self.git("tag", "v0.1.0")
+        self.raised = self.commit("0.2.0")
+        self.later = self.commit("0.2.0", "more.md")
+        self.step = step_named(workflow("release.yml"), "plan", self.STEP)
+
+    def plan(self, ref="refs/heads/main", released="v0.1.0", code=0):
         done = self.run_step(self.step, self.library, REF=ref, RELEASED=released)
-        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(done.returncode, code, done.stderr)
         return self.read(self.output), self.read(self.summary)
 
     def test_a_new_version_is_listed_once_at_the_commit_that_first_carries_it(self):
@@ -637,11 +757,34 @@ class TheReleasePlanRuns(StepsRun):
         self.assertEqual(output, "due<<END_OF_DUE\nEND_OF_DUE\n")
         self.assertIn("## Nothing to release", summary)
 
-    def test_a_tag_pushed_by_hand_gets_its_release(self):
+    def test_a_tag_made_by_hand_gets_its_release_at_the_commit_it_stands_at(self):
+        """Was: listed as "v0.2.0 tagged", with no commit, and released
+        wherever its tag pointed. Now the line names the tag's commit, the
+        one that raised main to its version, for the owner and for the job
+        that checks the tag again before it releases it."""
         self.git("tag", "v0.2.0", self.raised)
         output, summary = self.plan()
-        self.assertEqual(output, "due<<END_OF_DUE\nv0.2.0 tagged\nEND_OF_DUE\n")
-        self.assertIn("- v0.2.0: its tag was made before; it gets its release", summary)
+        self.assertEqual(output, f"due<<END_OF_DUE\nv0.2.0 {self.raised} tagged\nEND_OF_DUE\n")
+        self.assertIn(f"- v0.2.0: its tag was made before, at {self.raised}; it gets its release", summary)
+
+    def test_a_tag_made_by_hand_anywhere_else_stops_the_run_and_lists_nothing(self):
+        """A tag at a commit main never held, or at a later commit of main,
+        would otherwise have been released wherever it pointed once the
+        owner approved the run."""
+        self.git("checkout", "-q", "-b", "stray", self.first)
+        stray = self.commit("0.2.0", "stray.md")
+        self.git("checkout", "-q", "main")
+        for where in (stray, self.later):
+            with self.subTest(where=where):
+                self.git("tag", "-f", "v0.2.0", where)
+                self.clear()
+                output, summary = self.plan(code=1)
+                self.assertEqual(output, "")
+                self.assertTrue(summary.startswith(
+                    f"Nothing was listed for approval: the tag v0.2.0 points at {where[:7]}, but main's first-parent "
+                    f"line was raised to 0.2.0 at {self.raised[:7]}."), summary)
+                self.assertIn("git push origin :refs/tags/v0.2.0", summary)
+                self.assertEqual(summary.count("\n"), 1)
 
     def test_off_main_nothing_is_listed_and_the_summary_says_why(self):
         output, summary = self.plan(ref="refs/heads/claude/7")
@@ -689,67 +832,160 @@ class TheTaggingRuns(StepsRun):
         super().setUp()
         self.step = step_named(workflow("release.yml"), "release", self.STEP)
 
-    def calls_for(self, due, released=""):
-        done = self.run_step(self.step, self.scratch, DUE=due, RELEASED=released)
+    def tag(self, due, **environment):
+        return self.run_step(self.step, self.scratch, DUE=due, **environment)
+
+    def calls_made(self):
+        """gh's calls, each without its --jq filter."""
+        return [call.split(" --jq ")[0] for call in self.read(self.calls).splitlines()]
+
+    def calls_for(self, due, **environment):
+        done = self.tag(due, **environment)
         self.assertEqual(done.returncode, 0, done.stderr)
-        return self.read(self.calls).splitlines()
+        return self.calls_made()
+
+    def refs(self, tag):
+        return f"api repos/octo/library/git/matching-refs/tags/{tag}"
 
     def test_makes_each_listed_release_once_from_the_plans_list(self):
-        calls = self.calls_for(f"v0.2.0 {SHA}\nv0.3.0 tagged")
+        """Was: a tag made before was released by --verify-tag on the plan's
+        word alone; now each tag is read on GitHub first."""
+        calls = self.calls_for(f"v0.2.0 {SHA}\nv0.3.0 {OTHER} tagged", ON_GITHUB=f"v0.3.0=commit:{OTHER}")
         self.assertEqual(calls, [
             "release view v0.2.0 --repo octo/library",
+            self.refs("v0.2.0"),
             f"release create v0.2.0 --repo octo/library --target {SHA} --title sdlc-protocol 0.2.0 --generate-notes",
             "release view v0.3.0 --repo octo/library",
+            self.refs("v0.3.0"),
             "release create v0.3.0 --repo octo/library --verify-tag --title sdlc-protocol 0.3.0 --generate-notes",
         ])
 
     def test_a_release_made_while_it_waited_is_left_alone(self):
-        self.assertEqual(self.calls_for(f"v0.2.0 {SHA}", released="v0.2.0"),
+        self.assertEqual(self.calls_for(f"v0.2.0 {SHA}", RELEASED="v0.2.0"),
                          ["release view v0.2.0 --repo octo/library"])
+
+    def test_a_tag_made_elsewhere_while_it_waited_stops_the_job_and_releases_nothing(self):
+        """GitHub makes no tag where one exists and would release the one
+        made since the plan, at a commit the owner never saw."""
+        done = self.tag(f"v0.2.0 {SHA}\nv0.3.0 {SHA}", ON_GITHUB=f"v0.2.0=commit:{OTHER}")
+        self.assertEqual(done.returncode, 1)
+        summary = self.read(self.summary)
+        self.assertTrue(summary.startswith(f"Nothing more was released: the tag v0.2.0 now points at {OTHER}, not at "
+                                           f"{SHA}, the commit the plan listed for this approval."), summary)
+        self.assertEqual(summary.count("\n"), 1)
+        self.assertEqual([call for call in self.calls_made() if call.startswith("release create")], [])
+        self.assertNotIn("v0.3.0", "\n".join(self.calls_made()))
+
+    def test_a_tag_made_at_the_listed_commit_meanwhile_gets_its_release(self):
+        calls = self.calls_for(f"v0.2.0 {SHA}", ON_GITHUB=f"v0.2.0=commit:{SHA}")
+        self.assertEqual(calls[-1],
+                         "release create v0.2.0 --repo octo/library --verify-tag --title sdlc-protocol 0.2.0 --generate-notes")
+
+    def test_an_annotated_tag_is_followed_to_its_commit(self):
+        for commit, code in ((SHA, 0), (OTHER, 1)):
+            with self.subTest(commit=commit):
+                self.clear()
+                done = self.tag(f"v0.2.0 {SHA}", ON_GITHUB=f"v0.2.0=tag:{TAG_OBJECT}",
+                                ANNOTATED=f"{TAG_OBJECT}=commit:{commit}")
+                self.assertEqual(done.returncode, code, done.stderr)
+                self.assertIn(f"api repos/octo/library/git/tags/{TAG_OBJECT}", self.calls_made())
+                creates = [call for call in self.calls_made() if call.startswith("release create")]
+                self.assertEqual(len(creates), 1 - code)
+
+    def test_a_tag_whose_name_only_begins_the_same_is_another_tag(self):
+        """GitHub lists every tag whose name begins with the one asked for."""
+        calls = self.calls_for(f"v0.2.0 {SHA}", ON_GITHUB=f"v0.2.0-rc1=commit:{OTHER} v0.2.01=commit:{OTHER}")
+        self.assertEqual(calls[-1],
+                         f"release create v0.2.0 --repo octo/library --target {SHA} --title sdlc-protocol 0.2.0 "
+                         "--generate-notes")
+
+    def test_a_tag_it_cannot_read_stops_the_job(self):
+        done = self.tag(f"v0.2.0 {SHA}", REFS_FAIL="1")
+        self.assertNotEqual(done.returncode, 0)
+        self.assertEqual([call for call in self.calls_made() if call.startswith("release create")], [])
 
     def test_a_tag_github_refuses_stops_the_job_and_says_what_to_do(self):
         """GitHub refuses GITHUB_TOKEN a tag at a commit whose workflows
         differ from main's, which a release that waited for its approval
-        meets when a change to a workflow merged meanwhile."""
-        done = self.run_step(self.step, self.scratch, DUE=f"v0.2.0 {SHA}\nv0.3.0 {SHA}", CREATE_FAILS="1")
+        meets when a change to a workflow merged meanwhile. Was: push the
+        tag yourself, which put a tag where the repositories made from the
+        template, which take tags, would see it before any release; the
+        owner, who approved it already, publishes the release instead."""
+        done = self.tag(f"v0.2.0 {SHA}\nv0.3.0 {SHA}", CREATE_FAILS="1")
         self.assertEqual(done.returncode, 1)
         summary = self.read(self.summary)
         self.assertTrue(summary.startswith(f"GitHub did not make v0.2.0 at {SHA}."))
-        self.assertIn("push the tag yourself and run Release again from main (README.md, Releases)", summary)
-        self.assertNotIn("v0.3.0", self.read(self.calls))
+        self.assertIn("publish that release yourself, at that commit (README.md, Releases)", summary)
+        self.assertNotIn("v0.3.0", "\n".join(self.calls_made()))
 
 
-class TheSyncPlanRuns(StepsRun):
-    """The sync's plan step in this checkout, whose scripts/sync.py it runs."""
+class TheSyncPlanRuns(ALibraryRuns):
+    """The sync's plan step in a library of the test's own, with this
+    repository's scripts, ecosystem.json and vendoring.py in it, whose main
+    raised the version to each of VERSIONS in turn and tagged each where it
+    was raised, as release.yml does, and then moved on by one commit."""
 
     STEP = "Choose the release to carry, and whether the sync may run"
+    SCRIPTS = ("sync.py", "release.py", "ecosystem.py")
+    VERSIONS = ("0.3.1", "0.4.0", "0.4.1", "0.9.9", "0.10.0")
 
     def setUp(self):
         super().setUp()
+        shutil.copyfile(ROOT / "ecosystem.json", self.library / "ecosystem.json")
+        (self.library / "sdlc_protocol").mkdir()
+        shutil.copyfile(PACKAGE / "vendoring.py", self.library / "sdlc_protocol" / "vendoring.py")
+        self.raised = {}
+        for version in self.VERSIONS:
+            self.raised[version] = self.commit(version)
+            self.git("tag", f"v{version}")
+        self.later = self.commit(self.VERSIONS[-1], "later.md")
         self.step = step_named(workflow("sync.yml"), "plan", self.STEP)
         self.event = self.scratch / "event.json"
 
-    def plan(self, event="workflow_run", run=None, app_id="5258276", ref="refs/heads/main", tags=""):
+    def plan(self, event="workflow_run", run=None, app_id="5258276", ref="refs/heads/main", tags="", code=0):
         run = {"conclusion": "success", "event": "push", "head_branch": "main",
                "head_repository": {"full_name": "octo/library"}} if run is None else run
         self.event.write_text(json.dumps({"workflow_run": run} if event == "workflow_run" else {}), encoding="ascii")
-        done = self.run_step(self.step, ROOT, EVENT=event, APP_ID=app_id, REF=ref, RELEASE_TAGS=tags,
+        done = self.run_step(self.step, self.library, EVENT=event, APP_ID=app_id, REF=ref, RELEASE_TAGS=tags,
                              GITHUB_EVENT_PATH=str(self.event))
-        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(done.returncode, code, done.stderr)
         return self.read(self.output), self.read(self.summary)
 
-    def test_after_main_s_release_run_it_carries_the_highest_release(self):
+    def test_after_main_s_release_run_it_carries_the_highest_release_by_its_commit(self):
+        """Was: it handed on the tag alone, which the checkouts then named."""
         output, summary = self.plan(tags="v0.3.1 v0.10.0 v0.9.9 nightly")
-        self.assertEqual(output, "enabled=true\ntag=v0.10.0\n")
+        self.assertEqual(output, f"enabled=true\ntag=v0.10.0\ncommit={self.raised['0.10.0']}\n")
         self.assertTrue(summary.startswith("## The sync carries v0.10.0\n"))
+        self.assertIn(f"at {self.raised['0.10.0']}, the commit that raised main to its version", summary)
         self.assertIn("api --paginate repos/octo/library/releases?per_page=100 --jq", self.read(self.calls))
 
     def test_by_hand_or_on_the_schedule_it_carries_the_highest_release_too(self):
         for event in ("workflow_dispatch", "schedule"):
             with self.subTest(event=event):
-                self.output.write_text("", encoding="ascii")
+                self.clear()
                 output, _ = self.plan(event=event, tags="v0.4.0 v0.4.1")
-                self.assertEqual(output, "enabled=true\ntag=v0.4.1\n")
+                self.assertEqual(output, f"enabled=true\ntag=v0.4.1\ncommit={self.raised['0.4.1']}\n")
+
+    def test_a_newest_release_whose_tag_stands_anywhere_else_stops_the_run_red(self):
+        """A release published by hand at another commit, or one whose tag
+        was moved after its release, carries nothing, and the run fails so
+        the owner sees it."""
+        self.git("checkout", "-q", "-b", "side", self.raised["0.10.0"])
+        side = self.commit("0.11.0", "side.md")
+        self.git("tag", "v0.11.0")
+        self.git("checkout", "-q", "main")
+        self.git("tag", "-f", "v0.10.0", self.later)
+        for tags, words in (("v0.10.0 v0.4.1", f"points at {self.later[:7]}, but main's first-parent line was raised "
+                                                f"to 0.10.0 at {self.raised['0.10.0'][:7]}"),
+                            ("v0.11.0 v0.10.0", f"points at {side[:7]}, but main's first-parent line never carries "
+                                                "0.11.0"),
+                            ("v0.12.0", "names no commit this checkout holds")):
+            with self.subTest(tags=tags):
+                self.clear()
+                output, summary = self.plan(event="workflow_dispatch", tags=tags, code=1)
+                self.assertEqual(output, "enabled=false\n")
+                self.assertTrue(summary.startswith("## The sync did not run\n"))
+                self.assertIn(words, summary)
 
     def test_after_a_release_run_that_failed_it_stops_and_asks_nothing(self):
         output, summary = self.plan(run={"conclusion": "failure", "event": "push", "head_branch": "main",
@@ -764,7 +1000,7 @@ class TheSyncPlanRuns(StepsRun):
                     {"conclusion": "success", "event": "workflow_dispatch", "head_branch": "claude/7",
                      "head_repository": {"full_name": "octo/library"}}):
             with self.subTest(run=run):
-                self.output.write_text("", encoding="ascii")
+                self.clear()
                 output, _ = self.plan(run=run, tags="v0.4.1")
                 self.assertEqual(output, "enabled=false\n")
 
@@ -782,6 +1018,64 @@ class TheSyncPlanRuns(StepsRun):
         output, summary = self.plan(event="workflow_dispatch", tags="")
         self.assertEqual(output, "enabled=false\n")
         self.assertIn("has no published release yet", summary)
+
+
+class TheSyncGuardRuns(StepsRun):
+    """The step that lets a leg of the sync go on, in a folder that holds
+    the release's checkout as the job leaves it, under the name release."""
+
+    STEP = "Go on only with the commit of the release the plan chose"
+
+    def setUp(self):
+        super().setUp()
+        self.release = self.scratch / "release"
+        self.release.mkdir()
+        self.git("init", "-q")
+        self.first = self.commit("first")
+        self.second = self.commit("second")
+        self.git("tag", "v0.4.1", self.second)
+        self.step = step_named(workflow("sync.yml"), "sync", self.STEP)
+
+    def git(self, *args):
+        done = subprocess.run(["git", "-c", "user.name=sync test", "-c", "user.email=sync@example.invalid",
+                               "-c", "commit.gpgsign=false", "-c", "init.defaultBranch=main", *args],
+                              cwd=self.release, capture_output=True, text=True, timeout=60, env=self.environment)
+        if done.returncode != 0:
+            raise AssertionError(f"git {' '.join(args)}: {done.stderr}")
+        return done.stdout.strip()
+
+    def commit(self, name):
+        (self.release / f"{name}.md").write_text(f"{name}\n", encoding="ascii")
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", name)
+        return self.git("rev-parse", "HEAD")
+
+    def guard(self, tag="v0.4.1", commit=None):
+        return self.run_step(self.step, self.scratch, TAG=tag, COMMIT=self.second if commit is None else commit)
+
+    def test_goes_on_when_the_checkout_and_the_tag_are_the_plans_commit(self):
+        done = self.guard()
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(self.read(self.summary), "")
+
+    def test_stops_when_the_plan_handed_on_no_commit(self):
+        """The checkout is then this run's own commit, main's head, which
+        the leg would otherwise vendor into the consumer."""
+        for tag in ("v0.4.1", ""):
+            with self.subTest(tag=tag):
+                self.clear()
+                done = self.guard(tag=tag, commit="")
+                self.assertEqual(done.returncode, 1)
+                self.assertTrue(self.read(self.summary).startswith("Nothing was vendored: the plan chose "))
+
+    def test_stops_when_the_checkout_is_another_commit(self):
+        self.git("checkout", "-q", self.first)
+        self.assertEqual(self.guard().returncode, 1)
+
+    def test_stops_when_the_tag_was_moved_since_the_plan(self):
+        self.git("tag", "-f", "v0.4.1", self.first)
+        self.assertEqual(self.guard().returncode, 1)
+        self.assertIn(f"with that tag at {self.first}", self.read(self.summary))
 
 
 class Version(unittest.TestCase):

@@ -217,17 +217,62 @@ class WhatTheSummarySaysOfTheRelease(unittest.TestCase):
         self.assertIn("changed nothing in any consumer", text)
         self.assertEqual(run("no-release"), (0, text))
 
-    def test_it_names_the_release_it_carries(self):
-        text = sync.carrying_text(ECO, "v0.4.1")
+    def test_it_names_the_release_it_carries_and_its_commit(self):
+        """Was: the tag alone. The sync carries the commit the tag stands
+        at, never the name, so the summary names that commit."""
+        text = sync.carrying_text(ECO, "v0.4.1", NEW)
         self.assertTrue(text.startswith("## The sync carries v0.4.1\n"))
-        self.assertIn(f"The newest published release of {ECO['library']}", text)
-        self.assertEqual(run("carrying", "--tag", "v0.4.1"), (0, text))
+        self.assertIn(f"The newest published release of {ECO['library']}, at {NEW}", text)
+        self.assertEqual(run("carrying", "--tag", "v0.4.1", "--commit", NEW), (0, text))
 
     def test_is_ascii(self):
-        for text in (sync.no_release_text(ECO), sync.carrying_text(ECO, "v0.4.1"),
+        for text in (sync.no_release_text(ECO), sync.carrying_text(ECO, "v0.4.1", NEW),
                      sync.after_release_text(release_run(event="pull_request"), ECO["library"]),
                      sync.after_release_text(release_run(conclusion="failure"), ECO["library"])):
             text.encode("ascii")
+
+
+class TheReleaseThatStands(unittest.TestCase):
+    """The newest release counts only where its tag stands at the commit
+    that raised main's first-parent line to its version, in the plan's
+    checkout of main: scripts/release.py decides, and the summary says why
+    the sync carried nothing."""
+
+    def setUp(self):
+        self.scratch = Path(tempfile.mkdtemp()).resolve()
+        self.addCleanup(shutil.rmtree, self.scratch, True)
+        self.main = self.scratch / "main"
+        (self.main / "sdlc_protocol").mkdir(parents=True)
+        git(self.main, "init", "-q")
+        self.raised = self.version("0.4.1")
+        (self.main / "README.md").write_text("later\n", encoding="ascii")
+        self.later = commit(self.main, "A later commit")
+
+    def version(self, number):
+        (self.main / "sdlc_protocol" / "__init__.py").write_text(f'__version__ = "{number}"\n', encoding="ascii")
+        return commit(self.main, f"Raise the version to {number}")
+
+    def test_a_tag_at_the_commit_that_raised_its_version_is_carried(self):
+        self.assertIsNone(sync.misplaced_text(ECO, "v0.4.1", self.raised, self.main))
+
+    def test_a_tag_anywhere_else_stops_the_sync_and_says_why(self):
+        text = sync.misplaced_text(ECO, "v0.4.1", self.later, self.main)
+        self.assertTrue(text.startswith("## The sync did not run\n"))
+        self.assertIn(f"{ECO['library']}, v0.4.1, does not stand where the release workflow makes a release", text)
+        self.assertIn(f"the tag v0.4.1 points at {self.later[:7]}, but main's first-parent line was raised to 0.4.1 "
+                      f"at {self.raised[:7]}", text)
+        self.assertIn("changed nothing in any consumer", text)
+        text.encode("ascii")
+
+    def test_a_tag_this_checkout_does_not_hold(self):
+        self.assertIn("names no commit this checkout holds", sync.misplaced_text(ECO, "v0.4.1", "", self.main))
+
+    def test_the_command_reads_main_where_the_script_is_and_prints_nothing_to_go_on(self):
+        with mock.patch.object(sync.release, "ROOT", self.main):
+            self.assertEqual(run("misplaced", "--tag", "v0.4.1", "--commit", self.raised), (0, ""))
+            code, out = run("misplaced", "--tag", "v0.4.1", "--commit", self.later)
+        self.assertEqual(code, 0)
+        self.assertEqual(out, sync.misplaced_text(ECO, "v0.4.1", self.later, self.main))
 
 
 class TheLibraryOption(unittest.TestCase):

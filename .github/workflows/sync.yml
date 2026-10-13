@@ -5,14 +5,16 @@ name: Sync
 # the environment release (.github/workflows/release.yml), and the sync
 # carries only a published release: it runs when a run of the Release
 # workflow completes, weekly and by hand, and every run carries the newest
-# published release, by its tag, never main's head, so what reaches a
-# consumer is only what the owner approved, and neither a run by hand nor
-# the schedule is a way around that approval. Release publishes with
-# GITHUB_TOKEN, whose events start no workflow, so the sync follows the
-# Release run itself (workflow_run) rather than the release it published,
-# and goes on only after a Release run that concluded success and that
-# main started, by a push or by hand, never one that a pull request, a
-# fork's above all, could start.
+# published release, never main's head, so neither a run by hand nor the
+# schedule is a way around that approval. The release counts only where
+# its tag stands at the commit that raised main's first-parent line to its
+# version, where release.yml makes it, and the sync checks out that commit,
+# never the tag by its name, which a branch of the same name would take
+# the place of. Release publishes with GITHUB_TOKEN, whose events start no
+# workflow, so the sync follows the Release run itself (workflow_run)
+# rather than the release it published, and goes on only after a Release
+# run that concluded success and that main started, by a push or by hand,
+# never one that a pull request, a fork's above all, could start.
 #
 # For each consumer the release's own ecosystem.json lists, the job sync
 # makes the copy with the release's own scripts/vendor.py, from the
@@ -67,9 +69,13 @@ jobs:
       matrix: ${{ steps.consumers.outputs.matrix }}
       enabled: ${{ steps.plan.outputs.enabled }}
       tag: ${{ steps.plan.outputs.tag }}
+      commit: ${{ steps.plan.outputs.commit }}
     steps:
+      # Main's whole first-parent line and every tag, to find where the
+      # newest release's tag stands.
       - uses: actions/checkout@v7
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - uses: actions/setup-python@v6
@@ -79,7 +85,13 @@ jobs:
       # A Release run's completion and the schedule run on the default
       # branch, main; only a run by hand can name another ref, and that one
       # stops. The releases are listed as GitHub publishes them, drafts and
-      # prereleases left out, and the newest is the highest version.
+      # prereleases left out, and the newest is the highest version. Its
+      # tag counts only where release.yml makes one, at the commit that
+      # raised main's first-parent line to its version (scripts/release.py),
+      # and a tag anywhere else, a release published by hand or a tag moved
+      # after its release, stops the run, red, carrying nothing. From here
+      # on the release is that commit, never the tag's name, which a branch
+      # of the same name would take the place of in a checkout.
       - name: Choose the release to carry, and whether the sync may run
         id: plan
         env:
@@ -117,9 +129,17 @@ jobs:
             python3 scripts/sync.py no-release >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
+          commit="$(git rev-parse --verify -q "refs/tags/$tag^{commit}" || true)"
+          why="$(python3 scripts/sync.py misplaced --tag "$tag" --commit "$commit")"
+          if [ -n "$why" ]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            printf '%s\n' "$why" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
           echo "enabled=true" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          python3 scripts/sync.py carrying --tag "$tag" >> "$GITHUB_STEP_SUMMARY"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          python3 scripts/sync.py carrying --tag "$tag" --commit "$commit" >> "$GITHUB_STEP_SUMMARY"
 
       # The release's own ecosystem.json says which consumers take it. A
       # run that stops lists none: GitHub reads the job sync's if before
@@ -127,7 +147,7 @@ jobs:
       - uses: actions/checkout@v7
         if: steps.plan.outputs.enabled == 'true'
         with:
-          ref: ${{ steps.plan.outputs.tag }}
+          ref: ${{ steps.plan.outputs.commit }}
           path: release
           persist-credentials: false
 
@@ -159,14 +179,14 @@ jobs:
         with:
           persist-credentials: false
 
-      # The release the plan chose, with its whole history: its own
-      # scripts/vendor.py makes the copy, so the files, the record and the
-      # version a consumer gets are the release's, and the pull request's
-      # body lists the library's commits since the one the consumer's copy
-      # names.
+      # The release the plan chose, by its commit, with its whole history:
+      # its own scripts/vendor.py makes the copy, so the files, the record
+      # and the version a consumer gets are the release's, and the pull
+      # request's body lists the library's commits since the one the
+      # consumer's copy names.
       - uses: actions/checkout@v7
         with:
-          ref: ${{ needs.plan.outputs.tag }}
+          ref: ${{ needs.plan.outputs.commit }}
           path: release
           fetch-depth: 0
           persist-credentials: false
@@ -174,6 +194,23 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+
+      # An empty commit would have left the checkout above at this run's
+      # own commit, main's head, so the leg goes on only when the checkout
+      # is the commit the plan chose and the release's tag still names it,
+      # before the App's key is used.
+      - name: Go on only with the commit of the release the plan chose
+        env:
+          TAG: ${{ needs.plan.outputs.tag }}
+          COMMIT: ${{ needs.plan.outputs.commit }}
+        run: |
+          set -eu
+          head="$(git -C release rev-parse HEAD)"
+          tagged="$(git -C release rev-parse --verify -q "refs/tags/$TAG^{commit}" || true)"
+          if ! [[ "$COMMIT" =~ ^[0-9a-f]{40}$ ]] || [ "$head" != "$COMMIT" ] || [ "$tagged" != "$COMMIT" ]; then
+            echo "Nothing was vendored: the plan chose ${TAG:-no release} at ${COMMIT:-no commit}, and this checkout is at $head, with that tag at ${tagged:-no commit}." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
 
       # Contents to push the branch, pull requests to open, edit, close
       # and arm one; the installation's other permissions stay out.

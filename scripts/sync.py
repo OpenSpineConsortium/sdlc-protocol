@@ -6,7 +6,8 @@
   python3 scripts/sync.py after-release EVENT_FILE --repository OWNER/NAME
   python3 scripts/sync.py newest-release < tags
   python3 scripts/sync.py no-release
-  python3 scripts/sync.py carrying --tag TAG
+  python3 scripts/sync.py misplaced --tag TAG --commit COMMIT
+  python3 scripts/sync.py carrying --tag TAG --commit COMMIT
   python3 scripts/sync.py [--library DIR] title   <consumer checkout> --consumer OWNER/NAME
   python3 scripts/sync.py [--library DIR] message <consumer checkout> --consumer OWNER/NAME
   python3 scripts/sync.py [--library DIR] body    <consumer checkout> --consumer OWNER/NAME
@@ -25,7 +26,8 @@ before it merges here. The workflows only run git, gh and these commands,
 so what they decide is here, where it is tested: the matrix of consumers,
 what the owner must set up when the sync cannot run, why a run off main
 or after a Release run that published nothing vendors nothing, which
-release is the newest, the commit message, the title and the body of a
+release is the newest, whether its tag stands where release.yml makes one
+(scripts/release.py decides), the commit message, the title and the body of a
 consumer's pull request, built from the consumer's record before and
 after the release's scripts/vendor.py ran in its checkout, the comment
 that closes a sync pull request main has made stale, and each consumer's
@@ -46,6 +48,7 @@ import sys
 from pathlib import Path
 
 import ecosystem
+import release
 from ecosystem import vendoring  # the package's vendoring.py, loaded by its path alone
 
 LIBRARY = ecosystem.ROOT
@@ -165,12 +168,31 @@ def no_release_text(eco):
         "approves its run.\n")
 
 
-def carrying_text(eco, tag):
+def misplaced_text(eco, tag, commit, history=None):
+    """Why the sync does not carry the newest release, for the run's
+    summary, or None when it carries it: its tag must stand at a commit of
+    main's first-parent line that raised it to the tag's version, where
+    release.yml makes one, so a release published by hand anywhere else,
+    or one whose tag was moved, never reaches a consumer. history is the
+    checkout of main the plan runs in, this repository by default."""
+    why = release.misplaced(tag, commit, history or release.ROOT)
+    if why is None:
+        return None
+    return (
+        "## The sync did not run\n\n"
+        f"The newest published release of {eco['library']}, {tag}, does not stand where the release workflow makes "
+        f"a release: {why}. The sync carries a release only from the commit that raised main's first-parent line to "
+        "its version, so it changed nothing in any consumer, and every run stops here until that release is put "
+        "right. If it was published by hand, or its tag was moved, delete it on the repository's Releases page; the "
+        "next run then carries the newest release that stands.\n")
+
+
+def carrying_text(eco, tag, commit):
     """The run's summary's first words when the sync goes on."""
     return (
         f"## The sync carries {tag}\n\n"
-        f"The newest published release of {eco['library']}, made into each consumer's copy by that release's own "
-        "scripts/vendor.py; each consumer's job adds its row.\n")
+        f"The newest published release of {eco['library']}, at {commit}, the commit that raised main to its version, "
+        "made into each consumer's copy by that release's own scripts/vendor.py; each consumer's job adds its row.\n")
 
 
 def title(version, commit):
@@ -429,8 +451,13 @@ def arguments(argv):
     following.add_argument("--repository", required=True, metavar="OWNER/NAME", help="this repository")
     sub.add_parser("newest-release", help="the newest release's tag among the tags on stdin; nothing when none")
     sub.add_parser("no-release", help="why a run with no published release vendored nothing")
+    placing = sub.add_parser("misplaced", help="why the newest release's tag does not stand where release.yml "
+                                               "makes one; nothing when it does")
+    placing.add_argument("--tag", required=True)
+    placing.add_argument("--commit", required=True, help="the commit the tag names here, or an empty word")
     carrying = sub.add_parser("carrying", help="the summary's first words when the sync goes on")
     carrying.add_argument("--tag", required=True)
+    carrying.add_argument("--commit", required=True)
     for name in ("title", "message", "body"):
         pull = sub.add_parser(name, help=f"the consumer's pull request {name}")
         pull.add_argument("target", help="the consumer's checkout, after the release's scripts/vendor.py ran in it")
@@ -461,8 +488,10 @@ def answer(args, eco):
         return f"{tag}\n" if tag else ""
     if args.command == "no-release":
         return no_release_text(eco)
+    if args.command == "misplaced":
+        return misplaced_text(eco, args.tag, args.commit) or ""
     if args.command == "carrying":
-        return carrying_text(eco, args.tag)
+        return carrying_text(eco, args.tag, args.commit)
     consumer = ecosystem.consumer_named(eco, args.consumer)
     if args.command == "closing":
         return closing_comment(eco)
