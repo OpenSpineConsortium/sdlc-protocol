@@ -331,10 +331,12 @@ def claim_text(api, branch):
 
 def unread_claim_lines(snapshot):
     """A line for each claim file GitHub gave no text of, for the workflow's
-    log, since the board can show only that it was not read."""
+    log, since the page says so only where no label names the worker: where
+    one does, as the protocol's Announce step makes it, the row shows that
+    worker and no files, as for a claim file that lists none."""
     snap = board.as_snapshot(snapshot)
     return [f"{claims.branch_of(key)}: GitHub gave no text for {claims.claim_path(key)}, a file over 1 MB, so the "
-            f"board shows the claim file as not read"
+            f"board reads no worker and no files from it, and a release quotes no plan"
             for key, text in sorted(snap.claims.items(), key=lambda item: claims.by_number(item[0]))
             if text is board.UNREAD_CLAIM]
 

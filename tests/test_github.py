@@ -292,9 +292,30 @@ class Client(unittest.TestCase):
         live = board.Snapshot.from_dict(collected)
         self.assertIn("| #13 | claude/13 | claim file over 1 MB, not read | #41 |", board.render(live))
         self.assertEqual(github.unread_claim_lines(live), [
-            "claude/13: GitHub gave no text for docs/agents/claims/13.md, a file over 1 MB, so the board shows "
-            "the claim file as not read"])
+            "claude/13: GitHub gave no text for docs/agents/claims/13.md, a file over 1 MB, so the board reads "
+            "no worker and no files from it, and a release quotes no plan"])
         self.assertEqual(github.unread_claim_lines(board.Snapshot.from_dict(snap)), [])
+
+    def test_the_log_says_what_the_board_shows_of_a_claim_file_github_gave_no_text_of_under_a_worker_label(self):
+        # The Announce step puts the worker's label on the issue, and with
+        # it the row names that worker and lists no files, as for a claim
+        # file that lists none: the line said the board shows the claim
+        # file as not read, which nothing on the page did.
+        snap = board.Snapshot.from_dict({
+            "sha": "0123abc", "default_branch": "main", "branches": ["claude/13"],
+            "issues": [{"number": 13, "title": "Add the remember skill", "labels": [{"name": "claimed"}]}],
+            "claims": {"13": board.UNREAD_CLAIM},
+            "claim_issues": {"13": {"state": "open", "labels": ["claimed", "worker:nightly"]}},
+        })
+        page = board.render(snap)
+        self.assertIn("| #13 | claude/13 | nightly | (no pull request yet) | - |", page)
+        self.assertNotIn("not read", page)
+        self.assertEqual(github.unread_claim_lines(snap), [
+            "claude/13: GitHub gave no text for docs/agents/claims/13.md, a file over 1 MB, so the board reads "
+            "no worker and no files from it, and a release quotes no plan"])
+        snap.releases["13"] = board.Release("2026-09-20T09:00:00Z", HEAD_12, "2026-09-18T12:00:00Z")
+        self.assertIn("The claim file is over 1 MB, more than GitHub gives the text of, so its plan is not quoted",
+                      coordinator.release_text(snap, "13", coordinator.Holding()))
 
     def test_a_board_run_says_which_claim_file_github_gave_no_text_of(self):
         snap, answers = fixture_answers()
@@ -310,8 +331,8 @@ class Client(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertIn("| #13 | claude/13 | claim file over 1 MB, not read |", out.read_text(encoding="ascii"))
             self.assertEqual(printed.getvalue().splitlines(), [
-                "claude/13: GitHub gave no text for docs/agents/claims/13.md, a file over 1 MB, so the board shows "
-                "the claim file as not read", f"{out.as_posix()}: rewritten"])
+                "claude/13: GitHub gave no text for docs/agents/claims/13.md, a file over 1 MB, so the board reads "
+                "no worker and no files from it, and a release quotes no plan", f"{out.as_posix()}: rewritten"])
 
     def test_a_claim_branch_whose_issue_was_deleted_has_no_issue_and_stops_no_run(self):
         # GitHub answers 410 for an issue someone deleted, and the run
