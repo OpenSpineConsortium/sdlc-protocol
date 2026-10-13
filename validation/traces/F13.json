@@ -1,0 +1,17 @@
+{
+  "finding": "F13",
+  "title": "the landing order's oldest is the lowest number",
+  "status": "open; found by build step 1; a fix in the library or a word in the spec, the owner's choice",
+  "breaks": ["G7"],
+  "world": "memory",
+  "issues": {"1": ["todo"], "2": ["todo"]},
+  "workers": ["a", "b"],
+  "files": {"1": ["src/shared.py"], "2": ["src/shared.py"]},
+  "steps": [
+    {"verb": "claim", "actor": "a", "args": [1]},
+    {"verb": "open-draft", "actor": "a", "args": [1], "expect": {"pulls": [100]}},
+    {"at": 5, "verb": "claim", "actor": "b", "args": [2]},
+    {"verb": "board", "shows": "F13", "expect": {"overlaps": {"src/shared.py": [2, 100]}},
+     "note": "as built #2, claimed five hours later, lands before #100, since its number is the lower; reading the spec, the oldest work lands first"}
+  ]
+}

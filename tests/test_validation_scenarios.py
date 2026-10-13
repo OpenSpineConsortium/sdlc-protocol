@@ -1,9 +1,10 @@
 """The five scenarios of DESIGN.md section 5.2 (validation/scenarios.py),
-played by validation/run.py: every expectation holds, every guarantee is
-green on every step as built, the one step that shows F7 is red for G1,
-and each finding a step names turns red at that step once the oracle
-stops reading the finding as built. The scenarios are the fast lane's
-first part and run in a second."""
+played by validation/run.py: every expectation holds, and every result is
+what validation/known.json records (since build step 5): green on every
+step as built but the two that show F7, red for G1, and each finding a
+step names red at that step, and nowhere else, once the oracle stops
+reading the finding as built. The scenarios are the fast lane's first
+part and run in a second."""
 
 import sys
 import time
@@ -13,13 +14,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from validation import oracle, run, scenarios  # noqa: E402
+from validation import known, oracle, run, scenarios  # noqa: E402
 
 BUDGET_SECONDS = 15
 
 
-def steps_showing(scenario, finding):
-    return [i for i, step in enumerate(scenario.steps) if step.shows == finding]
+def results(record):
+    return {(at, v.guarantee) for at, v in record.violations}
 
 
 class EveryScenario(unittest.TestCase):
@@ -32,13 +33,13 @@ class EveryScenario(unittest.TestCase):
                 self.assertTrue(scenario.guarantees)
                 self.assertGreater(len(scenario.steps), 3)
 
-    def test_every_expectation_holds_and_every_guarantee_is_green_as_built(self):
+    def test_every_expectation_holds_and_every_result_is_what_known_json_records_as_built(self):
         began = time.perf_counter()
         for name, scenario in scenarios.SCENARIOS.items():
             with self.subTest(scenario=name):
                 record = run.run_scenario(scenario)
                 self.assertEqual(record.mismatches, [], "\n".join(record.timeline))
-                self.assertEqual(record.red_steps, steps_showing(scenario, "F7"), "\n".join(record.timeline))
+                self.assertEqual(known.differences("scenario", name, results(record)), [], "\n".join(record.timeline))
                 self.assertGreater(record.checks, 3)
                 self.assertTrue(record.pages)
         self.assertLess(time.perf_counter() - began, BUDGET_SECONDS)
@@ -49,14 +50,19 @@ class EveryScenario(unittest.TestCase):
         self.assertIn("the board names b for claude/1, whose holder is a", {v.detail for _, v in record.violations})
 
     def test_each_finding_a_step_names_turns_red_there_when_not_read_as_built(self):
-        named = {(name, step.shows) for name, scenario in scenarios.SCENARIOS.items()
-                 for step in scenario.steps if step.shows and step.shows != "F7"}
+        """Each switch known.json names on a scenario, off in turn: the
+        finding is red where the file records it and nowhere else. The
+        other switches are tried on the traces, which play in milliseconds
+        (tests/test_validation_traces.py), not on every scenario."""
+        named = {(name, f) for name in scenarios.SCENARIOS for f in known.findings_named("scenario", name)
+                 if f in known.AS_BUILT}
         self.assertEqual({f for _, f in named}, {"F2", "F12"})
         for name, finding in sorted(named):
             with self.subTest(scenario=name, finding=finding):
                 scenario = scenarios.SCENARIOS[name]
                 record = run.run_scenario(scenario, oracle.AS_BUILT - {finding})
-                self.assertEqual(record.red_steps, steps_showing(scenario, finding), "\n".join(record.timeline))
+                self.assertEqual(known.differences("scenario", name, results(record), finding), [],
+                                 "\n".join(record.timeline))
 
     def test_a_scenario_plays_the_same_twice(self):
         scenario = scenarios.SCENARIOS["S03"]

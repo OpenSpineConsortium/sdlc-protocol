@@ -1,0 +1,20 @@
+{
+  "finding": "F8",
+  "title": "idleness is the pusher's clock",
+  "status": "open; decision for the owner (DESIGN.md, 14); breaks nothing, since the spec says the committer date",
+  "breaks": [],
+  "world": "memory",
+  "issues": {"1": ["todo"]},
+  "workers": ["a"],
+  "steps": [
+    {"verb": "claim", "actor": "a", "args": [1], "skew": 72, "expect": {"holders": {"1": "a"}},
+     "note": "the claim commit is dated 72 hours ahead"},
+    {"verb": "announce", "actor": "a", "args": [1]},
+    {"at": 25, "verb": "board", "expect": {"labels": {"1": ["todo", "claimed", "worker:a"]}, "comments": {"1": {}}, "no_writes": true},
+     "note": "25 hours with no push, and the claim is not due: its head is dated in the future"},
+    {"at": 26, "verb": "commit", "actor": "a", "args": [1], "skew": -48, "expect": {"taken": true},
+     "note": "a commit dated 48 hours back"},
+    {"verb": "board", "expect": {"labels": {"1": ["todo"]}, "comments": {"1": {"claim-released": 1, "released": 1}}, "released": {"1": 1}},
+     "note": "released at once, as the spec reads: the assumption under which G2 and G3 hold"}
+  ]
+}

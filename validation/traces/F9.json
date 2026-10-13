@@ -1,0 +1,17 @@
+{
+  "finding": "F9",
+  "title": "a draft may never be told main moved",
+  "status": "open; one GET settles what GitHub answers (DESIGN.md, 14, step 7)",
+  "breaks": ["G10"],
+  "world": "memory",
+  "issues": {"1": ["todo"]},
+  "workers": ["a"],
+  "steps": [
+    {"verb": "claim", "actor": "a", "args": [1]},
+    {"verb": "open-draft", "actor": "a", "args": [1], "expect": {"pulls": [100]}},
+    {"at": 1, "verb": "move-main", "actor": "owner"},
+    {"verb": "board", "event": "push", "ref": "main", "shows": "F9",
+     "expect": {"comments": {"100": {}}, "standing": {"100": "behind"}},
+     "note": "the draft is behind main and hears nothing as built, since its mergeable_state reads draft; reading the spec, the run of the push owes it the word"}
+  ]
+}

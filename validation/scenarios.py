@@ -16,8 +16,9 @@ STATE.md does; "look" changes nothing and checks what a worker would pick;
 that names a finding (shows) is red for it: as built, for F7, which no
 board rule answers and the careless worker shows; with that finding's
 switch off in the oracle (oracle.AS_BUILT), for the findings the oracle
-reads as built. known.json, which will record these (build step 5),
-replaces the switches then.
+reads as built. known.json records each such step with its guarantee
+(known.py, since build step 5), and tests/test_validation_traces.py holds
+the two to each other.
 """
 
 from typing import NamedTuple

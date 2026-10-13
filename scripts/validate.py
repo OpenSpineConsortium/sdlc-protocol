@@ -2,6 +2,8 @@
 """Run the validation harness's lanes by hand (validation/README.md).
 
     python3 scripts/validate.py scenarios     the five scenarios, with their timelines
+    python3 scripts/validate.py traces        the regression traces, one per finding, against known.json
+    python3 scripts/validate.py replay <file> one trace file (validation/traces/F1.json), with its timeline
     python3 scripts/validate.py explore       the fast lane's searches, with their counts
     python3 scripts/validate.py guard         the guard against git's recorded answers
     python3 scripts/validate.py guard --record  run git first and write the answers
@@ -21,10 +23,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from validation import cycle, dealing, explore, guard_grammar, model as M, mutants, properties, run, scenarios  # noqa: E402
-from validation import verbs  # noqa: E402
+from validation import cycle, dealing, explore, guard_grammar, known, model as M, mutants, oracle, properties  # noqa: E402
+from validation import replay, run, scenarios, verbs  # noqa: E402
 
-LANES = ("scenarios", "explore", "guard", "deal", "properties")
+LANES = ("scenarios", "traces", "explore", "guard", "deal", "properties")
 
 
 def run_scenarios(out):
@@ -40,6 +42,35 @@ def run_scenarios(out):
         if record.mismatches:
             status = 1
     return status
+
+
+def run_traces(out):
+    """Every trace as built and with each switch of the oracle off, against
+    what known.json records; a difference is printed and fails the lane."""
+    status = 0
+    for finding, trace in replay.traces().items():
+        for switched_off in (None, *sorted(known.AS_BUILT)):
+            reading = oracle.AS_BUILT if switched_off is None else oracle.AS_BUILT - {switched_off}
+            record = replay.replay(trace, reading)
+            wrong = known.differences("trace", finding, replay.results(record), switched_off)
+            wrong += [f"trace {finding}: mismatch, {m}" for _, m in record.mismatches]
+            if switched_off is None:
+                red = ", ".join(f"step {s} {g}" for s, g in sorted(replay.results(record))) or "none"
+                print(f"{finding} ({trace.status}): red as built: {red}", file=out)
+            for line in wrong:
+                print("  " + line, file=out)
+            status |= bool(wrong)
+    return status
+
+
+def run_replay(out, path):
+    trace = replay.load(path)
+    record = replay.replay(trace)
+    print(replay.report(trace, record), file=out)
+    wrong = known.differences("trace", trace.finding, replay.results(record)) if trace.path.parent == replay.TRACES else []
+    for line in wrong:
+        print("  " + line, file=out)
+    return 1 if wrong or record.mismatches else 0
 
 
 def run_explore(out):
@@ -91,18 +122,20 @@ def run_properties(out):
     return 1 if stale or any(o.failures or not o.checked for o in outcomes) else 0
 
 
-RUNNERS = {"scenarios": run_scenarios, "explore": run_explore, "guard": run_guard, "deal": run_deal,
-           "properties": run_properties}
+RUNNERS = {"scenarios": run_scenarios, "traces": run_traces, "explore": run_explore, "guard": run_guard,
+           "deal": run_deal, "properties": run_properties}
 
 
 def main(argv=None, out=sys.stdout):
     args = list(sys.argv[1:] if argv is None else argv)
-    if not args or args[0] not in LANES + ("fast", "mutants"):
+    if not args or args[0] not in LANES + ("fast", "mutants", "replay") or (args[0] == "replay") != (len(args) == 2):
         print(__doc__, file=out)
         return 2
     lane, options = args[0], args[1:]
     if lane == "mutants":
         return mutants.main([])
+    if lane == "replay":
+        return run_replay(out, options[0])
     lanes = LANES if lane == "fast" else (lane,)
     status, began = 0, time.perf_counter()
     for name in lanes:

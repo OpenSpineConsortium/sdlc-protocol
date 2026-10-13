@@ -1,0 +1,19 @@
+{
+  "finding": "F2",
+  "title": "overlapping work is told again when a claim opens its pull request",
+  "status": "open; the owner's choice of fix (DESIGN.md, 14)",
+  "breaks": ["G7"],
+  "world": "memory",
+  "issues": {"1": ["todo"], "2": ["todo"]},
+  "workers": ["a", "b"],
+  "files": {"1": ["src/shared.py"], "2": ["src/shared.py"]},
+  "steps": [
+    {"verb": "claim", "actor": "a", "args": [1]},
+    {"verb": "claim", "actor": "b", "args": [2]},
+    {"verb": "board", "expect": {"overlaps": {"src/shared.py": [1, 2]}, "told": {"1": [2], "2": [1]}}},
+    {"at": 1, "verb": "open-draft", "actor": "a", "args": [1], "expect": {"pulls": [100]}},
+    {"verb": "board", "event": "pull_request", "shows": "F2",
+     "expect": {"overlaps": {"src/shared.py": [2, 100]}, "comments": {"100": {"overlap": 1}, "2": {"overlap": 2}}},
+     "note": "as built the work is numbered by its pull request now and told again, and #2 hears of #100 as if it were new work; reading the spec, both were told already (the order shown is F13's, the lowest number first)"}
+  ]
+}

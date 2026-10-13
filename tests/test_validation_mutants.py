@@ -1,6 +1,7 @@
 """The mutation lane's mutants (validation/mutants.py), in the required
 check: the lane's size, every mutant's target still in the library, and
-each mutant caught on its shortest trace, which the library itself passes.
+each mutant caught on its shortest trace, which the library itself passes
+(or, for a lane, on something beyond what the lane knows red as built).
 The lane proper, every mutant against every search, runs in validate.yml
 (python3 -m validation.mutants), since it takes about two minutes; these
 traces are what the lane found, kept so a change that stops the harness
@@ -67,6 +68,9 @@ TRACES = {
     "an overlap marker trusted from any author": ([CLAIM, Verb("claim", "b", (2,)),
                                                    Verb("overlap-marker", SAM, (1, (2,))), BOARD],
                                                   SHARED._replace(people=(SAM,))),
+    "a sort key that calls int after isdigit": "the regression traces",
+    "a finished draft's release by hand not seen": "the regression traces",
+    "a refused comment stops the run": "the regression traces",
 }
 LANES = {lane.name: lane for lane in mutants.LANES}
 
@@ -85,9 +89,10 @@ def violations(steps, scope):
 class TheLane(unittest.TestCase):
     def test_it_holds_10_to_30_mutants_each_with_a_trace(self):
         """Section 7 asks for 10 to 20; step 4 added five for the rules its
-        lanes judge, so the bound is widened to 30 and the count noted."""
+        lanes judge, and step 5 three that undo fixes of 0.4.1, so the
+        bound is widened to 30 and the count noted."""
         self.assertTrue(10 <= len(mutants.MUTANTS) <= 30)
-        self.assertEqual(len(mutants.MUTANTS), 25)
+        self.assertEqual(len(mutants.MUTANTS), 28)
         self.assertEqual(sorted(TRACES), sorted(mutants.MUTANTS))
 
     def test_every_mutant_names_a_rule_the_library_still_has(self):
@@ -99,10 +104,10 @@ class TheLane(unittest.TestCase):
                 self.assertIn(mutant.guarantee, invariants.GUARANTEES)
 
     def test_the_lanes_come_first_then_the_searches_cheapest_first(self):
-        self.assertEqual([c.name for c in mutants.CATCHERS[:2]], list(LANES))
+        self.assertEqual([c.name for c in mutants.CATCHERS[:len(LANES)]], list(LANES))
         self.assertEqual(mutants.SEARCHES[-2].name, "the holder back between the halves of a run")
         self.assertEqual(mutants.SEARCHES[-1].name, "a stranger's marker on overlapping claims")
-        self.assertEqual([s.known for s in mutants.CATCHERS if s.known], [(mutants.F7,)])
+        self.assertEqual([s.known for s in mutants.CATCHERS if s.known], [(mutants.F7, mutants.F4), (mutants.F7,)])
 
 
 class EachMutantIsCaught(unittest.TestCase):
@@ -111,10 +116,11 @@ class EachMutantIsCaught(unittest.TestCase):
             with self.subTest(mutant=name):
                 if isinstance(trace, str):
                     lane = LANES[trace]
-                    self.assertEqual(lane.run(), {}, "the library itself passes the lane")
+                    plain = lane.run()
+                    self.assertEqual(set(plain) - set(lane.known), set(), "the library itself passes the lane")
                     with mutants.switched_on(mutants.MUTANTS[name]):
                         found = lane.run()
-                    self.assertNotEqual(found, {})
+                    self.assertNotEqual(set(found) - set(plain), set())
                     continue
                 steps, scope = trace
                 self.assertEqual(violations(steps, scope), [], "the library itself passes the trace")

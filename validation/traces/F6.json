@@ -1,0 +1,18 @@
+{
+  "finding": "F6",
+  "title": "a single hand-made branch name stops the board",
+  "status": "fixed in 0.4.1 (#11)",
+  "breaks": ["G9", "G15"],
+  "world": "memory",
+  "issues": {"1": ["todo"]},
+  "workers": ["a"],
+  "careless": true,
+  "steps": [
+    {"verb": "push-by-hand", "actor": "owner", "args": [1, "claude/\u00b2"], "expect": {"taken": true},
+     "note": "a superscript two passes isdigit() and not int(): before 0.4.1 the render raised"},
+    {"verb": "board", "expect": {"queue": [1]}},
+    {"verb": "push-by-hand", "actor": "owner", "args": [1, "claude/caf\u00e9"], "expect": {"taken": true},
+     "note": "no digit at all: before 0.4.1 the live run's contents call sent the name unquoted and raised before STATE.md was written"},
+    {"verb": "board", "expect": {"queue": [1]}}
+  ]
+}

@@ -75,15 +75,31 @@ def change(model, name):
         raise ValueError(name)
 
 
-def moments(order):
+def moments(order, model=None):
     """The clients at each moment: before any change, after the first,
-    after both."""
-    model = start()
+    after both; from the lane's own start, or from a model a trace built."""
+    model = start() if model is None else model.clone()
     found = [ModelClient(model.clone())]
     for name in order:
         change(model, name)
         found.append(ModelClient(model.clone()))
     return found
+
+
+def play(model, order, looks, workers=WORKERS):
+    """One deal from the model as a trace left it: the changes in order,
+    each worker asking at the moment its look names (replay.py's "deal"
+    step)."""
+    clients = moments(order, model)
+    moves = {w: team.next_for(clients[look], w, list(workers)) for w, look in zip(workers, looks)}
+    return Deal(tuple(order), tuple(looks), moves)
+
+
+def violations(deal):
+    """G14 on one deal, as (guarantee, detail) pairs: an issue dealt to two
+    workers, from one look or from differing looks (F4)."""
+    looks = "one look" if deal.one_look else "differing looks"
+    return [("G14", f"#{n} dealt twice from {looks}: {deal.moves}") for n in deal.doubled]
 
 
 def deals():

@@ -1,0 +1,33 @@
+{
+  "finding": "F12",
+  "title": "main moved is lost under the board's concurrency group",
+  "status": "open; the owner's choice of fix (DESIGN.md, 14)",
+  "breaks": ["G10"],
+  "world": "memory",
+  "issues": {"1": ["todo"]},
+  "workers": ["a"],
+  "events": ["schedule", "push", "create", "delete", "pull_request", "issues"],
+  "split_board": true,
+  "steps": [
+    {"verb": "claim", "actor": "a", "args": [1]},
+    {"verb": "board-start", "event": "create", "ref": "claude/1"},
+    {"verb": "board-finish"},
+    {"verb": "board-start", "event": "push", "ref": "claude/1", "note": "a run the job skips"},
+    {"verb": "board-finish"},
+    {"verb": "open-draft", "actor": "a", "args": [1], "expect": {"pulls": [100]}},
+    {"verb": "board-start", "event": "pull_request"},
+    {"verb": "board-finish"},
+    {"verb": "mark-ready", "actor": "a", "args": [100]},
+    {"at": 1, "verb": "commit", "actor": "a", "args": [1]},
+    {"verb": "board-start", "event": "push", "ref": "claude/1",
+     "note": "the worker's push to its claim branch holds the group while its job is skipped"},
+    {"verb": "move-main", "actor": "owner", "note": "the push to main queues a run behind it"},
+    {"verb": "commit", "actor": "a", "args": [1], "note": "the worker's next push replaces the run that waited"},
+    {"verb": "board-finish"},
+    {"verb": "board-start", "event": "pull_request"},
+    {"verb": "board-finish", "shows": "F12", "expect": {"comments": {"100": {}}, "standing": {"100": "behind"}},
+     "note": "as built main moved is told only in the run a push to main started, and that run was cancelled; reading the spec, the pull request behind main is owed the word"},
+    {"verb": "board-start", "event": "push", "ref": "claude/1", "note": "the worker's own push, a run of nothing, which owes nothing"},
+    {"verb": "board-finish"}
+  ]
+}

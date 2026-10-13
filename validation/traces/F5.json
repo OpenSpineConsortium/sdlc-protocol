@@ -1,0 +1,19 @@
+{
+  "finding": "F5",
+  "title": "two branch names can claim one issue",
+  "status": "fixed in 0.4.1 (#11)",
+  "breaks": ["G1"],
+  "world": "memory",
+  "issues": {"1": ["todo"]},
+  "workers": ["a", "b"],
+  "careless": true,
+  "steps": [
+    {"verb": "claim", "actor": "a", "args": [1], "expect": {"holders": {"1": "a"}}},
+    {"verb": "claim-misnamed", "actor": "b", "args": [1, "claude/01"], "expect": {"taken": false, "refs": {"claude/01": false}},
+     "note": "the guard refuses the push, naming the claim branch of #1"},
+    {"verb": "push-by-hand", "actor": "owner", "args": [1, "claude/01"], "expect": {"taken": true, "refs": {"claude/01": true}},
+     "note": "a push by hand outside a session meets no guard"},
+    {"at": 1, "verb": "board", "expect": {"claims": {"claude/1": "a", "claude/01": "no claim file yet"}, "holders": {"1": "a"}},
+     "note": "as built the board lists claude/01 in its own row as not a claim, with no claim file, since the file is read at the key 01, and the protocol check refuses a pull request from it; before 0.4.1 both names claimed #1"}
+  ]
+}

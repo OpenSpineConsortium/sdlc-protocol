@@ -1,0 +1,20 @@
+{
+  "as_built": ["F2", "F9", "F12", "F13", "F14"],
+  "red": [
+    {"trace": "F2", "step": 4, "guarantee": "G7", "finding": "F2"},
+    {"trace": "F4", "step": 9, "guarantee": "G14", "finding": "F4"},
+    {"trace": "F7", "step": 1, "guarantee": "G1", "finding": "F7"},
+    {"trace": "F7", "step": 2, "guarantee": "G1", "finding": "F7"},
+    {"trace": "F9", "step": 3, "guarantee": "G10", "finding": "F9"},
+    {"trace": "F12", "step": 15, "guarantee": "G10", "finding": "F12"},
+    {"trace": "F13", "step": 3, "guarantee": "G7", "finding": "F13"},
+    {"trace": "F14", "step": 0, "guarantee": "G9", "finding": "F14"},
+    {"scenario": "S01c", "step": 4, "guarantee": "G1", "finding": "F7"},
+    {"scenario": "S01c", "step": 5, "guarantee": "G1", "finding": "F7"},
+    {"scenario": "S05a", "step": 12, "guarantee": "G7", "finding": "F2"},
+    {"scenario": "S05b", "step": 12, "guarantee": "G7", "finding": "F2"},
+    {"scenario": "S05q", "step": 12, "guarantee": "G7", "finding": "F2"},
+    {"scenario": "S05q", "step": 23, "guarantee": "G10", "finding": "F12"},
+    {"scenario": "S05q", "step": 24, "guarantee": "G10", "finding": "F12"}
+  ]
+}
