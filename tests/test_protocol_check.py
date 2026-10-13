@@ -88,6 +88,13 @@ class CheckProtocolTest(unittest.TestCase):
         self.assertEqual(protocol_check.problems_for(pull(branch="main"), exists), [])
         self.assertEqual(asked, [7])
 
+    def test_a_number_written_with_a_leading_zero_is_no_claim(self):
+        # claude/07 would be a second claim on #7 beside claude/7, which the
+        # first-push lock does not stop, so it is held to nothing, as any
+        # branch that is no claim is.
+        self.assertIsNone(protocol_check.claim_number(pull(branch="claude/07")))
+        self.assertEqual(self.with_claim(False, pull(branch="claude/07", body="")), [])
+
     def test_the_claim_number_comes_from_the_head_branch(self):
         self.assertEqual(protocol_check.claim_number(pull()), 7)
         self.assertEqual(protocol_check.claim_number(pull(branch="claude/42")), 42)

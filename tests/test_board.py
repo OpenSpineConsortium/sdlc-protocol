@@ -483,6 +483,22 @@ class Leniency(unittest.TestCase):
         self.assertEqual([w.number for w in board.open_work(snap)], [3])
         self.assertEqual(board.overlaps(snap), {})
 
+    def test_a_second_name_for_an_issue_claims_nothing(self):
+        # claude/03 is another name than claude/3, so GitHub takes a first
+        # push of each: only the name branch_of writes holds #3, and the
+        # other is shown as a branch under claude/ that claims nothing.
+        both = Snapshot.from_dict({
+            "branches": ["claude/03", "claude/3"],
+            "claims": {"03": "- Worker: bob\n", "3": "- Worker: alice\n"},
+        })
+        rows = section(board.render(both), board.CLAIM_HEADING, board.PULL_HEADING)
+        self.assertIn("| #3 | claude/3 | alice | (no pull request yet) | - |\n| 03 | claude/03 | bob |", rows)
+        alone = Snapshot.from_dict({"branches": ["claude/03"], "claims": {"03": "- Worker: bob\n"},
+                                    "issues": [{"number": 3, "title": "Three", "labels": ["todo"]}]})
+        self.assertEqual(board.claimed_numbers(alone.branches), set())
+        self.assertEqual(board.open_work(alone), [])
+        self.assertIn("| #3 | Three | todo |", section(board.render(alone), board.QUEUE_HEADING, board.GIVEN_HEADING))
+
     def test_a_pull_with_no_update_time_is_not_idle(self):
         pulls = [Pull(1, updated_at=""), {"number": 2, "updated_at": "2026-09-20T00:00:00Z"}]
         self.assertEqual([board.as_pull(p).number for p in board.idle_pulls(pulls, self.NOW)], [2])

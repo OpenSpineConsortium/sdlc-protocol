@@ -26,7 +26,7 @@ Fetch, then read the board (`git fetch origin board && git show origin/board:STA
 
 ## Claim
 
-Push a new branch `claude/<issue number>` from the default branch whose first commit adds `docs/agents/claims/<issue number>.md`: the worker, the plan, the files to touch, the issue's link. Nothing else is in that first commit. If the push is refused because the branch exists, another worker has it: delete the local branch and pick another issue.
+Push a new branch `claude/<issue number>` from the default branch whose first commit adds `docs/agents/claims/<issue number>.md`: the worker, the plan, the files to touch, the issue's link. Nothing else is in that first commit. The claim branch of issue N is exactly `claude/N`, with N in ASCII digits and no leading zeros, since GitHub refuses only a second push of the same name: `claude/03` is no claim on #3. If the push is refused because the branch exists, another worker has it: delete the local branch and pick another issue.
 
 The claim file takes this shape, with N the issue's number and NAME the worker's name. The board reads two parts of it (sdlc_protocol.claims): the `- Worker:` line (or the older `- Account:`), whose name is the worker's label without the `worker:` prefix, and the list under `## Files to touch`, which fills the board's Files column and its Overlaps until the pull request has files of its own; a release quotes the `## Plan`.
 

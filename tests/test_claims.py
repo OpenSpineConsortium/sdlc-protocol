@@ -57,7 +57,16 @@ class Branches(unittest.TestCase):
         # The template's check matched \d, which a superscript does not;
         # isdigit() lets it through and int() then raises.
         self.assertIsNone(claims.number_of("claude/\u00b2"))
-        self.assertEqual(claims.number_of("claude/007"), 7)
+
+    def test_only_the_name_branch_of_writes_names_an_issue(self):
+        # GitHub's lock on a claim is the first push of a name, so claude/03
+        # beside claude/3 would be a second claim on #3: only the issue's
+        # number as GitHub writes it, with no leading zero, names it.
+        for name in ("claude/03", "claude/007", "claude/00", "claude/0123456789"):
+            self.assertIsNone(claims.number_of(name), name)
+        for name in ("claude/3", "claude/30", "claude/0", "claude/123456789"):
+            self.assertEqual(claims.branch_of(claims.number_of(name)), name)
+        self.assertIsNone(claims.number_of("agent/07", "agent/"))
 
     def test_a_policy_may_name_another_prefix(self):
         self.assertEqual(claims.branch_of(7, "agent/"), "agent/7")
