@@ -5,8 +5,8 @@ This is the design of the harness that validates this library against its spec: 
 - **Line numbers** in this repository's files refer to commit cf3bdb0, where the package (`sdlc_protocol/`, version 0.4.0) was last changed by a996ec9. They will move as the package changes; the function names beside them will not. Line numbers in `validation/prototype/` refer to its files as this branch adds them.
 - **Other repositories' files** are named with the repository: symphony-template's `.github/workflows/board.yml` (read at a1d9695), coordbench's `PARITY.md` and the other coordbench files section 1 names (read at d6a3480; PARITY.md was last changed by e8e72f7), beethoven-qa's `src/beethoven_qa/gate.py` (read at 85f0e1c), symphony-app's `manifest.json` (read at 17cea0c), and GitHub's documentation by its path in the github/docs repository, read on 2026-10-13.
 - **Bare module names.** A name such as claims.py or adapters/github.py is a file of the package, under `sdlc_protocol/`; a bare name that follows a path in the same list, as measure.py does in "validation/prototype/explore.py and measure.py", is a file in that path's folder. Paths inside a scenario's own repository (`src/1.py`, `docs/agents/claims/1.md`) and REST paths are not files of this one.
-- **Planned files.** The harness does not exist yet. The files it will add, and the folder `validation-out/` its lanes write to, are listed in section 12 and are marked "planned" where they are named; every other path in this document names a file that exists at this commit.
-- **The package does not change here.** Fixes for F1, F2, F3, F5, F6, F10, F11 and F12 are in progress on the branch claude/validation-fixes; F4, F7, F8 and F9 are decisions for the owner (section 14).
+- **Planned files.** Build step 1 of section 14 is built: validation/model.py, fake_github.py, cycle.py, verbs.py, policies.py, oracle.py, invariants.py, explore.py and page.py, GUARANTEES.md, and their tests, tests/test_validation_*.py. The files the later steps will add, and the folder `validation-out/` their lanes write to, are listed in section 12 and are marked "planned" where they are named; every other path in this document names a file that exists at this commit.
+- **The package does not change here.** F1, F3, F5, F6, F10 and F11 are fixed in 0.4.1 (pull request #11, released and synced on 2026-10-13); F2 and F12 are still open, each waiting on the owner's choice of fix; F4, F7, F8 and F9 are decisions for the owner (section 14).
 - **Where the numbers come from.** Every number was measured in one container: 4 CPUs shared with other sessions, Python 3.12.3, git 2.43.0. State counts are exact and were reproduced on this branch; times move with the load.
 
 ## Summary
@@ -28,18 +28,18 @@ The prototype and its critique found twelve things. Section 13 has the evidence 
 
 | | Finding | Status |
 | --- | --- | --- |
-| F1 | A release whose label removal failed is never completed: the claim stays held for good | fix in progress on claude/validation-fixes |
-| F2 | Overlapping work is told again when a claim opens its pull request | fix in progress on claude/validation-fixes |
-| F3 | The push guard passes forced pushes and pushes to main in plain shapes: a `+` refspec, bundled short options (`-fu`), abbreviations git accepts (`--al`, `--mirr`), a destination written `heads/main`, and any command behind `VAR=value`, `env`, `command`, `nice` or `time` | fix in progress on claude/validation-fixes |
+| F1 | A release whose label removal failed is never completed: the claim stays held for good | fixed in 0.4.1 |
+| F2 | Overlapping work is told again when a claim opens its pull request | open; the owner's choice of fix |
+| F3 | The push guard passes forced pushes and pushes to main in plain shapes: a `+` refspec, bundled short options (`-fu`), abbreviations git accepts (`--al`, `--mirr`), a destination written `heads/main`, and any command behind `VAR=value`, `env`, `command`, `nice` or `time` | fixed in 0.4.1 |
 | F4 | The clerk can deal one issue to two workers of the same run | decision for the owner |
-| F5 | Two branch names can claim one issue (`claude/03` beside `claude/3`) | fix in progress on claude/validation-fixes |
-| F6 | One hand-made branch name stops every board run: `claude/\u00b2` in the render, and any non-ASCII name, `claude/caf\u00e9` included, in a live run | fix in progress on claude/validation-fixes |
+| F5 | Two branch names can claim one issue (`claude/03` beside `claude/3`) | fixed in 0.4.1 |
+| F6 | One hand-made branch name stops every board run: `claude/\u00b2` in the render, and any non-ASCII name, `claude/caf\u00e9` included, in a live run | fixed in 0.4.1 |
 | F7 | A worker that has fetched can take someone else's claim with `--force-with-lease` | decision for the owner |
 | F8 | Idleness is measured by the committer date, which the person pushing sets | decision for the owner |
 | F9 | A draft pull request may never be told "main moved" | decision for the owner |
-| F10 | Releasing a finished draft by hand never takes effect | fix in progress on claude/validation-fixes |
-| F11 | One refused comment fails the whole board run, and the board branch is not written | fix in progress on claude/validation-fixes |
-| F12 | "Main moved" is lost when the board's concurrency group replaces the run the push to main started | fix in progress on claude/validation-fixes |
+| F10 | Releasing a finished draft by hand never takes effect | fixed in 0.4.1 |
+| F11 | One refused comment fails the whole board run, and the board branch is not written | fixed in 0.4.1 |
+| F12 | "Main moved" is lost when the board's concurrency group replaces the run the push to main started | open; the owner's choice of fix |
 
 What held wherever the prototype looked, and how far that goes:
 - Under honest workers, one issue had one holder, and a holder who came back between the release comment and the rename kept the claim.
@@ -53,7 +53,7 @@ What held wherever the prototype looked, and how far that goes:
 | --- | --- | --- |
 | Every arm runs on the same task pair, side by side | bench/cooperbench/pilot.sh:1-11 and 35-40 run solo through sdlc on one task, then the report | The scenarios' verbs drive the memory and the git world alike, and the checker uses the same verbs. |
 | The score comes from CooperBench's own code, not a rewrite of it | PARITY.md row 0 (87-97): coordbench/run.py calls CooperBench's own `test_merged` | The harness drives the library's real adapter, board and gate. Only GitHub, and in the memory world git, are stood in for. |
-| Every difference is stated, with a status | PARITY.md:1-9, its status words at 28-35 and its summary table at 64-79 | validation/GUARANTEES.md (planned) has one row per guarantee sentence of the spec, with a status: held, held under an assumption, contradicted (naming the finding) or not checked. Section 3.6 is the same kind of table for the worlds. |
+| Every difference is stated, with a status | PARITY.md:1-9, its status words at 28-35 and its summary table at 64-79 | validation/GUARANTEES.md has one row per guarantee sentence of the spec, with a status: held, held under an assumption, contradicted (naming the finding) or not checked. Section 3.6 is the same kind of table for the worlds. |
 | One measure, computed two independent ways | PARITY.md row 1 (99-122) keeps the cascade's two verdicts apart | The oracle restates the spec from its text, and its answer is compared with what the board rendered and what the run did. |
 | Nothing calls a model unless the owner runs it on purpose | PARITY.md, decision 4 (1796-1806) | Workers are scripts. No token, no Claude. |
 | The report is pinned by tests on synthetic inputs | tests/test_experiment_report.py | tests/test_validation_report.py (planned) pins the Markdown on a synthetic results file. |
@@ -89,7 +89,7 @@ Each term restates a sentence of spec/PROTOCOL.md, cited by line, over the recor
 
 ### 2.3 The guarantees
 
-Each guarantee is one function in validation/invariants.py (planned), run at one of five kinds of moment:
+Each guarantee is one function in validation/invariants.py, run at one of five kinds of moment:
 - **state:** after every step;
 - **cycle:** on every board run, given the state before and after it and the run's write calls;
 - **command:** on every command a worker runs;
@@ -102,7 +102,7 @@ The spec column gives line numbers in spec/PROTOCOL.md. A guarantee that names e
 | --- | --- | --- | --- | --- |
 | G1 | **One name, one holder, by what every reader shows.** For every open issue n, the branches that any reader takes to name n are at most one, and it is claude/\<n\>. From the push that creates claude/\<n\> until a release or a merge frees the name, every reader names its holder and no other worker. Defining G1 through `claims.number_of` alone would let it pass vacuously if that function grew too strict, and a plain push that edits the claim file's Worker line changes whom the board names without changing who pushed first. | 3, 29, 104 | claims.key_of, number_of and claim_worker (claims.py:78-115); board.claim_rows (526-536); team.claim_branches (144-147); protocol_check.claim_number (33-36) | state |
 | G2 | **A release comment only on a due claim.** Every release comment the coordinator posts is on an issue that was due when the run began. | 67 | coordinator.is_candidate and releases_due (41-63); claims.release_due (194-208) | cycle |
-| G3 | **A due claim is released, in the spec's order.** In a run with no injected fault: one release comment by `github-actions[bot]`, the marker on its first line; then claimed and every worker label taken off, and no label taken off before the bot's own comment was posted; then claude/\<n\> renamed to `released/<n>-<first seven of its head>`; the branch's open pull request closed by the rename; and n in the Queue. | 67, 69 | github.coordinate, release_one, release_claims and free_name (adapters/github.py:457-504, 536-586) | cycle |
+| G3 | **A due claim is released, in the spec's order.** In a run with no injected fault: claimed and every worker label taken off first; then one release comment by `github-actions[bot]`, the marker on its first line, and no release comment posted while a label it takes off is still on (the order of 0.4.1; cf3bdb0 posted the comment first, F1); then claude/\<n\> renamed to `released/<n>-<first seven of its head>`; the branch's open pull request closed by the rename; and n in the Queue. | 67, 69 | github.coordinate, release_one, release_claims and free_name (adapters/github.py:457-504, 536-586) | cycle |
 | G3L | **No half release.** A claim whose release comment stands, more than 24 hours after its last commit and with no commit since, whose label claimed nobody took off and nobody put back (read from the label events), is completed by the next run with no fault. | 67, 69 | as G3 | cycle |
 | G4 | **The board and the coordinator never make a commit unreachable.** Every commit reachable from some ref before a board run is reachable from some ref after it, and a run deletes claude/\<n\> only when `released/<n>-<sha7>` already holds its head. A rebase pushed with a lease (line 55) and the tidy workflow's deletions (line 59) may drop commits; they are flows the protocol allows, not the board's, so "no work is ever lost" as a whole was false and is not claimed. | 59, 69 | github.free_name (570-586) | cycle |
 | G5 | **A release frees nothing it should not.** A marker comment by an untrusted author, or one made within a day of the last commit, or one followed by a commit, leaves claude/\<n\> named and n off the Queue. Putting claimed back undoes a release. | 69 | claims.is_release_comment and was_released (225-272); board.is_released (348-359) | cycle |
@@ -147,7 +147,7 @@ Each needs its precise reading from the spec before it becomes an invariant:
 
 ### 2.6 The oracle, from the spec's text
 
-validation/oracle.py (planned) restates the terms of section 2.2 directly over the model: refs, trees, labels, comments and the label events. It never reads a `board.Snapshot`, and it imports nothing from `sdlc_protocol`, not even a constant. The marker, the branch names, the label names, "finished; ready to mark", the overlap marker and the 24 hours are spelled in the oracle as the spec spells them. tests/test_validation_guarantees.py (planned) checks that each one, and each spec sentence an oracle function quotes, appears in spec/PROTOCOL.md word for word. So a change to a library constant shows up as a disagreement, and a change to the spec breaks that test until the oracle and validation/GUARANTEES.md (planned) follow.
+validation/oracle.py restates the terms of section 2.2 directly over the model: refs, trees, labels, comments and the label events. It never reads a `board.Snapshot`, and it imports nothing from `sdlc_protocol`, not even a constant. The marker, the branch names, the label names, "finished; ready to mark", the overlap marker and the 24 hours are spelled in the oracle as the spec spells them. tests/test_validation_guarantees.py checks that each one, and each spec sentence an oracle function quotes, appears in spec/PROTOCOL.md word for word. So a change to a library constant shows up as a disagreement, and a change to the spec breaks that test until the oracle and validation/GUARANTEES.md follow.
 
 The prototype shows why. Its oracle builds the expected Queue with `claims.number_of` and `labels.reserved` (validation/prototype/explore.py:96-100), the functions under test, so a fault in either moves the oracle with it and is never seen; and its marker came from `claims.RELEASE_MARKER`.
 
@@ -157,7 +157,7 @@ The oracle also takes one switch per entry of validation/known.json (planned). A
 
 ### 3.1 The memory world
 
-validation/model.py (planned) holds `RepoModel` and its records: `Commit`, `Issue`, `Comment`, `PullRequest` and `LabelEvent`.
+validation/model.py holds `RepoModel` and its records: `Commit`, `Issue`, `Comment`, `PullRequest` and `LabelEvent`.
 - Its clock counts minutes from the start of the scenario.
 - `commit()` is content-addressed, stamped with the clock.
 - `push(worker, ref, sha, force=False, lease=None)` follows git's rule as validation/prototype/gitprobe.py measured it. A push is taken when it creates the ref or fast-forwards it. Otherwise it is refused, unless it is forced, or it is a lease that matches the worker's own remote-tracking ref. Refusals use git's own words ("fetch first", "stale info").
@@ -165,7 +165,7 @@ validation/model.py (planned) holds `RepoModel` and its records: `Commit`, `Issu
 
 ### 3.2 The fake GitHub
 
-validation/fake_github.py (planned) holds `FakeGitHub`. It is an opener: `open(request, timeout)` returns an object with `read()` and `headers`, or raises `urllib.error.HTTPError`. tests/test_github.py already fakes this interface with fixed answers (its `FakeAnswer` and `FakeOpener`, lines 26-73); FakeGitHub answers from the model and changes it on writes. It serves exactly the endpoints the adapter calls:
+validation/fake_github.py holds `FakeGitHub`. It is an opener: `open(request, timeout)` returns an object with `read()` and `headers`, or raises `urllib.error.HTTPError`. tests/test_github.py already fakes this interface with fixed answers (its `FakeAnswer` and `FakeOpener`, lines 26-73); FakeGitHub answers from the model and changes it on writes. It serves exactly the endpoints the adapter calls:
 - issues, open, and one by number;
 - pulls, open and closed, one by number, and its files;
 - branches;
@@ -195,7 +195,7 @@ The fake encodes several things about GitHub. Each is documented, or is assumed 
 
 ### 3.3 The board's run, as the workflow makes it
 
-**One sequence.** `cli.board_live_run` (cli.py:98-118) runs collect, coordinate, render, writes STATE.md, then renames and posts the comments, in that order, on the wall clock (cli.py:104). The harness has to run the same order on its own clock. The recommended extraction, which keeps behaviour, is two functions in cli.py that take `now`: one that plans (collect, coordinate, render) and one that acts (renames and comments). `board_live_run` calls both with `datetime.now(timezone.utc)`; validation/cycle.py (planned) calls them with the model's clock, and the checker can put other verbs between them, as a workflow run of half a minute allows. The alternative, copying the lines into validation/cycle.py, would let a change of order in cli.py past the harness unseen.
+**One sequence.** `cli.board_live_run` (cli.py:98-118) runs collect, coordinate, render, writes STATE.md, then renames and posts the comments, in that order, on the wall clock (cli.py:104). The harness has to run the same order on its own clock. The recommended extraction, which keeps behaviour, is two functions in cli.py that take `now`: one that plans (collect, coordinate, render) and one that acts (renames and comments). `board_live_run` calls both with `datetime.now(timezone.utc)`; validation/cycle.py calls them with the model's clock, and the checker can put other verbs between them, as a workflow run of half a minute allows. The alternative, copying the lines into validation/cycle.py, would let a change of order in cli.py past the harness unseen.
 
 **The concurrency group.** symphony-template's board.yml:83-85 puts every run in the group `board` with `cancel-in-progress: false` and no `queue`. GitHub's documentation (github/docs, data/reusables/actions/actions-group-concurrency.md) says that "by default, any existing `pending` job or workflow in the same concurrency group will be canceled and the new queued job or workflow will take its place". The model therefore queues a board run for each event, keeps at most one pending while one runs, and has a transition in which a newer event's run replaces the pending one. The push trigger at board.yml:62 has no branch filter, so a worker's push to a claude/ branch also queues a run, whose job board.yml:94 then skips. Whether such a skipped run still takes the pending slot is inferred, not measured (canary C2).
 
@@ -255,7 +255,7 @@ The verbs are GitHub's real operations, one each, never bundles. The prototype's
 
 ### 4.2 Scripted workers
 
-These live in validation/policies.py (planned). A policy sees only what a worker sees: the last STATE.md, its own clone, and the comments on its own issues and pull requests. It never sees the model, so a worker that acts on a wrong board acts wrongly, and the scenario shows it. Each policy is `decide(view, rng) -> Verb | None`, deterministic, or seeded with `random.Random(seed)` in the soak runs. Before running any git command a policy issues, the harness passes it through `guard.run` (G11a), as the template's PreToolUse hook does.
+These live in validation/policies.py. A policy sees only what a worker sees: the last STATE.md, its own clone, and the comments on its own issues and pull requests. It never sees the model, so a worker that acts on a wrong board acts wrongly, and the scenario shows it. Each policy is `decide(view, rng) -> Verb | None`, deterministic, or seeded with `random.Random(seed)` in the soak runs. Before running any git command a policy issues, the harness passes it through `guard.run` (G11a), as the template's PreToolUse hook does.
 
 | Policy | Behaviour |
 | --- | --- |
@@ -410,7 +410,7 @@ The first design listed thirteen more scenarios, S06 to S18. None stays a scenar
 
 ### 6.1 Search
 
-validation/explore.py (planned) provides `explore(scope, depth, search="bfs") -> Exploration`. The search starts from the seeded state and applies, to a copy, every verb enabled for every worker and person, and every fault the scope names. It checks each new state's guarantees and deduplicates states by their key. Breadth first, the first trace that breaks a guarantee is a shortest one.
+validation/explore.py provides `explore(scope, depth, search="bfs") -> Exploration`. The search starts from the seeded state and applies, to a copy, every verb enabled for every worker and person, and every fault the scope names. It checks each new state's guarantees and deduplicates states by their key. Breadth first, the first trace that breaks a guarantee is a shortest one.
 
 **No pruning at a violation.** The prototype stopped exploring at every violating state (validation/prototype/explore.py:353-357), so with entries in known.json nothing past a known finding would ever be explored. The harness records the violation and goes on; each known finding is a switch in the oracle (section 2.6), so a known red neither stops the search nor hides a second fault behind it.
 
@@ -712,7 +712,7 @@ C7 needs Administration on the test repository, so it runs with the owner's own 
 
 ## 12. Where it lives, how long it runs, and how it guards every change
 
-The files the harness adds, all planned:
+The files the harness adds; those step 1 built (section 14) are on main, the rest planned:
 
 ```
 symphony-protocol/
@@ -720,7 +720,7 @@ symphony-protocol/
   validation/             never vendored: scripts/vendor.py copies only sdlc_protocol/ (scripts/vendor.py:151-156)
     README.md  DESIGN.md  prototype/            on this branch
     GUARANTEES.md  known.json  unproven.json  unreached.json  equivalent.json  guard_git.json  traces/
-    model.py  fake_github.py  git_store.py  cycle.py  verbs.py  policies.py
+    __init__.py  model.py  fake_github.py  git_store.py  cycle.py  verbs.py  policies.py  page.py
     oracle.py  invariants.py  situations.py  scenarios.py  run.py
     explore.py  shrink.py  mutants.py  guard_grammar.py  dealing.py
     properties.py  domains.py  coverage.py  report.py
@@ -744,7 +744,7 @@ Every file is ASCII with LF endings and a final newline; a hostile character app
 
 How it guards every future change:
 1. **The fast lane is part of the required check.** A pull request to the library runs it inside "check", so a rule change that breaks a guarantee goes red with the shortest trace in the log.
-2. **Exceptions stay visible.** A fix removes its entry from known.json in the same pull request. A spec edit that drops or rewords a guarantee breaks tests/test_validation_guarantees.py (planned) until the oracle and validation/GUARANTEES.md (planned) follow.
+2. **Exceptions stay visible.** A fix removes its entry from known.json in the same pull request. A spec edit that drops or rewords a guarantee breaks tests/test_validation_guarantees.py until the oracle and validation/GUARANTEES.md follow.
 3. **Coverage has a floor** (section 10.1), and **the mutation lane keeps the harness honest**: a change to the harness that stops it catching a mutant fails that lane.
 4. **The harness grows without sync noise.** A commit that changes only `validation/` changes no consumer's record, since scripts/vendor.py records the last commit that changed `sdlc_protocol/` (scripts/vendor.py:71-82), so no sync pull request follows.
 
@@ -754,18 +754,18 @@ No step is added to the downstream jobs. A partial copy is already covered by sc
 
 Every reproduction runs from the repository's root, on the library as the checkout holds it; the outputs quoted are from cf3bdb0.
 
-**F1. A release whose label removal failed is never completed.** Status: fix in progress on claude/validation-fixes.
+**F1. A release whose label removal failed is never completed.** Status: fixed in 0.4.1 (#11).
 - **What happens.** github.release_one posts the comment first (adapters/github.py:494), then takes the labels off (497-502). When the removal raises, it returns a line and never calls after_release (503).
 - **Why it never recovers.** On every later run coordinator.releases_due skips the claim as already released, since claims.release_due counts a trusted comment that came more than a day after the last commit as a release (claims.py:194-208, 262-272). Meanwhile board.is_released refuses the claim, because claimed is still on (board.py:355).
 - **Evidence.** `python3 validation/prototype/probe_coordinator.py` prints `releases_due = [] | released_keys = set()` on the next run and again thirty days on. The checker's shortest trace (`python3 validation/prototype/explore.py --depth 5 --all`) is claim a 1, announce a 1, wait, board with the label DELETE answering 500, board.
 - **Effect.** The issue says the claim was released, while the board shows it held and the Queue leaves it out. Only a person taking the label off, or the holder committing and going idle for another day, moves it. GitHub's issue timeline would tell a failed removal from an undo (an undo shows a person's "labeled claimed" event after the comment), but the board does not read the timeline.
 
-**F2. Overlapping work is told again when a claim opens its pull request.** Status: fix in progress on claude/validation-fixes.
+**F2. Overlapping work is told again when a claim opens its pull request.** Status: open, left so by 0.4.1; the owner's choice of fix (section 14).
 - **What happens.** tell_overlaps reads what has been told from the comments on the work's own number (adapters/github.py:513-517). A claim's work is numbered by its issue until it opens a pull request, and by the pull request after that (board.open_work, board.py:624-635), and the pull request has no markers yet. The marker also names the other piece by the number it had at the time (coordinator.py:229-233).
 - **Evidence.** `python3 validation/prototype/probe_coordinator.py`: run 1 tells #7 and #12 of each other; once #7's claim opens #13, run 2 tells #12 and #13 of each other, the same two pieces of work. The checker's shortest trace (`python3 validation/prototype/explore.py --issues 2 --depth 6 --all`) is claim a 1, claim a 2, board, draft a 1, board.
 - **Against the spec.** Line 73 says the coordinator "tells it again only when work it has not been told of starts to meet it". This is noise, not a safety problem.
 
-**F3. The push guard passes forced pushes and pushes to main in plain shapes.** Status: fix in progress on claude/validation-fixes.
+**F3. The push guard passes forced pushes and pushes to main in plain shapes.** Status: fixed in 0.4.1 (#11).
 - **What happens.** guard.refusal takes a leading `+` off a refspec (guard.py:171) but does not count it as a force; it counts only `-f` and `--force`, matched exactly (150-151), matches `--all`, `--branches` and `--mirror` exactly (154), and skips every other word that starts with a dash (158-159), so bundled short options (`-fu`) and the abbreviations git accepts (`--al`, `--mirr`) pass. It takes only `refs/heads/` off a destination (174), so `heads/main` passes. push_arguments reads a command as a push only when its first word is git (125), so `FOO=1 git push origin main`, and the same behind `env`, `command`, `nice` and `time`, pass.
 - **Evidence.** `python3 validation/prototype/probe_guard.py` lists the shapes the guard passes. `python3 validation/prototype/guard_grammar.py` judged 10,800 commands with a hand-written oracle and found 7,734 of the 8,550 forbidden ones let through, and no false refusal; by cause, 132 are a plain `+` refspec, 1,596 another worker's claim, and the rest the same causes behind a prefix or inside `bash -c`. `python3 validation/prototype/gitflags.py` shows git 2.43 performing `-fu` as a forced update, `--al` as `--all`, `--mirr` as `--mirror`, and `heads/main` as a push of `main`, each passed by the guard. `python3 validation/prototype/guard_git_oracle.py` judges the same shapes by what git offers. CrossHair found `+\x00` on its own (validation/prototype/properties.py, `a_forced_refspec_is_refused`).
 - **Which can be fixed.** Every cause the command shows (section 8.3's first four rows) can; a command inside a string another program runs, and whose a claim branch is, cannot be read from the command alone (G11b).
@@ -776,12 +776,12 @@ Every reproduction runs from the repository's root, on the library as the checko
 - **Effect.** The lock still holds, so one push of `claude/6` wins and the other run is wasted. Spec line 77 says the work is "dealt ... so no two race for one claim".
 - **The critique's view.** It reproduced F4 and proposed no change of its own. The choice stays the first design's: one job deals the whole run and passes the deals to the matrix, or the occasional wasted run is accepted, since the lock holds.
 
-**F5. Two branch names can claim one issue.** Status: fix in progress on claude/validation-fixes.
+**F5. Two branch names can claim one issue.** Status: fixed in 0.4.1 (#11).
 - **What happens.** claims.number_of accepts any decimal digits after `claude/` (claims.py:85-91), so `claude/03` and `claude/\u0663` (Arabic-Indic three) both name #3, while GitHub's first-push lock works per name.
 - **Evidence.** `python3 validation/prototype/probe_names.py`: the board lists two rows, `#3 alice` and `#03 bob`, and the protocol check passes both drafts. The checker's careless scope (`python3 validation/prototype/explore.py --depth 5 --all --careless`) finds it in two steps, and also a release posted for `claude/01` that the oracle never counted due. CrossHair found `'00'`.
 - **Contrast.** The gate already takes issue numbers in ASCII digits only (gate.py:74-79).
 
-**F6. A single hand-made branch name stops the board.** Status: fix in progress on claude/validation-fixes.
+**F6. A single hand-made branch name stops the board.** Status: fixed in 0.4.1 (#11).
 - **In the render.** claims.by_number tests with `isdigit` and then calls `int` (claims.py:103), which is exactly what its neighbour warns against: "a superscript passes isdigit() but not int(), and a branch name must never raise" (claims.py:86-89). board.claim_rows sorts by it (board.py:531), so render raises ValueError for `claude/\u00b2` (validation/prototype/probe_names.py) or `claude/\u27800` (CrossHair on validation/prototype/properties_two.py). board.claimed_numbers and open_work make the same mistake (board.py:326, 632-635).
 - **In a live run, earlier and wider.** http.client refuses any non-ASCII request path before it connects, with UnicodeEncodeError, which is a ValueError, and GitHub.request turns it into the GitHubError "the answer was not JSON" (adapters/github.py:150-151), so cli.run_board exits 1 before STATE.md is written (cli.py:121-127). claim_text builds `/contents/docs/agents/claims/{key}.md` with the raw key, and collect calls it for every `claude/` branch (adapters/github.py:269-272, 418), so a branch such as `claude/caf\u00e9`, with no digit at all, stops every live run although the render handles it; claim_issues puts a key that passes `isdigit` into `/issues/{key}` (adapters/github.py:301-303). The prototype's fake parsed and unquoted the URL, so it could never show this; the harness's fake encodes the request line as http.client does (section 3.2).
 - **Effect.** Until that branch is deleted, every board run in the repository fails, the coordinator's releases included.
@@ -800,18 +800,18 @@ Every reproduction runs from the repository's root, on the library as the checko
 - **Effect.** If GitHub reports "draft" for every draft, as that fixture and the adapter's OPAQUE_STATES (adapters/github.py:50-53) assume, a claim's draft never hears "main moved", and a draft is the protocol's working state (spec line 55). The gate's world, by contrast, reads such a draft through mergeable and behind_by (adapters/github.py:657-670).
 - **The critique's view.** One REST GET on any open draft settles what GitHub answers, with no canary repository (C0). GraphQL marks `MergeStateStatus.DRAFT` deprecated (github/docs src/graphql/data/fpt/schema.docs.graphql:26531-26536), so the REST answer today is not known. Then: should drafts hear "main moved", read the way GitHubWorld reads them?
 
-**F10. Releasing a finished draft by hand never takes effect.** Status: fix in progress on claude/validation-fixes.
+**F10. Releasing a finished draft by hand never takes effect.** Status: fixed in 0.4.1 (#11).
 - **What happens.** github.releases skips a finished draft before it reads any release comment (adapters/github.py:394), so board.is_released never sees the person's release. The spec counts it as released: line 69 excepts only in-review and a pull request marked ready, and line 67 says a person "may release by the same steps". The labels come off, but the board keeps showing the claim held, and the issue stays out of the Queue.
 - **Evidence.** `python3 validation/prototype/probe_finished_by_hand.py`: the oracle says released, with the Queue `[1]`; the board shows `claude/1` held, and still does thirty days later. `python3 validation/prototype/find_t3.py` finds the trace: claim, wait, announce, draft, finished, release by hand, board.
 - **The fix's choice.** Either the release takes effect, or a by-hand release of a finished draft is refused as a whole rather than half applied.
 
-**F11. One refused comment fails the whole board run, and the board branch is not written.** Status: fix in progress on claude/validation-fixes.
+**F11. One refused comment fails the whole board run, and the board branch is not written.** Status: fixed in 0.4.1 (#11).
 - **What happens.** post_comments and comment_once (adapters/github.py:436-452) let GitHubError escape, while coordinate (463-465) and release_claim (548-554) deliberately swallow theirs. board_live_run has already written STATE.md locally (cli.py:110) and then raises at 116, and run_board exits 1 (121-127). symphony-template's step that writes the branch board (board.yml:132-134) runs only after success, so it is skipped.
 - **Evidence.** `python3 validation/prototype/probe_comment_failure.py` prints `board: POST /repos/o/r/issues/100/comments: HTTP 500` and exit code 1, with STATE.md written locally. With a refused comment POST in scope, 116 board runs raised at depth 6, before the reductions (`python3 validation/prototype/ext_verbs.py`).
 - **Effect.** A secondary rate limit does the same. A comment GitHub refuses for good would freeze the board branch: the marker is never written, so every run tries the comment again and fails again.
 - **The fix, and the harness.** Catch the error per comment, as release_claim does; the harness adds G15 and faults on every write endpoint.
 
-**F12. "Main moved" is lost under the board's concurrency group.** Status: fix in progress on claude/validation-fixes.
+**F12. "Main moved" is lost under the board's concurrency group.** Status: open, left so by 0.4.1; the owner's choice of fix (section 14).
 - **What happens.** "Main moved" is the only rule keyed on the event that started the run (board.py:469). symphony-template's board.yml:83-85 sets `group: board` with no `queue`, and by default a newer run replaces the one pending in the group (github/docs data/reusables/actions/actions-group-concurrency.md).
 - **Why it is common.** A merge fires pull_request closed, a push to main, issues closed and delete at nearly the same moment, and the push trigger at board.yml:62 has no branch filter, so every worker's push to a `claude/` branch also queues a run, whose job board.yml:94 then skips; that such a run still takes the pending slot is inferred, not measured. So the push to main's run is often replaced, and that commit's "main moved" comments are never posted.
 - **The fix's options.** Make "main moved" depend on state: on any run, tell each behind or conflicting pull request that has no marker for main's current sha. Or add `queue: max` to the group, which github.com offers (github/docs data/features/actions-nga.yml). The model has the transition "a pending run is replaced" (section 3.3), and canary C2 measures the drops.
@@ -819,16 +819,18 @@ Every reproduction runs from the repository's root, on the library as the checko
 ## 14. Build order and the owner's decisions
 
 Pull requests, in order:
-1. **Foundations, in memory:** the sound state key, waits of 24 and 25 hours and the atomic verbs; no pruning at a violation; the effect-equivalence oracle built from the spec's text, and G15; validation/model.py, fake_github.py, cycle.py, verbs.py, policies.py, oracle.py and invariants.py, GUARANTEES.md and its test, all planned.
+1. **Foundations, in memory:** the sound state key, waits of 24 and 25 hours and the atomic verbs; no pruning at a violation; the effect-equivalence oracle built from the spec's text, and G15; validation/model.py, fake_github.py, cycle.py, verbs.py, policies.py, oracle.py and invariants.py, GUARANTEES.md and its test. Built: validation/README.md says what each file holds and what it measured. Until known.json (step 5), the open findings are switches in the oracle, `oracle.AS_BUILT`, and F7 shows only under the careless scope.
 2. **The mutation lane,** standard library, 10 to 20 mutants, as the acceptance test of step 1: no step after this one starts until every mutant is caught.
 3. **A FakeGitHub faithful to the transport:** an ASCII request line, Link pagination, `mergeable` null on the first read; the concurrency group and the board-branch write that happens only when a run exits 0; and the board run in two halves in cli.py.
 4. **The fast lane, under 60 seconds:** S01 to S05 and the three table-driven tests (section 5.3); the checker at depth 5 plus searches from scenario prefixes; the guard grammar against git's answers, which this step records first, into validation/guard_git.json (planned; section 8.2), by the command the deep lane later runs again; dealing; the Unicode-class property lane.
-5. **Regression traces for F1 to F12,** each red in known.json until its fix lands from claude/validation-fixes, which then removes the entry.
+5. **Regression traces for F1 to F12,** each red in known.json until its fix lands, which then removes the entry; F1, F3, F5, F6, F10 and F11, fixed in 0.4.1, are recorded green from the start.
 6. **The deep lane:** two issues at depth 7, one issue at depth 8 with the depth-aware digest set, the soak, conformance against git, git's answers for the guard grammar recorded again on every deep run, and the gate over BareGitWorld; validate.yml.
 7. **One GET now for F9 (canary C0).** Then the monthly canary on sdlc-template-test, once it carries the current template: canary.yml and scripts/canary.py, both planned.
 8. **The Markdown report** last; the HTML page optional.
 
 The owner's decisions:
+- **F2.** Which identity for a piece of open work in the overlap marker: the issue for as long as the claim lives, so opening the pull request tells nothing again, or the pull request once there is one, with the issue's markers read as told too?
+- **F12.** Make "main moved" depend on state, telling on any run each behind or conflicting pull request with no marker for main's current sha; or add `queue: max` to the board's concurrency group in the copies' board.yml.
 - **F4.** Should one job deal the whole run and pass the deals to the matrix, or is the occasional wasted run accepted, since the lock still holds?
 - **F7.** Which second fence, if any: the guard reading the claim file on `origin/claude/N` before a lease push, the board reading the activity API's `force_push` events, or neither? A ruleset blocking forced pushes on `claude/**` is ruled out: it refuses the prescribed lease and makes renames an administrator's.
 - **F8.** Keep the committer date, as the spec says, and state the trust it places in the pusher; or read the server's `pushed_at` from the activity API, once canary C5 shows it behaves as documented.

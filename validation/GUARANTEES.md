@@ -1,0 +1,32 @@
+# Guarantees
+
+One row per guarantee of DESIGN.md section 2.3: the sentence of spec/PROTOCOL.md it restates, quoted word for word, and its status in the harness as it stands. tests/test_validation_guarantees.py holds this file to the spec and to validation/invariants.py: every quote must be in the spec as written, every guarantee the invariants name must have a row here and every row a guarantee, and a guarantee the invariants check may not be marked "not checked". So a spec edit that rewords one of these sentences fails that test until this file, and the oracle where it quotes the same words, follow.
+
+The statuses:
+- **checked**: an invariant checks it on every step it applies to, in the tests and in every search; no trace reached so far breaks it.
+- **checked, under F8**: as checked, under the assumption the spec states, that idleness is the committer date the pusher sets (finding F8).
+- **known (F...)**: checked, and the named open finding contradicts it: the oracle reads that rule as the library is built (oracle.AS_BUILT), and without the switch the harness reports the finding.
+- **partly checked**: the part this step's worlds reach; the rest waits for the build step named.
+- **not checked yet**: no world of this step reaches it; the build step named adds it.
+
+As it stands is build step 1 of DESIGN.md section 14: the memory world, the fake GitHub, the board run, the verbs, the scripted workers, the oracle and the invariants, with a first breadth-first search. "Checked" here means checked by the unit tests' traces and by searches of small scope (two workers, one or two issues, a depth of 4 to 5), not yet by the fast lane's scopes, which build step 4 adds once step 2's mutants have shown the searches bite.
+
+| Id | Guarantee | The spec's words | Status |
+| --- | --- | --- | --- |
+| G1 | One name, one holder, by what every reader shows | "A claim is the first push of a branch: GitHub refuses the second push of the same name, so two workers can never hold the same issue." | known (F7): under careless workers a lease after a fetch takes another's claim, and the board then names the new pusher |
+| G2 | A release comment only on a due claim | "A claim whose branch has had no commit for more than 24 hours, by the committer date of its head, is released by the coordinator, unless it is finished" | checked, under F8 |
+| G3 | A due claim is released, in the spec's order | "The coordinator first takes the label claimed and every worker's label off the issue, a label already gone counting as taken off; then it posts a comment on the issue whose first line is `<!-- sdlc-coordinator: claim-released -->`" | checked, under F8 |
+| G3L | No half release | "A run that fails between the two puts back the labels it took off" | checked |
+| G4 | The board and the coordinator never make a commit unreachable | "the name `claude/<issue>` is free, the work stays under the new name" | checked |
+| G5 | A release frees nothing it should not | "A release comment made sooner, or by anyone else, frees nothing; a commit pushed to the branch before the rename, its holder coming back, keeps the claim; and putting the label claimed back undoes a release" | checked |
+| G6 | The coordinator never releases a finished claim | "That holds for a draft whose author said it is finished as for any other, though the coordinator never releases one" | checked |
+| G7 | Overlaps are told when owed, once, in order | "In the same run the coordinator tells each piece of open work about the work it meets, once" | known (F2): a claim that opens its pull request is told again of the work it was told of |
+| G8 | Labels name the holder | "An issue a worker's label names is that worker's alone: it is left out of the board's Queue and shown under Given to workers until the worker claims it." | checked |
+| G9 | The board renders the state, and a run with nothing new writes nothing | "The board then leaves the claim and its pull request off the page and lists the issue in the Queue again" | checked |
+| G10 | Each kind of comment is posted when owed, and once | "the board says on the issue where the branch went" | known (F9, F12): a draft is never told "main moved", and a pull request is told only in the run a push to main started |
+| G11a | The guard refuses every push it can read that the rules forbid | "The push guard (sdlc_protocol.guard, run as a Claude Code hook through `python3 -m sdlc_protocol guard`) refuses those pushes before they run, and branch protection on GitHub stands behind it." | partly checked: the guard passes every allowed shape the verbs run; the grammar judged by git's own answers is build step 4 |
+| G11b | What only the second fence enforces | "Never push to another worker's branch." | not checked yet: the second fence is GitHub's, measured by canary C7 (build step 7) |
+| G12 | The protocol check passes what the protocol prescribes and fails the rest | "CI holds a `claude/<issue>` pull request to this protocol" | checked |
+| G13 | The merge gate behaves as specified | "A refusal carries the code its command exits with, so a script can tell one kind from another" | not checked yet: the gate's worlds are build steps 4 and 6 |
+| G14 | Workers of one run are never dealt the same issue | "Workers that ask at the same moment, as the workers in Actions of one run do, are dealt the open work so no two race for one claim" | not checked yet: dealing is build step 4, and F4 is known to contradict it |
+| G15 | A board run never raises over a refused write or a branch name | "rewrites that branch's one commit on every issue and pull request event, every branch made or deleted, every push to the default branch, and every six hours as a fallback" | checked |
