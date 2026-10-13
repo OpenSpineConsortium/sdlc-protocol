@@ -28,16 +28,17 @@ IDLE_AFTER = timedelta(hours=24)
 # board and the field metrics tell a release from what people write
 # without reading what the comment says.
 RELEASE_MARKER = "<!-- sdlc-coordinator: claim-released -->"
-# Whose release comments count by GitHub's author_association word alone:
-# the repository's owner, the members of its organization and its
-# collaborators. Anyone else's count only when an adapter finds that they
-# may write to the repository (is_release_comment).
+# Whose release comments, and overlap markers, count by GitHub's
+# author_association word alone: the repository's owner, the members of its
+# organization and its collaborators. Anyone else's count only when an
+# adapter finds that they may write to the repository (is_trusted_author).
 RELEASERS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
 # The bot a repository's own workflows write as, with their GITHUB_TOKEN:
-# the coordinator posts its releases as this bot. Only a workflow of the
-# repository can write as it, and a workflow only runs once someone who
-# may write has put it there, so its release counts like theirs. No
-# person's login can end in "[bot]", which GitHub keeps for its Apps.
+# the coordinator posts its releases and overlap comments as this bot.
+# Only a workflow of the repository can write as it, and a workflow only
+# runs once someone who may write has put it there, so what it posts
+# counts like theirs. No person's login can end in "[bot]", which GitHub
+# keeps for its Apps.
 RELEASING_BOTS = frozenset({"github-actions[bot]"})
 # Where a released claim's branch goes: out of the claude/ names, so the
 # issue can be claimed again, and under a name of its own, so the work it
