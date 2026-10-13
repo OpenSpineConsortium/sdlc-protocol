@@ -183,11 +183,17 @@ def state_checks(model):
 # --- commands ---------------------------------------------------------------
 
 def command_checks(outcome):
-    """G11a for the shapes the verbs run, each one the rules allow: a plain
-    push of a claim branch, a lease on one's own claim branch, a released
-    head pushed again under its claim name."""
-    if outcome.command and outcome.refused_by_guard and outcome.allowed_shape:
+    """G11a for the shapes the verbs run through the guard: those the rules
+    allow (a plain push of a claim branch, a lease on one's own claim
+    branch, a released head pushed again under its claim name) pass, and
+    those they forbid that the command shows (a name that reads as a claim
+    and claims nothing) are refused. A push by hand meets no guard."""
+    if not outcome.command or not outcome.guarded:
+        return []
+    if outcome.refused_by_guard and outcome.allowed_shape:
         return [Violation("G11a", f"the guard refused {outcome.command}: {outcome.refused_by_guard}")]
+    if not outcome.refused_by_guard and not outcome.allowed_shape:
+        return [Violation("G11a", f"the guard passed {outcome.command}, which the rules forbid")]
     return []
 
 
@@ -280,10 +286,15 @@ def releases_only_due(before, actual):
 
 def labels_put_back(before, after, record, actual):
     """A run that fails between the labels and the comment puts back what it
-    took off (spec, Release), unless GitHub refused the putting back too."""
+    took off (spec, Release), unless GitHub refused the putting back too;
+    and one whose comment was written, its answer lost or not, puts back
+    nothing, since the comment makes the release whole (G3L)."""
     problems = []
     for number in sorted({e.target for e in actual if e.kind == "label-off"}):
         if oracle.Effect("comment", number, "claim-released") in actual:
+            if any(e.kind == "label-on" and e.target == number for e in actual):
+                problems.append(Violation("G3L", f"#{number}: the release comment stands and its labels "
+                                                 f"were put back"))
             continue
         put_back_refused = any(c.method == "POST" and c.path == f"/issues/{number}/labels" and not c.applied
                                for c in record.calls)
