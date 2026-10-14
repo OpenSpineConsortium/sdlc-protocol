@@ -29,6 +29,7 @@ BUDGET_SECONDS = 10
 UNDONE = {
     "F1": [("the comment before the labels", 5, "G3L")],
     "F3": [("the guard passes --force", 1, "G11a")],
+    "F4": [("each leg dealt from its own look", 9, "G14")],
     "F5": [("a claim number with leading zeros", 2, "G1")],
     "F6": [("a sort key that calls int after isdigit", 1, "G15"), ("a branch name sent unquoted", 3, "G15")],
     "F7": [("the guard passes a lease onto another's claim", 1, "G11a")],
@@ -36,8 +37,10 @@ UNDONE = {
     "F11": [("a refused comment stops the run", 6, "G15")],
     "F12": [("main moved told only in the push's run", 8, "G10")],
 }
-FIXED = ("F1", "F3", "F5", "F6", "F7", "F10", "F11", "F12")
-RED_AS_BUILT = ("F4",)
+FIXED = ("F1", "F3", "F4", "F5", "F6", "F7", "F10", "F11", "F12")
+# Findings red as built, which no rule of the library answers: none since
+# F4's fix; the test keeps the case for the next one.
+RED_AS_BUILT = ()
 
 
 class TheTraces(unittest.TestCase):
@@ -102,12 +105,17 @@ class TheTraces(unittest.TestCase):
                     self.assertIn((step, guarantee), replay.results(record), "\n".join(record.timeline))
                     self.assertIn(guarantee, trace.breaks)
 
-    def test_f4_s_red_is_the_dealing_lane_s(self):
-        """The one finding red as built names the same violation the
-        mutation lane knows on the library itself."""
-        record = replay.replay(self.traces["F4"])
-        self.assertEqual({(v.guarantee, v.detail) for _, v in record.violations}, {mutants.F4})
-        self.assertEqual(mutants.F4[1], "#6 dealt twice from differing looks: {'a': 'take 5', 'b': 'take 6', 'c': 'take 6'}")
+    def test_f4_s_trace_deals_from_the_run_s_one_look_and_twice_under_its_mutant(self):
+        """The run looks before main moves, so c is dealt nothing; with
+        each leg looking for itself, c's later look deals #6 twice."""
+        trace = self.traces["F4"]
+        record = replay.replay(trace)
+        self.assertEqual(replay.results(record), set())
+        self.assertIn("{'a': 'take 5', 'b': 'take 6', 'c': 'none'}", record.timeline[-1])
+        with mutants.switched_on(mutants.MUTANTS["each leg dealt from its own look"]):
+            record = replay.replay(trace)
+        self.assertEqual({(v.guarantee, v.detail) for _, v in record.violations},
+                         {("G14", "#6 dealt twice from differing looks: {'a': 'take 5', 'b': 'take 6', 'c': 'take 6'}")})
 
     def test_f7_s_trace_is_green_and_red_for_g1_too_under_its_mutant(self):
         """The fence refuses the careless lease (G11a at the lease); with
@@ -161,14 +169,14 @@ class KnownJson(unittest.TestCase):
                 self.assertTrue([e for e in known.ENTRIES if e.finding == finding])
 
     def test_expected_reads_the_file_as_its_docstring_says(self):
-        self.assertEqual(known.expected("trace", "F4"), {(9, "G14")})
+        self.assertEqual(known.expected("trace", "F4"), set())
         self.assertEqual(known.expected("trace", "F7"), set())
         self.assertEqual(known.expected("trace", "F2"), set())
         self.assertEqual(known.expected("trace", "F2", "F2"), {(4, "G7")})
         self.assertEqual(known.expected("scenario", "S05q", "F2"), {(12, "G7")})
         self.assertEqual(known.expected("scenario", "S05q", "F12"), set())
-        self.assertEqual(known.differences("trace", "F4", set()),
-                         ["trace F4 as built: recorded red and green: step 9, G14"])
+        self.assertEqual(known.differences("trace", "F2", set(), "F2"),
+                         ["trace F2 with F2 read from the spec: recorded red and green: step 4, G7"])
         self.assertEqual(known.differences("trace", "F1", {(0, "G3")}),
                          ["trace F1 as built: red and not recorded: step 0, G3"])
 

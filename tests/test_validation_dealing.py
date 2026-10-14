@@ -1,7 +1,8 @@
-"""The dealing lane (validation/dealing.py, DESIGN.md 9.1): three workers
-ask the clerk at once over snapshots of one model; from one look no issue
-is dealt twice (G14), and from differing looks the known double deal, F4,
-shows; and the clerk's client over the model answers as GitHub does."""
+"""The dealing lane (validation/dealing.py, DESIGN.md 9.1): three workers'
+legs at any moments of one model, dealt as the workers' workflow deals,
+once for the run from one look; no issue is dealt twice (G14), where each
+leg's own look dealt one twice until F4's fix; and the clerk's client over
+the model answers as GitHub does."""
 
 import sys
 import unittest
@@ -11,21 +12,40 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from sdlc_protocol import team  # noqa: E402
-from validation import dealing  # noqa: E402
+from validation import clerk, dealing, mutants  # noqa: E402
 from validation.clerk import ModelClient  # noqa: E402
 
 
 class TheLane(unittest.TestCase):
-    def test_no_double_deal_from_one_look_and_f4_from_differing_looks(self):
+    def test_no_double_deal_from_any_looks(self):
         lane = dealing.run_lane()
         self.assertEqual(lane.deals, 54)
         self.assertEqual(lane.doubled_from_one_look, ())
-        self.assertTrue(lane.doubled_from_differing_looks)
+        self.assertEqual(lane.doubled_from_differing_looks, ())
+        self.assertEqual(dealing.doubled(lane), ())
+        self.assertEqual(dealing.main(), 0)
+
+    def test_each_leg_from_its_own_look_dealt_one_issue_twice_until_the_fix(self):
+        """F4, as the lane found it: fifteen of the 54 deals doubled, the
+        first after main moved and a's pull request fell behind, from looks
+        that differ on it."""
+        with mutants.switched_on(mutants.MUTANTS["each leg dealt from its own look"]):
+            lane = dealing.run_lane()
+        self.assertEqual(lane.doubled_from_one_look, ())
+        self.assertEqual(len(lane.doubled_from_differing_looks), 15)
         first = lane.doubled_from_differing_looks[0]
-        self.assertEqual(first.order, ("main-moves", "outsider-claims"))
-        self.assertFalse(first.one_look)
-        self.assertTrue(first.doubled)
+        self.assertEqual((first.order, first.looks), (("main-moves", "outsider-claims"), (0, 0, 1)))
+        self.assertEqual(first.moves, {"a": "take 5", "b": "take 6", "c": "take 6"})
         self.assertIn("F4", dealing.report(lane))
+
+    def test_the_run_looks_no_later_than_its_earliest_leg(self):
+        clients = dealing.moments(("main-moves", "outsider-claims"))
+        self.assertEqual(clerk.workflow_deals(clients, dealing.WORKERS, (2, 0, 1)),
+                         {"a": "take 5", "b": "take 6", "c": "none"})
+        self.assertEqual(clerk.workflow_deals(clients, dealing.WORKERS, (1, 2, 1)),
+                         {"a": "carry 4", "b": "take 5", "c": "take 6"})
+        self.assertEqual(clerk.workflow_deals(clients, dealing.WORKERS, (2, 2, 2)),
+                         {"a": "carry 4", "b": "take 6", "c": "none"})
 
     def test_the_start_is_a_held_ready_claim_and_two_free_issues(self):
         client = ModelClient(dealing.start())

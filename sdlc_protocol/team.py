@@ -20,6 +20,11 @@ ways, each run by a workflow step through the command line (cli.py's
          claim needs work), "take <issue>" (the task it was given, else its
          share of the unclaimed blockers and todos that fit its area) or
          "none".
+  deal   for every worker of a run, from one look at the repository, the
+         same answer next gives each, as JSON by worker: the workers'
+         workflow deals once, in its first job, and hands each leg its
+         move, so no two legs looking for themselves at different moments
+         are dealt one issue (F4).
 
 Every call to GitHub goes through a Client, the small interface below that
 adapters/github.py implements over REST and a test implements in memory,
@@ -262,36 +267,68 @@ def deal(members, pool, areas=None):
     return dealt
 
 
-def next_for(client, agent, team=None, areas=None):
-    """The worker's next move: its own claims first, then the task it was
-    given, then its share of the shared work. The workers of one run ask at
-    the same moment, so the shared work is dealt out (deal): the workers
-    with no work of their own, in the order given, each take the next issue
-    that fits their area, and one with no issue left for it waits, rather
+def deals(client, team, areas=None):
+    """Every worker's next move, by name, from one look at the repository:
+    its own claims first, then the task it was given, then its share of the
+    shared work, which is dealt out (deal) among the workers with no work of
+    their own, in the order given, each taking the next issue that fits its
+    area; a worker with no issue left for it gets "none" and waits, rather
     than start a session that would race a peer for the same claim. areas
-    maps a worker's name to its area; a worker not in it takes any issue."""
+    maps a worker's name to its area; a worker not in it takes any issue.
+
+    One look for the whole run is the point: a worker that looked for
+    itself could see a peer's ready pull request clean, and be dealt the
+    issue after the peer's, while a later look saw the same pull request
+    behind the default branch, the peer carrying its own claim, and dealt
+    the peer's issue again (F4). So the workers' workflow asks once, in its
+    first job, and hands each leg its move; next_for is one worker's answer
+    from the same rule."""
+    team = list(team)
+    snap = Snapshot(client)
+    moves = {member: snap.own_move(member) for member in team}
+    idle = [member for member in team if not moves[member]]
+    dealt = deal(idle, snap.pool(), areas)
+    for member in idle:
+        moves[member] = f"take {dealt[member]['number']}" if member in dealt else "none"
+    return moves
+
+
+def next_for(client, agent, team=None, areas=None):
+    """The worker's next move, as deals gives it: the same answer the run's
+    one look would give this worker, from the worker's own look."""
     team = list(team or [agent])
     if agent not in team:
         team.append(agent)
-    snap = Snapshot(client)
-    own = snap.own_move(agent)
-    if own:
-        return own
-    idle = [member for member in team if member == agent or not snap.own_move(member)]
-    issue = deal(idle, snap.pool(), areas).get(agent)
-    return f"take {issue['number']}" if issue else "none"
+    return deals(client, team, areas)[agent]
 
 
 def next_move(client, agent, team=None, label=None, areas=None):
-    """The worker's next move as the workers' workflow asks for it:
-    next_for, and when the move is a take and the worker named its label,
-    the label is made first, so the session that follows can put it on the
-    issue (a label gh cannot find makes `gh issue edit --add-label` add
-    none)."""
+    """The worker's next move as a round of the workers' workflow asks for
+    it: next_for, and when the move is a take and the worker named its
+    label, the label is made first, so the session that follows can put it
+    on the issue (a label gh cannot find makes `gh issue edit --add-label`
+    add none)."""
     answer = next_for(client, agent, team, areas)
     if label and answer.startswith("take "):
         ensure_label(client, label)
     return answer
+
+
+def deal_moves(client, team, areas=None, labels=None, run=None):
+    """The moves of the workers of one run, as the workers' workflow asks
+    for them in its first job: deals over the whole team, since a worker not
+    in this run is still dealt its share and so left it, as next_for leaves
+    it; the answer holds the workers of the run (run, default the whole
+    team; a name not in the team is dealt after it), and each take's worker
+    has its label made first, as next_move does, labels giving the label by
+    name."""
+    team = list(team)
+    run = list(team if run is None else run)
+    moves = deals(client, team + [name for name in run if name not in team], areas)
+    for name in run:
+        if moves[name].startswith("take ") and (labels or {}).get(name):
+            ensure_label(client, labels[name])
+    return {name: moves[name] for name in run}
 
 
 # --- seed -------------------------------------------------------------------

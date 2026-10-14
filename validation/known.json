@@ -2,7 +2,6 @@
   "as_built": ["F2", "F9", "F13", "F14"],
   "red": [
     {"trace": "F2", "step": 4, "guarantee": "G7", "finding": "F2"},
-    {"trace": "F4", "step": 9, "guarantee": "G14", "finding": "F4"},
     {"trace": "F9", "step": 3, "guarantee": "G10", "finding": "F9"},
     {"trace": "F13", "step": 3, "guarantee": "G7", "finding": "F13"},
     {"trace": "F14", "step": 0, "guarantee": "G9", "finding": "F14"},
