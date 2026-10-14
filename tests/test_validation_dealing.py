@@ -20,8 +20,10 @@ class TheLane(unittest.TestCase):
     def test_no_double_deal_from_any_looks(self):
         lane = dealing.run_lane()
         self.assertEqual(lane.deals, 54)
+        self.assertEqual(lane.distinct, 6, "one deal per ordering and run moment, since the run looks once")
         self.assertEqual(lane.doubled_from_one_look, ())
         self.assertEqual(lane.doubled_from_differing_looks, ())
+        self.assertIn("54 deals over every assignment of moments to the legs, 6 distinct", dealing.report(lane))
         self.assertEqual(dealing.doubled(lane), ())
         self.assertEqual(dealing.main(), 0)
 
@@ -33,6 +35,7 @@ class TheLane(unittest.TestCase):
             lane = dealing.run_lane()
         self.assertEqual(lane.doubled_from_one_look, ())
         self.assertEqual(len(lane.doubled_from_differing_looks), 15)
+        self.assertEqual(lane.distinct, 14, "each leg's own look tells the moments apart")
         first = lane.doubled_from_differing_looks[0]
         self.assertEqual((first.order, first.looks), (("main-moves", "outsider-claims"), (0, 0, 1)))
         self.assertEqual(first.moves, {"a": "take 5", "b": "take 6", "c": "take 6"})

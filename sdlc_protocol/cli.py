@@ -268,13 +268,21 @@ def team_answer(client, args):
 def deal_answer(client, registered, run_json):
     """The deal's one line: a JSON object, worker to move, for the workers
     of the run, the registry's workers in Actions unless --workers names
-    them; a name that is no worker here is a ValueError, since the workflow
-    took its list from the same registry."""
+    them; a name that is no worker here, or a value that is not JSON, is a
+    ValueError naming the flag and the shape it takes, since the workflow
+    took its list from the same registry; so is an empty --registry, which
+    argparse lets through and which names no folder."""
+    if registered is None:
+        raise ValueError("--registry must name the registry folder")
     in_actions = workers.in_actions(registered)
     names = [w.name for w in in_actions]
-    run = names if run_json is None else json.loads(run_json)
+    shape = f"--workers must be a JSON list of the registry's workers in Actions, {json.dumps(names)}"
+    try:
+        run = names if run_json is None else json.loads(run_json)
+    except ValueError as problem:
+        raise ValueError(f"{shape}; the value given is not JSON: {problem}") from None
     if not isinstance(run, list) or any(name not in names for name in run):
-        raise ValueError(f"--workers must be a JSON list of the registry's workers in Actions, {names}")
+        raise ValueError(shape)
     moves = team.deal_moves(client, names, {w.name: w.area for w in registered},
                             {w.name: w.label for w in in_actions}, run)
     return json.dumps(moves, sort_keys=True, separators=(",", ":"))

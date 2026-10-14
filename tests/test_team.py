@@ -295,8 +295,9 @@ class CountingClient(FakeClient):
     def open_pull(self, branch):
         self.reads["open_pull"] += 1
         pull = super().open_pull(branch)
+        pull = None if pull is None else dict(pull)
         if self.after_first_pull:
-            self.after_first_pull()
+            self.after_first_pull()  # what GitHub answers after this read
             self.after_first_pull = None
         return pull
 
@@ -318,12 +319,19 @@ class DealsTest(unittest.TestCase):
         return api
 
     def test_one_look_gives_each_worker_what_next_for_gives_it(self):
-        for state in ("clean", "behind"):
+        """c was given #8 and takes it whatever the pool holds; the pool
+        goes to the idle members in team order, a among them only while
+        its pull request is clean; and a worker asking alone gets the
+        same move from the same state."""
+        expected = {"clean": {"a": "take 6", "b": "take 7", "c": "take 8", "d": "none"},
+                    "behind": {"a": "carry 5", "b": "take 6", "c": "take 8", "d": "take 7"}}
+        for state, moves in expected.items():
             api = self.held_ready_and_two_free(state)
             api.add_issue(8, ["todo", "worker:c"])
             members = ["a", "b", "c", "d"]
             with self.subTest(state=state):
-                self.assertEqual(team.deals(api, members), {m: team.next_for(api, m, members) for m in members})
+                self.assertEqual(team.deals(api, members), moves)
+                self.assertEqual({m: team.next_for(api, m, members) for m in members}, moves)
 
     def test_the_run_reads_the_issues_the_branches_and_each_claim_once(self):
         api = self.held_ready_and_two_free()
@@ -342,16 +350,40 @@ class DealsTest(unittest.TestCase):
         from_own_looks = [team.next_for(clean, "a", members), team.next_for(behind, "b", members)]
         self.assertEqual(from_own_looks, ["take 6", "take 6"], "the double deal each leg's own look made")
 
+    def test_a_worker_with_work_of_its_own_reads_no_peer_s_pull_request(self):
+        """next_for answers a worker's own work before it looks at the
+        peers, as it did before F4's fix: deals gives such a worker its own
+        move whatever the others do, and each peer's pull request costs a
+        call, which a leg that still asks for itself would pay for nothing."""
+        api = self.held_ready_and_two_free("behind")
+        api.add_issue(8, ["claimed", "worker:b"])
+        api.branches.add("claude/8")
+        api.add_pull(8, state="clean")
+        self.assertEqual(team.next_for(api, "a", ["a", "b", "c"]), "carry 5")
+        self.assertEqual(api.reads["open_pull"], 1, "a's own pull request alone")
+        self.assertEqual(team.deals(api, ["a", "b", "c"]), {"a": "carry 5", "b": "take 6", "c": "take 7"})
+
+    def test_a_name_repeated_is_one_member_dealt_once(self):
+        """A repetition dealt its own issue would leave that issue to
+        nobody this run."""
+        api = self.held_ready_and_two_free()
+        self.assertEqual(team.deals(api, ["b", "b", "c"]), {"b": "take 6", "c": "take 7"})
+        self.assertEqual(team.deal_moves(api, ["a"], run=["z", "z"]), {"z": "take 7"})
+
     def test_a_change_during_the_look_cannot_split_the_run(self):
+        """Main moves past a's pull request right after the run's one read
+        of it: the run deals what it saw, a idle and the pool to a and b,
+        and reads the pull request no second time; a leg looking for
+        itself afterwards sees a carrying #5 and is dealt #6 again."""
         api = self.held_ready_and_two_free("clean")
 
         def main_moves():
             api.pulls["claude/5"]["mergeable_state"] = "behind"
 
         api.after_first_pull = main_moves
-        moves = team.deals(api, ["a", "b", "c"])
-        takes = [move for move in moves.values() if move.startswith("take ")]
-        self.assertEqual(len(takes), len(set(takes)), moves)
+        self.assertEqual(team.deals(api, ["a", "b", "c"]), {"a": "take 6", "b": "take 7", "c": "none"})
+        self.assertEqual(api.reads["open_pull"], 1)
+        self.assertEqual(team.next_for(api, "b", ["a", "b", "c"]), "take 6", "what a later look deals b")
 
     def test_the_moves_of_one_run_and_the_labels_made_for_its_takes(self):
         api = self.held_ready_and_two_free()

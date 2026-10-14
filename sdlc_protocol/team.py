@@ -283,8 +283,15 @@ def deals(client, team, areas=None):
     the peer's issue again (F4). So the workers' workflow asks once, in its
     first job, and hands each leg its move; next_for is one worker's answer
     from the same rule."""
-    team = list(team)
-    snap = Snapshot(client)
+    return moves_from(Snapshot(client), team, areas)
+
+
+def moves_from(snap, team, areas=None):
+    """deals over a look already taken: each member's own move, then the
+    shared work dealt among the members with none. A name repeated in team
+    is one member, dealt once, so no issue goes to a repetition and to
+    nobody."""
+    team = list(dict.fromkeys(team))
     moves = {member: snap.own_move(member) for member in team}
     idle = [member for member in team if not moves[member]]
     dealt = deal(idle, snap.pool(), areas)
@@ -295,11 +302,15 @@ def deals(client, team, areas=None):
 
 def next_for(client, agent, team=None, areas=None):
     """The worker's next move, as deals gives it: the same answer the run's
-    one look would give this worker, from the worker's own look."""
+    one look would give this worker, from the worker's own look. Its own
+    work is answered first, before any peer's claim is read: deals gives a
+    member with work of its own that work whatever the others do, and each
+    peer's pull request costs a call."""
     team = list(team or [agent])
     if agent not in team:
         team.append(agent)
-    return deals(client, team, areas)[agent]
+    snap = Snapshot(client)
+    return snap.own_move(agent) or moves_from(snap, team, areas)[agent]
 
 
 def next_move(client, agent, team=None, label=None, areas=None):
@@ -322,8 +333,8 @@ def deal_moves(client, team, areas=None, labels=None, run=None):
     team; a name not in the team is dealt after it), and each take's worker
     has its label made first, as next_move does, labels giving the label by
     name."""
-    team = list(team)
-    run = list(team if run is None else run)
+    team = list(dict.fromkeys(team))
+    run = list(dict.fromkeys(team if run is None else run))
     moves = deals(client, team + [name for name in run if name not in team], areas)
     for name in run:
         if moves[name].startswith("take ") and (labels or {}).get(name):

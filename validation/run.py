@@ -19,9 +19,10 @@ sha.
 Two steps are no verb of the model's: "guard" asks the push guard about a
 command and, when the command is one of the guard grammar's, judges the
 guard's answer by git's recorded one (guard_grammar.judged_by_git, G11a);
-"deal" has the workers ask the clerk from the model as the steps left it,
-each at the moment its look names (dealing.play, G14). Both are what the
-regression traces of DESIGN.md 5.3 need (replay.py).
+"deal" deals the workers' legs, each given a moment, from the model as the
+steps left it, the way the workers' workflow deals since F4's fix: one
+look for the run, no later than the earliest leg (dealing.play, G14). Both
+are what the regression traces of DESIGN.md 5.3 need (replay.py).
 """
 
 import copy

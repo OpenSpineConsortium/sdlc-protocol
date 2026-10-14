@@ -19,7 +19,11 @@ look, so the holder was dealt an issue and the worker the next, and
 behind at another's, so the holder carried its own claim and that worker
 was dealt what the first worker's deal gave the holder. Since the fix the
 workflow looks once for the run, in its first job (team.deals), and the
-lane fails on any double deal, from one look or from differing looks.
+lane fails on any double deal, from one look or from differing looks. On
+the library the 54 assignments of moments to legs give one deal per
+ordering and run moment, 6 distinct, which the lane counts and the report
+says; the assignments are still played, since the mutant that gives each
+leg its own look is judged on the same 54 and doubles 15 of them.
 """
 
 import itertools
@@ -109,18 +113,20 @@ def deals():
 
 class Lane(NamedTuple):
     deals: int
+    distinct: int  # how many of the deals differ in their order or their moves
     doubled_from_one_look: tuple
     doubled_from_differing_looks: tuple
 
 
 def run_lane():
-    one, differing, count = [], [], 0
+    one, differing, count, seen = [], [], 0, set()
     for deal in deals():
         count += 1
+        seen.add((deal.order, tuple(sorted(deal.moves.items()))))
         if not deal.doubled:
             continue
         (one if deal.one_look else differing).append(deal)
-    return Lane(count, tuple(one), tuple(differing))
+    return Lane(count, len(seen), tuple(one), tuple(differing))
 
 
 def doubled(lane):
@@ -129,7 +135,8 @@ def doubled(lane):
 
 
 def report(lane):
-    lines = [f"{lane.deals} deals; {len(lane.doubled_from_one_look)} doubled from one look, "
+    lines = [f"{lane.deals} deals over every assignment of moments to the legs, {lane.distinct} distinct; "
+             f"{len(lane.doubled_from_one_look)} doubled from one look, "
              f"{len(lane.doubled_from_differing_looks)} from differing looks (F4 until its fix)"]
     for deal in doubled(lane)[:4]:
         lines.append(f"  after {' then '.join(deal.order)}, looks at {deal.looks}: {deal.moves}")

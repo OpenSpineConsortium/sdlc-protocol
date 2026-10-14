@@ -407,15 +407,25 @@ class TeamWithTheRegistry(unittest.TestCase):
         self.assertEqual((code, json.loads(out)), (0, {"web": "take 6"}), "spare is still dealt #4")
 
     def test_deal_refuses_a_worker_list_the_registry_does_not_hold(self):
+        shape = 'team: --workers must be a JSON list of the registry\'s workers in Actions, ["api"]'
         with tempfile.TemporaryDirectory() as folder:
             where = registry(folder, {"name": "api", "runs": "actions"}, {"name": "alice", "runs": "session"})
-            for given in ('["alice"]', '"api"', "api", '["api", "ghost"]'):
+            for given in ('["alice"]', '"api"', "api", "{", "", '["api", "ghost"]', "1" * 5000):
                 with self.subTest(given=given):
                     code, out, err = self.through_the_adapter(["deal", "--registry", where, "--workers", given],
                                                               FakeClient())
                     self.assertEqual((code, out), (1, ""))
-                    self.assertTrue(err.startswith("team: "), err)
+                    self.assertTrue(err.startswith(shape), err)
                     self.assertEqual(len(err.splitlines()), 1, err)
+            code, out, err = self.through_the_adapter(["deal", "--registry", where, "--workers", "api"], FakeClient())
+            self.assertIn("not JSON", err)
+
+    def test_deal_refuses_an_empty_registry_in_one_line(self):
+        """argparse lets --registry "" through, as a workflow with the
+        variable unset would send it; the answer is one line, not a
+        traceback."""
+        code, out, err = self.through_the_adapter(["deal", "--registry", ""], FakeClient())
+        self.assertEqual((code, out, err), (1, "", "team: --registry must name the registry folder\n"))
 
     def test_deal_needs_the_registry(self):
         with self.assertRaises(SystemExit) as caught, redirect_stderr(io.StringIO()):
