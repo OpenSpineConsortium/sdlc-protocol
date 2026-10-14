@@ -224,6 +224,7 @@ class FakeSite:
         return [e for e in self.activity_events if e["ref"] == ref]
 
     def runs_since(self, when):
+        self.runs_asked_since = when
         return self.runs
 
     # issues and pull requests
@@ -408,6 +409,8 @@ class TheChecks(unittest.TestCase):
         self.assertEqual(seen.values["the pull request left behind after the merge"], "clean")
         self.assertTrue(seen.values["board.yml queues its runs"])
         self.assertEqual(seen.notes, [])
+        self.assertEqual(site.runs_asked_since, site.now() - canary.RUNS_MARGIN,
+                         "the runs are asked for from a minute before the merge, against the clocks' skew")
 
     def test_c2_without_main_moved_is_known_while_f12_is_known(self):
         site = FakeSite()

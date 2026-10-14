@@ -77,6 +77,12 @@ CHECK_BUDGET = 900
 # group (queue: max), each a board run of about a minute, so the run the
 # push to main started may finish some minutes after the merge.
 RUNS_BUDGET = 600
+# The runs are asked for by their creation time on GitHub's clock, to
+# the second, from an instant on the runner's: a minute earlier keeps a
+# runner a few seconds ahead from leaving the merge's runs out, and the
+# runs are then told apart by event and branch, which nothing else in
+# that minute shares (no other step pushes to main or to board).
+RUNS_MARGIN = timedelta(minutes=1)
 # An installation token lives 60 minutes from its mint; the run stops its
 # checks five minutes short of that, from when the site is made, so the
 # clean-up still has a token that works. A token minted by hand some
@@ -751,7 +757,7 @@ def check_c2(site, seen):
     if not pushed.ok:
         raise CanaryError(f"the claim of #{beside} was not taken: {pushed.words}")
     clone_beside.commit({f"docs/canary/{beside}-beside.md": FILE_TEXT}, "A worker's push beside the merge")
-    since = site.now()
+    since = site.now() - RUNS_MARGIN
     merge, pushed = site.race([lambda: site.merge(pull_merged), lambda: clone_beside.push(claims.branch_of(beside))])
     merge = merge if isinstance(merge, Pushed) else Pushed(False, str(merge))
     pushed = pushed if isinstance(pushed, Pushed) else Pushed(False, str(pushed))
@@ -870,7 +876,7 @@ def check_c6(site, seen):
     wait_for_board(site, seen, "the board lists the claim before the backdated push",
                    lambda text: claim_row(text, number) is not None)
     head = clone.commit({canary_file(number): FILE_TEXT}, "Work, dated 25 hours back", site.now() - BACKDATED)
-    since = site.now()
+    since = site.now() - RUNS_MARGIN
     pushed = clone.push(branch)
     if not pushed.ok:
         raise CanaryError(f"the backdated push was not taken: {pushed.words}")
