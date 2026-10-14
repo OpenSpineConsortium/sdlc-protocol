@@ -24,11 +24,15 @@ commit the model makes on main's tip, which no ref here names and the
 bare repository never holds, so its standing and files are the model's
 rule's in both worlds. A copy of an attached model is detached from the
 store and answers from what the model read, and for a branch's standing
-with the word git gave the attached model (model.standings): the oracle
-and G9's second run read copies, git's word and the model's rule part
-where three pieces of work change one file, behind against dirty, and
-under lenient rules (F16) a branch behind main is owed nothing where a
-dirty one is owed "main moved".
+with the word git gave the attached model for that head and main
+(model.standings), else by the model's rule. Every copy shares that
+word, the states a run in two halves keeps among them, since the oracle
+and G9's second run read copies, and git's word and the model's rule
+part where three pieces of work change one file, behind against dirty,
+and under lenient rules (F16) a branch behind main is owed nothing where
+a dirty one is owed "main moved". A commit made on a copy, as a dealing
+look's change makes one, is no git object, so a branch at one is judged
+by the model's rule.
 
 So the two worlds differ only where git decides (DESIGN.md, 3.6): whether
 a push is taken, and whether two changes conflict, which git judges at
@@ -135,9 +139,10 @@ class GitStore:
         self.closed = False
 
     def __deepcopy__(self, memo):
-        """A model copied whole (the states a run in two halves keeps) is
-        detached from the store, as RepoModel.clone detaches a copy: it
-        keeps what the model read from git and changes no repository."""
+        """A model copied whole (RepoModel.copied_whole: the states a run
+        in two halves keeps) is detached from the store, as RepoModel.clone
+        detaches a copy: it keeps what the model read from git, shares the
+        standings git gave, and changes no repository."""
         return None
 
     def close(self):

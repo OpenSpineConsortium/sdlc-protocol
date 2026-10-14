@@ -189,15 +189,16 @@ class RepoModel:
     # part of the key: the key is read from the model, which mirrors it.
     store: object = None
     # git's word for how each branch it was asked about stands to main, by
-    # the branch's head and main's, which the attached model keeps and its
-    # detached copies share and read before the model's own rule: git
-    # judges a conflict at line level and the model at file level, so
-    # where three pieces of work change one file the two part, behind
-    # against dirty, and since F16 a branch behind main under lenient
-    # rules is owed nothing where a dirty one is owed "main moved", so the
-    # oracle and G9's quiet second run, which read copies, must hear git's
-    # word. None in the memory world; no part of the key, since git's word
-    # for two commits never changes.
+    # the branch's head and main's, which the attached model keeps and
+    # every copy of it shares (clone, copied_whole) and reads before the
+    # model's own rule: git judges a conflict at line level and the model
+    # at file level, so where three pieces of work change one file the two
+    # part, behind against dirty, and since F16 a branch behind main under
+    # lenient rules is owed nothing where a dirty one is owed "main moved",
+    # so the oracle and G9's quiet second run, which read copies (the
+    # states a split run keeps among them), must hear git's word. None in
+    # the memory world; no part of the key, since git's word for two
+    # commits never changes.
     standings: object = None
 
     # --- commits ------------------------------------------------------------
@@ -291,11 +292,13 @@ class RepoModel:
 
     def delete_ref(self, ref):
         """GitHub's delete: the ref goes, and the open pull requests whose
-        head it was are closed, as the rename closes one ("If the branch
-        is associated with at least one open pull request, deleting the
+        head it was are closed, as the rename closes one, never one from a
+        fork whose branch bears the same name, which is another branch.
+        The web UI's page says so of its delete ("If the branch is
+        associated with at least one open pull request, deleting the
         branch closes the pull requests", managing-branches-within-your-
-        repository.md:71), never one from a fork whose branch bears the
-        same name, which is another branch. The soak found the model
+        repository.md:71); for the REST delete the board makes it is
+        assumed, and canary C6 settles it. The soak found the model
         keeping such a pull request open, which the board then told "idle"
         on every run."""
         if self.store is not None:
@@ -514,6 +517,16 @@ class RepoModel:
         """A 16-byte digest of the key, for the deep scopes' seen-set."""
         return hashlib.sha256(repr(self.canonical()).encode("utf-8")).digest()[:16]
 
+    def copied_whole(self):
+        """A copy of every level, as a run in two halves keeps its states
+        and as clone copies a model with a run between its halves:
+        detached from the store (GitStore.__deepcopy__), and sharing the
+        standings git gave, at every level, so the oracle that judges a
+        split run from the state it started from hears git's word as one
+        that judges a whole run does (the second review of the merge of
+        F16)."""
+        return copy.deepcopy(self, {id(self.standings): self.standings})
+
     def clone(self):
         """A copy no verb on it changes this one through. The commits, the
         comments and the label events are immutable records, so they are
@@ -522,15 +535,17 @@ class RepoModel:
         halves holds a client over this model, so a model with one is
         copied whole. A copy of a model in the git world is detached from
         the store: it keeps the refs, commits and trees the model read
-        from git, and answers from them, and shares the standings git
-        gave, so a verb or a run on a copy (the dealing lane's looks, the
-        quiet second run of G9) never changes the one repository the
-        model is attached to, and a branch git calls behind stands behind
-        on the copy too."""
+        from git, and answers from them, so a verb or a run on a copy (the
+        dealing lane's looks, the quiet second run of G9) never changes
+        the one repository the model is attached to; and it shares the
+        standings git gave, so a branch git calls behind stands behind on
+        the copy too, for a head and main the attached model asked git
+        about. A commit made on a copy, as a look's change makes one, is
+        no git object, and a branch at one is judged by the model's
+        rule."""
         if self.running is not None:
-            copied = copy.deepcopy(self)
+            copied = self.copied_whole()
             copied.store = None
-            copied.standings = self.standings
             return copied
         return RepoModel(
             now=self.now, commits=dict(self.commits), refs=dict(self.refs),

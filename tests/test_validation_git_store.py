@@ -173,19 +173,42 @@ class TheStore(unittest.TestCase):
         which answered by the model's rule, so over git, on a branch git
         calls behind and the rule dirty, they owed the notice and then
         posted it, two violations the library did not commit (the review
-        of F16's merge); a copy shares the word git gave."""
+        of F16's merge); a copy shares the word git gave. A run in two
+        halves is judged from the state it started from, which kept a
+        copy of the words git had given before its first half asked about
+        #102, so the oracle owed the notice there too (the second review);
+        that state shares them now."""
+        whole = (THREE, (Verb("board", "board", ("schedule", "")),))
+        halves = (THREE._replace(split_board=True),
+                  (Verb("board-start", "board", ("schedule", "")), Verb("board-finish", "board")))
+        for name, (scope, board_run) in (("whole", whole), ("in two halves", halves)):
+            with self.subTest(run=name), git_store.GitStore() as store:
+                model = M.seeded(issues=(1, 2, 3), writers=("a", "b", "c"))
+                model.lenient_rules = True
+                store.attach(model, ("a", "b", "c"))
+                red = []
+                for verb in THREE_PIECES + board_run:
+                    before = model.clone()
+                    outcome = verbs.apply(model, verb, scope)
+                    red += [(str(verb), v.guarantee, v.detail)
+                            for v in invariants.step_checks(before, model, verb, outcome)]
+                self.assertEqual(red, [])
+                self.assertEqual(model.standing("claude/3"), M.BEHIND)
+                self.assertEqual([c.body for c in model.comments_on(102)], [])
+
+    def test_every_copy_shares_the_words_git_gave_at_every_level(self):
+        """The states a run in two halves keeps, and those of a copy of a
+        model with such a run, share the attached model's one record of
+        git's words, so a word git gives after the copy is heard there
+        too."""
         with git_store.GitStore() as store:
-            model = M.seeded(issues=(1, 2, 3), writers=("a", "b", "c"))
-            model.lenient_rules = True
-            store.attach(model, ("a", "b", "c"))
-            red = []
-            for verb in THREE_PIECES + (Verb("board", "board", ("schedule", "")),):
-                before = model.clone()
-                outcome = verbs.apply(model, verb, THREE)
-                red += [(str(verb), v.guarantee, v.detail) for v in invariants.step_checks(before, model, verb, outcome)]
-            self.assertEqual(red, [])
-            self.assertEqual(model.standing("claude/3"), M.BEHIND)
-            self.assertEqual([c.body for c in model.comments_on(102)], [])
+            model = M.seeded()
+            store.attach(model, ("a",))
+            verbs.apply(model, Verb("board-start", "board", ("schedule", "")), Scope(split_board=True))
+            copied = model.clone()
+            for state in (model.running.started_from, model.running.planned, copied,
+                          copied.running.started_from, copied.running.planned):
+                self.assertIs(state.standings, model.standings)
 
 
 if __name__ == "__main__":

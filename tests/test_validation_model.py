@@ -152,8 +152,10 @@ class Rename(unittest.TestCase):
 
 class Delete(unittest.TestCase):
     """GitHub closes the open pull requests a deleted branch was the head of
-    (managing-branches-within-your-repository.md:71), as the board's
-    delete of a branch pushed again at the head a release kept meets. The
+    on the web UI's delete (managing-branches-within-your-repository.md:71),
+    and is assumed to on the REST delete the board makes, which canary C6
+    settles; the board's delete of a branch pushed again at the head a
+    release kept meets it. The
     soak's G9 lead (seed 427) met the model keeping such a draft open,
     which the next run told "idle", and F17's work met it too."""
 
