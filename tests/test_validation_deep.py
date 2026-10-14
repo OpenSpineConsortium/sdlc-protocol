@@ -14,6 +14,7 @@ the counterexamples a resumed search wrote, and refuses to start beside
 a run in progress. The real spaces run for hours (scripts/validate.py
 deep); here the spaces are small."""
 
+import _thread
 import errno
 import io
 import itertools
@@ -114,7 +115,10 @@ def says_it_is_ready(folder):
 def runs_the_lane_and_goes_on(folder):
     """A runner that is itself a process multiprocessing started, as under
     a test runner that forks, with one part that runs until it is ended;
-    it says so when the run lets it go on after a SIGTERM."""
+    it says so when the run lets it go on after a SIGTERM. It runs in a
+    session of its own, so the test ends it with its part whatever the
+    test sees."""
+    os.setsid()
     lanes.first_wave = lambda settings, results: [("a part", says_it_is_ready, (folder,))]
     lanes.second_wave = lambda settings, results: []
     try:
@@ -151,6 +155,57 @@ lanes.run(lanes.Settings(out, only=("search",), jobs=1), open(os.devnull, "w"))
 """
 
 
+# A runner that leaves while its part runs, past run's cleanup, as an
+# exception it does not catch leaves; the part says it is ready with its id.
+LEAVES_ITS_PART = """\
+import io, os, signal, sys, time
+from pathlib import Path
+sys.path.insert(0, {root!r})
+from validation import lanes
+out = Path({out!r})
+
+
+def says_it_is_ready():
+    (out / "ready.tmp").write_text(f"{{os.getpid()}}\\n", encoding="ascii")
+    (out / "ready.tmp").replace(out / "ready")
+    time.sleep(600)
+
+
+def leaves(signum, frame):
+    raise RuntimeError("the runner left past its cleanup")
+
+
+signal.signal(signal.SIGUSR1, leaves)
+out.mkdir()
+lanes.run_jobs(lanes.Settings(out, only=("search",), jobs=1), [("a part", says_it_is_ready, ())], lanes.fresh_results(),
+               time.perf_counter(), io.StringIO())
+"""
+
+
+# A runner with nothing to run, to which a SIGTERM comes as its cleanup
+# puts the default handler back, before the marker is removed.
+SIGNALLED_AS_ITS_HANDLER_IS_PUT_BACK = """\
+import io, os, signal, sys
+from pathlib import Path
+sys.path.insert(0, {root!r})
+from validation import lanes
+setting = signal.signal
+
+
+def signalled_as_it_is_put_back(signum, handler):
+    previous = setting(signum, handler)
+    if signum == signal.SIGTERM and handler == signal.SIG_DFL:
+        os.kill(os.getpid(), signal.SIGTERM)
+    return previous
+
+
+signal.signal = signalled_as_it_is_put_back
+lanes.first_wave = lambda settings, results: []
+lanes.second_wave = lambda settings, results: []
+lanes.run(lanes.Settings(Path({out!r}), only=("search",), jobs=1), io.StringIO())
+"""
+
+
 def a_live_process(test):
     """A process that lives until the test ends, standing for a run in
     progress: a marker naming the test's own process reads as a dead
@@ -161,13 +216,18 @@ def a_live_process(test):
     return process.pid
 
 
+def kill_group(pid):
+    """Every process left in the group the process pid leads."""
+    try:
+        os.killpg(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
+
 def end_session(process):
     """A process started in a session of its own, ended with every process
     in its group, its workers among them, whatever the test saw."""
-    try:
-        os.killpg(process.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
+    kill_group(process.pid)
     process.wait()
 
 
@@ -725,11 +785,11 @@ class TheLaneAsOneRun(unittest.TestCase):
     def test_the_counterexamples_are_read_from_this_run_s_folder_however_a_run_spelt_it(self):
         """A result records each trace file as the invocation that wrote it
         spelt the folder, relative to its own working directory, so a
-        resume from another directory, or with the folder spelt another
-        way, found none of the files, and the counterexamples' conformance
-        raised on every resume. The files are read by name from this
-        run's traces folder, and a conformance that played them under
-        another spelling is done."""
+        resume from another directory, or of a folder since moved, found
+        none of the files, and the counterexamples' conformance raised on
+        every resume. The files are read by name from this run's traces
+        folder, and a conformance that played them under another spelling
+        is done."""
         with tempfile.TemporaryDirectory() as folder:
             with mock.patch.object(claims, "is_idle", at_exactly_24_hours):
                 found = deep.search_space(ONE)
@@ -745,6 +805,37 @@ class TheLaneAsOneRun(unittest.TestCase):
             self.assertEqual((played["counterexamples"], played["disagreements"]), (1, []))
             results["conformance"].append({**played, "files": [f"{folder}/./{deep.TRACES}/{name}"]})
             self.assertIn(f"conformance {lanes.COUNTEREXAMPLES}", lanes.done_parts(results))
+
+    def test_a_resumed_file_names_each_trace_file_as_this_run_spells_its_folder(self):
+        """After a resume from another directory the red lines named each
+        trace file as the invocation that wrote it spelt the folder, a
+        path replay could not open from here, and one results file held
+        two spellings of one folder; a resumed file's trace files are
+        named as this run spells it."""
+        elsewhere = f"another/working/directory/{deep.TRACES}"
+        with tempfile.TemporaryDirectory() as folder:
+            settings = lanes.Settings(folder, only=("search",), jobs=2, quick=True, resume=True)
+            results = lanes.fresh_results(settings)
+            results["searches"].append({"space": "E-two", "depth": 3, "states": 1, "transitions": 0, "seconds": 0.0,
+                                        "stopped": False, "differences": [],
+                                        "violations": [{"guarantee": "G1", "detail": "d", "count": 1, "finding": None,
+                                                        "file": f"{elsewhere}/G1-E-two-1.json"}]})
+            results["soak"]["chunks"].append({"seeds": [0, 1], "walks": 2, "steps": 4, "seconds": 0.0,
+                                              "violations": [{"seed": 0, "step": 1, "guarantee": "G3", "detail": "d",
+                                                              "file": f"{elsewhere}/G3-soak-0-1-1.json"}]})
+            results["conformance"].append({"space": lanes.COUNTEREXAMPLES, "paths": 0, "counterexamples": 2,
+                                           "seconds": 0.0, "files": lanes.counterexample_files(results),
+                                           "disagreements": [{"file": f"{elsewhere}/G1-E-two-1.json", "step": -1,
+                                                              "field": "red", "memory": "[]", "git": "[]"}]})
+            (Path(folder) / "deep.json").write_text(json.dumps(results), encoding="ascii")
+            kept, _ = lanes.kept_results(settings)
+        here = Path(folder) / deep.TRACES
+        files = [str(here / "G1-E-two-1.json"), str(here / "G3-soak-0-1-1.json")]
+        self.assertEqual(lanes.counterexample_files(kept), files)
+        self.assertEqual(kept["conformance"][0]["files"], files)
+        self.assertEqual(kept["conformance"][0]["disagreements"][0]["file"], files[0])
+        self.assertIn(f"search E-two: G1 d (1 times), {files[0]}", lanes.red_lines(kept))
+        self.assertIn(f"soak seed 0 step 1: G3 d, {files[1]}", lanes.red_lines(kept))
 
     def test_a_run_is_refused_while_another_is_in_progress_in_the_folder(self):
         """A fresh run removes the checkpoints and the trace files first,
@@ -1105,6 +1196,102 @@ class TheLaneAsOneRun(unittest.TestCase):
             self.assertEqual(runner.wait(timeout=60), -signal.SIGTERM)
             self.assertFalse((out / lanes.RUNNING).exists())
 
+    def test_a_signal_as_the_handler_is_put_back_waits_until_the_marker_is_removed(self):
+        """Once the cleanup has put the default handler back, a SIGTERM
+        ends the process at once, so one that came before the marker was
+        removed left it naming a dead process; held, it ends the process
+        once the marker is gone."""
+        with tempfile.TemporaryDirectory() as folder:
+            out = Path(folder) / "out"
+            runner = subprocess.Popen([sys.executable, "-c",
+                                       SIGNALLED_AS_ITS_HANDLER_IS_PUT_BACK.format(root=str(ROOT), out=str(out))],
+                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+            self.addCleanup(end_session, runner)
+            self.assertEqual(runner.wait(timeout=60), -signal.SIGTERM)
+            self.assertTrue((out / "deep.json").exists())
+            self.assertFalse((out / lanes.RUNNING).exists())
+
+    def test_two_signals_that_land_as_a_part_is_forked_still_end_the_run_whole(self):
+        """A SIGINT and a SIGTERM held while a part was forked were let in
+        together; SIGINT's KeyboardInterrupt left first, and SIGTERM's
+        handler raised as run's finally began, past the whole cleanup: the
+        part ran on, the runner waited for it at its exit, the handler was
+        never put back and the marker stayed. The cleanup is begun again
+        until it is done, and the run ends by the SIGTERM."""
+        forked, fork, signalled = [], os.fork, []
+
+        def both_signals_as_it_forks():
+            pid = fork()
+            if pid:
+                forked.append(pid)
+                os.kill(os.getpid(), signal.SIGINT)
+                os.kill(os.getpid(), signal.SIGTERM)
+            return pid
+
+        def recorded(signum, frame):
+            signalled.append(signum)
+
+        self.addCleanup(end_forked, forked)
+        self.addCleanup(signal.signal, signal.SIGINT, signal.signal(signal.SIGINT, signal.default_int_handler))
+        self.addCleanup(signal.signal, signal.SIGTERM, signal.signal(signal.SIGTERM, recorded))
+        with tempfile.TemporaryDirectory() as folder:
+            settings = lanes.Settings(folder, only=("search",), jobs=1, quick=True)
+            with mock.patch.object(lanes, "first_wave", lambda settings, results: [("a part", sleeps, ())]), \
+                    mock.patch.object(lanes, "second_wave", lambda settings, results: []), \
+                    mock.patch.object(os, "fork", both_signals_as_it_forks), self.assertRaises(SystemExit) as ended:
+                try:
+                    lanes.run(settings, io.StringIO())
+                except KeyboardInterrupt:
+                    self.fail("the run ended by the SIGINT alone, though a SIGTERM reached it")
+            self.assertFalse((Path(folder) / lanes.RUNNING).exists())
+        self.assertEqual(ended.exception.code, 128 + signal.SIGTERM)
+        self.assertEqual(signalled, [signal.SIGTERM])
+        self.assertIs(signal.getsignal(signal.SIGTERM), recorded)
+        self.assertEqual(len(forked), 1)
+        self.assertFalse(alive(forked[0]))
+
+    def test_a_handler_that_runs_as_the_hold_begins_leaves_nothing_held(self):
+        """CPython runs the handler of a signal that came just before the
+        mask was set once it is set; what the handler raised left the
+        hold's start with SIGINT and SIGTERM held for good, so a caller
+        that went on after it could be stopped by neither. Here the
+        signal comes as pthread_sigmask reads its set, in C, where no
+        handler runs before the mask is set."""
+        class Raised(Exception):
+            pass
+
+        def raises(signum, frame):
+            raise Raised()
+
+        before = signal.pthread_sigmask(signal.SIG_BLOCK, ())
+        self.addCleanup(signal.pthread_sigmask, signal.SIG_SETMASK, before)
+        self.addCleanup(signal.signal, signal.SIGTERM, signal.signal(signal.SIGTERM, raises))
+        tripped = itertools.chain(lanes.HELD, filter(None, map(_thread.interrupt_main, [signal.SIGTERM])))
+        with mock.patch.object(lanes, "HELD", tripped), self.assertRaises(Raised):
+            with lanes.signals_held():
+                self.fail("the held block ran")
+        self.assertEqual(signal.pthread_sigmask(signal.SIG_BLOCK, ()), before)
+
+    def test_an_exit_past_the_cleanup_ends_the_parts(self):
+        """An exit that passed run's cleanup by, an exception the runner
+        did not catch, had multiprocessing's exit handler wait for the
+        parts, each running its search on for hours; the parts are
+        daemons, so the exit handler ends them."""
+        with tempfile.TemporaryDirectory() as folder:
+            out = Path(folder) / "out"
+            runner = subprocess.Popen([sys.executable, "-c", LEAVES_ITS_PART.format(root=str(ROOT), out=str(out))],
+                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+            self.addCleanup(end_session, runner)
+            self.assertTrue(wait_for(lambda: (out / "ready").exists(), 60), "the part did not start within a minute")
+            part = int((out / "ready").read_text(encoding="ascii"))
+            runner.send_signal(signal.SIGUSR1)
+            try:
+                code = runner.wait(timeout=60)
+            except subprocess.TimeoutExpired:
+                self.fail("the runner waited for its part at its exit")
+            self.assertEqual(code, 1)
+            self.assertFalse(alive(part))
+
     def test_a_runner_multiprocessing_started_ends_by_the_signal(self):
         """Under a test runner that forks, the runner is itself a process
         multiprocessing started, and there the handler took a part's way:
@@ -1116,6 +1303,7 @@ class TheLaneAsOneRun(unittest.TestCase):
             runner.start()
             self.addCleanup(runner.join)
             self.addCleanup(runner.kill)
+            self.addCleanup(kill_group, runner.pid)
             self.assertTrue(wait_for(lambda: (Path(folder) / "ready").exists(), 60), "the part did not start within a minute")
             runner.terminate()
             runner.join(60)
@@ -1126,7 +1314,8 @@ class TheLaneAsOneRun(unittest.TestCase):
     def test_the_file_under_the_process_s_own_name_goes_however_the_marker_fails(self):
         """The marker is written under a name of the process's own first;
         where the folder holds no hard links and the exclusive create
-        failed too, that file stayed behind."""
+        failed too, or where the disk filled as that file was written,
+        it stayed behind."""
         def no_links(source, target):
             raise PermissionError(errno.EPERM, "Operation not permitted")
 
@@ -1137,11 +1326,19 @@ class TheLaneAsOneRun(unittest.TestCase):
                 raise PermissionError(errno.EACCES, "Permission denied")
             return opened(path, mode, *args, **kwargs)
 
+        def made_then_full(path, *args, **kwargs):
+            path.touch()
+            raise OSError(errno.ENOSPC, "No space left on device")
+
         with tempfile.TemporaryDirectory() as folder:
             settings = lanes.Settings(folder, only=("search",), jobs=2, quick=True)
             with mock.patch.object(lanes.os, "link", no_links), mock.patch.object(Path, "open", no_exclusive_create), \
                     self.assertRaises(PermissionError):
                 lanes.take_marker(settings)
+            self.assertEqual(list(Path(folder).iterdir()), [])
+            with mock.patch.object(Path, "write_text", made_then_full), self.assertRaises(OSError) as full:
+                lanes.take_marker(settings)
+            self.assertEqual(full.exception.errno, errno.ENOSPC)
             self.assertEqual(list(Path(folder).iterdir()), [])
 
     def test_a_folder_with_no_hard_links_still_takes_the_marker(self):

@@ -255,8 +255,8 @@ def counterexample_files(results, out=None):
     results name them; with out, each by its name in this run's traces
     folder. A result records a file as the invocation that wrote it spelt
     the folder, relative to its own working directory, so a resume from
-    another directory, or spelling the folder another way, found none of
-    them there, and the counterexamples' conformance raised on every
+    another directory, or of a folder since moved, found none of them
+    there, and the counterexamples' conformance raised on every
     resume."""
     files = [v["file"] for s in results["searches"] for v in s["violations"]]
     files += [v["file"] for s in results["soak"]["chunks"] for v in s["violations"]]
@@ -541,12 +541,13 @@ def take_marker(settings):
     process left, as the machine's restart leaves one, is replaced; two
     runs started at the same moment over such a file can both replace
     it, a window of a few instructions. The file under this process's
-    own name goes however this ends."""
+    own name goes however this ends, a write that fills the disk as it
+    is made included."""
     file = settings.out / RUNNING
     settings.out.mkdir(parents=True, exist_ok=True)
     mine = file.with_name(f"{RUNNING}.{os.getpid()}")
-    mine.write_text(f"{os.getpid()}\n", encoding="ascii")
     try:
+        mine.write_text(f"{os.getpid()}\n", encoding="ascii")
         try:
             os.link(mine, file)
         except FileExistsError:
@@ -585,10 +586,31 @@ def kept_results(settings):
             raise SystemExit(f"{file} was made under other settings or other code ({', '.join(differing)} differ), "
                              f"so it is not resumed; run without --resume, or into another --out")
         results.setdefault("errors", [])
+        name_files_here(results, settings.out)
         return results, time.perf_counter() - results["seconds"]
     for folder in (settings.out / CHECKPOINTS, settings.out / deep.TRACES):
         shutil.rmtree(folder, ignore_errors=True)
     return fresh_results(settings), time.perf_counter()
+
+
+def name_files_here(results, out):
+    """Each trace file a resumed results file names, named as this run
+    spells its folder: the invocation that wrote it spelt it relative to
+    its own working directory, so after a resume from another directory
+    the red lines named a file replay could not open from here, and one
+    results file held two spellings of one folder."""
+    def here(file):
+        return str(Path(out) / deep.TRACES / Path(file).name)
+
+    for entry in results["searches"] + results["soak"]["chunks"]:
+        for violation in entry["violations"]:
+            violation["file"] = here(violation["file"])
+    for c in results["conformance"]:
+        if c["space"] == COUNTEREXAMPLES:
+            c["files"] = [here(file) for file in c["files"]]
+        for disagreement in c["disagreements"]:
+            if "file" in disagreement:
+                disagreement["file"] = here(disagreement["file"])
 
 
 def fork_context():
@@ -608,12 +630,18 @@ def fork_context():
 def signals_held():
     """A block run with SIGINT and SIGTERM held back, each delivered once
     it ends under whatever handler is set by then; where the platform
-    has no signal mask, Windows, the block runs as it is."""
+    has no signal mask, Windows, the block runs as it is. The mask is
+    read first and changed inside the try, since CPython runs the
+    handler of a signal that came just before it was changed once it is
+    changed: what that handler raised left the block's start with both
+    signals held for good, and a caller that went on after it, a test
+    runner, say, could no longer be stopped by either."""
     if not hasattr(signal, "pthread_sigmask"):
         yield
         return
-    before = signal.pthread_sigmask(signal.SIG_BLOCK, HELD)
+    before = signal.pthread_sigmask(signal.SIG_BLOCK, ())
     try:
+        signal.pthread_sigmask(signal.SIG_BLOCK, HELD)
         yield
     finally:
         signal.pthread_sigmask(signal.SIG_SETMASK, before)
@@ -659,7 +687,10 @@ def run_jobs(settings, jobs, results, began, out):
     recorded as raised, in place of the error it left before, and the
     others go on. A job that lands clears the error it left. The parent
     waits on each process's end and its pipe alike, since a result larger
-    than the pipe holds is sent only as it is read."""
+    than the pipe holds is sent only as it is read. Each process is a
+    daemon, so an exit that passes run's cleanup by, an exception the
+    runner does not catch, has multiprocessing's exit handler end the
+    parts, where it waited for them, for hours."""
     pending = list(jobs)
     running = {}
     context = fork_context()
@@ -674,7 +705,7 @@ def run_jobs(settings, jobs, results, began, out):
                 # fork's own steps, which lost it or swallowed what its
                 # handler raised; held, it reaches the parent once the
                 # part is listed and the part once run_part lets it in.
-                process = context.Process(target=run_part, args=(theirs, function, args), name=part)
+                process = context.Process(target=run_part, args=(theirs, function, args), name=part, daemon=True)
                 process.start()
                 theirs.close()
                 running[part] = (process, ours)
@@ -739,13 +770,13 @@ def end_workers(grace=10.0):
     """The parts' live processes ended and waited for, each a child of
     this process, so a run that ends, however it ends, leaves none
     behind, not even one unreaped: a run that ends by its own SIGTERM
-    runs no exit handler, which waited for them before, and where nothing
-    else reaps an orphan, a container's first process that is no init,
-    it stays. Each is sent SIGTERM, and the grace, in seconds, is for all
-    of them together; one still alive then is killed, as one is whose
-    signal a finalizer swallowed, or one deep in writing its checkpoint,
-    which is written beside the last and moved into place, so the last
-    stays whole."""
+    runs no exit handler, which would end them and wait for them, and
+    where nothing else reaps an orphan, a container's first process that
+    is no init, it stays. Each is sent SIGTERM, and the grace, in
+    seconds, is for all of them together; one still alive then is killed,
+    as one is whose signal a finalizer swallowed, or one deep in writing
+    its checkpoint, which is written beside the last and moved into
+    place, so the last stays whole."""
     children = multiprocessing.active_children()
     for child in children:
         child.terminate()
@@ -766,18 +797,23 @@ def run(settings, out=sys.stdout):
     process group do, and then ends the process by the signal; the
     handler can be set from the main thread alone, where the script and
     the tests call this; a second signal meanwhile, a cancelled job's
-    SIGTERM after its SIGINT or Ctrl-C again, waits until the workers
-    are ended, the handler is put back and the marker removed, where it
-    cut the cleanup short. The results file says whether the run finished,
-    every part any invocation of it asked for landed or shown red, and
-    one that did not is red. From the marker's taking on, whatever
-    ends the run, a refusal to resume included, the finally removes the
-    marker."""
+    SIGTERM after its SIGINT or Ctrl-C again, waits until the workers are
+    ended, the handler is put back and the marker removed, where it cut
+    the cleanup short. Two signals that come together, as while a part is
+    forked, have their handlers run one after the other, and the second
+    ran as the cleanup began and raised past all of it, so the parts ran
+    on, the runner waited for them at its exit and the marker stayed; the
+    cleanup is begun again until it is done, and a run a SIGTERM reached
+    ends by it whatever else ended it. The results file says whether the
+    run finished, every part any invocation of it asked for landed or
+    shown red, and one that did not is red. From the marker's taking on,
+    whatever ends the run, a refusal to resume included, the finally
+    removes the marker."""
     take_marker(settings)
     marker = settings.out / RUNNING
     in_main_thread = threading.current_thread() is threading.main_thread()
     previous = signal.signal(signal.SIGTERM, stop_on_term(os.getpid())) if in_main_thread else None
-    terminated = False
+    terminated, interrupted = False, None
     try:
         results, began = kept_results(settings)
         results["asked"] = sorted(set(results.get("asked", ())) | set(settings.only or PARTS))
@@ -791,14 +827,24 @@ def run(settings, out=sys.stdout):
     except Terminated:
         terminated = True
     finally:
-        with signals_held():
-            end_workers()
-            if in_main_thread:
-                signal.signal(signal.SIGTERM, previous)
-            marker.unlink(missing_ok=True)
-    if terminated:
-        os.kill(os.getpid(), signal.SIGTERM)
-        raise SystemExit(128 + signal.SIGTERM)
+        cleaned = False
+        while not cleaned:
+            try:
+                with signals_held():
+                    end_workers()
+                    if in_main_thread:
+                        signal.signal(signal.SIGTERM, previous)
+                    marker.unlink(missing_ok=True)
+                    cleaned = True
+            except Terminated:
+                terminated = True
+            except KeyboardInterrupt as error:
+                interrupted = error
+        if terminated:
+            os.kill(os.getpid(), signal.SIGTERM)
+            raise SystemExit(128 + signal.SIGTERM)
+        if interrupted is not None:
+            raise interrupted
     for line in summary_lines(results):
         print(line, file=out)
     for line in results["red"]:
