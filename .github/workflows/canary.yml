@@ -55,7 +55,10 @@ env:
 jobs:
   canary:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    # The App's token lives an hour from its mint, and the driver stops
+    # its checks at 55 minutes (TOKEN_LIFE) to clean up while the token
+    # still works; the rest is the set-up, the clean-up and a margin.
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v7
         with:

@@ -14,16 +14,18 @@ breaks it. An entry for a finding in
 an entry for any other finding (F4, dealing from differing looks) is red
 as built, since no rule of the library answers it; a fix removes its
 entries, as F7's did. "fixed_after" names each finding fixed on main
-with the last version that still has it, main's version when the fix
-merged: a copy of the library at that version or an earlier one, which
-no release the copy can vendor yet carries, still has the finding. Only
-the live canary reads it (scripts/canary.py, DESIGN.md section 11),
-since it runs the release the canary repository vendors and not main,
-and an expectation that fails there for such a finding is known, not
-new; the oracle and the lanes run main and read "as_built" alone. A fix
-moves its finding from "as_built" to "fixed_after", as F7's and F12's
-did after 0.4.1, and the entry stays, since it is true of every copy at
-that version for as long as one exists.
+with the last version that still has it: the version main stated just
+before the fixing pull request merged, since the fix ships only with the
+release that raises it. A copy of the library at that version or an
+earlier one still has the finding. Only the live canary reads it
+(scripts/canary.py, DESIGN.md section 11), since it runs the release the
+canary repository vendors and not main, and an expectation that fails
+there for such a finding is known, not new; the oracle and the lanes run
+main and read "as_built" alone. A fix adds its finding to "fixed_after",
+and takes it out of "as_built" when it was there: F12's fix did both, and
+F7's, whose entries were red as built with no switch, only the first,
+both after 0.4.1. The entry stays, since it is true of every copy at that
+version for as long as one exists.
 
 The suite passes when every result is what the file records
 (tests/test_validation_traces.py, tests/test_validation_scenarios.py):

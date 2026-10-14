@@ -184,9 +184,11 @@ class KnownJson(unittest.TestCase):
                 self.assertIn(finding, FINDINGS_IN_DESIGN)
                 self.assertNotIn(finding, known.AS_BUILT, "a finding is as built or fixed, never both")
                 self.assertIsNotNone(known.version_key(version))
-                self.assertLessEqual(known.version_key(version), current, "a fix merges at main's version or before")
+                self.assertLessEqual(known.version_key(version), current,
+                                     "the last version with a finding is one main has stated, never a later one")
         self.assertEqual(known.as_built_for("0.4.1"), known.AS_BUILT | {"F7", "F12"})
         self.assertEqual(known.as_built_for("0.4.0"), known.AS_BUILT | {"F7", "F12"})
+        self.assertEqual(known.as_built_for("0.4.2"), known.AS_BUILT, "the next release carries the fixes")
         self.assertEqual(known.as_built_for("0.5.0"), known.AS_BUILT)
         self.assertEqual(known.as_built_for("1.0.0"), known.AS_BUILT)
         for none in (None, "", "unknown", "0.4", "0.4.1-dirty", "1" * 10 + ".0.0"):

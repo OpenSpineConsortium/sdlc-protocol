@@ -5,8 +5,9 @@ canary.Site alone, so a fake with the same methods, keeping issues, pull
 requests, branches and a board page in memory and reacting to the driver
 as the live board would when the test says so, drives every check end to
 end; the live site's git side, Clone, is run for real against a bare
-repository here, the race included, and its REST side is the library's own
-adapter, tested with the library.
+repository here, the race included, and its REST side, canary.Site's own
+calls, against the library's FakeOpener, which answers each path as
+GitHub's API does.
 """
 
 import base64
@@ -19,7 +20,7 @@ import sys
 import tempfile
 import unittest
 import urllib.parse
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -113,7 +114,9 @@ class FakeSite:
         self.files, self.parents, self.dates = {MAIN: {}}, {MAIN: None}, {}
         self.counter, self.next_number = 0, 100
         self.reactions, self.ticks, self.activity_events = [], 0, []
-        self.runs = runs
+        # A run is completed unless the test says otherwise, as the runs a
+        # check reads at the end of its wait mostly are.
+        self.runs = None if runs is None else [{"status": "completed", **found} for found in runs]
         self.runs_allowed = runs is not None
         self.admin = object() if admin else None
         self.rulesets_made, self.take_every_push = {}, take_every_push
@@ -122,6 +125,8 @@ class FakeSite:
         self.check_runs_by_sha = {}
         self.label_calls = []
         self.pokes, self.swept = [], False
+        # The token's hour: expired from the start, or from a tick of wait.
+        self.expired, self.expire_at_tick = False, None
 
     # the lists Site keeps for the clean-up
     @property
@@ -134,8 +139,15 @@ class FakeSite:
     def sleep(self, seconds):
         pass
 
+    def out_of_time(self):
+        return self.expired
+
     def wait(self, read, holds, budget=canary.POLL_BUDGET, every=canary.POLL_EVERY):
         for _ in range(12):
+            if self.expire_at_tick is not None and self.ticks >= self.expire_at_tick:
+                self.expired = True
+            if self.expired:
+                raise canary.OutOfTime("the run reached its token's hour")
             value = read()
             if holds(value):
                 return value, True
@@ -352,6 +364,10 @@ def main_moved(site):
     site.comment(behind, board.MAIN_MOVED_MARKER.format(sha=sha7) + "\nmain moved: ...", BOT, "NONE")
 
 
+def nothing(site):
+    """A tick on which the live board does nothing the test watches."""
+
+
 def run(site, name, known_findings=frozenset()):
     out = io.StringIO()
     records = canary.run_checks(site, [name], known_findings, out)
@@ -388,34 +404,84 @@ class TheChecks(unittest.TestCase):
         self.assertTrue(seen.values["merge"]["ok"])
         self.assertTrue(seen.values["push beside it"]["ok"])
         self.assertEqual(seen.values["checks on the merged head"], {"check": "success"})
+        self.assertEqual(seen.values["checks on the behind head"], {"check": "success"})
+        self.assertEqual(seen.values["the pull request left behind after the merge"], "clean")
         self.assertTrue(seen.values["board.yml queues its runs"])
+        self.assertEqual(seen.notes, [])
 
     def test_c2_without_main_moved_is_known_while_f12_is_known(self):
         site = FakeSite()
         seen, _ = run(site, "C2", frozenset({"F12"}))
         self.assertEqual(seen.status, "known")
-        self.assertIn("the token has no Actions read", seen.notes[0])
+        missed = [(e["expectation"], e["known"]) for e in seen.expectations if not e["holds"]]
+        self.assertEqual(missed, [("the pull request behind main hears main moved for main's new commit", True)])
+        self.assertIn("the token may not list workflow runs", seen.notes[0])
+        self.assertTrue(seen.values["board.yml queues its runs"], "recorded whether the runs are read or not")
         seen, _ = run(FakeSite(), "C2")
         self.assertEqual(seen.status, "failed")
 
-    def test_c2_fails_when_the_push_to_main_s_run_was_cancelled(self):
+    def test_c2_fails_when_the_push_to_main_s_run_was_cancelled_whatever_is_known(self):
         """The word arrived, told by another run's state, and the run the
         push to main started was cancelled all the same: the copy's queue:
-        max did not keep it, which is F12's other half."""
+        max, F12's other half, did not keep it. That half is the template's,
+        which no release of the library changes, so its miss is never read
+        as known."""
         runs = [{"event": "push", "head_branch": "main", "conclusion": "cancelled"},
                 {"event": "pull_request", "head_branch": "claude/102", "conclusion": "success"}]
-        site = FakeSite(runs=runs, queued=False)
+        for queued in (False, True):
+            site = FakeSite(runs=runs, queued=queued)
+            site.reactions.append(main_moved)
+            seen, _ = run(site, "C2", frozenset({"F12"}))
+            self.assertEqual(seen.status, "failed", seen.as_dict())
+            missed = [(e["expectation"], e["finding"], e["known"]) for e in seen.expectations if not e["holds"]]
+            self.assertEqual(missed, [("the push to main started a board run that was not cancelled", None, False)])
+            self.assertEqual(seen.values["board.yml queues its runs"], queued)
+            self.assertEqual(seen.values["board runs by event"]["push on main"], {"cancelled": 1})
+            self.assertEqual(any("does not queue its runs" in note for note in seen.notes), not queued)
+
+    def test_c2_waits_for_the_push_to_main_s_run_to_finish(self):
+        """The merge's runs queue behind each other, so the run the push to
+        main started may still be waiting when the word arrives: C2 reads
+        the runs again until it has finished, and one that has not finished
+        within the budget is a miss, never a pass."""
+        runs = [{"event": "push", "head_branch": "main", "status": "queued", "conclusion": None}]
+
+        def finish(site):
+            site.runs[0].update(status="completed", conclusion="success")
+        site = FakeSite(runs=runs)
+        site.reactions += [main_moved, nothing, finish]
+        seen, _ = run(site, "C2")
+        self.assertEqual(seen.status, "passed", seen.as_dict())
+        self.assertEqual(seen.values["board runs by event"], {"push on main": {"success": 1}})
+        site = FakeSite(runs=runs)
         site.reactions.append(main_moved)
         seen, _ = run(site, "C2")
         self.assertEqual(seen.status, "failed", seen.as_dict())
-        missed = [e["expectation"] for e in seen.expectations if not e["holds"]]
-        self.assertEqual(missed, ["the push to main started a board run that was not cancelled"])
-        self.assertFalse(seen.values["board.yml queues its runs"])
-        self.assertEqual(seen.values["board runs by event"]["push on main"], {"cancelled": 1})
-        site = FakeSite(runs=runs)
-        site.reactions.append(main_moved)
-        seen, _ = run(site, "C2", frozenset({"F12"}))
-        self.assertEqual(seen.status, "known")
+        self.assertEqual(seen.values["board runs by event"], {"push on main": {"queued": 1}})
+        self.assertIn("no board run the push to main started had finished within the budget", seen.notes)
+
+    def test_c2_does_not_judge_the_word_while_the_check_left_behind_has_not_passed(self):
+        """GitHub reads a pull request whose required check failed or is
+        pending as blocked, which hides how it stands to main, so the word
+        is not judged then: the miss is the check's, and never read as F12."""
+        for word in ("failure", None):
+            site = FakeSite(runs=[{"event": "push", "head_branch": "main", "conclusion": "success"}])
+            behind = claims.branch_of(site.next_number + 1)
+
+            def check_runs(sha, site=site, behind=behind, word=word):
+                if sha != site.branches.get(behind):
+                    return [{"name": "check", "status": "completed", "conclusion": "success"}]
+                return [{"name": "check", "status": "completed" if word else "in_progress", "conclusion": word}]
+            site.check_runs = check_runs
+            site.reactions.append(main_moved)
+            seen, _ = run(site, "C2", frozenset({"F12"}))
+            self.assertEqual(seen.status, "failed", seen.as_dict())
+            missed = [e["expectation"] for e in seen.expectations if not e["holds"]]
+            self.assertEqual(missed, ["the check passed on the pull request left behind, so GitHub can say how it "
+                                      "stands to main"])
+            self.assertNotIn("the pull request behind main hears main moved for main's new commit",
+                             [e["expectation"] for e in seen.expectations])
+            self.assertIn(f"stood at {word or 'in_progress'}", " ".join(seen.notes))
 
     def test_c3_lists_each_odd_name_as_no_claim(self):
         site = FakeSite()
@@ -436,6 +502,7 @@ class TheChecks(unittest.TestCase):
     def test_a_read_refused_until_the_budget_ends_is_a_line_not_a_failure(self):
         site = FakeSite()
         site.wait = canary.Site.wait.__get__(site)
+        site.mind_the_clock = lambda: None
         site.sleep = lambda s: None
         refuse = canary.GitHubError("GET /x: HTTP 500", 500)
         value, held = site.wait(lambda: (_ for _ in ()).throw(refuse), lambda v: True, budget=20, every=10)
@@ -468,6 +535,9 @@ class TheChecks(unittest.TestCase):
         self.assertIn("the rename closed the draft", held)
         self.assertIn("the issue is back in the Queue and the claim is off the board", held)
         self.assertIn("the next run deletes the second push, since the released branch keeps its head", held)
+        self.assertIn("the comment moved the draft's updated_at", held)
+        self.assertIn("the push moved the draft's updated_at", held)
+        self.assertEqual(list(seen.values["draft updated_at"]), ["after the open", "after the comment", "after the push"])
         self.assertEqual(seen.values["release comment"], {"author": BOT, "author_association": "NONE"})
         self.assertEqual(seen.values["labels after the release"], [labels.TODO])
         self.assertIn("C6: passed", out)
@@ -484,13 +554,41 @@ class TheChecks(unittest.TestCase):
         self.assertEqual(missed, ["the board's own pushes started no board run"])
         self.assertEqual(seen.values["board runs by event"]["push on board"], {"success": 1})
 
-    def test_c6_fails_when_the_rename_never_comes(self):
+    def test_c6_fails_when_the_comment_moves_nothing(self):
+        site = FakeSite(runs=[])
+        comment = site.comment
+
+        def comment_that_moves_nothing(number, text, author="app[bot]", association="NONE"):
+            before = site.pulls[number]["updated_at"] if number in site.pulls else None
+            comment(number, text, author, association)
+            if before is not None:
+                site.pulls[number]["updated_at"] = before
+        site.comment = comment_that_moves_nothing
+        site.reactions += [release(101, "sha-002"), delete_second_push(101)]
+        seen, _ = run(site, "C6")
+        self.assertEqual(seen.status, "failed", seen.as_dict())
+        missed = [e["expectation"] for e in seen.expectations if not e["holds"]]
+        self.assertEqual(missed, ["the comment moved the draft's updated_at"])
+
+    def test_c6_names_a_refused_rename_and_asks_nothing_that_depends_on_it(self):
         site = FakeSite()
         site.reactions.append(release(101, "sha-002", refuse_rename=True))
         seen, _ = run(site, "C6")
         self.assertEqual(seen.status, "failed")
         missed = [e["expectation"] for e in seen.expectations if not e["holds"]]
         self.assertEqual(missed[0], "the branch is renamed to released/101-sha-002 and the claim's name is free")
+        asked = [e["expectation"] for e in seen.expectations]
+        for depends in ("the rename closed the draft", "the board says once on the issue where the branch went",
+                        "the freed name takes a push at the released head"):
+            self.assertNotIn(depends, asked)
+        self.assertNotIn("second push at the released head", seen.values)
+        said = [note for note in seen.notes if note.startswith("the rename did not come")]
+        self.assertEqual(len(said), 1)
+        self.assertIn("the board says GitHub refused the rename", said[0])
+        self.assertIn(canary.RULESET, said[0])
+        site = FakeSite()
+        number = site.throwaway("C6")
+        self.assertIn("the board said nothing of a refusal", canary.why_not_renamed(site, number, "released/1-abc1234"))
 
     def test_c7_is_skipped_without_an_administrator(self):
         seen, _ = run(FakeSite(), "C7")
@@ -525,6 +623,32 @@ class TheChecks(unittest.TestCase):
         self.assertEqual(records[0].notes, ["stopped: no issue"])
         self.assertTrue(site.cleaned)
 
+    def test_a_refused_token_stops_the_checks_that_follow(self):
+        """A 401 is the token itself refused: every later call would be
+        refused too, so the checks after it are not run, and nothing reads
+        as the library failing."""
+        site = FakeSite()
+        site.throwaway = lambda check: (_ for _ in ()).throw(canary.GitHubError("POST /x: HTTP 401", 401))
+        records = canary.run_checks(site, ["C1", "C3"], frozenset(), io.StringIO())
+        self.assertEqual([r.status for r in records], ["failed", "skipped"])
+        self.assertIn("GitHub refused the token itself (401)", records[0].notes[1])
+        self.assertEqual(records[1].notes, ["not run: GitHub refused the token in an earlier check (401)"])
+        self.assertTrue(site.cleaned)
+
+    def test_the_token_s_hour_stops_the_checks_and_leaves_the_clean_up(self):
+        site = FakeSite()
+        site.expire_at_tick = 0
+        records = canary.run_checks(site, ["C1", "C3"], frozenset(), io.StringIO())
+        self.assertEqual([r.status for r in records], ["failed", "skipped"])
+        self.assertEqual(records[0].notes, ["stopped: the run reached its token's hour"])
+        self.assertEqual(records[1].notes, ["not run: an earlier check reached the token's hour"])
+        self.assertTrue(site.cleaned)
+        site = FakeSite()
+        site.expired = True
+        records = canary.run_checks(site, ["C1"], frozenset(), io.StringIO())
+        self.assertEqual(records[0].status, "skipped")
+        self.assertEqual(records[0].notes, ["not run: the run reached its token's hour before this check started"])
+
 
 class TheRecords(unittest.TestCase):
     def records(self):
@@ -541,9 +665,31 @@ class TheRecords(unittest.TestCase):
         self.assertIn("vendoring sdlc-protocol 0.4.1 438844f. A failed expectation is known for: F2, F9 (as built); "
                       "F12 (fixed after 0.4.1).", text)
         self.assertIn("- C1: passed, 3 of 3 expectations held", text)
-        self.assertIn("- C2: failed, 3 of 4 expectations held", text)
+        self.assertIn("- C2: failed, 4 of 5 expectations held", text)
         self.assertIn("- C2: did not hold: something more", text)
         self.assertIn("known for: none.", canary.summary(records, "v", "o/r"))
+
+    def test_a_missed_expectation_is_marked_known_by_itself(self):
+        """A check can miss a known expectation and a new one: the known
+        one says so on its line, the new one does not, and the check is
+        failed; a check that missed only known ones is known."""
+        seen = canary.Seen("C2", frozenset({"F12"}))
+        seen.expect("the word", False, "F12")
+        seen.expect("the run", False)
+        seen.expect("held", True, "F12")
+        self.assertEqual(seen.status, "failed")
+        self.assertEqual([e["known"] for e in seen.expectations], [True, False, False])
+        text = canary.summary([seen], "v", "o/r", frozenset({"F12"}))
+        self.assertIn("- C2: did not hold: the word (known, F12)\n", text)
+        self.assertIn("- C2: did not hold: the run\n", text)
+        with tempfile.TemporaryDirectory() as scratch:
+            data = canary.write_results(Path(scratch) / "c.json", [seen], "v", "o/r", ["C2"], frozenset({"F12"}))
+        issue = canary.issue_text(data, None)
+        self.assertIn("- did not hold: the word (known, F12)\n", issue)
+        self.assertIn("- did not hold: the run\n", issue)
+        only_known = canary.Seen("C2", frozenset({"F12"}))
+        only_known.expect("the word", False, "F12")
+        self.assertEqual(only_known.status, "known")
 
     def test_a_failed_expectation_is_known_for_what_the_vendored_release_still_has(self):
         """The canary runs the release the canary repository vendors, not
@@ -572,7 +718,8 @@ class TheRecords(unittest.TestCase):
             self.assertEqual(data["known_for"], ["F2", "F9", "F13", "F14"])
             self.assertEqual(data["results"][0]["status"], "failed")
             text = canary.issue_text(data, None)
-            self.assertIn("A failed expectation was known for F2, F9, F13, F14; what follows is new.", text)
+            self.assertIn("This run reads a missed expectation as known when it fails for F2, F9, F13, F14, which "
+                          "the vendored release still has", text)
 
     def test_the_records_file_and_the_issue(self):
         records = self.records()
@@ -624,6 +771,24 @@ class TheRecords(unittest.TestCase):
             self.assertIn("not adopted yet", summary.read_text())
         self.assertIn("Not ready", out.getvalue())
 
+    def test_a_first_read_refused_is_not_ready(self):
+        """A token that does not reach the repository is the run's set-up,
+        said in the summary with exit 2, not a check failing."""
+        site = FakeSite()
+        site.main_file = lambda path: (_ for _ in ()).throw(canary.GitHubError("GET /x: HTTP 403", 403))
+        out = io.StringIO()
+        with tempfile.TemporaryDirectory() as scratch:
+            summary = Path(scratch) / "summary.md"
+            self.assertEqual(canary.run_site(site, ["C1"], Path(scratch) / "c.json", summary, out), 2)
+            self.assertIn("Not ready: GitHub refused the first read", summary.read_text())
+        self.assertFalse(site.swept, "no check ran")
+
+    def test_the_summary_takes_a_character_outside_ascii(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            path = Path(scratch) / "summary.md"
+            canary.append(path, "git said claude/caf\u00e9\n")
+            self.assertEqual(path.read_bytes(), b"git said claude/caf\\xe9\n")
+
     def test_run_site_exits_1_on_a_failed_check_and_0_on_a_known_one(self):
         out = io.StringIO()
         with tempfile.TemporaryDirectory() as scratch:
@@ -637,10 +802,21 @@ class TheRecords(unittest.TestCase):
         self.assertEqual(canary.main(["list"], out), 0)
         self.assertIn("C6: a release end to end", out.getvalue())
         self.assertIn("(monthly)", out.getvalue())
-        env = dict(os.environ)
-        env.pop("CANARY_TOKEN", None)
+        env = {name: value for name, value in os.environ.items() if name not in ("CANARY_TOKEN", "CANARY_REPO")}
         done = subprocess.run([sys.executable, str(ROOT / "scripts" / "canary.py"), "run"], capture_output=True,
                               text=True, env=env)
+        self.assertEqual(done.returncode, 2)
+        self.assertIn("CANARY_TOKEN is not set", done.stdout)
+
+    def test_the_script_runs_on_the_canary_alone_unless_told(self):
+        """The checks merge into the default branch and close every issue
+        titled "canary ", so another repository takes --any-repository."""
+        out = io.StringIO()
+        self.assertEqual(canary.main(["run", "--repo", "o/r"], out), 2)
+        self.assertIn("--any-repository", out.getvalue())
+        env = {name: value for name, value in os.environ.items() if name not in ("CANARY_TOKEN", "CANARY_REPO")}
+        done = subprocess.run([sys.executable, str(ROOT / "scripts" / "canary.py"), "run", "--repo", "o/r",
+                               "--any-repository"], capture_output=True, text=True, env=env)
         self.assertEqual(done.returncode, 2)
         self.assertIn("CANARY_TOKEN is not set", done.stdout)
 
@@ -790,9 +966,7 @@ class TheSite(unittest.TestCase):
         self.assertIsNone(site.branch_sha("released/5-abc1234"))
         self.assertEqual(site.main_sha(), "m1")
         site.delete_branch("claude/9")
-        site.delete_branch("gone")
-        self.assertEqual(self.paths(opener, "DELETE"),
-                         ["/repos/o/r/git/refs/heads/claude/9", "/repos/o/r/git/refs/heads/gone"])
+        self.assertEqual(self.paths(opener, "DELETE"), ["/repos/o/r/git/refs/heads/claude/9"])
         for call in opener.calls:
             self.assertNotIn(TOKEN, call.full_url)
             self.assertEqual(call.get_header("Authorization"), f"Bearer {TOKEN}")
@@ -813,12 +987,12 @@ class TheSite(unittest.TestCase):
         self.assertNotIn(listed(runs_path, created=">=2026-10-14T04:00:00Z"), self.paths(opener, "GET"))
         site, _ = self.site(answers, runs_allowed=True)
         self.assertEqual(site.runs_since(since), [{"event": "push"}])
-        for status in (403, 404):
+        site, _ = self.site({listed(runs_path, created=">=2026-10-14T04:00:00Z"): Refusal(403)}, runs_allowed=True)
+        self.assertIsNone(site.runs_since(since), "a 403 is the permission missing, not a failure")
+        for status in (404, 500):
             site, _ = self.site({listed(runs_path, created=">=2026-10-14T04:00:00Z"): Refusal(status)}, runs_allowed=True)
-            self.assertIsNone(site.runs_since(since), f"a {status} is the permission missing, not a failure")
-        site, _ = self.site({listed(runs_path, created=">=2026-10-14T04:00:00Z"): Refusal(500)}, runs_allowed=True)
-        with self.assertRaises(canary.GitHubError):
-            site.runs_since(since)
+            with self.assertRaises(canary.GitHubError, msg=f"a {status} is the copy's or GitHub's, not the token's"):
+                site.runs_since(since)
 
     def test_it_opens_labels_comments_pokes_and_closes_issues(self):
         site, opener = self.site({
@@ -943,6 +1117,20 @@ class TheSite(unittest.TestCase):
         self.assertEqual((value, held, waits), ("not read: GET /repos/o/r/flaky: HTTP 502", False, [10, 10]))
         self.assertEqual(len(self.paths(opener, "GET")), 4)
 
+    def test_wait_stops_the_check_on_a_refused_token_and_at_the_token_s_hour(self):
+        site, _ = self.site({"/repos/o/r/expired": Refusal(401)})
+        with self.assertRaises(canary.GitHubError) as raised:
+            site.wait(lambda: site.api.get("/repos/o/r/expired"), lambda v: True)
+        self.assertEqual(raised.exception.status, 401)
+        self.assertFalse(site.out_of_time())
+        site.deadline = site.now()
+        self.assertTrue(site.out_of_time())
+        reads = []
+        with self.assertRaises(canary.OutOfTime):
+            site.wait(lambda: reads.append(1), lambda v: True)
+        self.assertEqual(reads, [], "nothing is read once the hour is up")
+        self.assertLess(canary.TOKEN_LIFE, timedelta(hours=1))
+
 
 class TheEnvironment(unittest.TestCase):
     def test_the_token_reaches_git_through_the_environment_alone(self):
@@ -974,6 +1162,7 @@ class TheEnvironment(unittest.TestCase):
         self.assertIn('cron: "43 4 3 * *"', text)
         self.assertIn("workflow_dispatch", text)
         self.assertIn("permission-actions: read", text)
+        self.assertIn("timeout-minutes: 75", text)
         self.assertIn("SDLC_APP_PRIVATE_KEY", text)
         self.assertIn("issues: write", text)
         self.assertEqual(text.count("CANARY_RUNS:"), 1)
@@ -984,7 +1173,7 @@ class TheEnvironment(unittest.TestCase):
         text = canary.claim_text("o/r", 12, "canary", "plan")
         self.assertTrue(text.startswith("# Claim: #12\n\n- Issue: https://github.com/o/r/issues/12\n- Worker: canary\n"
                                         "- Branch: claude/12\n\n## Plan\n\nplan\n\n## Files to touch\n\n- docs/canary/12.md\n"))
-        self.assertEqual(claims.claim_worker(text) if hasattr(claims, "claim_worker") else "canary", "canary")
+        self.assertEqual(claims.claim_worker(text), "canary")
 
 
 if __name__ == "__main__":

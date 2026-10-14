@@ -22,7 +22,12 @@ check fails.
 
 The environment: CANARY_TOKEN, an installation token of SymphonyBoard for
 the canary repository alone, with contents, issues and pull requests write;
-CANARY_REPO, the repository as OWNER/NAME (the default is the canary);
+an installation token lives an hour, so a run stops its checks at
+TOKEN_LIFE after it starts and cleans up while the token still works;
+CANARY_REPO, the repository as OWNER/NAME (the default is the canary, and
+any other is refused unless --any-repository says so on purpose, since a
+run merges into that repository's default branch and closes its issues
+titled "canary ");
 CANARY_RUNS, "true" when that token may list workflow runs, which C2 and C6
 need for their run counts and which the App has only once the owner adds
 Actions read to it; CANARY_ADMIN_TOKEN, a token with Administration on the
@@ -55,8 +60,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from sdlc_protocol import board, claims, labels, vendoring  # noqa: E402
-from sdlc_protocol.adapters.github import GitHub, GitHubError  # noqa: E402
+from sdlc_protocol import board, claims, gate, labels, vendoring  # noqa: E402
+from sdlc_protocol.adapters.github import GitHub, GitHubError, check_word  # noqa: E402
 from validation import known, page  # noqa: E402
 
 CANARY_REPO = "OpenSpineConsortium/symphony-protocol-canary"
@@ -68,6 +73,19 @@ WORKER = "canary"
 POLL_EVERY = 10
 POLL_BUDGET = 300
 CHECK_BUDGET = 900
+# The board runs a merge fires wait their turn in the copy's concurrency
+# group (queue: max), each a board run of about a minute, so the run the
+# push to main started may finish some minutes after the merge.
+RUNS_BUDGET = 600
+# An installation token lives 60 minutes from its mint; the run stops its
+# checks five minutes short of that, from when the site is made, so the
+# clean-up still has a token that works. A token minted by hand some
+# time before the run lives less than this says.
+TOKEN_LIFE = timedelta(minutes=55)
+# GitHub writes a pull request's updated_at in whole seconds, so C6 waits
+# this long between reading it and commenting, or the comment could land
+# in the same second and look as if it moved nothing.
+UPDATED_AT_TICK = 2
 # What C6 and C7 push: a commit whose committer date is a day and an hour
 # back, past the spec's 24 hours, so the next board run releases the claim.
 BACKDATED = timedelta(hours=25)
@@ -87,13 +105,21 @@ class CanaryError(Exception):
     """A check that could not go on: what was asked and what GitHub said."""
 
 
+class OutOfTime(CanaryError):
+    """The run reached TOKEN_LIFE: the token is about to expire, and every
+    call after that would be refused, which would read as the library
+    failing."""
+
+
 # --- what a check records ---------------------------------------------------
 
 class Seen:
     """One check's record: its expectations, each a sentence with whether
-    it held, the values it saw, and its status, which is failed on the
-    first expectation that does not hold, or known when that expectation
-    fails for a finding still listed as built."""
+    it held and whether a miss of it is known, the values it saw, and its
+    status, which is failed when an expectation that is not known does not
+    hold, and known when every expectation that does not hold fails for a
+    finding the run reads as known (known_for: as built on main, or fixed
+    on main after the version the canary vendors)."""
 
     def __init__(self, check, known_findings=frozenset()):
         self.check = check
@@ -105,9 +131,10 @@ class Seen:
 
     def expect(self, sentence, holds, finding=None):
         holds = bool(holds)
-        self.expectations.append({"expectation": sentence, "holds": holds, "finding": finding})
+        known_miss = not holds and bool(finding) and finding in self.known_findings
+        self.expectations.append({"expectation": sentence, "holds": holds, "finding": finding, "known": known_miss})
         if not holds and self.status != "failed":
-            self.status = "known" if finding and finding in self.known_findings else "failed"
+            self.status = "known" if known_miss else "failed"
         return holds
 
     def note(self, sentence):
@@ -283,21 +310,36 @@ class Site:
         self.pulls = []
         self.extra_branches = []
         self.clones = 0
+        self.deadline = self.now() + TOKEN_LIFE
 
     # -- waiting --------------------------------------------------------------
 
     def now(self):
         return datetime.now(timezone.utc)
 
+    def out_of_time(self):
+        return self.now() >= self.deadline
+
+    def mind_the_clock(self):
+        if self.out_of_time():
+            raise OutOfTime(f"the run reached its token's hour (TOKEN_LIFE, {int(TOKEN_LIFE.total_seconds() // 60)} "
+                            f"minutes after it started), so it stopped before the token expired")
+
     def wait(self, read, holds, budget=POLL_BUDGET, every=POLL_EVERY):
         """Read until holds(value), at most budget seconds: the value and
         whether it held. A read GitHub refuses for the moment is tried
-        again at the next tick."""
+        again at the next tick; a 403 is the token's permission and ends
+        the wait at once; a 401 is the token itself refused and ends the
+        check, as reaching the token's hour does (OutOfTime), since every
+        later call would be refused too."""
         waited = 0
         while True:
+            self.mind_the_clock()
             try:
                 value = read()
             except GitHubError as problem:
+                if problem.status == 401:
+                    raise
                 value = f"not read: {problem}"
                 if problem.status == 403:
                     return value, False
@@ -351,8 +393,11 @@ class Site:
 
     def runs_since(self, when):
         """The board workflow's runs created since when, or None when the
-        token may not list them: the App has no Actions read until the
-        owner adds it (DESIGN.md, section 11)."""
+        token may not list them: it was minted without Actions read, which
+        the App lacks until the owner adds it (DESIGN.md, section 11), or
+        GitHub refused the list (403). A 404 is no workflow board.yml in
+        the copy, which is the copy's fault, not the token's, and stops the
+        check with its path."""
         if not self.runs_allowed:
             return None
         stamp = when.strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -360,7 +405,7 @@ class Site:
             pages = self.api.pages(f"/repos/{self.repo}/actions/workflows/board.yml/runs", {"created": f">={stamp}"})
             return [run for found in pages for run in (found or {}).get("workflow_runs", [])]
         except GitHubError as problem:
-            if problem.status in (403, 404):
+            if problem.status == 403:
                 return None
             raise
 
@@ -572,8 +617,26 @@ def by_event(runs):
     return counted
 
 
+RUNS_NOT_READ = ("the board's runs were not read: the token may not list workflow runs, since it was minted without "
+                 "Actions read (the App lacks it until the owner adds it to SymphonyBoard, or the mint that asks for "
+                 "it failed this run, which its step in the run's log shows) or GitHub refused the list")
+
+
 def check_finished(runs):
     return any(r.get("name") == "check" and r.get("status") == "completed" for r in runs)
+
+
+def check_passed(runs):
+    """Whether the required check, named check, passed on the commit: the
+    gate's own reading of the runs, red winning over pending."""
+    return check_word(runs, "check") == gate.GREEN
+
+
+def push_to_main_done(runs, default_branch):
+    """Whether a run the push to the default branch started has finished,
+    cancelled included, so its conclusion can be judged."""
+    return any(r.get("event") == "push" and r.get("head_branch") == default_branch and r.get("status") == "completed"
+               for r in runs or [])
 
 
 def wait_for_board(site, seen, sentence, holds, finding=None, budget=POLL_BUDGET):
@@ -638,11 +701,12 @@ def check_c2(site, seen):
     """A merge fires four events at once, beside a worker's push: whether
     the pull request behind main hears "main moved" for main's new commit,
     judged by the state, the marker on the pull request within the budget
-    whichever run posts it, as the library tells it since F12's fix;
-    whether the push to main's run survives the concurrency group, which
-    the copies' board.yml keeps with queue: max, F12's other half; and what
-    each event's run did. Both are F12's while the canary vendors a
-    release without the fix."""
+    whichever run posts it, as the library tells it since F12's fix, and
+    read as known (F12) while the canary vendors a release without that
+    fix; whether the push to main's run survives the concurrency group,
+    which the copy's board.yml keeps with queue: max, F12's other half,
+    which the template brings and no release of the library changes, so
+    it is never read as known; and what each event's run did."""
     behind, merged = site.throwaway("C2 behind"), site.throwaway("C2 merged")
     clone_behind, clone_merged = site.clone(), site.clone()
     for clone, number in ((clone_behind, behind), (clone_merged, merged)):
@@ -656,17 +720,28 @@ def check_c2(site, seen):
     pull_behind = site.open_pull(claims.branch_of(behind), f"canary C2: stays behind, #{behind}", f"Closes #{behind}", False)
     pull_merged = site.open_pull(claims.branch_of(merged), f"canary C2: merged, #{merged}", f"Closes #{merged}", False)
     # Both pull requests have their check done before the merge: the merge
-    # needs it on one, and the other must not read as blocked, which hides
-    # how it stands to main, when the push to main's run looks at it.
-    for which, clone in (("merged", clone_merged), ("behind", clone_behind)):
+    # needs it on one, and the other must have passed it, since GitHub
+    # reads a pull request whose required check failed or is pending as
+    # blocked, which hides how it stands to main, and the board tells
+    # "main moved" only to one it reads as behind or conflicting.
+    for which, clone, ready in (("merged", clone_merged, check_finished), ("behind", clone_behind, check_passed)):
         head = clone.head()
-        runs, done = site.wait(lambda: site.check_runs(head), check_finished, budget=CHECK_BUDGET)
+        runs, done = site.wait(lambda: site.check_runs(head), ready, budget=CHECK_BUDGET)
         checks = {r.get("name"): r.get("conclusion") or r.get("status") for r in (runs if isinstance(runs, list) else [])}
         if not isinstance(runs, list):
             seen.note(str(runs))
         seen.values[f"checks on the {which} head"] = checks
-        if not done:
-            seen.note(f"no check named check finished on the {which} head within the budget; going on anyway")
+        if which == "merged" and not done:
+            seen.note("no check named check finished on the merged head within the budget; going on anyway")
+        if which == "behind":
+            # A miss here is the copy's or the canary's, never F12's, so the
+            # word is not judged on top of it, which would read as F12.
+            judge_the_word = seen.expect("the check passed on the pull request left behind, so GitHub can say how it "
+                                         "stands to main", done)
+            if not done:
+                seen.note(f"the main-moved expectation was not judged: the check on the pull request left behind "
+                          f"stood at {checks.get('check', 'no run named check')} at the end of the budget, and GitHub "
+                          f"reads a pull request whose required check failed or is pending as blocked")
     # The worker's push beside the merge goes to a claim with no pull
     # request, so the merge's four events meet one skipped run and nothing
     # changes the pull request left behind while it waits for the word.
@@ -686,18 +761,36 @@ def check_c2(site, seen):
         return
     main_sha = site.main_sha() or ""
     seen.values["main"] = main_sha
-    marker = board.MAIN_MOVED_MARKER.format(sha=board.short_sha(main_sha))
-    comments, heard = site.wait(lambda: site.comments(pull_behind), lambda cs: bool(has_marker(cs, marker)))
-    seen.expect("the pull request behind main hears main moved for main's new commit", heard, finding="F12")
+    queued = "queue: max" in (site.main_file(".github/workflows/board.yml") or "")
+    seen.values["board.yml queues its runs"] = queued
+    if not queued:
+        seen.note("the copy's board.yml does not queue its runs (queue: max), F12's half that the template brings and "
+                  "no release of the library changes: adopt the copy from the current template")
+    if judge_the_word:
+        marker = board.MAIN_MOVED_MARKER.format(sha=board.short_sha(main_sha))
+        comments, heard = site.wait(lambda: site.comments(pull_behind), lambda cs: bool(has_marker(cs, marker)))
+        seen.expect("the pull request behind main hears main moved for main's new commit", heard, finding="F12")
+    # How GitHub stands the pull request left behind to main, so a missed
+    # word names its cause: behind with no word is the library's; blocked
+    # is the check; clean is a ruleset that does not ask for an up-to-date
+    # branch.
+    detail, _ = site.wait(lambda: site.pull(pull_behind), mergeability_computed, budget=60, every=3)
+    seen.values["the pull request left behind after the merge"] = (detail if isinstance(detail, dict) else {}).get(
+        "mergeable_state")
     runs = site.runs_since(since)
     if runs is None:
-        seen.note("the board's runs were not read: the token has no Actions read (the owner adds it to SymphonyBoard)")
+        seen.note(RUNS_NOT_READ)
         return
+    runs, _ = site.wait(lambda: site.runs_since(since), lambda found: push_to_main_done(found, site.default_branch),
+                        budget=RUNS_BUDGET)
+    runs = runs if isinstance(runs, list) else []
     seen.values["board runs by event"] = by_event(runs)
-    seen.values["board.yml queues its runs"] = "queue: max" in (site.main_file(".github/workflows/board.yml") or "")
     to_main = [r for r in runs if r.get("event") == "push" and r.get("head_branch") == site.default_branch]
+    if not push_to_main_done(runs, site.default_branch):
+        seen.note("no board run the push to main started had finished within the budget")
     seen.expect("the push to main started a board run that was not cancelled",
-                any(r.get("conclusion") not in ("cancelled", "skipped") for r in to_main), finding="F12")
+                any(r.get("status") == "completed" and r.get("conclusion") not in ("cancelled", "skipped")
+                    for r in to_main))
 
 
 def check_c3(site, seen):
@@ -769,8 +862,11 @@ def check_c6(site, seen):
         raise CanaryError(f"the claim was not taken: {pushed.words}")
     announce(site, number)
     pull = site.open_pull(branch, f"canary C6: a draft for #{number}", f"Closes #{number}", True)
+    updated = {"after the open": site.pull(pull).get("updated_at")}
+    site.sleep(UPDATED_AT_TICK)
     site.comment(pull, "A comment on the draft, before the backdated push.")
-    updated = {"after the comment": site.pull(pull).get("updated_at")}
+    updated["after the comment"], by_comment = site.wait(
+        lambda: site.pull(pull).get("updated_at"), moved_from(updated["after the open"]), budget=60)
     wait_for_board(site, seen, "the board lists the claim before the backdated push",
                    lambda text: claim_row(text, number) is not None)
     head = clone.commit({canary_file(number): FILE_TEXT}, "Work, dated 25 hours back", site.now() - BACKDATED)
@@ -778,14 +874,14 @@ def check_c6(site, seen):
     pushed = clone.push(branch)
     if not pushed.ok:
         raise CanaryError(f"the backdated push was not taken: {pushed.words}")
-    updated["after the push"], _ = site.wait(lambda: site.pull(pull).get("updated_at"),
-                                             lambda found: found != updated["after the comment"], budget=60)
+    updated["after the push"], by_push = site.wait(
+        lambda: site.pull(pull).get("updated_at"), moved_from(updated["after the comment"]), budget=60)
     seen.values["draft updated_at"] = updated
     # The push's runs may be the ones a burst replaces; one more event,
     # nothing newer behind it, makes sure a run reads after the commit.
     site.poke(number)
-    seen.expect("the draft's updated_at moved with the comment and with the push",
-                len({v for v in updated.values() if v}) == 2)
+    seen.expect("the comment moved the draft's updated_at", by_comment)
+    seen.expect("the push moved the draft's updated_at", by_push)
     comments, released = site.wait(lambda: site.comments(number),
                                    lambda cs: bool(has_marker(cs, claims.RELEASE_MARKER)))
     if not seen.expect("the coordinator posts the release comment, with its marker first", released):
@@ -803,11 +899,14 @@ def check_c6(site, seen):
     _, kept = site.wait(lambda: (site.branch_sha(renamed), site.branch_sha(branch)),
                         lambda pair: pair[0] == head and pair[1] is None)
     seen.expect(f"the branch is renamed to {renamed} and the claim's name is free", kept)
-    state, closed = site.wait(lambda: site.pull(pull).get("state"), lambda found: found == "closed")
-    seen.expect("the rename closed the draft", closed)
-    marker = board.RELEASED_MARKER.format(branch=renamed)
-    comments, said = site.wait(lambda: site.comments(number), lambda cs: len(has_marker(cs, marker)) == 1)
-    seen.expect("the board says once on the issue where the branch went", said)
+    if kept:
+        state, closed = site.wait(lambda: site.pull(pull).get("state"), lambda found: found == "closed")
+        seen.expect("the rename closed the draft", closed)
+        marker = board.RELEASED_MARKER.format(branch=renamed)
+        comments, said = site.wait(lambda: site.comments(number), lambda cs: len(has_marker(cs, marker)) == 1)
+        seen.expect("the board says once on the issue where the branch went", said)
+    else:
+        seen.note(why_not_renamed(site, number, renamed))
     wait_for_board(site, seen, "the issue is back in the Queue and the claim is off the board",
                    lambda text: number in page.queue(text) and claim_row(text, number) is None)
     runs = site.runs_since(since)
@@ -816,7 +915,9 @@ def check_c6(site, seen):
         seen.expect("the board's own pushes started no board run",
                     not any(r.get("head_branch") == "board" for r in runs))
     else:
-        seen.note("the board's runs were not read: the token has no Actions read")
+        seen.note(RUNS_NOT_READ)
+    if not kept:
+        return
     again = clone.push(branch)
     seen.values["second push at the released head"] = again.as_dict()
     if not seen.expect("the freed name takes a push at the released head", again.ok):
@@ -825,6 +926,25 @@ def check_c6(site, seen):
     _, deleted = site.wait(lambda: (site.branch_sha(branch), site.branch_sha(renamed)),
                            lambda pair: pair[0] is None and pair[1] == head)
     seen.expect("the next run deletes the second push, since the released branch keeps its head", deleted)
+
+
+def moved_from(before):
+    """A wait's test that a pull request's updated_at moved past before: a
+    value read and different, never None."""
+    return lambda found: bool(found) and found != before
+
+
+def why_not_renamed(site, number, renamed):
+    """The note when C6's rename did not come, naming the board's own word
+    when it said GitHub refused the rename, as a ruleset over claude/**
+    does (a C7 run killed before it removed its ruleset leaves one); the
+    draft's closing, the word on where the branch went and the second push
+    of the freed name depend on the rename, so they are not asked."""
+    said = has_marker(site.comments(number), board.RENAME_REFUSED_MARKER.format(branch=renamed))
+    cause = ("the board says GitHub refused the rename, as a ruleset over claude/** makes it do (one named "
+             f"{RULESET!r} is a C7 run's that was killed before it removed it: delete it under the canary repository's "
+             "Settings, Rules, Rulesets)") if said else "the board said nothing of a refusal"
+    return f"the rename did not come within the budget: {cause}; what depends on it was not asked"
 
 
 def check_c7(site, seen):
@@ -948,18 +1068,33 @@ def run_checks(site, names, known_findings=None, out=sys.stdout):
     if known_findings is None:
         known_findings = frozenset(known.AS_BUILT)
     records = []
+    stopped = None
     try:
         for line in site.sweep():
             print(line, file=out, flush=True)
         for name in names:
             seen = Seen(name, known_findings)
+            if stopped is None and site.out_of_time():
+                stopped = "the run reached its token's hour before this check started"
+            if stopped:
+                seen.skip(f"not run: {stopped}")
+                records.append(seen)
+                print(f"{name}: {seen.status}", file=out, flush=True)
+                continue
             check, _ = CHECKS[name]
             print(f"{name}: running", file=out, flush=True)
             started = time.monotonic()
             try:
                 check(site, seen)
+            except OutOfTime as problem:
+                seen.fail(f"stopped: {problem}")
+                stopped = "an earlier check reached the token's hour"
             except (CanaryError, GitHubError) as problem:
                 seen.fail(f"stopped: {problem}")
+                if getattr(problem, "status", None) == 401:
+                    seen.note("GitHub refused the token itself (401): an installation token lives an hour, so the run "
+                              "outlived it or the token was revoked; this says nothing of the library")
+                    stopped = "GitHub refused the token in an earlier check (401)"
             except Exception as problem:  # noqa: BLE001 - a check's crash is a record, kept with the rest
                 seen.fail(f"stopped: {type(problem).__name__}: {problem}")
             seen.values["seconds"] = round(time.monotonic() - started)
@@ -984,12 +1119,16 @@ def summary(records, version, repo, known_findings=frozenset()):
     for seen in records:
         for e in seen.expectations:
             if not e["holds"]:
-                why = f" (known, {e['finding']})" if e["finding"] and seen.status == "known" else ""
-                details.append(f"- {seen.check}: did not hold: {e['expectation']}{why}")
+                details.append(f"- {seen.check}: did not hold: {e['expectation']}{known_suffix(e)}")
         details += [f"- {seen.check}: {note}" for note in seen.notes]
     if details:
         lines += ["", *details]
     return "\n".join(lines) + "\n"
+
+
+def known_suffix(expectation):
+    """What follows a missed expectation's line when the miss is known."""
+    return f" (known, {expectation['finding']})" if expectation.get("known") else ""
 
 
 def write_results(path, records, version, repo, checks_asked, known_findings=frozenset()):
@@ -1012,12 +1151,15 @@ def issue_text(data, run_url):
     lines = [f"The canary on {data.get('repository')} failed on {data.get('ran_at')}, vendoring "
              f"{data.get('vendoring')}. Run: {run_url or '(by hand)'}", ""]
     if data.get("known_for"):
-        lines += [f"A failed expectation was known for {', '.join(data['known_for'])}; what follows is new.", ""]
+        lines += [f"This run reads a missed expectation as known when it fails for {', '.join(data['known_for'])}, "
+                  f"which the vendored release still has; such a line says (known), a check marked known missed "
+                  f"nothing else, and every other line is new.", ""]
     for record in data.get("results", []):
         if record["status"] not in ("failed", "known"):
             continue
         lines.append(f"**{record['check']}: {record['status']}**")
-        lines += [f"- did not hold: {e['expectation']}" for e in record["expectations"] if not e["holds"]]
+        lines += [f"- did not hold: {e['expectation']}{known_suffix(e)}" for e in record["expectations"]
+                  if not e["holds"]]
         lines += [f"- {note}" for note in record["notes"]]
         lines.append("")
     lines.append("The values each check saw are in the run's artifact canary.json. The checks are "
@@ -1054,6 +1196,9 @@ def parse(argv):
     run.add_argument("--out", default="canary-out/canary.json", help="where the records go")
     run.add_argument("--summary", help="a file the job summary is appended to")
     run.add_argument("--repo", default=os.environ.get("CANARY_REPO") or CANARY_REPO)
+    run.add_argument("--any-repository", action="store_true",
+                     help="run on a repository other than the canary, on purpose: the checks merge into its default "
+                          "branch, open issues labelled todo and close any issue or pull request titled 'canary '")
     issue = commands.add_parser("issue", help="open or update the failure issue from a run's records")
     issue.add_argument("records", help="the canary.json a run wrote")
     issue.add_argument("--run-url", default=os.environ.get("CANARY_RUN_URL"))
@@ -1072,6 +1217,11 @@ def main(argv=None, out=sys.stdout):
         api = GitHub(os.environ.get("GITHUB_TOKEN"), os.environ["GITHUB_REPOSITORY"])
         print(open_or_update_issue(api, data, args.run_url), file=out)
         return 0
+    if args.repo != CANARY_REPO and not args.any_repository:
+        print(f"the canary runs on {CANARY_REPO} alone, and {args.repo} is another repository: its checks merge into "
+              f"the default branch and close every issue and pull request titled 'canary ', so pass "
+              f"--any-repository to run there on purpose", file=out)
+        return 2
     token = os.environ.get("CANARY_TOKEN")
     if not token:
         print("CANARY_TOKEN is not set: an installation token for the canary repository is needed", file=out)
@@ -1085,7 +1235,16 @@ def run_site(site, checks, out_path, summary_path, out=sys.stdout):
     """What main does once it has a site: the adoption first, then the
     checks, the records, the summary and the exit code: 0 when every check
     passed or is known, 1 when one failed, 2 when the canary is not ready."""
-    version = adopted(site)
+    try:
+        version = adopted(site)
+    except GitHubError as problem:
+        text = (f"{SUMMARY_HEADING}\n\nNot ready: GitHub refused the first read of {site.repo} ({problem}), so the "
+                f"token does not reach the repository as the run needs: check the mint's repositories and "
+                f"permissions in .github/workflows/canary.yml, and that the App is installed there.\n")
+        print(text, file=out)
+        if summary_path:
+            append(summary_path, text)
+        return 2
     if version is None:
         text = (f"{SUMMARY_HEADING}\n\nNot ready: {site.repo} has no tools/VENDORED on its default branch, so it is "
                 f"not adopted yet. Adopt it through the front door (OpenSpineConsortium/symphony-start, the form "
@@ -1105,7 +1264,11 @@ def run_site(site, checks, out_path, summary_path, out=sys.stdout):
 
 
 def append(path, text):
-    with Path(path).open("a", encoding="ascii") as out:
+    """Add to the job summary in ASCII, a character outside it written as
+    its escape, as ascii_name writes a branch name: a note can quote git's
+    words on a name such as claude/caf\u00e9, and one such character must
+    not lose the summary and the run's exit code."""
+    with Path(path).open("a", encoding="ascii", errors="backslashreplace") as out:
         out.write(text)
 
 
