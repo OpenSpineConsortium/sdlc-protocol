@@ -326,10 +326,11 @@ class FakeGitHub:
 
     def activity(self, query):
         """The repository's activity as far as the model records it: the
-        push that made each branch that stands, newest first, filtered as
-        asked by ref (refs/heads/<name> or the name) and by type; a filter
-        the model records nothing of, any type but branch_creation, answers
-        an empty list, as GitHub does for activity that never happened."""
+        push that made each branch that stands, newest first unless asked
+        for the oldest first (direction asc), filtered as asked by ref
+        (refs/heads/<name> or the name) and by type; a filter the model
+        records nothing of, any type but branch_creation, answers an empty
+        list, as GitHub does for activity that never happened."""
         model = self.model
         ref = query.get("ref", "")
         name = ref[len("refs/heads/"):] if ref.startswith("refs/heads/") else ref
@@ -339,7 +340,7 @@ class FakeGitHub:
         return [{"ref": f"refs/heads/{branch}", "timestamp": iso(at), "activity_type": "branch_creation",
                  "actor": {"login": model.creators.get(branch, "")}, "before": "0" * 40,
                  "after": model.refs.get(branch, "")}
-                for at, branch in sorted(made, reverse=True)]
+                for at, branch in sorted(made, reverse=query.get("direction", "desc") != "asc")]
 
     def rename(self, old, new):
         if old not in self.model.refs:

@@ -207,13 +207,13 @@ def overlaps_list_only_meeting_work_in_landing_order(drafts: tuple, blockers: tu
         assert all(path in w.files for w in works)
         # The spec's order, written out: a blocker first, then work marked
         # ready, then the oldest, the work that began first, work nothing
-        # dates first of all, the number breaking a tie; not landing_key
+        # dates last of all, the number breaking a tie; not landing_key
         # itself, which would check nothing.
         for first, second in zip(works, works[1:]):
             assert first.blocker or not second.blocker
             assert first.blocker != second.blocker or first.ready or not second.ready
             if (first.blocker, first.ready) == (second.blocker, second.ready):
-                assert (first.began != "", first.began, first.number) < (second.began != "", second.began,
+                assert (first.began == "", first.began, first.number) < (second.began == "", second.began,
                                                                        second.number)
     expected = {f for f in itertools.chain(*files) if sum(f in touched for touched in files) > 1}
     assert set(found) == expected

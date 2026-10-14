@@ -124,7 +124,9 @@ class Pull:
     the branch stands where GitHub's word says only that something else
     stops the merge (adapters.github.standing_of). created_at, when the
     pull request was opened, is when its work began where GitHub says
-    nothing of its branch (open_work)."""
+    nothing of its branch (open_work); fork, whether its branch stands in
+    another repository, or in none, a fork since deleted, whose branch a
+    branch of the same name here is not (from_fork)."""
 
     number: int
     title: str = ""
@@ -136,6 +138,7 @@ class Pull:
     draft: bool = False
     standing: str | None = None
     created_at: str = ""
+    fork: bool = False
 
     @property
     def state(self):
@@ -168,6 +171,7 @@ class Pull:
             draft=bool(data.get("draft")),
             standing=data.get("standing"),
             created_at=data.get("created_at") or "",
+            fork=from_fork(data),
         )
 
     def to_dict(self):
@@ -184,7 +188,21 @@ class Pull:
             data["standing"] = self.standing
         if self.created_at:
             data["created_at"] = self.created_at
+        if self.fork:
+            data["fork"] = True
         return data
+
+
+def from_fork(data):
+    """Whether a pull request's branch stands in another repository than the
+    one it would merge into, or in none, a fork since deleted, as the API's
+    head and base name them; a dict that does not name both, as a fixture or
+    a snapshot written by hand, says so by the board's own key fork, which
+    Pull.to_dict writes."""
+    head, base = data.get("head") or {}, (data.get("base") or {}).get("repo") or {}
+    if "repo" not in head or not base.get("full_name"):
+        return bool(data.get("fork"))
+    return ((head.get("repo") or {}).get("full_name") or "").lower() != base["full_name"].lower()
 
 
 @dataclass
@@ -263,7 +281,9 @@ class Snapshot:
     behind each claim branch, what a release reads about a claim by issue
     key, the merges last, and when the work that meets other work began,
     by its branch: when GitHub says the push that made the branch came, as
-    the adapter reads it for the overlaps' landing order (began_at)."""
+    the adapter reads it for the overlaps' landing order (began_at), with
+    GitHub's answer for each branch it refused to date, which the run's log
+    names (adapters.github.began_refused_lines)."""
 
     sha: str = ""
     default_branch: str = "main"
@@ -275,6 +295,7 @@ class Snapshot:
     merged: list = field(default_factory=list)
     releases: dict = field(default_factory=dict)
     began: dict = field(default_factory=dict)
+    began_refused: dict = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, data):
@@ -291,6 +312,7 @@ class Snapshot:
             merged=[Merged.from_dict(m) for m in data.get("merged") or []],
             releases={str(k): Release.from_dict(v or {}) for k, v in (data.get("releases") or {}).items()},
             began={str(k): str(v) for k, v in (data.get("began") or {}).items() if v},
+            began_refused={str(k): str(v) for k, v in (data.get("began_refused") or {}).items()},
         )
 
     def to_dict(self):
@@ -305,7 +327,7 @@ class Snapshot:
             "merged": [m.to_dict() for m in self.merged],
             "releases": {k: v.to_dict() for k, v in self.releases.items()},
             "began": dict(self.began),
-        }
+        } | ({"began_refused": dict(self.began_refused)} if self.began_refused else {})
 
     @classmethod
     def from_json(cls, text):
@@ -668,8 +690,9 @@ class Work(NamedTuple):
     request's or, for a claim with no pull request yet, the issue's; the
     files it changes or, before it changes any, the files its claim says it
     will touch; whether it is marked ready and whether its issue is a
-    blocker; whether it is a pull request at all; its branch; and when it
-    began, as GitHub writes a time, "" when nothing says (open_work)."""
+    blocker; whether it is a pull request at all; its branch, "" for a
+    pull request from a fork; and when it began, as GitHub writes a time,
+    "" when nothing says (open_work)."""
 
     number: int
     files: tuple
@@ -681,11 +704,14 @@ class Work(NamedTuple):
 
 
 # Where work whose beginning nothing says stands in the landing order: with
-# the oldest. A branch GitHub's activity says nothing of was most likely
-# made before the activity began to be recorded, since GitHub's own
-# documentation of it sets no limit on how long it is kept; the number
-# orders such work among itself, as it ordered all work before F13.
-UNKNOWN_START = datetime.min.replace(tzinfo=timezone.utc)
+# the newest. Only a claim with no pull request yet can be such work, since
+# a pull request began at its opening where GitHub says nothing of its
+# branch, and the protocol has a claim open its draft at once (Work in the
+# open), so such a claim is all but always the newest piece; counted as the
+# oldest, a claim GitHub would not date in the run that tells an overlap
+# was told as landing before work days older (F13's review). The number
+# orders such work among itself.
+UNDATED = datetime.max.replace(tzinfo=timezone.utc)
 
 
 def landing_key(work):
@@ -701,13 +727,14 @@ def landing_key(work):
 
 def began_at(text):
     """When a piece of work began, as an aware datetime, from the time
-    GitHub wrote; UNKNOWN_START when there is none or it does not read as
-    a time, since a fixture or a snapshot saved by hand may hold anything
-    and the board never stops for one value."""
+    GitHub wrote; UNDATED when there is none or it does not read as a
+    time, since a fixture or a snapshot saved by hand may hold anything,
+    a number or a list included, and the board never stops for one
+    value."""
     try:
-        return parse_time(text) if text else UNKNOWN_START
-    except (TypeError, ValueError):
-        return UNKNOWN_START
+        return parse_time(text) if text else UNDATED
+    except (AttributeError, TypeError, ValueError):
+        return UNDATED
 
 
 def own_files(files):
@@ -727,9 +754,9 @@ def open_work(snapshot):
     file lists while it changes nothing but that file; and each claim with
     no pull request yet, with the files its claim file lists. Each began
     when the push that made its branch came, as the snapshot holds it by
-    branch, so a claim and the pull request later opened from its branch
-    are one piece that began at the claim; a pull request whose branch the
-    snapshot says nothing of began when it was opened."""
+    branch, and a pull request where pull_began says; a pull request from a
+    fork carries no branch, since its branch is none of this
+    repository's."""
     snap = as_snapshot(snapshot)
     released = released_keys(snap)
     pulls = {p.branch: p for p in snap.pulls}
@@ -740,7 +767,7 @@ def open_work(snapshot):
             continue
         files = own_files(pull.files) or (own_files(claim_files(snap.claims.get(key) or "")) if key else ())
         work.append(Work(pull.number, files, not pull.draft, bool(key) and is_blocker(snap, key), True,
-                         pull.branch, snap.began.get(pull.branch) or pull.created_at))
+                         "" if pull.fork else pull.branch, pull_began(snap, pull)))
     for branch in claim_branches(snap.branches):
         key, number = key_of(branch), number_of(branch)
         if branch in pulls or key in released or number is None:
@@ -748,6 +775,16 @@ def open_work(snapshot):
         files = own_files(claim_files(snap.claims.get(key) or ""))
         work.append(Work(number, files, False, is_blocker(snap, key), False, branch, snap.began.get(branch, "")))
     return sorted(work, key=lambda w: w.number)
+
+
+def pull_began(snap, pull):
+    """When a pull request's work began: when the push that made its branch
+    came, as the snapshot holds it, so a claim and the pull request later
+    opened from its branch are one piece that began at the claim (F13);
+    else, for a pull request from a branch the snapshot says nothing of, or
+    from a fork, whose branch a branch of the same name here is not, when
+    it was opened."""
+    return ("" if pull.fork else snap.began.get(pull.branch, "")) or pull.created_at
 
 
 def overlaps(snapshot):

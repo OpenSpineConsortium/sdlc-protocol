@@ -61,6 +61,10 @@ EFFECT_GUARANTEE = {
 # Statuses that mean a read did not succeed, as against an answer such as
 # 404 that the adapter reads as absence.
 FAILED_READ = 500
+# The reads a board run does without when GitHub refuses them: how a held
+# branch stands (F9) and when a branch began (F13), so a run that fails
+# over one of them breaks G15.
+READS_DONE_WITHOUT = ("/compare/", "/activity")
 # A body that closes issue N, as GitHub reads one: a closing keyword, in
 # any case, then #N and no further digit (spec, Finish: the body says
 # "Closes #N"; Rules: "the body closes its issue").
@@ -99,7 +103,10 @@ def guarantee_of(effect):
 
 
 def reads_failed(calls):
-    return any(c.method == "GET" and (c.status >= FAILED_READ or c.status in (403, 429)) for c in calls)
+    """Whether GitHub refused a read the run needs, which excuses a run that
+    fails; a refused read the run does without excuses nothing."""
+    return any(c.method == "GET" and (c.status >= FAILED_READ or c.status in (403, 429))
+               and not c.path.startswith(READS_DONE_WITHOUT) for c in calls)
 
 
 # --- state ----------------------------------------------------------------------

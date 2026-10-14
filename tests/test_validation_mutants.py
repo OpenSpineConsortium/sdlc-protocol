@@ -68,6 +68,8 @@ TRACES = {
     "each leg dealt from its own look": "the regression traces",
     "given to workers needing the label todo": "the regression traces",
     "the landing order by number": "the regression traces",
+    "a pull request dated by its opening": "the regression traces",
+    "a refused activity read stops the run": "the regression traces",
     "an overlap marker read on any line": ([CLAIM, Verb("claim", "b", (2,)), Verb("overlap-quote", "a", (1, (2,))),
                                             BOARD], SHARED),
     "an overlap marker trusted from any author": ([CLAIM, Verb("claim", "b", (2,)),
@@ -99,7 +101,7 @@ class TheLane(unittest.TestCase):
         since one that undoes it (F7's first), so the bound is widened to
         40 and the count noted."""
         self.assertTrue(10 <= len(mutants.MUTANTS) <= 40)
-        self.assertEqual(len(mutants.MUTANTS), 35)
+        self.assertEqual(len(mutants.MUTANTS), 37)
         self.assertEqual(sorted(TRACES), sorted(mutants.MUTANTS))
 
     def test_every_mutant_names_a_rule_the_library_still_has(self):

@@ -84,8 +84,9 @@ SPEC = {
     "landing order": "a blocker first, since it stops everyone; then work marked ready, which waits only for its "
                      "merge; then the oldest",
     "oldest": "the work that began first, when GitHub says the push that made its branch came, or, for a pull "
-              "request from a branch it says nothing of, when the pull request was opened; work whose beginning "
-              "nothing says counts as the oldest, and the number breaks a tie",
+              "request from a fork or from a branch it says nothing of, when the pull request was opened; work "
+              "whose beginning nothing says, which can only be a claim with no pull request yet, counts as the "
+              "newest, since a claim opens its draft at once (Work in the open), and the number breaks a tie",
     "rename refused": "When GitHub refuses the rename for good, for a ruleset whose target takes in the claim "
                       "branches or a token without the right, the board says so once on the issue",
 }
@@ -97,9 +98,9 @@ FILES_HEADING = "## Files to touch"
 TODO, CLAIMED, IN_REVIEW, BLOCKER, EPIC = "todo", "claimed", "in-review", "blocker", "epic"
 WORKER_SPELLINGS = ("worker:", "account:", "agent:")
 IDLE_MINUTES = 24 * HOUR
-# Where work whose beginning nothing says stands among the oldest
-# (SPEC["oldest"]): before every minute the model counts.
-NOTHING_SAYS = float("-inf")
+# Where work whose beginning nothing says stands, as the newest
+# (SPEC["oldest"]): after every minute the model counts.
+NOTHING_SAYS = float("inf")
 FINISHED = "finished; ready to mark"
 RELEASE_MARKER = "<!-- sdlc-coordinator: claim-released -->"
 OVERLAP_MARKER = re.compile(r"<!-- sdlc-coordinator: overlap ([0-9 ]+) -->")
@@ -368,7 +369,7 @@ def is_blocker(model, number):
 def landing(piece, known=AS_BUILT):
     """SPEC["landing order"], with "the oldest" read as SPEC["oldest"]
     says: the work that began first, work whose beginning nothing says
-    first of all, the number breaking a tie. Until F13's fix the library
+    last of all, the number breaking a tie. Until F13's fix the library
     read it as the lowest number, an issue's and a pull request's alike,
     which the switch F13 read. No finding switches this rule now, and known
     is taken as every rule of the page takes it."""

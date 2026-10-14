@@ -506,7 +506,13 @@ def fixture_answers(name="board.json"):
 def activity_path(branch):
     """The one activity call branch_made_at makes for a branch."""
     return "/repos/o/r/activity?" + urllib.parse.urlencode(
-        {"ref": f"refs/heads/{branch}", "activity_type": "branch_creation", "per_page": 1})
+        {"ref": f"refs/heads/{branch}", "activity_type": "branch_creation", "direction": "desc", "per_page": 1})
+
+
+# The one call newest_creations makes: the whole repository's newest branch
+# creations.
+NEWEST_CREATIONS = "/repos/o/r/activity?" + urllib.parse.urlencode(
+    {"activity_type": "branch_creation", "direction": "desc", "per_page": 100})
 
 
 def made(branch, timestamp, kind="branch_creation"):
@@ -525,6 +531,7 @@ def wide_answers(forks=()):
     for pull in snap["pulls"]:
         detail = {k: v for k, v in pull.items() if k != "files"}
         detail["head"] = dict(detail["head"], repo={"full_name": "x/fork" if pull["number"] in forks else "o/r"})
+        detail["base"] = {"ref": "main", "repo": {"full_name": "o/r"}}
         answers[f"/repos/o/r/pulls/{pull['number']}"] = FakeAnswer(detail)
     return snap, answers
 
@@ -559,32 +566,77 @@ class WhenWorkBegan(unittest.TestCase):
         with self.assertRaises(github.GitHubError):
             github.branch_made_at(api, "claude/7")
 
-    def test_collect_asks_once_for_each_branch_of_work_in_the_overlaps_and_never_for_a_fork(self):
+    def test_one_read_dates_every_branch_the_newest_creations_name(self):
+        page = [made("claude/8", "2026-10-01T10:00:00Z"), made("claude/7", "2026-10-01T09:00:00Z"),
+                made("claude/8", "2026-10-01T08:00:00Z"), made("claude/9", "2026-10-01T07:00:00Z", "push"),
+                made("claude/10", ""), dict(made("claude/9", "2026-10-01T06:00:00Z"), ref=["refs/heads/claude/9"]),
+                "an entry that is no object"]
+        api, opener = client({NEWEST_CREATIONS: FakeAnswer(page)})
+        self.assertEqual(github.newest_creations(api, ["claude/7", "claude/8", "claude/9", "claude/10"]),
+                         {"claude/8": "2026-10-01T10:00:00Z", "claude/7": "2026-10-01T09:00:00Z"})
+        self.assertEqual([c.selector for c in opener.calls], [NEWEST_CREATIONS])
+        for answer in ([], {}, None):
+            with self.subTest(answer=answer):
+                api, _ = client({NEWEST_CREATIONS: FakeAnswer(answer)})
+                self.assertEqual(github.newest_creations(api, ["claude/7"]), {})
+        api, _ = client({NEWEST_CREATIONS: Refusal(502)})
+        with self.assertRaises(github.GitHubError):
+            github.newest_creations(api, ["claude/7"])
+
+    def test_collect_reads_the_newest_creations_once_then_each_branch_they_miss_and_never_a_fork(self):
         snap, answers = wide_answers(forks=(66,))
-        answers[activity_path("claude/22")] = FakeAnswer([made("claude/22", "2026-09-20T08:00:00Z")])
+        answers[NEWEST_CREATIONS] = FakeAnswer([made("claude/22", "2026-09-20T08:00:00Z"),
+                                                made("claude/34", "2026-09-21T08:00:00Z")])
         answers[activity_path("claude/5")] = FakeAnswer([made("claude/5", "2026-09-19T08:00:00Z")])
         api, opener = client(answers)
         found = github.collect(api, snap["sha"], snap["default_branch"])
         self.assertEqual(found["began"], {"claude/22": "2026-09-20T08:00:00Z", "claude/5": "2026-09-19T08:00:00Z"})
-        self.assertEqual(activity_asked(opener), sorted(activity_path(b) for b in ("claude/22", "claude/31", "claude/5")))
+        self.assertNotIn("began_refused", found)
+        self.assertEqual(activity_asked(opener), sorted([NEWEST_CREATIONS] + [activity_path(b) for b in ("claude/31",
+                                                                                                         "claude/5")]))
+
+    def test_nothing_is_read_where_nothing_overlaps(self):
+        snap, answers = fixture_answers()
+        api, opener = client(answers)
+        self.assertEqual(github.collect(api, snap["sha"], snap["default_branch"])["began"], {})
+        self.assertEqual(activity_asked(opener), [])
 
     def test_the_overlaps_land_in_the_order_the_work_began(self):
         snap, answers = wide_answers()
-        answers[activity_path("claude/22")] = FakeAnswer([made("claude/22", "2026-09-20T08:00:00Z")])
-        answers[activity_path("claude/34")] = FakeAnswer([made("claude/34", "2026-09-18T08:00:00Z")])
+        answers[NEWEST_CREATIONS] = FakeAnswer([made("claude/22", "2026-09-20T08:00:00Z"),
+                                                made("claude/34", "2026-09-18T08:00:00Z")])
         api, _ = client(answers)
         self.assertIn("| a.md | #66, #61 |", board.render(github.snapshot(api, snap["sha"], snap["default_branch"])))
 
-    def test_a_refused_read_leaves_that_branch_out_and_fails_no_run(self):
+    def test_a_refused_read_of_the_newest_creations_asks_each_branch_on_its_own(self):
         snap, answers = wide_answers()
+        answers[NEWEST_CREATIONS] = Refusal(502)
         answers[activity_path("claude/22")] = FakeAnswer([made("claude/22", "2026-09-20T08:00:00Z")])
+        answers[activity_path("claude/34")] = FakeAnswer([made("claude/34", "2026-09-18T08:00:00Z")])
+        api, opener = client(answers)
+        found = github.collect(api, snap["sha"], snap["default_branch"])
+        self.assertEqual(found["began"], {"claude/22": "2026-09-20T08:00:00Z", "claude/34": "2026-09-18T08:00:00Z"})
+        self.assertNotIn("began_refused", found)
+        self.assertEqual(activity_asked(opener), sorted([NEWEST_CREATIONS] + [
+            activity_path(b) for b in ("claude/22", "claude/34", "claude/31", "claude/5")]))
+
+    def test_a_refused_read_leaves_that_branch_out_says_so_and_fails_no_run(self):
+        snap, answers = wide_answers()
+        answers[NEWEST_CREATIONS] = FakeAnswer([made("claude/22", "2026-09-20T08:00:00Z")])
         for code in (403, 422, 500, 502, 503):
-            answers[activity_path("claude/31")] = Refusal(code)
+            answers[activity_path("claude/31")] = Refusal(code, {"message": "no"})
             with self.subTest(code=code):
                 api, _ = client(answers)
                 found = github.collect(api, snap["sha"], snap["default_branch"])
                 self.assertEqual(found["began"], {"claude/22": "2026-09-20T08:00:00Z"})
-                self.assertIn("| docs/b.md | #63, #5 |", board.render(board.Snapshot.from_dict(found)))
+                self.assertEqual(list(found["began_refused"]), ["claude/31"])
+                self.assertIn(f"HTTP {code}", found["began_refused"]["claude/31"])
+                live = board.Snapshot.from_dict(found)
+                self.assertIn("| docs/b.md | #63, #5 |", board.render(live))
+                self.assertEqual(github.began_refused_lines(live), [
+                    f"claude/31: GitHub refused to say when the branch was made "
+                    f"({found['began_refused']['claude/31']}), so the Overlaps order its work as work nothing dates"])
+        self.assertEqual(github.began_refused_lines(board.Snapshot.from_dict(snap)), [])
 
 
 class Collect(unittest.TestCase):

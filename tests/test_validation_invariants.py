@@ -271,18 +271,21 @@ class TheOpenFindingsShow(unittest.TestCase):
 
     def test_f13_the_oldest_work_lands_first(self):
         """Found by this step, fixed after 0.4.1: a draft whose branch was
-        made five hours before another claim lands first, as the spec reads
-        the oldest; until the fix the claim landed first, its issue's number
-        being below the pull request's, which the mutant that orders by
-        number again shows."""
-        steps = [Verb("claim", "a", (1,)), Verb("open-draft", "a", (1,)), Verb("wait", "clock", (5,)),
-                 Verb("claim", "b", (2,)), BOARD]
+        made two hours before another claim, and opened two hours after it,
+        lands first, as the spec reads the oldest; until the fix the claim
+        landed first, its issue's number being below the pull request's,
+        which the mutant that orders by number again shows, and so it does
+        under the mutant that dates the draft by its opening (F13's
+        review)."""
+        steps = [Verb("claim", "a", (1,)), Verb("wait", "clock", (2,)), Verb("claim", "b", (2,)),
+                 Verb("wait", "clock", (2,)), Verb("open-draft", "a", (1,)), BOARD]
         self.assertEqual(violations(steps, SHARED, issues=None), [])
-        with mutants.switched_on(mutants.MUTANTS["the landing order by number"]):
-            found = violations(steps, SHARED, issues=None)
-        self.assertEqual([(v.guarantee, v.detail) for v in found],
-                         [("G7", "the board's Overlaps are {'src/shared.py': [2, 100]}, the oracle's "
-                                 "{'src/shared.py': [100, 2]}")])
+        for mutant in ("the landing order by number", "a pull request dated by its opening"):
+            with self.subTest(mutant=mutant), mutants.switched_on(mutants.MUTANTS[mutant]):
+                found = violations(steps, SHARED, issues=None)
+                self.assertEqual([(v.guarantee, v.detail) for v in found],
+                                 [("G7", "the board's Overlaps are {'src/shared.py': [2, 100]}, the oracle's "
+                                         "{'src/shared.py': [100, 2]}")])
 
     def test_f14_an_issue_a_worker_s_label_names_is_shown_under_given_to_workers(self):
         """Found by this step, fixed after 0.4.1: an issue a worker's label
