@@ -162,6 +162,15 @@ class TheKey(unittest.TestCase):
         two models alike but for it behave differently under the board."""
         self.assertTrue(self.differs(lambda m: setattr(m, "opaque_pulls", True)))
 
+    def test_keeps_whether_github_calls_a_branch_behind_clean(self):
+        """The fake answers clean or behind for a branch that is behind by
+        it (F16), so two models alike but for it behave differently."""
+        self.assertTrue(self.differs(lambda m: setattr(m, "lenient_rules", True)))
+        self.assertTrue(self.model.clone().lenient_rules is False)
+        lenient = self.model.clone()
+        lenient.lenient_rules = True
+        self.assertTrue(lenient.clone().lenient_rules)
+
     def test_two_paths_to_one_state_meet(self):
         one, two = self.model.clone(), self.model.clone()
         one.add_label(1, "a", "claimed")

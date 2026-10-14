@@ -78,8 +78,10 @@ class Search(NamedTuple):
     to its start, the scope searched from there and how deep, and the
     violations, as (guarantee, detail), the library as it stands is known
     to meet in it; opaque_pulls has GitHub call every pull request not in
-    conflict blocked, as a rule that holds it does (model.RepoModel), and
-    labels are what the seeded issues carry."""
+    conflict blocked, as a rule that holds it does (model.RepoModel),
+    lenient_rules has it call a branch that is behind clean, as a rule that
+    does not require an up-to-date branch does, and labels are what the
+    seeded issues carry."""
 
     name: str
     prefix: tuple
@@ -89,6 +91,7 @@ class Search(NamedTuple):
     known: tuple = ()
     opaque_pulls: bool = False
     labels: tuple = ("todo",)
+    lenient_rules: bool = False
 
 
 # --- the replacements ---------------------------------------------------------
@@ -308,6 +311,30 @@ def put_labels_on_then(put_back_of):
     return put_labels_on
 
 
+def standing_of_every_word(api, detail, default_branch=None):
+    """github.standing_of reading every word but behind and dirty through
+    the comparison, as the first build of F16's answer did: a pull request
+    GitHub calls clean, unstable or has_hooks while its branch is behind,
+    as under a rule that does not require an up-to-date branch, reads
+    behind and hears "main moved", though the spec says it may merge as it
+    stands."""
+    word = detail.get("mergeable_state")
+    if word in ("behind", "dirty"):
+        return None
+    base = (detail.get("base") or {}).get("ref")
+    if default_branch and base and base != default_branch:
+        return None
+    if word in github.OPAQUE_STATES and not detail.get("mergeable"):
+        return github.standing_word(detail)
+    try:
+        behind = github.behind_by(api, detail, default_branch)
+    except github.GitHubError:
+        behind = None
+    if word in github.OPAQUE_STATES:
+        return github.standing_word(detail, behind)
+    return "behind" if behind else None
+
+
 def given_rows_needing_todo(snap):
     """board.given_rows as built until F14's fix: an issue a worker's label
     names was shown under Given to workers only when it also carried todo
@@ -471,6 +498,10 @@ MUTANTS = {
     "the comparison read by ahead_by": Mutant(
         github, "behind_by", ahead_read_as_behind, "G10",
         "how far a held branch is behind is the comparison's behind_by, the commits of main it lacks, never its own commits (F9)"),
+    "a clean word compared": Mutant(
+        github, "standing_of", standing_of_every_word, "G10",
+        "a pull request GitHub calls clean, unstable or has_hooks is not held for being behind under the "
+        "repository's rules and hears nothing, however far main has moved (F16)"),
     "main moved told only in the push's run": Mutant(
         board, "comments_due", main_moved_only_in_the_push_s_run,
         "G10", "main moved is told by whichever run finds the branch behind, once per commit of main (F12)"),
@@ -708,6 +739,8 @@ SEARCHES = (
            Scope(workers=("a",), people=(M.OWNER, DANA, SAM), waits=(24, 25)), 4),
     Search("a draft GitHub calls blocked", (CLAIM, Verb("open-draft", "a", (1,))),
            Scope(workers=("a",), people=(M.OWNER,), waits=(25,)), 3, opaque_pulls=True),
+    Search("a draft GitHub calls clean while it is behind", (CLAIM, Verb("open-draft", "a", (1,))),
+           Scope(workers=("a",), people=(M.OWNER,), waits=(25,)), 3, lenient_rules=True),
     Search("the holder back between the halves of a run", (CLAIM, CLAIMED, WORKER, Verb("wait", "clock", (25,))),
            Scope(workers=("a",), people=(), waits=(25,), split_board=True), 3),
     Search("a stranger's marker on overlapping claims", (CLAIM, Verb("claim", "b", (2,))),
@@ -723,6 +756,7 @@ def start(search):
     """The search's starting state, with the violations met on its prefix."""
     model = M.seeded(search.issues, writers=("a", "b", "c", CAROL, DANA), labels=search.labels)
     model.opaque_pulls = search.opaque_pulls
+    model.lenient_rules = search.lenient_rules
     cycle.board_run(model)
     found = []
     for step in search.prefix:

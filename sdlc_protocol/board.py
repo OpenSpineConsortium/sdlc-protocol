@@ -561,9 +561,13 @@ class DueComment(NamedTuple):
 
 def comments_due(snapshot, event_name, ref_name, now, idle_after=IDLE_AFTER):
     """What the board says after this run, as (pull number, marker, text).
-    Every pull request behind the default branch or in conflict with it
-    hears so, once per commit of the default branch (the marker carries
-    the short sha), in whichever run first finds it so: the word used to
+    Every pull request behind the default branch or in conflict with it, as
+    its state word says (Pull.state), hears so, once per commit of the
+    default branch (the marker carries the short sha), in whichever run
+    first finds it so; behind is GitHub's word, or, where GitHub says only
+    that something else stops the merge, the comparison's (F9), so one
+    GitHub calls clean, which the repository's rules do not hold for being
+    behind, hears nothing (F16): the word used to
     be owed only by the run the push to the default branch started, and
     that run is lost when the workflow's concurrency group replaces it
     behind a later event's (F12), so the word depends on the state alone,

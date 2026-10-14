@@ -1740,6 +1740,15 @@ class World(unittest.TestCase):
             place, _ = world(pull_answers(state=state))
             self.assertEqual(place.standing("claude/7"), word, state)
 
+    def test_its_standing_never_vouches_a_clean_branch_is_level(self):
+        """GitHub calls a branch clean that a rule not asking for an
+        up-to-date branch lets merge while behind (F16), so the standing the
+        gate reads, which it prefers to the word, keeps GitHub's word and
+        says the branch may not be level."""
+        for state, word in (("clean", "clean"), ("behind", "behind"), ("dirty", "conflicting")):
+            place, _ = world(pull_answers(state=state))
+            self.assertEqual(gate.standing_of(place, "claude/7"), gate.Standing(word, level=False), state)
+
     def test_a_blocked_or_draft_pull_is_read_from_the_comparison(self):
         for state in ("blocked", "draft"):
             for behind_by, word in ((0, "clean"), (2, "behind")):
@@ -1901,10 +1910,16 @@ class Standing(unittest.TestCase):
             self.assertEqual(compares_asked(opener), [], state)
 
     def test_a_state_the_board_reads_as_it_is_gets_no_standing_and_no_compare(self):
-        """clean, behind and dirty already say how the branch stands and
-        unknown is GitHub still computing, so a standing beside them would
-        be a second word for the same thing on a dict no fixture ever held."""
-        for state, mergeable in (("clean", True), ("behind", True), ("dirty", False), ("unknown", None)):
+        """behind and dirty already say how the branch stands and unknown is
+        GitHub still computing, so a standing beside them would be a second
+        word for the same thing on a dict no fixture ever held. clean,
+        unstable and has_hooks say the repository's rules do not hold the
+        pull request for being behind, which they say of a branch behind
+        main only under a rule that does not require an up-to-date branch,
+        and the spec owes such a pull request nothing however far main has
+        moved (F16), so a comparison there could change no answer."""
+        for state, mergeable in (("clean", True), ("unstable", True), ("has_hooks", True), ("behind", True),
+                                 ("dirty", False), ("unknown", None)):
             waits = []
             api, opener = client(detail_answers(state, mergeable=mergeable), waits)
             pull = github.pull_with_detail(api, 7)

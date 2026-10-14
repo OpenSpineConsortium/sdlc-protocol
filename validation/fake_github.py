@@ -35,15 +35,18 @@ template's main ruleset does (C0 read no branch behind); with the model's
 opaque_pulls on, the word is "blocked" wherever the branch is not in
 conflict, with mergeable true, as a rule that holds the pull request
 gives, a required check pending or red or a review not yet given, and the
-comparison carries behind_by (F9); a rename closes the pull request whose
-head the branch is; a rename onto a name that stands answers 422; the
-board posts as github-actions[bot] with the author_association NONE; a
-pull request's updated_at moves with pushes and comments; and the
-repository's activity lists the push that made each branch at GitHub's
-own time, newest first (F13), a renamed branch keeping the time it was
-made, which the model's rename does and no canary check reads yet. Under
-a rule that does not require an up-to-date branch GitHub answers "clean"
-for a branch that is behind, which the fake never does (DESIGN.md, 3.2).
+comparison carries behind_by (F9); with the model's lenient_rules on,
+the word for a branch that is behind is "clean", as GitHub gives under a
+rule that does not require an up-to-date branch or under none (F16), and
+with both on the word is "blocked", since a rule that holds the pull
+request holds it whatever its branch; a
+rename closes the pull request whose head the branch is; a rename onto a
+name that stands answers 422; the board posts as github-actions[bot] with
+the author_association NONE; a pull request's updated_at moves with
+pushes and comments; and the repository's activity lists the push that
+made each branch at GitHub's own time, newest first (F13), a renamed
+branch keeping the time it was made, which the model's rename does and
+no canary check reads yet.
 """
 
 import base64
@@ -311,6 +314,8 @@ class FakeGitHub:
         if seen in self.computed:
             mergeable = standing != "dirty"
             state = "blocked" if model.opaque_pulls and mergeable else standing
+            if state == "behind" and model.lenient_rules:
+                state = "clean"
         else:
             self.computed.add(seen)
             mergeable, state = None, "unknown"

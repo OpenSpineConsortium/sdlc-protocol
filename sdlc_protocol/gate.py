@@ -178,11 +178,16 @@ class MergeRefused(GateError):
 class Standing:
     """How a branch stands to the default branch: a word from STANDINGS (or
     NO_BRANCH, NOTHING_NEW), main's commit, and the conflicting files when
-    the world can name them."""
+    the world can name them. level says whether a clean branch is known to
+    be level with the default branch, as git and the memory world know it;
+    GitHub's word clean says only that the branch merges as it stands,
+    since a rule that does not ask for an up-to-date branch, or none, gives
+    it to a branch that is behind (F16)."""
 
     word: str
     main: str = ""
     conflicts: tuple = ()
+    level: bool = True
 
 
 @dataclass
@@ -673,7 +678,8 @@ def standing_sentence(policy, standing, main, number):
     branch, at = policy.branch_of(number), f"{name} at {short(main)}"
     conflicts = ", ".join(standing.conflicts) or "some files"
     sentences = {
-        CLEAN: f"Against {at}: clean, up to date with {name} and merging cleanly.",
+        CLEAN: (f"Against {at}: clean, up to date with {name} and merging cleanly." if standing.level
+                else f"Against {at}: clean; it merges cleanly with {name} as it stands."),
         BEHIND: f"Against {at}: behind; {name} moved since {branch} branched, but it still merges "
                 f"cleanly, so the gate can merge it as it is.",
         CONFLICTING: f"Against {at}: conflicting; main moved and {branch} no longer merges cleanly with it "

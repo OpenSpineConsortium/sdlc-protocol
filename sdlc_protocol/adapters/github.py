@@ -342,9 +342,16 @@ def standing_of(api, detail, default_branch=None):
     a conflict apart, and the comparison tells behind from clean, as the
     gate's world reads such a pull request (F9: until this the board read
     blocked as blocked and draft as unknown, and neither heard "main
-    moved"). None where GitHub's word is one the board reads as it is, and
-    for a pull request stacked on a branch other than the default branch
-    the caller names, since "main moved" speaks of the default branch. A
+    moved"). None where GitHub's word is one the board reads as it is:
+    behind and dirty say how the branch stands, unknown is GitHub still
+    computing, and clean, unstable and has_hooks say the repository's
+    rules do not hold the pull request for being behind, a draft's as any
+    other's, since GitHub gives a draft the word its branch has (C0), which
+    they say of a branch that is behind only under a rule that does not
+    require an up-to-date branch, or under none, so the spec owes it
+    nothing however far the default branch has moved (F16). None too for a pull request
+    stacked on a branch other than the default branch the caller names,
+    since "main moved" speaks of the default branch. A
     comparison GitHub refuses, a 5xx, a 422 or a rate limit's 403, reads
     as unknown, which keeps GitHub's own word, as the coordinator's own
     comparison does (holding): one pull request GitHub will not compare
@@ -1101,6 +1108,13 @@ class GitHubWorld:
             return gate.UNKNOWN
         found = standing_of(self.api, pull)
         return found if found is not None else standing_word(pull)
+
+    def standing_detail(self, branch):
+        """The branch's gate.Standing, which never says a clean branch is
+        level with the default branch: GitHub's word clean says only that
+        it merges as it stands, behind or not under a rule that does not
+        ask for an up-to-date branch (F16)."""
+        return gate.Standing(self.standing(branch), level=False)
 
     def check(self, branch):
         sha = self.branch_sha(branch)
