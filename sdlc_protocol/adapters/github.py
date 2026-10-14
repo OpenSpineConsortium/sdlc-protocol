@@ -586,19 +586,23 @@ def began_times(api, found, forks=frozenset()):
     records as the pushes reach it, so no clock of a worker's own comes in
     (F13). Only the work in the Overlaps is asked about, one call a branch,
     since the landing order is all the time is for; a pull request from a
-    fork is never asked about, and when GitHub has no such push to give,
-    or no activity at all (a 404), the branch is left out and the board
-    orders that work as work whose beginning nothing says
-    (board.landing_key). Any other failure stops the run, as a failed read
-    of the open issues does, so the order is never drawn or told from half
-    of what GitHub knows."""
+    fork is never asked about. When GitHub has no such push to give, has
+    no activity at all (a 404), or refuses the read (a 5xx, a 422, a rate
+    limit's 403), the branch is left out and the board orders that work as
+    work whose beginning nothing says (board.landing_key), a pull request
+    by when it was opened: the order is the one thing the time is for, and
+    one branch GitHub will not answer for must not fail the board's whole
+    run, as a comparison GitHub refuses does not (standing_of)."""
     times, asked = {}, set()
     for works in board.overlaps(found).values():
         for work in works:
             if not work.branch or work.branch in asked or (work.is_pull and work.number in forks):
                 continue
             asked.add(work.branch)
-            began = branch_made_at(api, work.branch)
+            try:
+                began = branch_made_at(api, work.branch)
+            except GitHubError:
+                continue
             if began:
                 times[work.branch] = began
     return times
@@ -607,7 +611,8 @@ def began_times(api, found, forks=frozenset()):
 def branch_made_at(api, branch):
     """When the newest push that made the branch came, as GitHub writes the
     time, or "" when GitHub records none: the activity list, filtered to the
-    branch and to branch creations, gives the newest first."""
+    branch and to branch creations, gives the newest first. A refusal other
+    than a 404 raises."""
     listed = api.get(f"/repos/{api.repo}/activity", {"ref": f"refs/heads/{branch}",
                                                      "activity_type": "branch_creation", "per_page": 1},
                      missing_ok=True) or []

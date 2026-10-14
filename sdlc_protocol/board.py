@@ -681,9 +681,10 @@ class Work(NamedTuple):
 
 
 # Where work whose beginning nothing says stands in the landing order: with
-# the oldest, since GitHub keeps what its branches did for as long as the
-# repository has existed, so work it says nothing of is the older; the
-# number orders such work among itself, as it ordered all work before F13.
+# the oldest. A branch GitHub's activity says nothing of was most likely
+# made before the activity began to be recorded, since GitHub's own
+# documentation of it sets no limit on how long it is kept; the number
+# orders such work among itself, as it ordered all work before F13.
 UNKNOWN_START = datetime.min.replace(tzinfo=timezone.utc)
 
 
