@@ -228,7 +228,8 @@ class TheSearchesCatchWhatTheyWereAddedFor(unittest.TestCase):
                   "a released epic": (("epic",), {"an epic gets todo": "G3"}),
                   "a released blocker": (("blocker",), {"a blocker gets todo": "G3",
                                                         "the Blockers section left empty": "G9"}),
-                  "a released blocked task": (("blocked",), {"a blocked task gets no todo": "G3"}),
+                  "a released blocked task": (("blocked",), {"a blocked task gets no todo": "G3",
+                                                             "a row without blocked": "G9"}),
                   "a held blocker": (("blocker",), {"the Blockers section without the held blockers": "G9",
                                                     "a held blocker's row without claimed": "G9"}),
                   "a released blocker under every fault": (("blocker",), {

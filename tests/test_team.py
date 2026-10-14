@@ -166,6 +166,17 @@ class NextTest(unittest.TestCase):
         self.api.issues[3]["labels"] = [{"name": "worker:w1"}, {"name": "blocked"}]
         self.assertEqual(team.next_for(self.api, "w1"), "take 2")
 
+    def test_an_epic_is_dealt_to_nobody_with_todo_or_as_a_blocker(self):
+        """Pick never takes an epic, whatever section lists it, since the
+        coordinator plans it (F15's fourth review): the clerk keeps an epic
+        labelled todo or blocker out of the shared pool, and deals the next
+        issue in its place."""
+        self.api.issues[1]["labels"] = [{"name": "epic"}, {"name": "todo"}]
+        self.api.add_issue(2, ["epic", "blocker"])
+        self.assertEqual(team.next_for(self.api, "w1"), "none")
+        self.api.add_issue(3, ["todo"])
+        self.assertEqual(team.deals(self.api, ["w1", "w2"]), {"w1": "take 3", "w2": "none"})
+
     def test_a_claimed_task_is_not_taken_again(self):
         self.api.add_issue(2, ["todo"])
         self.api.branches.add("claude/2")
