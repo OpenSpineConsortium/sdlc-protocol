@@ -138,17 +138,21 @@ class Turns(list):
 
 
 class InTurn(FakeOpener):
-    """A FakeOpener that answers a path given Turns with them in turn."""
+    """A FakeOpener that answers a path given Turns with them in turn, keyed
+    as FakeOpener keys its answers: by path and query for GET and by
+    "METHOD path" otherwise."""
 
     def open(self, call, timeout=None):
-        turns = self.answers.get(call.selector)
+        method = call.get_method()
+        key = call.selector if method == "GET" else f"{method} {call.selector}"
+        turns = self.answers.get(key)
         if not isinstance(turns, Turns):
             return super().open(call, timeout)
-        self.answers = dict(self.answers, **{call.selector: turns[0]})
+        self.answers = dict(self.answers, **{key: turns[0]})
         try:
             return super().open(call, timeout)
         finally:
-            self.answers[call.selector] = Turns(*turns[1:]) if len(turns) > 1 else turns
+            self.answers[key] = Turns(*turns[1:]) if len(turns) > 1 else turns
 
 
 def too_large_to_give(path, ref):
@@ -1227,6 +1231,82 @@ class Coordinate(unittest.TestCase):
             "#12: not released, the comment failed: POST /repos/o/r/issues/12/comments: HTTP 502; putting claimed, "
             "worker:nightly back failed too, so they stay off: POST /repos/o/r/issues/12/labels: HTTP 403: "
             "Resource not accessible"])
+
+    def given_snapshot(self, names=("claimed", "worker:nightly")):
+        """idle_snapshot with issue 12 given to nightly by its label alone,
+        as the coordinator gives a planned task, so it carries no todo."""
+        snap = idle_snapshot()
+        snap.claim_issues["12"].labels = list(names)
+        snap.issues[0].labels = list(names)
+        return snap
+
+    def test_a_release_puts_todo_on_an_issue_given_by_a_label_alone_so_the_queue_lists_it_again(self):
+        """F15: the Queue lists only an issue labelled todo, so until the fix
+        such an issue was shown nowhere once its claim was released."""
+        answers = release_answers()
+        answers[LABELS_12] = FakeAnswer([])
+        snap = self.given_snapshot()
+        api, opener = client(answers)
+        self.assertEqual(github.coordinate(api, snap, NOW), ["#12: claim released, idle since 2026-09-18T12:00:00Z"])
+        self.assertEqual([c.get_method() for c in opener.calls], ["DELETE", "DELETE", "POST", "GET", "POST"])
+        self.assertEqual(opener.sent("POST")[0], {"labels": ["todo"]})
+        self.assertEqual((snap.claim_issues["12"].labels, snap.issues[0].labels), (["todo"], ["todo"]))
+        self.assertEqual(board.released_keys(snap), {"12"})
+        self.assertIn("| #12 | Describe the board | todo |", board.render(snap).split(board.QUEUE_HEADING)[1])
+
+    def test_an_issue_with_todo_or_an_epic_gets_no_label_put_on(self):
+        for names in (("claimed", "todo", "worker:nightly"), ("claimed", "epic", "worker:nightly")):
+            with self.subTest(labels=names):
+                api, opener = client(release_answers())
+                github.coordinate(api, self.given_snapshot(names), NOW)
+                self.assertEqual([c.get_method() for c in opener.calls], ["DELETE", "DELETE", "GET", "POST"])
+
+    def test_a_comment_github_refuses_takes_off_the_todo_the_release_put_on(self):
+        answers = release_answers()
+        answers["POST /repos/o/r/issues/12/comments"] = Refusal(502)
+        answers[COMMENTS_12] = FakeAnswer([])
+        answers[LABELS_12] = FakeAnswer([])
+        answers["DELETE /repos/o/r/issues/12/labels/todo"] = FakeAnswer(None)
+        snap = self.given_snapshot()
+        api, opener = client(answers)
+        self.assertEqual(github.coordinate(api, snap, NOW), [
+            "#12: not released, the comment failed: POST /repos/o/r/issues/12/comments: HTTP 502; claimed, "
+            "worker:nightly put back; todo taken off again"])
+        self.assertEqual([f"{c.get_method()} {c.selector}" for c in opener.calls][-2:], [
+            "POST /repos/o/r/issues/12/labels", "DELETE /repos/o/r/issues/12/labels/todo"])
+        self.assertEqual(opener.sent("POST")[2], {"labels": ["claimed", "worker:nightly"]})
+        self.assertEqual(board.released_keys(snap), set())
+        self.assertEqual(snap.claim_issues["12"].labels, ["claimed", "worker:nightly"])
+
+    def test_todo_github_refuses_puts_the_labels_back_and_takes_off_a_todo_it_may_have_written(self):
+        """GitHub may write a label and lose its answer, so the run takes off
+        the todo whose putting on it was told failed; a 404 says it was
+        never written, which counts as taken off."""
+        for todo_there, said in ((True, "; todo taken off again"), (False, "")):
+            with self.subTest(todo_there=todo_there):
+                answers = release_answers()
+                answers[LABELS_12] = Turns(Refusal(502), FakeAnswer([]))
+                if todo_there:
+                    answers["DELETE /repos/o/r/issues/12/labels/todo"] = FakeAnswer(None)
+                api = github.GitHub("t", "o/r", opener=InTurn(answers), sleep=lambda seconds: None)
+                snap = self.given_snapshot()
+                self.assertEqual(github.coordinate(api, snap, NOW), [
+                    "#12: not released, putting todo on failed: POST /repos/o/r/issues/12/labels: HTTP 502; "
+                    f"claimed, worker:nightly put back{said}"])
+                self.assertEqual(api.opener.sent("POST"), [{"labels": ["todo"]}, {"labels": ["claimed", "worker:nightly"]}])
+                self.assertEqual(board.released_keys(snap), set())
+
+    def test_a_todo_github_will_not_take_off_again_is_said(self):
+        answers = release_answers()
+        answers["POST /repos/o/r/issues/12/comments"] = Refusal(502)
+        answers[COMMENTS_12] = FakeAnswer([])
+        answers[LABELS_12] = FakeAnswer([])
+        answers["DELETE /repos/o/r/issues/12/labels/todo"] = Refusal(403, {"message": "Resource not accessible"})
+        api, _ = client(answers)
+        line, = github.coordinate(api, self.given_snapshot(), NOW)
+        self.assertTrue(line.endswith("; claimed, worker:nightly put back; taking todo off again failed too, so it "
+                                      "stays on: DELETE /repos/o/r/issues/12/labels/todo: HTTP 403: Resource not "
+                                      "accessible"), line)
 
     def test_a_label_github_refuses_is_a_line_and_posts_no_comment(self):
         answers = release_answers()

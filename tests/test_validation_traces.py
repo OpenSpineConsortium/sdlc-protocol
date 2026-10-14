@@ -1,4 +1,4 @@
-"""The regression traces of DESIGN.md 5.3, one per finding F1 to F14
+"""The regression traces of DESIGN.md 5.3, one per finding F1 to F15
 (validation/traces/, played by validation/replay.py), and known.json, the
 record of what is red on purpose: every trace loads and plays with no
 mismatch; its red results are exactly what known.json records, as built
@@ -35,7 +35,10 @@ BUDGET_SECONDS = 10
 # F13's at its first board run, step 3, where the claim made later lands
 # first once the order is by number again, or once the draft is dated by
 # its opening, two hours after the claim on #2, and at its second, step 4,
-# where the run fails once a refused read of the activity escapes.
+# where the run fails once a refused read of the activity escapes; F15's at
+# its run that fails at the comment, step 6, where the todo the release put
+# on stays on once the putting back forgets it, and at the next run, step
+# 7, where the release puts no todo on once the rule is gone.
 UNDONE = {
     "F1": [("the comment before the labels", 5, "G3L")],
     "F3": [("the guard passes --force", 1, "G11a")],
@@ -50,10 +53,12 @@ UNDONE = {
     "F12": [("main moved told only in the push's run", 8, "G10")],
     "F13": [("the landing order by number", 3, "G7"), ("a pull request dated by its opening", 3, "G7"),
             ("a refused activity read stops the run", 4, "G15")],
+    "F15": [("a release that leaves todo off", 7, "G3"), ("a failed release leaves its todo on", 6, "G3L")],
 }
-# The twelve fixed findings: F1, F3, F5, F6, F10 and F11 in 0.4.1, and F4,
-# F7, F9, F12, F13 and F14 on main after it (known.json's fixed_after).
-FIXED = ("F1", "F3", "F4", "F5", "F6", "F7", "F9", "F10", "F11", "F12", "F13", "F14")
+# The thirteen fixed findings: F1, F3, F5, F6, F10 and F11 in 0.4.1, and
+# F4, F7, F9, F12, F13, F14 and F15 on main after it (known.json's
+# fixed_after).
+FIXED = ("F1", "F3", "F4", "F5", "F6", "F7", "F9", "F10", "F11", "F12", "F13", "F14", "F15")
 # Findings red as built, which no rule of the library answers: none since
 # F4's fix; the test keeps the case for the next one.
 RED_AS_BUILT = ()
@@ -201,7 +206,8 @@ class KnownJson(unittest.TestCase):
         repository vendors, so a finding fixed on main is still known there
         at that version and before, and new from the next release on."""
         self.assertEqual(known.FIXED_AFTER,
-                         {"F4": "0.4.1", "F7": "0.4.1", "F9": "0.4.1", "F12": "0.4.1", "F13": "0.4.1", "F14": "0.4.1"})
+                         {"F4": "0.4.1", "F7": "0.4.1", "F9": "0.4.1", "F12": "0.4.1", "F13": "0.4.1", "F14": "0.4.1",
+                          "F15": "0.4.1"})
         current = known.version_key(sdlc_protocol.__version__)
         for finding, version in known.FIXED_AFTER.items():
             with self.subTest(finding=finding):
@@ -210,8 +216,8 @@ class KnownJson(unittest.TestCase):
                 self.assertIsNotNone(known.version_key(version))
                 self.assertLessEqual(known.version_key(version), current,
                                      "the last version with a finding is one main has stated, never a later one")
-        self.assertEqual(known.as_built_for("0.4.1"), known.AS_BUILT | {"F4", "F7", "F9", "F12", "F13", "F14"})
-        self.assertEqual(known.as_built_for("0.4.0"), known.AS_BUILT | {"F4", "F7", "F9", "F12", "F13", "F14"})
+        self.assertEqual(known.as_built_for("0.4.1"), known.AS_BUILT | {"F4", "F7", "F9", "F12", "F13", "F14", "F15"})
+        self.assertEqual(known.as_built_for("0.4.0"), known.AS_BUILT | {"F4", "F7", "F9", "F12", "F13", "F14", "F15"})
         self.assertEqual(known.as_built_for("0.4.2"), known.AS_BUILT, "the next release carries the fixes")
         self.assertEqual(known.as_built_for("0.5.0"), known.AS_BUILT)
         self.assertEqual(known.as_built_for("1.0.0"), known.AS_BUILT)

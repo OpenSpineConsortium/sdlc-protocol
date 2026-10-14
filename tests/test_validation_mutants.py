@@ -67,6 +67,8 @@ TRACES = {
     "dealing without its taken set": "dealing at every look",
     "each leg dealt from its own look": "the regression traces",
     "given to workers needing the label todo": "the regression traces",
+    "a release that leaves todo off": "the regression traces",
+    "a failed release leaves its todo on": "the regression traces",
     "the landing order by number": "the regression traces",
     "a pull request dated by its opening": "the regression traces",
     "a refused activity read stops the run": "the regression traces",
@@ -101,7 +103,7 @@ class TheLane(unittest.TestCase):
         since one that undoes it (F7's first), so the bound is widened to
         40 and the count noted."""
         self.assertTrue(10 <= len(mutants.MUTANTS) <= 40)
-        self.assertEqual(len(mutants.MUTANTS), 37)
+        self.assertEqual(len(mutants.MUTANTS), 39)
         self.assertEqual(sorted(TRACES), sorted(mutants.MUTANTS))
 
     def test_every_mutant_names_a_rule_the_library_still_has(self):
