@@ -39,7 +39,7 @@ from datetime import datetime, timedelta, timezone
 from typing import NamedTuple
 from unittest import mock
 
-from sdlc_protocol import board, claims, coordinator, guard, team
+from sdlc_protocol import board, claims, coordinator, guard, labels, team
 from sdlc_protocol.adapters import github
 from sdlc_protocol.workers import fits
 
@@ -190,6 +190,23 @@ def each_leg_from_its_own_look(clients, workers, looks, areas=None):
     itself at its own moment, so two looks that differ on whether the
     holder's pull request is behind deal its issue twice."""
     return {w: team.next_for(clients[look], w, list(workers), areas) for w, look in zip(workers, looks)}
+
+
+def given_rows_needing_todo(snap):
+    """board.given_rows as built until F14's fix: an issue a worker's label
+    names was shown under Given to workers only when it also carried todo
+    and was not an epic, so one labelled worker:<name> alone was shown in
+    neither section of the board."""
+    claimed = board.claimed_numbers(snap.branches, board.released_keys(snap))
+    rows = []
+    for issue in sorted(snap.issues, key=lambda i: i.number):
+        names = sorted(issue.labels)
+        workers = labels.holder_names(names)
+        if labels.TODO not in names or labels.CLAIMED in names or labels.EPIC in names or not workers:
+            continue
+        if issue.number not in claimed:
+            rows.append([f"#{issue.number}", issue.title, ", ".join(workers)])
+    return rows
 
 
 def deal_without_the_taken_set(members, pool, areas=None):
@@ -344,6 +361,9 @@ MUTANTS = {
     "each leg dealt from its own look": Mutant(
         clerk, "workflow_deals", each_leg_from_its_own_look,
         "G14", "the workers' workflow deals once for the run, from one look, in its first job (F4)"),
+    "given to workers needing the label todo": Mutant(
+        board, "given_rows", given_rows_needing_todo,
+        "G9", "every open, unclaimed issue a worker's label names is shown under Given to workers, todo or not (F14)"),
     "an overlap marker read on any line": Mutant(
         coordinator, "told_numbers", told_on_any_line,
         "G7", "a comment that quotes the marker further down told nothing"),

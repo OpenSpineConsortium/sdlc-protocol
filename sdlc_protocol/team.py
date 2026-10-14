@@ -228,13 +228,17 @@ class Snapshot:
 
     def own_move(self, agent):
         """A member's own work: a claim of its own that needs work, else
-        the task the lead gave it; None when it has neither."""
+        the task the lead gave it, an issue its label names whether or not
+        it also carries todo, since the board shows it under Given to
+        workers either way (F14) and the spec has the worker take it
+        first; never an epic, which the coordinator plans and nobody takes
+        whole. None when it has neither."""
         mine = [i for i in self.issues if is_mine(i, agent) and BLOCKED_LABEL not in label_names(i)]
         for issue in mine:
             if issue["number"] in self.claimed and self.claim_needs_work(issue["number"]):
                 return f"carry {issue['number']}"
         for issue in mine:
-            if self.free(issue) and TODO_LABEL in label_names(issue) and EPIC_LABEL not in label_names(issue):
+            if self.free(issue) and EPIC_LABEL not in label_names(issue):
                 return f"take {issue['number']}"
         return None
 

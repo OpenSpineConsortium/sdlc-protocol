@@ -154,6 +154,18 @@ class NextTest(unittest.TestCase):
         self.api.add_issue(2, ["todo", "agent:w2"])
         self.assertEqual(team.next_for(self.api, "w1"), "none")
 
+    def test_a_task_given_without_todo_is_taken_and_an_epic_given_is_not(self):
+        """F14: the board shows an issue a worker's label names under Given
+        to workers whether or not it carries todo, and the worker takes it
+        first; an epic given to a worker is the coordinator's to plan."""
+        self.api.add_issue(2, ["todo"])
+        self.api.add_issue(3, ["worker:w1"])
+        self.assertEqual(team.next_for(self.api, "w1"), "take 3")
+        self.api.issues[1]["labels"] = [{"name": "epic"}, {"name": "worker:w1"}]
+        self.assertEqual(team.next_for(self.api, "w1"), "take 3")
+        self.api.issues[3]["labels"] = [{"name": "worker:w1"}, {"name": "blocked"}]
+        self.assertEqual(team.next_for(self.api, "w1"), "take 2")
+
     def test_a_claimed_task_is_not_taken_again(self):
         self.api.add_issue(2, ["todo"])
         self.api.branches.add("claude/2")
