@@ -31,6 +31,7 @@ not take; the lane runs for as long as it takes.
 """
 
 import json
+import pickle
 import random
 import time
 from collections import Counter
@@ -110,19 +111,66 @@ class Deep(NamedTuple):
         return not self.stopped
 
 
-def search(start, scope, depth, known=oracle.AS_BUILT, budget=None, say=None, every=200000):
+# How often a search writes its checkpoint, in seconds.
+CHECKPOINT_EVERY = 900.0
+
+
+def write_checkpoint(path, seen, stack, found, transitions, seconds):
+    """The search's whole state, so a restart continues it: written beside
+    the path and moved into place, so a restart during the write finds the
+    one before."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    partial = path.with_name(path.name + ".partial")
+    with partial.open("wb") as file:
+        pickle.dump({"seen": seen, "stack": stack, "found": found, "transitions": transitions, "seconds": seconds},
+                    file, protocol=pickle.HIGHEST_PROTOCOL)
+    partial.replace(path)
+
+
+def read_checkpoint(path):
+    with Path(path).open("rb") as file:
+        return pickle.load(file)
+
+
+def search(start, scope, depth, known=oracle.AS_BUILT, budget=None, say=None, every=200000, checkpoint=None,
+           checkpoint_every=CHECKPOINT_EVERY):
     """Every interleaving of the scope's verbs from start, to depth, depth
     first; stopped, and so incomplete, when a budget in seconds runs
     out. say, when given, hears a line of progress every `every`
-    transitions."""
+    transitions. checkpoint, when given, is a file the search's state is
+    written to every checkpoint_every seconds and continued from when the
+    file is there, so a search of hours survives a restart of the
+    machine; the search is the same one, since its order is fixed, and
+    the budget and the seconds count from the first start. The caller
+    removes the file once it has kept the result. A model with a run
+    between its halves holds a client and cannot be pickled, so the
+    checkpoint is for the lane's spaces, none of which splits runs."""
     began = time.perf_counter()
     seen = {start.digest(): 0}
     stack = [(start, ())]
-    found, transitions, stopped = {}, 0, False
+    found, transitions, before = {}, 0, 0.0
+    if checkpoint is not None and Path(checkpoint).exists():
+        kept = read_checkpoint(checkpoint)
+        seen, stack, found, transitions, before = (kept["seen"], kept["stack"], kept["found"], kept["transitions"],
+                                                   kept["seconds"])
+        if say is not None:
+            say(f"continued from the checkpoint: {len(seen)} states, {transitions} transitions, {before:.0f} s")
+    written = began
+    stopped = False
+
+    def elapsed():
+        return before + time.perf_counter() - began
+
     while stack:
-        if budget is not None and time.perf_counter() - began > budget:
+        if budget is not None and elapsed() > budget:
             stopped = True
             break
+        if checkpoint is not None and time.perf_counter() - written > checkpoint_every:
+            write_checkpoint(checkpoint, seen, stack, found, transitions, elapsed())
+            written = time.perf_counter()
+            if say is not None:
+                say(f"checkpoint written: {len(seen)} states, {transitions} transitions, {elapsed():.0f} s")
         model, trace = stack.pop()
         here = len(trace)
         for verb in reversed(verbs.enabled(model, scope)):
@@ -142,12 +190,16 @@ def search(start, scope, depth, known=oracle.AS_BUILT, budget=None, say=None, ev
                 if here + 1 < depth:
                     stack.append((after, path))
             if say is not None and transitions % every == 0:
-                say(f"{len(seen)} states, {transitions} transitions, {time.perf_counter() - began:.0f} s")
-    return Deep("", len(seen), transitions, depth, time.perf_counter() - began, tuple(found.values()), stopped)
+                say(f"{len(seen)} states, {transitions} transitions, {elapsed():.0f} s")
+    if checkpoint is not None and stopped:
+        write_checkpoint(checkpoint, seen, stack, found, transitions, elapsed())
+    return Deep("", len(seen), transitions, depth, elapsed(), tuple(found.values()), stopped)
 
 
-def search_space(space, known=oracle.AS_BUILT, budget=None, say=None, depth=None):
-    found = search(space.start(), space.scope, depth or space.depth, known, budget, say)
+def search_space(space, known=oracle.AS_BUILT, budget=None, say=None, depth=None, checkpoint=None,
+                 checkpoint_every=CHECKPOINT_EVERY):
+    found = search(space.start(), space.scope, depth or space.depth, known, budget, say, checkpoint=checkpoint,
+                   checkpoint_every=checkpoint_every)
     return found._replace(name=space.name)
 
 
@@ -157,9 +209,22 @@ def hours(minutes):
     return minutes // HOUR
 
 
+def symbolic_trace(space, trace):
+    """The trace with every released branch a verb names written
+    symbolically, as run.symbolic writes it, so the trace can be shortened
+    (shrink.py) with the clock moving under the names."""
+    model, found = space.start(), []
+    for verb in trace:
+        verb = run.concrete(model, verb)
+        found.append(verb._replace(args=run.symbolic(model, verb.args)))
+        verbs.apply(model, verb, space.scope)
+    return tuple(found)
+
+
 def step_json(model, verb):
-    """One verb as a step of a trace file, at the model's hour before it."""
-    name, actor, args = verb
+    """One verb as a step of a trace file, at the model's hour before it;
+    the verb's released branches, if any, named symbolically."""
+    name, actor, args = run.concrete(model, verb)
     at = hours(model.now)
     if name in ("board", "board-start"):
         event, ref_name = args[0], args[1] if len(args) > 1 else ""
@@ -184,7 +249,7 @@ def trace_json(space, trace, violated="", title=""):
     cycle.board_run(model)
     for verb in tuple(space.prefix) + tuple(trace):
         steps.append(step_json(model, verb))
-        verbs.apply(model, verb, space.scope)
+        verbs.apply(model, run.concrete(model, verb), space.scope)
     return {
         "finding": "", "title": title or f"a counterexample of the deep lane's {space.name}",
         "status": "counterexample", "violated": violated, "breaks": [violated.split()[0]] if violated else [],
@@ -214,7 +279,7 @@ def write_counterexamples(folder, space, found, known=oracle.AS_BUILT, budget=60
     written = []
     for at, violation in enumerate(sorted(found, key=lambda f: (f.guarantee, f.detail)), 1):
         target = (violation.guarantee, violation.detail)
-        shorter = shrink.shrink(space.start, space.scope, violation.trace, target, known, budget)
+        shorter = shrink.shrink(space.start, space.scope, symbolic_trace(space, violation.trace), target, known, budget)
         data = trace_json(space, shorter.trace, f"{violation.guarantee} {violation.detail}")
         path = write_trace(folder, f"{violation.guarantee}-{space.name}-{at}", data)
         written.append({"guarantee": violation.guarantee, "detail": violation.detail, "count": violation.count,

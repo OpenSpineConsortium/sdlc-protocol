@@ -14,11 +14,17 @@ many at once as there are processors or `--jobs` says, since the
 searches take hours and share nothing.
 
 The results file (<out>/deep.json) is rewritten as each part ends, so a
-run that is killed leaves what it had measured. The run is red, exit
-code 1, on any violation, mismatch, disagreement, differing guard
-answer, or a search a budget stopped before it was done: a stopped
-search has not checked its space, and the owner's rule is that a missed
-violation costs more than the hours.
+run that is killed leaves what it had measured, and each search writes
+a checkpoint of its state under <out>/checkpoints/ every quarter of an
+hour (deep.search), removed once its result is in the file; `--resume`
+starts a run again from the file and the checkpoints, running only the
+parts the file does not hold and continuing each search from where its
+checkpoint left it, so a restart of the machine costs a quarter of an
+hour and not the hours. The run is red, exit code 1, on any violation,
+mismatch, disagreement, differing guard answer, or a search a budget
+stopped before it was done: a stopped search has not checked its space,
+and the owner's rule is that a missed violation costs more than the
+hours.
 """
 
 import json
@@ -40,6 +46,8 @@ GATE_DEPTH = 8
 GATE_SEQUENCES = 40
 GATE_LENGTH = 12
 SHRINK_BUDGET = 600.0
+# Where the searches keep their checkpoints under the output folder.
+CHECKPOINTS = "checkpoints"
 
 # What --quick runs: a few steps of everything, for a look and for the tests.
 QUICK = {"depths": {"E-two": 3, "E-deep": 4, "E-faults": 2}, "soak_seeds": 4, "soak_steps": 40, "soak_chunk": 2,
@@ -49,12 +57,15 @@ QUICK = {"depths": {"E-two": 3, "E-deep": 4, "E-faults": 2}, "soak_seeds": 4, "s
 class Settings:
     """How much of each part a run does."""
 
-    def __init__(self, out, only=(), jobs=None, budget=None, quick=False):
+    def __init__(self, out, only=(), jobs=None, budget=None, quick=False, resume=False,
+                 checkpoint_every=deep.CHECKPOINT_EVERY):
         self.out = Path(out)
         self.only = tuple(only)
         self.jobs = jobs or os.cpu_count() or 2
         self.budget = budget
         self.quick = quick
+        self.resume = resume
+        self.checkpoint_every = checkpoint_every
         self.depths = dict(QUICK["depths"]) if quick else {}
         self.soak_seeds = QUICK["soak_seeds"] if quick else SOAK_SEEDS
         self.soak_steps = QUICK["soak_steps"] if quick else SOAK_STEPS
@@ -68,6 +79,9 @@ class Settings:
     def wanted(self, part):
         return not self.only or part in self.only
 
+    def checkpoint(self, name):
+        return self.out / CHECKPOINTS / f"{name}.pickle"
+
 
 # --- the parts, each a function a process runs ---------------------------------
 
@@ -75,9 +89,10 @@ def say(line):
     print(line, file=sys.stderr, flush=True)
 
 
-def run_search(name, out, depth, budget):
+def run_search(name, out, depth, budget, checkpoint=None, checkpoint_every=deep.CHECKPOINT_EVERY):
     space = deep.SPACES[name]
-    found = deep.search_space(space, oracle.AS_BUILT, budget, lambda line: say(f"{name}: {line}"), depth)
+    found = deep.search_space(space, oracle.AS_BUILT, budget, lambda line: say(f"{name}: {line}"), depth, checkpoint,
+                              checkpoint_every)
     written = deep.write_counterexamples(out, space, found.found, oracle.AS_BUILT, SHRINK_BUDGET)
     for violation in written:
         violation["finding"] = known.search_finding(name, violation["guarantee"], violation["detail"])
@@ -95,8 +110,8 @@ def run_soak(seeds, steps, out):
         walks.append(walk)
         for guarantee, detail, at in walk.violations:
             target = (guarantee, detail)
-            shorter = shrink.shrink(soak.SPACE.start, soak.SCOPE, walk.verbs[:at + 1], target, oracle.AS_BUILT,
-                                    SHRINK_BUDGET)
+            shorter = shrink.shrink(soak.SPACE.start, soak.SCOPE, deep.symbolic_trace(soak.SPACE, walk.verbs[:at + 1]),
+                                    target, oracle.AS_BUILT, SHRINK_BUDGET)
             data = deep.trace_json(soak.SPACE, shorter.trace, f"{guarantee} {detail}")
             path = deep.write_trace(out, f"{guarantee}-soak-{seed}-{at}", data)
             written.append({"seed": seed, "step": at, "guarantee": guarantee, "detail": detail,
@@ -128,27 +143,50 @@ def run_conformance(name, counterexamples, count, length, seed):
 
 # --- the run ---------------------------------------------------------------------
 
-def first_wave(settings, pool):
-    """The parts that depend on nothing, submitted; a future for each,
-    with its part's name."""
+def done_parts(results):
+    """The parts a results file already holds, by name, which a resumed
+    run does not run again."""
+    done = {f"search {s['space']}" for s in results["searches"]}
+    done |= {f"soak {c['seeds'][0]}" for c in results["soak"]["chunks"]}
+    done |= {f"conformance {c['space']}" for c in results["conformance"]}
+    if results["gate"] is not None:
+        done.add("gate")
+    if results["git"]["scenarios"]:
+        done.add("git scenarios")
+    if results["git"]["traces"]:
+        done.add("git traces")
+    if results["guard"] is not None:
+        done.add("guard")
+    return done
+
+
+def first_wave(settings, pool, results):
+    """The parts that depend on nothing, submitted, but those the results
+    already hold; a future for each, with its part's name."""
+    done = done_parts(results)
     futures = {}
+
+    def submit(part, function, *args):
+        if part not in done:
+            futures[pool.submit(function, *args)] = part
+
     if settings.wanted("search"):
         for name in deep.SPACES:
             depth = settings.depths.get(name)
-            futures[pool.submit(run_search, name, str(settings.out), depth, settings.budget)] = f"search {name}"
+            submit(f"search {name}", run_search, name, str(settings.out), depth, settings.budget,
+                   str(settings.checkpoint(name)), settings.checkpoint_every)
     if settings.wanted("soak"):
         seeds = list(range(settings.soak_seeds))
         for at in range(0, len(seeds), settings.soak_chunk):
             chunk = seeds[at:at + settings.soak_chunk]
-            futures[pool.submit(run_soak, chunk, settings.soak_steps, str(settings.out))] = f"soak {chunk[0]}"
+            submit(f"soak {chunk[0]}", run_soak, chunk, settings.soak_steps, str(settings.out))
     if settings.wanted("gate"):
-        futures[pool.submit(run_gate, settings.gate_depth, settings.gate_sequences, settings.gate_length,
-                            settings.budget)] = "gate"
+        submit("gate", run_gate, settings.gate_depth, settings.gate_sequences, settings.gate_length, settings.budget)
     if settings.wanted("git"):
-        futures[pool.submit(run_git_scenarios)] = "git scenarios"
-        futures[pool.submit(run_git_traces)] = "git traces"
+        submit("git scenarios", run_git_scenarios)
+        submit("git traces", run_git_traces)
     if settings.wanted("guard"):
-        futures[pool.submit(run_guard)] = "guard"
+        submit("guard", run_guard)
     return futures
 
 
@@ -157,13 +195,15 @@ def second_wave(settings, pool, results):
     futures = {}
     if not settings.wanted("conformance"):
         return futures
+    done = done_parts(results)
     files = [v["file"] for s in results["searches"] for v in s["violations"]]
     files += [v["file"] for s in results["soak"]["chunks"] for v in s["violations"]]
     spaces = list(deep.SPACES)
     share, left = divmod(settings.conformance_paths, len(spaces))
     for n, name in enumerate(spaces):
-        futures[pool.submit(run_conformance, name, files if n == 0 else (), share + (n < left),
-                            settings.conformance_length, 1000 * n)] = f"conformance {name}"
+        if f"conformance {name}" not in done:
+            futures[pool.submit(run_conformance, name, files if n == 0 else (), share + (n < left),
+                                settings.conformance_length, 1000 * n)] = f"conformance {name}"
     return futures
 
 
@@ -278,19 +318,30 @@ def summary_lines(results):
     return lines
 
 
+def kept_results(settings):
+    """A resumed run's results so far, from the file the last run left,
+    counting its seconds on; a fresh run's otherwise."""
+    file = settings.out / "deep.json"
+    if settings.resume and file.exists():
+        results = json.loads(file.read_text(encoding="ascii"))
+        return results, time.perf_counter() - results["seconds"]
+    return fresh_results(), time.perf_counter()
+
+
 def run(settings, out=sys.stdout):
     """The whole lane; the results, written to <out>/deep.json as they
     come, and exit code 1 when any part is red."""
-    began = time.perf_counter()
-    results = fresh_results()
+    results, began = kept_results(settings)
     write_results(settings, results, began)
     with ProcessPoolExecutor(max_workers=settings.jobs) as pool:
         for wave in (first_wave, second_wave):
-            futures = wave(settings, pool) if wave is first_wave else wave(settings, pool, results)
+            futures = wave(settings, pool, results)
             for future in as_completed(futures):
                 part = futures[future]
                 take(results, part, future.result())
                 write_results(settings, results, began)
+                if part.startswith("search "):
+                    settings.checkpoint(part[len("search "):]).unlink(missing_ok=True)
                 print(f"    {part} done at {results['seconds']} s", file=out, flush=True)
     for line in summary_lines(results):
         print(line, file=out)

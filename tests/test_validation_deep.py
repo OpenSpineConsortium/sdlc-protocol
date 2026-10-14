@@ -68,6 +68,23 @@ class TheSearch(unittest.TestCase):
         self.assertTrue(stopped.stopped)
         self.assertFalse(stopped.complete)
 
+    def test_a_search_continues_from_its_checkpoint_to_the_same_end(self):
+        whole = deep.search_space(SMALL)
+        with tempfile.TemporaryDirectory() as folder:
+            checkpoint = Path(folder) / "small.pickle"
+            said = []
+            stopped = deep.search_space(SMALL, budget=0.02, say=said.append, checkpoint=str(checkpoint))
+            self.assertTrue(stopped.stopped)
+            self.assertTrue(checkpoint.exists())
+            self.assertLess(stopped.states, whole.states)
+            resumed = deep.search_space(SMALL, say=said.append, checkpoint=str(checkpoint), checkpoint_every=0.0)
+        self.assertFalse(resumed.stopped)
+        self.assertEqual((resumed.states, resumed.transitions), (whole.states, whole.transitions))
+        self.assertEqual(sorted(resumed.found), sorted(whole.found))
+        self.assertGreaterEqual(resumed.seconds, stopped.seconds)
+        self.assertTrue(any(line.startswith("continued from the checkpoint") for line in said))
+        self.assertTrue(any(line.startswith("checkpoint written") for line in said))
+
 
 class Shortening(unittest.TestCase):
     def test_a_violation_is_shortened_to_a_trace_that_still_shows_it(self):
@@ -162,6 +179,26 @@ class TheLaneAsOneRun(unittest.TestCase):
         self.assertIn("search E-faults: depth 2", out.getvalue())
         self.assertIn("0 violations", out.getvalue())
         self.assertIn("deep lane: ok", out.getvalue())
+
+    def test_a_resumed_run_runs_only_the_parts_the_file_lacks_and_drops_the_checkpoints(self):
+        with tempfile.TemporaryDirectory() as folder:
+            out = io.StringIO()
+            settings = lanes.Settings(folder, only=("search",), jobs=2, quick=True)
+            self.assertEqual(lanes.run(settings, out), 0, out.getvalue())
+            self.assertEqual(out.getvalue().count(" done at "), 3)
+            first = json.loads((Path(folder) / "deep.json").read_text(encoding="ascii"))
+            self.assertFalse(list((Path(folder) / lanes.CHECKPOINTS).glob("*.pickle")))
+            again = io.StringIO()
+            settings = lanes.Settings(folder, only=("search", "soak"), jobs=2, quick=True, resume=True)
+            self.assertEqual(lanes.run(settings, again), 0, again.getvalue())
+            second = json.loads((Path(folder) / "deep.json").read_text(encoding="ascii"))
+        self.assertEqual(again.getvalue().count(" done at "), 2)
+        self.assertNotIn("search ", again.getvalue().split("search E-deep: depth")[0].split("done at")[0]
+                         if "done at" in again.getvalue() else "")
+        self.assertEqual(second["searches"], first["searches"])
+        self.assertEqual(len(second["soak"]["chunks"]), 2)
+        self.assertGreaterEqual(second["seconds"], first["seconds"])
+        self.assertEqual(lanes.done_parts(second), {"search E-two", "search E-deep", "search E-faults", "soak 0", "soak 2"})
 
     def test_a_stopped_search_is_red(self):
         results = lanes.fresh_results()

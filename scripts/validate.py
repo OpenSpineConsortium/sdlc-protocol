@@ -18,6 +18,7 @@
         --only search,soak,gate,git,guard,conformance   some parts only
         --jobs N                              processes at once (the processors)
         --budget SECONDS                      stop each search there; a stopped search is red
+        --resume                              go on from DIR's deep.json and the searches' checkpoints
         --quick                               a few steps of every part, for a look
 
 The tests under tests/ run the same lanes with their budgets; this script
@@ -157,7 +158,8 @@ def run_deep(out, options):
     jobs = option(options, "--jobs")
     budget = option(options, "--budget")
     settings = lanes.Settings(option(options, "--out", str(lanes.deep.OUT)), [p for p in only.split(",") if p],
-                             int(jobs) if jobs else None, float(budget) if budget else None, "--quick" in options)
+                             int(jobs) if jobs else None, float(budget) if budget else None, "--quick" in options,
+                             "--resume" in options)
     return lanes.run(settings, out)
 
 
