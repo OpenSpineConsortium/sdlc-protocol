@@ -1,17 +1,23 @@
 {
   "finding": "F13",
   "title": "the landing order's oldest is the lowest number",
-  "status": "open; found by build step 1; a fix in the library or a word in the spec, the owner's choice",
-  "breaks": ["G7"],
+  "status": "fixed after 0.4.1: the landing order reads the oldest as the work that began first, when GitHub says the push that made its branch came (DESIGN.md, 13)",
+  "breaks": ["G7", "G15"],
   "world": "memory",
-  "issues": {"1": ["todo"], "2": ["todo"]},
-  "workers": ["a", "b"],
-  "files": {"1": ["src/shared.py"], "2": ["src/shared.py"]},
+  "issues": {"1": ["todo"], "2": ["todo"], "3": ["todo"]},
+  "workers": ["a", "b", "c"],
+  "files": {"1": ["src/shared.py"], "2": ["src/shared.py"], "3": ["src/shared.py"]},
   "steps": [
     {"verb": "claim", "actor": "a", "args": [1]},
-    {"verb": "open-draft", "actor": "a", "args": [1], "expect": {"pulls": [100]}},
-    {"at": 5, "verb": "claim", "actor": "b", "args": [2]},
-    {"verb": "board", "shows": "F13", "expect": {"overlaps": {"src/shared.py": [2, 100]}},
-     "note": "as built #2, claimed five hours later, lands before #100, since its number is the lower; reading the spec, the oldest work lands first"}
+    {"at": 2, "verb": "claim", "actor": "b", "args": [2]},
+    {"at": 3, "verb": "open-draft", "actor": "b", "args": [2], "expect": {"pulls": [100]}},
+    {"at": 5, "verb": "open-draft", "actor": "a", "args": [1], "expect": {"pulls": [100, 101]}},
+    {"verb": "board", "expect": {"overlaps": {"src/shared.py": [101, 100]}},
+     "note": "a's branch was made two hours before b's, and a's draft, #101, opened two hours after b's, #100, so #101 began first and lands first, as the spec reads the oldest; until the fix #100 landed first, its number being the lower, which the mutant that orders by number again shows, and the mutant that dates a pull request by its opening shows #100 first too (G7)"},
+    {"verb": "board", "faults": ["activity-500"], "expect": {"overlaps": {"src/shared.py": [101, 100]}},
+     "note": "GitHub refuses the run's first read of the activity, the newest branch creations of the whole repository; each branch is then asked about on its own, so the order stands; under the mutant that asks no branch on its own both drafts are dated by their openings and #100 lands first (G7), and under the mutant that lets the refusal escape the run fails (G15)"},
+    {"at": 6, "verb": "claim", "actor": "c", "args": [3]},
+    {"verb": "board", "faults": ["activity-500-all"], "expect": {"overlaps": {"src/shared.py": [100, 101, 3]}},
+     "note": "GitHub refuses every read of the activity in this run, as for a token that may not read it: each draft is dated by its opening, and c's claim, which nothing dates now, lands last, as the spec reads work whose beginning nothing says; under the mutant that puts such work first #3 lands first (G7)"}
   ]
 }

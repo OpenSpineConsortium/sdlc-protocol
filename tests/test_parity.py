@@ -331,6 +331,9 @@ class FakeRepo:
         runs = self.checks.get(rest[0], [])
         return {"total_count": len(runs), "check_runs": runs}
 
+    def get_activity(self, rest, query, body):
+        return []
+
     def get_contents(self, rest, query, body):
         text = found(self.contents.get((query.get("ref"), "/".join(rest))))
         return {"content": base64.b64encode(text.encode("utf-8")).decode("ascii")}
@@ -559,12 +562,14 @@ class BoardParity(unittest.TestCase):
             old = template_board().collect(template_client(old_repo, old_sleep), sha, trunk)
             new = github.collect(library_client(new_repo, new_sleep), sha, trunk)
             with self.subTest(name):
-                # The template read no releases and no standing
-                # (DeclaredDifferences): none of these repositories holds a
-                # release, and none can compare a branch with its base, so a
-                # pull request whose word is opaque stands unknown, which
-                # renders as GitHub's word did; the rest is the same.
+                # The template read no releases, no standing and no times
+                # work began (DeclaredDifferences): none of these
+                # repositories holds a release, none can compare a branch
+                # with its base, so a pull request whose word is opaque
+                # stands unknown, which renders as GitHub's word did, and
+                # GitHub records no activity in them; the rest is the same.
                 self.assertEqual(new.pop("releases"), {})
+                self.assertEqual(new.pop("began"), {})
                 standings = {pull["number"]: pull.pop("standing") for pull in new["pulls"] if "standing" in pull}
                 self.assertEqual(standings, {pull["number"]: "unknown" for pull in snap["pulls"]
                                              if pull.get("mergeable_state") in github.OPAQUE_STATES})

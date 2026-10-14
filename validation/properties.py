@@ -178,33 +178,43 @@ def a_cell_is_one_ascii_line(value: str) -> None:
 
 # --- overlaps ---------------------------------------------------------------------
 
-def overlap_snapshot(drafts, blockers, files):
+# When each of the three pieces began, by the time GitHub gives for the push
+# that made its branch, "" where it gives none: nothing said of any, an order
+# against the numbers' with one piece nothing dates, and a tie.
+BEGAN = (("", "", ""), (domains.iso(5), domains.iso(3), ""), (domains.iso(1), domains.iso(1), domains.iso(0)))
+
+
+def overlap_snapshot(drafts, blockers, files, began=("", "", "")):
     pulls, issues = [], {}
     for n, (draft, blocker, touched) in enumerate(zip(drafts, blockers, files), start=1):
         pulls.append({"number": 100 + n, "head": {"ref": f"claude/{n}", "sha": SHA}, "draft": draft,
                       "files": [{"filename": f} for f in touched], "mergeable_state": "clean"})
         issues[str(n)] = {"state": "open", "labels": ["claimed"] + (["blocker"] if blocker else [])}
     return {"sha": SHA, "pulls": pulls, "branches": ["main"] + [f"claude/{n}" for n in range(1, len(pulls) + 1)],
-            "claim_issues": issues}
+            "claim_issues": issues, "began": {f"claude/{n}": at for n, at in enumerate(began, start=1) if at}}
 
 
-def overlaps_list_only_meeting_work_in_landing_order(drafts: tuple, blockers: tuple, files: tuple) -> None:
+def overlaps_list_only_meeting_work_in_landing_order(drafts: tuple, blockers: tuple, files: tuple,
+                                                      began: tuple) -> None:
     """Each listed group has two or more pieces, every piece touches the
     file, the groups come in landing order, and a comment is owed to each
     piece exactly when it meets work it was not told of."""
-    assert len(drafts) == len(blockers) == len(files) == 3
-    snapshot = overlap_snapshot(drafts, blockers, files)
+    assert len(drafts) == len(blockers) == len(files) == len(began) == 3
+    snapshot = overlap_snapshot(drafts, blockers, files, began)
     found = board.overlaps(snapshot)
     for path, works in found.items():
         assert len(works) >= 2
         assert all(path in w.files for w in works)
         # The spec's order, written out: a blocker first, then work marked
-        # ready, then the oldest, read as the lowest number until F13 is
-        # settled; not landing_key itself, which would check nothing.
+        # ready, then the oldest, the work that began first, work nothing
+        # dates last of all, the number breaking a tie; not landing_key
+        # itself, which would check nothing.
         for first, second in zip(works, works[1:]):
             assert first.blocker or not second.blocker
             assert first.blocker != second.blocker or first.ready or not second.ready
-            assert (first.blocker, first.ready) != (second.blocker, second.ready) or first.number < second.number
+            if (first.blocker, first.ready) == (second.blocker, second.ready):
+                assert (first.began == "", first.began, first.number) < (second.began == "", second.began,
+                                                                       second.number)
     expected = {f for f in itertools.chain(*files) if sum(f in touched for touched in files) > 1}
     assert set(found) == expected
     told = {101: {102}}
@@ -372,8 +382,9 @@ def cases():
         state_word_is_one_of_five: [(s,) for s in STATES],
         a_cell_is_one_ascii_line: [(k,) for k in short],
         overlaps_list_only_meeting_work_in_landing_order: [
-            (drafts, blockers, files) for drafts in itertools.product(bools, repeat=3)
-            for blockers in itertools.product(bools, repeat=3) for files in itertools.product(domains.file_sets(), repeat=3)],
+            (drafts, blockers, files, began) for drafts in itertools.product(bools, repeat=3)
+            for blockers in itertools.product(bools, repeat=3) for files in itertools.product(domains.file_sets(), repeat=3)
+            for began in BEGAN],
         told_numbers_reads_the_first_line_of_a_trusted_comment: [(b, t) for b in MARKER_BODIES for t in bools],
         a_release_takes_both_acts: [
             (ls, d, c, r) for ls in ([], ["claimed"], ["in-review"], ["claimed", "worker:a"], ["todo", "account:a"])

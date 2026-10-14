@@ -182,17 +182,18 @@ class BoardLiveRun(unittest.TestCase):
         said = []
         with mock.patch.object(github, "snapshot", lambda api, sha, default_branch, now: board.Snapshot(sha=sha)), \
              mock.patch.object(github, "unread_claim_lines", lambda snap: ["unread"]), \
+             mock.patch.object(github, "began_refused_lines", lambda snap: ["undated"]), \
              mock.patch.object(github, "coordinate", lambda api, snap, now: ["coordinated"]), \
              mock.patch.object(github, "release_claims", lambda api, snap: [f"released at {snap.sha}"]), \
              mock.patch.object(github, "post_comments", lambda api, due: ["posted"]):
             snap, page = cli.plan_board(FakeBoardApi("t", REPO), "abc", "main", None, say=said.append)
-            self.assertEqual((snap.sha, said), ("abc", ["unread", "coordinated"]))
+            self.assertEqual((snap.sha, said), ("abc", ["unread", "undated", "coordinated"]))
             self.assertEqual(page, board.render(snap))
             cli.act_on_board(FakeBoardApi("t", REPO), snap, "schedule", "", None, say=said.append)
-            self.assertEqual(said, ["unread", "coordinated", "released at abc", "posted"])
+            self.assertEqual(said, ["unread", "undated", "coordinated", "released at abc", "posted"])
             said.clear()
             cli.plan_board(FakeBoardApi("t", REPO), "abc", "main", None, render_only=True, say=said.append)
-            self.assertEqual(said, ["unread"])
+            self.assertEqual(said, ["unread", "undated"])
 
     def test_render_only_posts_nothing_and_the_sha_defaults_to_github_sha(self):
         with tempfile.TemporaryDirectory() as folder:

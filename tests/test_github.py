@@ -503,6 +503,170 @@ def fixture_answers(name="board.json"):
     return snap, answers
 
 
+def activity_path(branch):
+    """The one activity call branch_made_at makes for a branch."""
+    return "/repos/o/r/activity?" + urllib.parse.urlencode(
+        {"ref": f"refs/heads/{branch}", "activity_type": "branch_creation", "direction": "desc", "per_page": 1})
+
+
+# The one call newest_creations makes: the whole repository's newest branch
+# creations.
+NEWEST_CREATIONS = "/repos/o/r/activity?" + urllib.parse.urlencode(
+    {"activity_type": "branch_creation", "direction": "desc", "per_page": 100})
+
+
+def made(branch, timestamp, kind="branch_creation"):
+    """One entry of the repository's activity, in GitHub's shape."""
+    return {"id": 1, "ref": f"refs/heads/{branch}", "timestamp": timestamp, "activity_type": kind,
+            "actor": {"login": "a"}, "before": "0" * 40, "after": "f" * 40}
+
+
+def wide_answers(forks=()):
+    """The wide fixture's answers, its branches by name as GitHub lists
+    them, each pull request's head in this repository as GitHub's detail
+    names it, but those whose numbers forks holds, whose heads stand in a
+    fork."""
+    snap, answers = fixture_answers("board-wide.json")
+    answers["/repos/o/r/branches?per_page=100"] = FakeAnswer([{"name": board.branch_name(b)} for b in snap["branches"]])
+    for pull in snap["pulls"]:
+        detail = {k: v for k, v in pull.items() if k != "files"}
+        detail["head"] = dict(detail["head"], repo={"full_name": "x/fork" if pull["number"] in forks else "o/r"})
+        detail["base"] = {"ref": "main", "repo": {"full_name": "o/r"}}
+        answers[f"/repos/o/r/pulls/{pull['number']}"] = FakeAnswer(detail)
+    return snap, answers
+
+
+def activity_asked(opener):
+    return sorted(c.selector for c in opener.calls if c.selector.startswith("/repos/o/r/activity"))
+
+
+class WhenWorkBegan(unittest.TestCase):
+    """F13: the oldest work is the work that began first, by when GitHub's
+    activity says the push that made its branch came. The wide fixture's
+    overlaps: a.md by #61 (claude/22) and #66 (claude/34), both ready, and
+    docs/b.md by #63 (claude/31) and claude/5's claim with no pull
+    request."""
+
+    def test_the_newest_creation_of_the_branch_is_read_in_one_call(self):
+        api, opener = client({activity_path("claude/7"): FakeAnswer([made("claude/7", "2026-10-01T09:00:00Z")])})
+        self.assertEqual(github.branch_made_at(api, "claude/7"), "2026-10-01T09:00:00Z")
+        self.assertEqual([c.selector for c in opener.calls], [activity_path("claude/7")])
+
+    def test_nothing_on_record_says_nothing(self):
+        for answer in ([], [made("claude/8", "2026-10-01T09:00:00Z")],
+                       [made("claude/7", "2026-10-01T09:00:00Z", "push")], {}):
+            with self.subTest(answer=answer):
+                api, _ = client({activity_path("claude/7"): FakeAnswer(answer)})
+                self.assertEqual(github.branch_made_at(api, "claude/7"), "")
+        api, _ = client({})
+        self.assertEqual(github.branch_made_at(api, "claude/7"), "")
+
+    def test_a_refusal_other_than_a_404_raises_from_the_one_call(self):
+        api, _ = client({activity_path("claude/7"): Refusal(500)})
+        with self.assertRaises(github.GitHubError):
+            github.branch_made_at(api, "claude/7")
+
+    def test_one_read_dates_every_branch_the_newest_creations_name(self):
+        page = [made("claude/8", "2026-10-01T10:00:00Z"), made("claude/7", "2026-10-01T09:00:00Z"),
+                made("claude/8", "2026-10-01T08:00:00Z"), made("claude/9", "2026-10-01T07:00:00Z", "push"),
+                made("claude/10", ""), dict(made("claude/9", "2026-10-01T06:00:00Z"), ref=["refs/heads/claude/9"]),
+                "an entry that is no object"]
+        api, opener = client({NEWEST_CREATIONS: FakeAnswer(page)})
+        self.assertEqual(github.newest_creations(api, ["claude/7", "claude/8", "claude/9", "claude/10"]),
+                         {"claude/8": "2026-10-01T10:00:00Z", "claude/7": "2026-10-01T09:00:00Z"})
+        self.assertEqual([c.selector for c in opener.calls], [NEWEST_CREATIONS])
+        for answer in ([], {}, None):
+            with self.subTest(answer=answer):
+                api, _ = client({NEWEST_CREATIONS: FakeAnswer(answer)})
+                self.assertEqual(github.newest_creations(api, ["claude/7"]), {})
+        api, _ = client({NEWEST_CREATIONS: Refusal(502)})
+        with self.assertRaises(github.GitHubError):
+            github.newest_creations(api, ["claude/7"])
+
+    def test_collect_reads_the_newest_creations_once_then_each_branch_they_miss_and_never_a_fork(self):
+        snap, answers = wide_answers(forks=(66,))
+        answers[NEWEST_CREATIONS] = FakeAnswer([made("claude/22", "2026-09-20T08:00:00Z"),
+                                                made("claude/34", "2026-09-21T08:00:00Z")])
+        answers[activity_path("claude/5")] = FakeAnswer([made("claude/5", "2026-09-19T08:00:00Z")])
+        api, opener = client(answers)
+        found = github.collect(api, snap["sha"], snap["default_branch"])
+        self.assertEqual(found["began"], {"claude/22": "2026-09-20T08:00:00Z", "claude/5": "2026-09-19T08:00:00Z"})
+        self.assertNotIn("began_refused", found)
+        self.assertEqual(activity_asked(opener), sorted([NEWEST_CREATIONS] + [activity_path(b) for b in ("claude/31",
+                                                                                                         "claude/5")]))
+
+    def test_nothing_is_read_where_nothing_overlaps(self):
+        snap, answers = fixture_answers()
+        api, opener = client(answers)
+        self.assertEqual(github.collect(api, snap["sha"], snap["default_branch"])["began"], {})
+        self.assertEqual(activity_asked(opener), [])
+
+    def test_the_overlaps_land_in_the_order_the_work_began(self):
+        snap, answers = wide_answers()
+        answers[NEWEST_CREATIONS] = FakeAnswer([made("claude/22", "2026-09-20T08:00:00Z"),
+                                                made("claude/34", "2026-09-18T08:00:00Z")])
+        api, _ = client(answers)
+        self.assertIn("| a.md | #66, #61 |", board.render(github.snapshot(api, snap["sha"], snap["default_branch"])))
+
+    def test_a_refused_read_of_the_newest_creations_asks_each_branch_on_its_own(self):
+        snap, answers = wide_answers()
+        answers[NEWEST_CREATIONS] = Refusal(502)
+        answers[activity_path("claude/22")] = FakeAnswer([made("claude/22", "2026-09-20T08:00:00Z")])
+        answers[activity_path("claude/34")] = FakeAnswer([made("claude/34", "2026-09-18T08:00:00Z")])
+        api, opener = client(answers)
+        found = github.collect(api, snap["sha"], snap["default_branch"])
+        self.assertEqual(found["began"], {"claude/22": "2026-09-20T08:00:00Z", "claude/34": "2026-09-18T08:00:00Z"})
+        self.assertNotIn("began_refused", found)
+        self.assertEqual(activity_asked(opener), sorted([NEWEST_CREATIONS] + [
+            activity_path(b) for b in ("claude/22", "claude/34", "claude/31", "claude/5")]))
+
+    def test_a_refused_read_leaves_that_branch_out_says_so_and_fails_no_run(self):
+        snap, answers = wide_answers()
+        answers[NEWEST_CREATIONS] = FakeAnswer([made("claude/22", "2026-09-20T08:00:00Z")])
+        for code in (403, 422, 500, 502, 503):
+            answers[activity_path("claude/31")] = Refusal(code, {"message": "no"})
+            with self.subTest(code=code):
+                api, _ = client(answers)
+                found = github.collect(api, snap["sha"], snap["default_branch"])
+                self.assertEqual(found["began"], {"claude/22": "2026-09-20T08:00:00Z"})
+                self.assertEqual(list(found["began_refused"]), ["claude/31"])
+                self.assertIn(f"HTTP {code}", found["began_refused"]["claude/31"])
+                live = board.Snapshot.from_dict(found)
+                self.assertIn("| docs/b.md | #63, #5 |", board.render(live))
+                self.assertEqual(github.began_refused_lines(live), [
+                    f"claude/31: GitHub refused to say when the branch was made "
+                    f"({found['began_refused']['claude/31']}), so the Overlaps date its pull request by when it "
+                    f"was opened"])
+        self.assertEqual(github.began_refused_lines(board.Snapshot.from_dict(snap)), [])
+
+    def test_the_log_says_a_refused_claim_lands_last(self):
+        """F13's second review: a claim with no pull request yet is the work
+        nothing dates once GitHub refuses its branch, and lands last, where
+        a pull request's work is dated by its opening."""
+        snap, answers = wide_answers()
+        answers[NEWEST_CREATIONS] = FakeAnswer([made("claude/31", "2026-09-20T08:00:00Z")])
+        answers[activity_path("claude/5")] = Refusal(502)
+        api, _ = client(answers)
+        live = github.snapshot(api, snap["sha"], snap["default_branch"])
+        self.assertIn("| docs/b.md | #63, #5 |", board.render(live))
+        self.assertEqual(github.began_refused_lines(live), [
+            f"claude/5: GitHub refused to say when the branch was made ({live.began_refused['claude/5']}), "
+            f"so the Overlaps put its claim last, as work nothing dates"])
+
+    def test_a_branch_two_pull_requests_share_is_asked_about_once(self):
+        """F13's second review: two open pull requests from one head, as to
+        the default branch and to a release branch, are two pieces of work
+        on one branch, whose push GitHub is asked about once."""
+        snap, _ = wide_answers()
+        twin = dict(next(p for p in snap["pulls"] if p["number"] == 63), number=70)
+        snap["pulls"].append(twin)
+        api, opener = client({NEWEST_CREATIONS: FakeAnswer([])})
+        self.assertEqual([w.branch for w in board.overlaps(snap)["docs/b.md"]].count("claude/31"), 2)
+        self.assertEqual(github.began_times(api, snap), ({}, {}))
+        self.assertEqual(activity_asked(opener), sorted([NEWEST_CREATIONS] + [
+            activity_path(b) for b in ("claude/22", "claude/31", "claude/34", "claude/5")]))
+
+
 class Collect(unittest.TestCase):
     def test_a_live_snapshot_renders_the_page_the_fixture_does(self):
         snap, answers = fixture_answers()
