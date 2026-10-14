@@ -18,6 +18,7 @@ import errno
 import io
 import itertools
 import json
+import multiprocessing
 import os
 import shutil
 import signal
@@ -86,6 +87,70 @@ def waits_outside_its_work(ready):
     time.sleep(600)
 
 
+def sleeps():
+    """A part that runs until it is ended."""
+    time.sleep(600)
+
+
+def begins_and_sleeps(began):
+    """A part that says its work began, then runs until it is ended."""
+    Path(began).write_text("began\n", encoding="ascii")
+    time.sleep(600)
+
+
+def ignores_sigterm(ready):
+    """A part a SIGTERM does not end, as one is whose signal a finalizer
+    swallowed."""
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    ready.set()
+    time.sleep(600)
+
+
+def says_it_is_ready(folder):
+    Path(folder, "ready").write_text("ready\n", encoding="ascii")
+    time.sleep(600)
+
+
+def runs_the_lane_and_goes_on(folder):
+    """A runner that is itself a process multiprocessing started, as under
+    a test runner that forks, with one part that runs until it is ended;
+    it says so when the run lets it go on after a SIGTERM."""
+    lanes.first_wave = lambda settings, results: [("a part", says_it_is_ready, (folder,))]
+    lanes.second_wave = lambda settings, results: []
+    try:
+        lanes.run(lanes.Settings(Path(folder) / "out", only=("search",), jobs=1), io.StringIO())
+    except SystemExit as stopped:
+        Path(folder, "went-on").write_text(f"{stopped!r}\n", encoding="ascii")
+
+
+# A runner with one part that takes three seconds to end once told to, and
+# says when it is told, in a process of its own.
+SLOW_TO_END = """\
+import os, signal, sys, time
+from pathlib import Path
+sys.path.insert(0, {root!r})
+from validation import lanes
+out = Path({out!r})
+
+
+def ends_in_three_seconds(signum, frame):
+    (out / "ending").write_text("ending\\n", encoding="ascii")
+    time.sleep(3)
+    os._exit(3)
+
+
+def slow_to_end():
+    signal.signal(signal.SIGTERM, ends_in_three_seconds)
+    (out / "ready").write_text("ready\\n", encoding="ascii")
+    time.sleep(600)
+
+
+lanes.first_wave = lambda settings, results: [("a slow part", slow_to_end, ())]
+lanes.second_wave = lambda settings, results: []
+lanes.run(lanes.Settings(out, only=("search",), jobs=1), open(os.devnull, "w"))
+"""
+
+
 def a_live_process(test):
     """A process that lives until the test ends, standing for a run in
     progress: a marker naming the test's own process reads as a dead
@@ -104,6 +169,22 @@ def end_session(process):
     except ProcessLookupError:
         pass
     process.wait()
+
+
+def end_forked(pids):
+    """The processes a test forked, killed and reaped whatever the test
+    saw, through multiprocessing where it lists them."""
+    listed = {child.pid: child for child in multiprocessing.active_children()}
+    for pid in pids:
+        if pid in listed:
+            listed[pid].kill()
+            listed[pid].join()
+            continue
+        try:
+            os.kill(pid, signal.SIGKILL)
+            os.waitpid(pid, 0)
+        except (ProcessLookupError, ChildProcessError):
+            pass
 
 
 def results_in(folder):
@@ -641,6 +722,30 @@ class TheLaneAsOneRun(unittest.TestCase):
         resumed["searches"][0]["violations"].append({"file": "one more"})
         self.assertNotIn("conformance counterexamples", lanes.done_parts(resumed))
 
+    def test_the_counterexamples_are_read_from_this_run_s_folder_however_a_run_spelt_it(self):
+        """A result records each trace file as the invocation that wrote it
+        spelt the folder, relative to its own working directory, so a
+        resume from another directory, or with the folder spelt another
+        way, found none of the files, and the counterexamples' conformance
+        raised on every resume. The files are read by name from this
+        run's traces folder, and a conformance that played them under
+        another spelling is done."""
+        with tempfile.TemporaryDirectory() as folder:
+            with mock.patch.object(claims, "is_idle", at_exactly_24_hours):
+                found = deep.search_space(ONE)
+                name = Path(deep.write_counterexamples(folder, ONE, found.found[:1], budget=0.0)[0]["file"]).name
+            settings = lanes.Settings(folder, only=("conformance",), jobs=2, quick=True)
+            results = lanes.fresh_results(settings)
+            elsewhere = f"another/working/directory/{deep.TRACES}/{name}"
+            results["searches"].append({"space": "E-two", "stopped": False, "violations": [{"file": elsewhere}]})
+            part, function, args = lanes.second_wave(settings, results)[-1]
+            self.assertEqual((part, args), (f"conformance {lanes.COUNTEREXAMPLES}",
+                                            ([str(Path(folder) / deep.TRACES / name)],)))
+            played = function(*args)
+            self.assertEqual((played["counterexamples"], played["disagreements"]), (1, []))
+            results["conformance"].append({**played, "files": [f"{folder}/./{deep.TRACES}/{name}"]})
+            self.assertIn(f"conformance {lanes.COUNTEREXAMPLES}", lanes.done_parts(results))
+
     def test_a_run_is_refused_while_another_is_in_progress_in_the_folder(self):
         """A fresh run removes the checkpoints and the trace files first,
         which would take them from a run still writing them; the running
@@ -887,7 +992,7 @@ class TheLaneAsOneRun(unittest.TestCase):
         SystemExit, which ends it with 143 and prints nothing."""
         context = lanes.fork_context()
         ready = context.Event()
-        previous = signal.signal(signal.SIGTERM, lanes.stop_on_term)
+        previous = signal.signal(signal.SIGTERM, lanes.stop_on_term(os.getpid()))
         try:
             part = context.Process(target=waits_outside_its_work, args=(ready,))
             part.start()
@@ -899,6 +1004,145 @@ class TheLaneAsOneRun(unittest.TestCase):
         part.terminate()
         part.join(30)
         self.assertEqual(part.exitcode, 128 + signal.SIGTERM)
+
+    def test_a_sigterm_that_lands_as_a_part_is_forked_finds_the_part_listed(self):
+        """A SIGTERM that reached the runner as os.fork returned raised
+        before multiprocessing listed the part, so end_workers never found
+        it, and it ran its search on, orphaned. Held while the part is
+        forked and listed, it raises once the part is listed, and the
+        part is ended."""
+        forked, fork = [], os.fork
+
+        def signalled_as_it_forks():
+            pid = fork()
+            if pid:
+                forked.append(pid)
+                os.kill(os.getpid(), signal.SIGTERM)
+            return pid
+
+        self.addCleanup(end_forked, forked)
+        with tempfile.TemporaryDirectory() as folder:
+            settings = lanes.Settings(folder, only=("search",), jobs=1, quick=True)
+            previous = signal.signal(signal.SIGTERM, lanes.stop_on_term(os.getpid()))
+            try:
+                with mock.patch.object(os, "fork", signalled_as_it_forks), self.assertRaises(lanes.Terminated):
+                    lanes.run_jobs(settings, [("a part", sleeps, ())], lanes.fresh_results(settings), time.perf_counter(),
+                                   io.StringIO())
+            finally:
+                signal.signal(signal.SIGTERM, previous)
+        listed = [child for child in multiprocessing.active_children() if child.pid in forked]
+        lanes.end_workers()
+        self.assertEqual(len(forked), 1)
+        self.assertEqual([child.exitcode for child in listed], [128 + signal.SIGTERM])
+
+    def test_a_sigterm_that_reaches_a_part_as_it_is_forked_ends_it_before_its_work(self):
+        """A SIGTERM that reached a part during the fork's own steps was
+        lost there, or what its handler raised was swallowed, and the
+        part ran its whole work. Held until run_part lets it in, it ends
+        the part before its work begins. An alarm ends the test, not the
+        suite, if the part runs on."""
+        def ran_on(signum, frame):
+            raise AssertionError("the part ran on after its SIGTERM")
+
+        forked, fork = [], os.fork
+
+        def its_part_signalled_as_it_forks():
+            pid = fork()
+            if pid:
+                forked.append(pid)
+                os.kill(pid, signal.SIGTERM)
+            return pid
+
+        self.addCleanup(end_forked, forked)
+        with tempfile.TemporaryDirectory() as folder:
+            began = Path(folder) / "began"
+            settings = lanes.Settings(folder, only=("search",), jobs=1, quick=True)
+            results = lanes.fresh_results(settings)
+            previous = signal.signal(signal.SIGTERM, lanes.stop_on_term(os.getpid()))
+            self.addCleanup(signal.signal, signal.SIGTERM, previous)
+            self.addCleanup(signal.signal, signal.SIGALRM, signal.signal(signal.SIGALRM, ran_on))
+            signal.alarm(60)
+            try:
+                with mock.patch.object(os, "fork", its_part_signalled_as_it_forks):
+                    lanes.run_jobs(settings, [("a part", begins_and_sleeps, (str(began),))], results, time.perf_counter(),
+                                   io.StringIO())
+            finally:
+                signal.alarm(0)
+            self.assertFalse(began.exists())
+        self.assertEqual([e["error"] for e in results["errors"]],
+                         [f"its worker process died: exit code {128 + signal.SIGTERM}"])
+
+    def test_a_part_alive_after_the_grace_is_killed(self):
+        """A part whose SIGTERM a finalizer swallowed outlived end_workers'
+        wait and, once the runner had ended, ran its search on, orphaned;
+        one still alive after the grace is killed."""
+        context = lanes.fork_context()
+        ready = context.Event()
+        part = context.Process(target=ignores_sigterm, args=(ready,))
+        part.start()
+        self.addCleanup(part.join)
+        self.addCleanup(part.kill)
+        self.assertTrue(ready.wait(30))
+        lanes.end_workers(grace=0.5)
+        self.assertEqual(part.exitcode, -signal.SIGKILL)
+
+    def test_a_second_signal_while_the_run_ends_waits_until_it_has_ended(self):
+        """A cancelled job sends SIGINT and, seconds later, SIGTERM; the
+        second came while end_workers waited for a part slow to end and
+        raised there, past the rest of the cleanup, so the marker stayed,
+        naming a dead process, and the process ended on a traceback. Held
+        until the parts are ended, the handler put back and the marker
+        removed, it then ends the process."""
+        with tempfile.TemporaryDirectory() as folder:
+            out = Path(folder) / "out"
+            runner = subprocess.Popen([sys.executable, "-c", SLOW_TO_END.format(root=str(ROOT), out=str(out))],
+                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+            self.addCleanup(end_session, runner)
+            self.assertTrue(wait_for(lambda: (out / "ready").exists(), 60), "the part did not start within a minute")
+            runner.send_signal(signal.SIGINT)
+            self.assertTrue(wait_for(lambda: (out / "ending").exists(), 60), "the part was not ended within a minute")
+            runner.send_signal(signal.SIGTERM)
+            self.assertEqual(runner.wait(timeout=60), -signal.SIGTERM)
+            self.assertFalse((out / lanes.RUNNING).exists())
+
+    def test_a_runner_multiprocessing_started_ends_by_the_signal(self):
+        """Under a test runner that forks, the runner is itself a process
+        multiprocessing started, and there the handler took a part's way:
+        it raised SystemExit, and a caller that catches one went on after
+        the signal. The process's id tells the runner from its parts."""
+        context = lanes.fork_context()
+        with tempfile.TemporaryDirectory() as folder:
+            runner = context.Process(target=runs_the_lane_and_goes_on, args=(folder,))
+            runner.start()
+            self.addCleanup(runner.join)
+            self.addCleanup(runner.kill)
+            self.assertTrue(wait_for(lambda: (Path(folder) / "ready").exists(), 60), "the part did not start within a minute")
+            runner.terminate()
+            runner.join(60)
+            self.assertEqual(runner.exitcode, -signal.SIGTERM)
+            self.assertFalse((Path(folder) / "went-on").exists())
+            self.assertFalse((Path(folder) / "out" / lanes.RUNNING).exists())
+
+    def test_the_file_under_the_process_s_own_name_goes_however_the_marker_fails(self):
+        """The marker is written under a name of the process's own first;
+        where the folder holds no hard links and the exclusive create
+        failed too, that file stayed behind."""
+        def no_links(source, target):
+            raise PermissionError(errno.EPERM, "Operation not permitted")
+
+        opened = Path.open
+
+        def no_exclusive_create(path, mode="r", *args, **kwargs):
+            if "x" in mode:
+                raise PermissionError(errno.EACCES, "Permission denied")
+            return opened(path, mode, *args, **kwargs)
+
+        with tempfile.TemporaryDirectory() as folder:
+            settings = lanes.Settings(folder, only=("search",), jobs=2, quick=True)
+            with mock.patch.object(lanes.os, "link", no_links), mock.patch.object(Path, "open", no_exclusive_create), \
+                    self.assertRaises(PermissionError):
+                lanes.take_marker(settings)
+            self.assertEqual(list(Path(folder).iterdir()), [])
 
     def test_a_folder_with_no_hard_links_still_takes_the_marker(self):
         """os.link fails with EPERM on vfat, exFAT and SMB without unix

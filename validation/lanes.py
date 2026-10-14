@@ -52,6 +52,7 @@ done: a stopped search has not checked its space, and the owner's rule
 is that a missed violation costs more than the hours.
 """
 
+import contextlib
 import copy
 import json
 import multiprocessing
@@ -89,6 +90,9 @@ CHECKPOINTS = "checkpoints"
 # The file under the output folder that names the process of a run in
 # progress there.
 RUNNING = "running"
+# The signals held back while a part is forked and while a run ends
+# (signals_held).
+HELD = (signal.SIGINT, signal.SIGTERM)
 # The conformance part that plays the counterexample files.
 COUNTEREXAMPLES = "counterexamples"
 # The parts --only may name.
@@ -239,19 +243,30 @@ def run_conformance(name, count, length, seed):
 def run_conformance_files(files):
     """Every counterexample file written so far, played in both worlds;
     the files it played, so a resumed run knows whether it is owed
-    again."""
+    again (done_parts)."""
     results = deep.conformance((), files, 0)
     return {"space": COUNTEREXAMPLES, "files": list(files), **results}
 
 
 # --- the run ---------------------------------------------------------------------
 
-def counterexample_files(results):
+def counterexample_files(results, out=None):
     """The trace files the searches and the soak wrote, in the order the
-    results name them."""
+    results name them; with out, each by its name in this run's traces
+    folder. A result records a file as the invocation that wrote it spelt
+    the folder, relative to its own working directory, so a resume from
+    another directory, or spelling the folder another way, found none of
+    them there, and the counterexamples' conformance raised on every
+    resume."""
     files = [v["file"] for s in results["searches"] for v in s["violations"]]
     files += [v["file"] for s in results["soak"]["chunks"] for v in s["violations"]]
+    if out is not None:
+        files = [str(Path(out) / deep.TRACES / Path(file).name) for file in files]
     return files
+
+
+def file_names(files):
+    return [Path(file).name for file in files]
 
 
 def done_parts(results):
@@ -259,13 +274,14 @@ def done_parts(results):
     run does not run again; a search the budget stopped is not done, and
     a resume runs it again from its checkpoint, nor a gate whose budget
     stopped an exploration, nor the counterexamples' conformance once a
-    search or the soak has written files it did not play, nor a part
-    that raised, which the errors name and the results do not hold."""
+    search or the soak has written files it did not play, told apart by
+    name as they are read (counterexample_files), nor a part that raised,
+    which the errors name and the results do not hold."""
     done = {f"search {s['space']}" for s in results["searches"] if not s["stopped"]}
     done |= {f"soak {c['seeds'][0]}" for c in results["soak"]["chunks"]}
-    files = counterexample_files(results)
+    written = file_names(counterexample_files(results))
     done |= {f"conformance {c['space']}" for c in results["conformance"]
-             if c["space"] != COUNTEREXAMPLES or c["files"] == files}
+             if c["space"] != COUNTEREXAMPLES or file_names(c["files"]) == written}
     gate = results["gate"]
     if gate is not None and not any(m.get("stopped") for m in gate["memory"]):
         done.add("gate")
@@ -320,7 +336,7 @@ def second_wave(settings, results):
     for n, name in enumerate(spaces):
         if f"conformance {name}" not in done:
             jobs.append((f"conformance {name}", run_conformance, (name, share + (n < left), settings.conformance_length, 1000 * n)))
-    files = counterexample_files(results)
+    files = counterexample_files(results, settings.out)
     if files and f"conformance {COUNTEREXAMPLES}" not in done:
         jobs.append((f"conformance {COUNTEREXAMPLES}", run_conformance_files, (files,)))
     return jobs
@@ -520,10 +536,12 @@ def take_marker(settings):
     appears with the process's id in it: a file made empty and written
     after read as no run to a second run in between. Where the folder
     holds no hard links (vfat, exFAT, SMB without unix extensions) it is
-    made exclusively and written, empty for that moment. A file a dead
+    made exclusively and written, empty for that moment, in which a
+    second run reads no run and goes on beside the first. A file a dead
     process left, as the machine's restart leaves one, is replaced; two
     runs started at the same moment over such a file can both replace
-    it, a window of a few instructions."""
+    it, a window of a few instructions. The file under this process's
+    own name goes however this ends."""
     file = settings.out / RUNNING
     settings.out.mkdir(parents=True, exist_ok=True)
     mine = file.with_name(f"{RUNNING}.{os.getpid()}")
@@ -539,12 +557,11 @@ def take_marker(settings):
     except FileExistsError:
         pid = running_process(settings)
         if pid is not None:
-            mine.unlink(missing_ok=True)
             raise SystemExit(f"{file} names process {pid}, a run in progress there, so this one does not start; wait "
                              f"for it, run into another --out, or delete the file if no run is in progress") from None
         mine.replace(file)
-    else:
-        mine.unlink()
+    finally:
+        mine.unlink(missing_ok=True)
 
 
 def kept_results(settings):
@@ -587,9 +604,34 @@ def fork_context():
     return multiprocessing.get_context("fork" if "fork" in methods else methods[0])
 
 
+@contextlib.contextmanager
+def signals_held():
+    """A block run with SIGINT and SIGTERM held back, each delivered once
+    it ends under whatever handler is set by then; where the platform
+    has no signal mask, Windows, the block runs as it is."""
+    if not hasattr(signal, "pthread_sigmask"):
+        yield
+        return
+    before = signal.pthread_sigmask(signal.SIG_BLOCK, HELD)
+    try:
+        yield
+    finally:
+        signal.pthread_sigmask(signal.SIG_SETMASK, before)
+
+
+def release_signals():
+    """SIGINT and SIGTERM let in again in a part, which is forked with
+    them held (run_jobs)."""
+    if hasattr(signal, "pthread_sigmask"):
+        signal.pthread_sigmask(signal.SIG_UNBLOCK, HELD)
+
+
 def run_part(connection, function, args):
     """A part in its own process: the result, or why it raised, sent back
-    through the pipe; a process that dies sends nothing."""
+    through the pipe; a process that dies sends nothing. The signals the
+    fork held are let in first, so one that came while the process was
+    being made ends it here, before its work."""
+    release_signals()
     try:
         outcome = ("done", function(*args))
     except Exception as error:
@@ -625,10 +667,17 @@ def run_jobs(settings, jobs, results, began, out):
         while pending and len(running) < settings.jobs:
             part, function, args = pending.pop(0)
             ours, theirs = context.Pipe(duplex=False)
-            process = context.Process(target=run_part, args=(theirs, function, args), name=part)
-            process.start()
-            theirs.close()
-            running[part] = (process, ours)
+            with signals_held():
+                # A signal that lands as the part is forked raised in the
+                # parent before multiprocessing listed the part, which
+                # end_workers then never found, and in the part during the
+                # fork's own steps, which lost it or swallowed what its
+                # handler raised; held, it reaches the parent once the
+                # part is listed and the part once run_part lets it in.
+                process = context.Process(target=run_part, args=(theirs, function, args), name=part)
+                process.start()
+                theirs.close()
+                running[part] = (process, ours)
         ready = {}
         for part, (process, connection) in running.items():
             ready[process.sentinel] = part
@@ -662,36 +711,51 @@ class Terminated(BaseException):
     caller's catches it on its way, as it would a SystemExit."""
 
 
-def stop_on_term(signum, frame):
-    """What a SIGTERM to the runner does, the signal `kill <pid>` sends:
-    the run stops by an exception that reaches run's finally, which then
-    sends the signal again under the handler that was there before, so
-    the process ends as the signal ends it, and a caller such as a test
-    runner, which catches a SystemExit and goes on, does not outlive it.
-    Without a handler the parent would die at once with the marker left
-    naming a dead process and each part's process, which watches no
-    parent, running its search on for hours, orphaned. A part's process
-    inherits the handler by the fork, and there, ended by end_workers, it
-    ends quietly by SystemExit wherever the signal finds it, where a
-    Terminated outside run_part's try reached multiprocessing's own
-    except, which printed it and ended the part with 1."""
-    if multiprocessing.parent_process() is not None:
-        raise SystemExit(128 + signum)
-    raise Terminated()
+def stop_on_term(runner):
+    """The SIGTERM handler run sets in the process runner, for the signal
+    `kill <pid>` sends. There the run stops by an exception that reaches
+    run's finally, which then sends the signal again under the handler
+    that was there before, so the process ends as the signal ends it, and
+    a caller such as a test runner, which catches a SystemExit and goes
+    on, does not outlive it. Without a handler the parent would die at
+    once with the marker left naming a dead process and each part's
+    process, which watches no parent, running its search on for hours,
+    orphaned. A part's process inherits the handler by the fork, and
+    there, ended by end_workers, it ends quietly by SystemExit wherever
+    the signal finds it, where a Terminated outside run_part's try
+    reached multiprocessing's own except, which printed it and ended the
+    part with 1. The two are told apart by the process's id, since the
+    runner can itself be a process multiprocessing started, as under a
+    test runner that forks, and there it took the part's way and went
+    on after the signal."""
+    def stop(signum, frame):
+        if os.getpid() != runner:
+            raise SystemExit(128 + signum)
+        raise Terminated()
+    return stop
 
 
-def end_workers():
+def end_workers(grace=10.0):
     """The parts' live processes ended and waited for, each a child of
     this process, so a run that ends, however it ends, leaves none
     behind, not even one unreaped: a run that ends by its own SIGTERM
     runs no exit handler, which waited for them before, and where nothing
     else reaps an orphan, a container's first process that is no init,
-    it stays. Ten seconds a part bounds the wait."""
+    it stays. Each is sent SIGTERM, and the grace, in seconds, is for all
+    of them together; one still alive then is killed, as one is whose
+    signal a finalizer swallowed, or one deep in writing its checkpoint,
+    which is written beside the last and moved into place, so the last
+    stays whole."""
     children = multiprocessing.active_children()
     for child in children:
         child.terminate()
+    ends = time.monotonic() + grace
     for child in children:
-        child.join(10)
+        child.join(max(0.0, ends - time.monotonic()))
+    for child in children:
+        if child.is_alive():
+            child.kill()
+            child.join()
 
 
 def run(settings, out=sys.stdout):
@@ -701,7 +765,10 @@ def run(settings, out=sys.stdout):
     workers and removes the marker, as Ctrl-C and a signal to the whole
     process group do, and then ends the process by the signal; the
     handler can be set from the main thread alone, where the script and
-    the tests call this. The results file says whether the run finished,
+    the tests call this; a second signal meanwhile, a cancelled job's
+    SIGTERM after its SIGINT or Ctrl-C again, waits until the workers
+    are ended, the handler is put back and the marker removed, where it
+    cut the cleanup short. The results file says whether the run finished,
     every part any invocation of it asked for landed or shown red, and
     one that did not is red. From the marker's taking on, whatever
     ends the run, a refusal to resume included, the finally removes the
@@ -709,7 +776,7 @@ def run(settings, out=sys.stdout):
     take_marker(settings)
     marker = settings.out / RUNNING
     in_main_thread = threading.current_thread() is threading.main_thread()
-    previous = signal.signal(signal.SIGTERM, stop_on_term) if in_main_thread else None
+    previous = signal.signal(signal.SIGTERM, stop_on_term(os.getpid())) if in_main_thread else None
     terminated = False
     try:
         results, began = kept_results(settings)
@@ -724,10 +791,11 @@ def run(settings, out=sys.stdout):
     except Terminated:
         terminated = True
     finally:
-        end_workers()
-        if in_main_thread:
-            signal.signal(signal.SIGTERM, previous)
-        marker.unlink(missing_ok=True)
+        with signals_held():
+            end_workers()
+            if in_main_thread:
+                signal.signal(signal.SIGTERM, previous)
+            marker.unlink(missing_ok=True)
     if terminated:
         os.kill(os.getpid(), signal.SIGTERM)
         raise SystemExit(128 + signal.SIGTERM)
