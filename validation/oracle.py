@@ -23,11 +23,13 @@ holds the open findings the board's run can reach (DESIGN.md, 13), read
 from validation/known.json since build step 5 (known.py): F2,
 overlapping work told again once a claim opens its pull request; F9, a
 draft never told "main moved"; F13, the landing order's "oldest" read as
-the lowest number; F14, Given to workers needing the label todo and
-leaving epics out. F12, "main moved" told only in the run the push to
-main started, was a switch until its fix, which tells it in whichever
-run finds the branch behind. F13 and F14 are what the harness of build step 1 found when its
-oracle was held to the spec's words (DESIGN.md, 13).
+the lowest number. Two were switches until their fixes: F12, "main
+moved" told only in the run the push to main started, which is now told
+in whichever run finds the branch behind, and F14, Given to workers
+needing the label todo and leaving epics out, which now shows every
+open, unclaimed issue a worker's label names. F13 and F14 are what the
+harness of build step 1 found when its oracle was held to the spec's
+words (DESIGN.md, 13).
 """
 
 import re
@@ -254,12 +256,13 @@ def queue(model):
 def given(model, known=AS_BUILT):
     """Given to workers: open issues a worker's label names, not yet
     claimed, with the workers named (SPEC["given"]). The spec's sentence
-    asks for no other label; with F14 known, the issue must carry todo and
-    not epic, as the library reads it."""
+    asks for no other label, and since F14's fix the library asks for none
+    either; until it the issue had to carry todo and not epic, which the
+    switch F14 read. No finding switches this rule now, and known is taken
+    as every rule of the page takes it."""
     held = held_numbers(model)
     return {n: workers_named(i.labels) for n, i in model.issues.items()
-            if i.state == "open" and CLAIMED not in i.labels and n not in held and workers_named(i.labels)
-            and ("F14" not in known or (TODO in i.labels and EPIC not in i.labels))}
+            if i.state == "open" and CLAIMED not in i.labels and n not in held and workers_named(i.labels)}
 
 
 def claims_listed(model):

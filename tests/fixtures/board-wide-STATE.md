@@ -44,7 +44,7 @@ As of commit fedcba9 on trunk. Rewritten by .github/workflows/board.yml; do not 
 | #25 | Blocks everyone \| twice over | blocker, todo |
 | #100 | A hundred, to sort after nine | todo |
 
-## Given to workers (open issues labelled todo that a worker's label names, not yet claimed)
+## Given to workers (open issues a worker's label names, not yet claimed)
 
 | Issue | Title | Worker |
 | --- | --- | --- |

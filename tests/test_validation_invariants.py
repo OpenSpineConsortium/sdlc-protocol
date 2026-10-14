@@ -258,11 +258,14 @@ class TheOpenFindingsShow(unittest.TestCase):
                          [("G7", "the board's Overlaps are {'src/shared.py': [2, 100]}, the oracle's "
                                  "{'src/shared.py': [100, 2]}")])
 
-    def test_f14_given_to_workers_needs_the_label_todo(self):
-        """Found by this step: an issue a worker's label names, with no todo,
-        is shown in neither the Queue nor Given to workers."""
+    def test_f14_an_issue_a_worker_s_label_names_is_shown_under_given_to_workers(self):
+        """Found by this step, fixed after 0.4.1: an issue a worker's label
+        names, with no todo, is shown under Given to workers as the spec
+        reads; until the fix it was shown in neither section, which the
+        mutant that asks for todo again shows."""
         self.assertEqual(violations([BOARD], labels=("worker:a",)), [])
-        found = violations([BOARD], known=oracle.AS_BUILT - {"F14"}, labels=("worker:a",))
+        with mutants.switched_on(mutants.MUTANTS["given to workers needing the label todo"]):
+            found = violations([BOARD], labels=("worker:a",))
         self.assertEqual([(v.guarantee, v.detail) for v in found],
                          [("G9", "Given to workers is {}, the oracle's {1: ['a']}")])
 
