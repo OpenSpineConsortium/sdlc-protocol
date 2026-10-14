@@ -135,6 +135,21 @@ class EachMutantIsCaught(unittest.TestCase):
                 self.assertNotEqual(found, [])
 
 
+class TheSearchesCatchWhatTheyWereAddedFor(unittest.TestCase):
+    def test_a_draft_github_calls_blocked_catches_both_of_f9_s_mutants(self):
+        """The lane credits a mutant to the first catcher, the regression
+        traces for F9's two, so the search added with F9's fix (DESIGN.md,
+        7 and section 13) is held here: it finds nothing on the library and
+        a G10 violation under each mutant, which it can only while the
+        search starts with GitHub calling the draft blocked."""
+        search = next(s for s in mutants.SEARCHES if s.name == "a draft GitHub calls blocked")
+        self.assertTrue(search.opaque_pulls)
+        self.assertEqual(mutants.violations(search), {})
+        for name in ("an opaque state read by GitHub's word alone", "the comparison read by ahead_by"):
+            with self.subTest(mutant=name), mutants.switched_on(mutants.MUTANTS[name]):
+                self.assertIn("G10", {guarantee for guarantee, _ in mutants.violations(search)})
+
+
 class TheHarnessFixesTheLaneAskedFor(unittest.TestCase):
     def test_a_head_pushed_again_and_deleted_is_no_refused_rename(self):
         """The rename of a branch pushed again at the head a release kept is

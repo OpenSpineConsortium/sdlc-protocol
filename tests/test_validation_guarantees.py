@@ -67,10 +67,20 @@ def resolved(dotted):
     if found is None:
         return MISSING
     for part in rest:
-        found = getattr(found, part, MISSING)
+        found = attribute(found, part)
         if found is MISSING:
             return MISSING
     return found
+
+
+def attribute(found, part):
+    """One part of a cited name below the one before: an attribute, or a
+    field of a dataclass, which the class holds no value of when the field
+    has no default, as board.Pull.number; MISSING when there is neither."""
+    fields = getattr(found, "__dataclass_fields__", None) if isinstance(found, type) else None
+    if fields and part in fields:
+        return fields[part]
+    return getattr(found, part, MISSING)
 
 
 def longest_module(parts):
@@ -161,14 +171,18 @@ class GuaranteesMd(unittest.TestCase):
 
     def test_a_name_that_resolves_to_nothing_is_told_apart(self):
         """The resolver the citation check rests on: a class's method, a
-        harness module's function, a path from the package and a constant
-        resolve; a misspelled module, a rule that is not there and a part
-        below one do not."""
+        harness module's function, a path from the package, a constant and
+        a dataclass's field, with a default or without one, resolve; a
+        misspelled module, a rule that is not there and a part below one do
+        not."""
         for dotted in ("github.GitHubWorld.standing", "dealing.run_lane", "validation.dealing.run_lane",
                        "sdlc_protocol.adapters.github.standing_of"):
             with self.subTest(dotted=dotted):
                 self.assertTrue(callable(resolved(dotted)))
         self.assertEqual(resolved("github.OPAQUE_STATES"), github.OPAQUE_STATES)
+        for dotted in ("board.Pull.number", "board.Pull.standing"):
+            with self.subTest(dotted=dotted):
+                self.assertIsNot(resolved(dotted), MISSING)
         for dotted in ("orakle.main_moved_effects", "board.no_such_rule", "board.Pull.no_such_field",
                        "validation.no_such_lane.run", "sdlc_protocol.boards.render"):
             with self.subTest(dotted=dotted):

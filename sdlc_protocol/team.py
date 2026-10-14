@@ -207,7 +207,13 @@ def claim_needs_work(client, number):
     wasted. A branch behind its base counts whether GitHub says so or the
     pull request's standing does, where GitHub's word says only that a
     check or a review holds it, since the board tells such a pull request
-    "main moved" (F9) and its holder should hear it from the clerk too."""
+    "main moved" (F9) and its holder should hear it from the clerk too. So
+    a ready claim whose check is still running is carried at once when its
+    branch is behind, where until F9 it waited for the check and, under a
+    rule that asks for an up-to-date branch, for GitHub to say behind; a
+    busy default branch can then take a worker in Actions round after
+    round, each push starting the check again, up to its limit of rounds.
+    integration_due reads the integration's claim the same way."""
     pull = client.open_pull(f"{CLAIM_PREFIX}{number}")
     if not pull:
         return True
