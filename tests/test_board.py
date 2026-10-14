@@ -265,16 +265,20 @@ class Overlaps(unittest.TestCase):
         self.assertIn("| docs/agents/STATE.md | #40, #42 |", section)
         self.assertNotIn("claims/16.md", section)
 
-    def drafts_meeting(self, began=None, opened=""):
+    def drafts_meeting(self, began=None, opened="", fork=False):
         """#42, a draft from claude/16, and the claim on #17, with no pull
         request, both touching docs/agents/STATE.md, and #40 out of it:
         neither is a blocker or ready, so the oldest lands first. began is
-        the snapshot's times by branch, opened #42's created_at."""
+        the snapshot's times by branch, opened #42's created_at, and fork
+        puts #42's branch in a fork, as the API's head and base name it."""
         snap = self.overlapping()
         snap["pulls"][0]["files"] = ["docs/agents/README.md"]
         snap["claims"]["17"] = CLAIM_TEXT.replace("- docs/b.md\n- `docs/a.md`", "- docs/agents/STATE.md")
         if opened:
             snap["pulls"][2]["created_at"] = opened
+        if fork:
+            snap["pulls"][2]["head"]["repo"] = {"full_name": "someone/fork"}
+            snap["pulls"][2]["base"] = {"ref": "main", "repo": {"full_name": "o/r"}}
         if began is not None:
             snap["began"] = began
         return [w.number for w in board.overlaps(snap)["docs/agents/STATE.md"]]
@@ -290,10 +294,15 @@ class Overlaps(unittest.TestCase):
         self.assertEqual(self.drafts_meeting({"claude/16": "2026-09-22T08:00:00+00:00",
                                               "claude/17": "2026-09-22T09:00:00Z"}), [42, 17])
 
-    def test_work_nothing_dates_counts_as_the_oldest_and_the_number_breaks_a_tie(self):
+    def test_work_nothing_dates_counts_as_the_newest_and_the_number_breaks_a_tie(self):
+        """In a live run only a claim with no pull request yet can be such
+        work, since a pull request began at its opening where GitHub says
+        nothing of its branch, and a claim opens its draft at once, so it
+        is all but always the newest (F13's review); #42 has no created_at
+        here, as a fixture written by hand may have none."""
         self.assertEqual(self.drafts_meeting(), [17, 42])
-        self.assertEqual(self.drafts_meeting({"claude/16": "2026-09-22T08:00:00Z"}), [17, 42])
-        self.assertEqual(self.drafts_meeting({"claude/17": "2026-09-22T08:00:00Z"}), [42, 17])
+        self.assertEqual(self.drafts_meeting({"claude/16": "2026-09-22T08:00:00Z"}), [42, 17])
+        self.assertEqual(self.drafts_meeting({"claude/17": "2026-09-22T08:00:00Z"}), [17, 42])
         same = "2026-09-22T08:00:00Z"
         self.assertEqual(self.drafts_meeting({"claude/16": same, "claude/17": same}), [17, 42])
 
@@ -306,10 +315,46 @@ class Overlaps(unittest.TestCase):
                          "the push that made the branch wins over the opening of its pull request")
 
     def test_a_time_that_does_not_read_as_one_counts_as_nothing_said(self):
-        for word in ("yesterday", "2026-13-40T00:00:00Z", "\u0661\u0662"):
+        for word in ("yesterday", "2026-13-40T00:00:00Z", "\u0661\u0662", 1695369600, ["2026-09-22T08:00:00Z"]):
             with self.subTest(word=word):
                 self.assertEqual(self.drafts_meeting({"claude/16": word, "claude/17": "2026-09-22T09:00:00Z"}),
-                                 [42, 17])
+                                 [17, 42])
+        for opened in (1695369600, ["2026-09-22T08:00:00Z"], {"at": "2026-09-22T08:00:00Z"}):
+            with self.subTest(opened=opened):
+                self.assertEqual(self.drafts_meeting({"claude/17": "2026-09-22T09:00:00Z"}, opened=opened), [17, 42])
+
+    def test_a_pull_request_from_a_fork_began_when_it_was_opened_whatever_a_branch_here_of_its_name_says(self):
+        """F13's review: the fork's branch is none of this repository's, so
+        the push that made claude/16 here says nothing of when #42's work
+        began."""
+        began = {"claude/16": "2026-09-22T10:00:00Z", "claude/17": "2026-09-22T09:00:00Z"}
+        self.assertEqual(self.drafts_meeting(began, opened="2026-09-22T08:30:00Z"), [17, 42])
+        self.assertEqual(self.drafts_meeting(began, opened="2026-09-22T08:30:00Z", fork=True), [42, 17])
+        self.assertEqual(self.drafts_meeting(began, fork=True), [17, 42])
+        snap = self.overlapping()
+        snap["pulls"][2]["head"]["repo"] = {"full_name": "someone/fork"}
+        snap["pulls"][2]["base"] = {"ref": "main", "repo": {"full_name": "o/r"}}
+        self.assertEqual([(w.number, w.branch) for w in board.open_work(snap) if w.is_pull],
+                         [(40, "claude/12"), (41, "claude/13"), (42, "")])
+
+    def test_a_fork_is_read_from_the_api_s_head_and_base_and_round_trips(self):
+        def pull(head_repo="o/r", base_repo="o/r"):
+            data = {"number": 5, "head": {"ref": "fix", "sha": "abc"}}
+            if head_repo != "unnamed":
+                data["head"]["repo"] = {"full_name": head_repo} if head_repo else None
+            if base_repo:
+                data["base"] = {"ref": "main", "repo": {"full_name": base_repo}}
+            return Pull.from_dict(data)
+
+        self.assertFalse(pull().fork)
+        self.assertFalse(pull("O/R").fork)
+        self.assertTrue(pull("someone/r").fork)
+        self.assertTrue(pull(None).fork, "a fork since deleted, whose head names no repository")
+        self.assertFalse(pull("unnamed").fork, "a head written by hand, which names no repository")
+        self.assertFalse(pull("someone/r", base_repo="").fork)
+        self.assertEqual(Pull.from_dict(pull("someone/r").to_dict()), pull("someone/r"))
+        self.assertTrue(Pull.from_dict({"number": 5, "fork": True}).fork)
+        self.assertNotIn("fork", pull().to_dict())
 
     def test_when_work_began_round_trips_and_is_left_out_where_nothing_says(self):
         snap = Snapshot.from_dict(dict(snapshot(), began={"claude/12": "2026-09-22T08:00:00Z", "claude/13": ""}))
@@ -319,6 +364,10 @@ class Overlaps(unittest.TestCase):
         opened = Pull(5, "Five", "claude/5", "abc", "clean", created_at="2026-09-22T08:00:00Z")
         self.assertEqual(Pull.from_dict(opened.to_dict()), opened)
         self.assertNotIn("created_at", Pull(6, "Six", "claude/6", "def", "clean").to_dict())
+        refused = Snapshot.from_dict(dict(snapshot(), began_refused={"claude/12": "HTTP 502"}))
+        self.assertEqual(refused.began_refused, {"claude/12": "HTTP 502"})
+        self.assertEqual(Snapshot.from_json(refused.to_json()), refused)
+        self.assertNotIn("began_refused", Snapshot.from_dict(snapshot()).to_dict())
 
     def test_a_released_claims_pull_request_meets_nothing(self):
         snap = self.overlapping()

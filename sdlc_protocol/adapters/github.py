@@ -45,6 +45,9 @@ API_VERSION = "2022-11-28"
 USER_AGENT = "sdlc-board"
 TIMEOUT = 60
 PER_PAGE = 100
+# The branch creations one read of the repository's activity lists, the
+# most GitHub gives on a page (began_times).
+ACTIVITY_PAGE = 100
 # GitHub computes mergeability after the first ask; one more ask after a
 # pause is enough, and "unknown" is the honest word when it still has not.
 MERGEABLE_RETRY_SECONDS = 3
@@ -241,20 +244,31 @@ class GitHub:
         return [branch["name"] for branch in self.get_all(f"/repos/{self.repo}/branches")]
 
     def open_pull(self, branch):
+        """The open pull request from a branch of this repository, as
+        pull_detail gives it, with its standing where GitHub's word says
+        only that something else stops the merge (standing_of), so the
+        clerk deals a claim back for a branch behind its base, as the board
+        tells one behind the default branch "main moved"; or None. A draft
+        is not compared, since the clerk carries a draft whatever its
+        standing. No default branch is named, so a pull request stacked on
+        another branch is compared with that base, which the clerk reads as
+        a base it has fallen behind and the board leaves to GitHub's word;
+        the template's rulesets hold only the default branch, so GitHub
+        never calls such a pull request blocked there."""
+        detail = self.pull_detail(branch)
+        if detail and not detail.get("draft"):
+            standing = standing_of(self, detail)
+            if standing is not None:
+                detail["standing"] = standing
+        return detail
+
+    def pull_detail(self, branch):
         """The open pull request from a branch of this repository, in the
-        detail that holds mergeable_state and the head's sha, with its
-        standing where GitHub's word says only that something else stops
-        the merge (standing_of), so the clerk deals a claim back for the
-        same "behind" the board tells it "main moved" for; or None."""
+        detail that holds mergeable_state and the head's sha, as GitHub
+        gives it, or None."""
         owner = self.repo.split("/")[0]
         found = self.get(f"/repos/{self.repo}/pulls", {"state": "open", "head": f"{owner}:{branch}"}) or []
-        if not found:
-            return None
-        detail = self.get(f"/repos/{self.repo}/pulls/{found[0]['number']}")
-        standing = standing_of(self, detail)
-        if standing is not None:
-            detail["standing"] = standing
-        return detail
+        return self.get(f"/repos/{self.repo}/pulls/{found[0]['number']}") if found else None
 
     def check_runs(self, sha):
         """Every check run on one commit, page by page: the endpoint wraps
@@ -566,60 +580,103 @@ def collect(api, sha, default_branch, now=None):
         "merged": recent_merged(api),
         "releases": releases(api, claim_heads(listed), found_issues, pulls, now),
     }
-    found["began"] = began_times(api, found, from_forks(api, pulls))
+    found["began"], refused = began_times(api, found)
+    if refused:
+        found["began_refused"] = refused
     return found
 
 
-def from_forks(api, pulls):
-    """The numbers of the open pull requests whose branch stands in another
-    repository, a fork, or in none, a fork since deleted: a branch of the
-    same name here is another branch, and its history says nothing of
-    theirs."""
-    return {p["number"] for p in pulls
-            if (((p.get("head") or {}).get("repo") or {}).get("full_name") or "").lower() != api.repo.lower()}
-
-
-def began_times(api, found, forks=frozenset()):
+def began_times(api, found):
     """When each piece of open work that meets other work in a file began,
     by its branch: the time GitHub writes for the newest push that made a
     branch of that name, read from the repository's activity, which GitHub
     records as the pushes reach it, so no clock of a worker's own comes in
-    (F13). Only the work in the Overlaps is asked about, one call a branch,
-    since the landing order is all the time is for; a pull request from a
-    fork is never asked about. When GitHub has no such push to give, has
-    no activity at all (a 404), or refuses the read (a 5xx, a 422, a rate
-    limit's 403), the branch is left out and the board orders that work as
-    work whose beginning nothing says (board.landing_key), a pull request
-    by when it was opened: the order is the one thing the time is for, and
-    one branch GitHub will not answer for must not fail the board's whole
-    run, as a comparison GitHub refuses does not (standing_of)."""
-    times, asked = {}, set()
+    (F13); and GitHub's answer for each branch it refused to date. Only the
+    work in the Overlaps is asked about, since the landing order is all the
+    time is for, and a pull request from a fork never, since its branch is
+    none of this repository's (board.open_work). One call reads the newest
+    branch creations of the whole repository (newest_creations), and each
+    branch it does not name is asked about on its own (branch_made_at), so
+    a run pays one call where the work is new, as it is while it overlaps,
+    and a refused first call costs only the reads it would have saved.
+    When GitHub has no such push to give, or no activity at all (a 404),
+    or refuses a branch's own read, whatever it answers, that branch is
+    left out and the board orders its work as work whose beginning nothing
+    says (board.landing_key), a pull request by when it was opened: the
+    order is the one thing the time is for, and one branch GitHub will not
+    answer for must not fail the board's whole run, as a comparison GitHub
+    refuses does not (standing_of)."""
+    wanted = []
     for works in board.overlaps(found).values():
-        for work in works:
-            if not work.branch or work.branch in asked or (work.is_pull and work.number in forks):
-                continue
-            asked.add(work.branch)
-            try:
-                began = branch_made_at(api, work.branch)
-            except GitHubError:
-                continue
-            if began:
-                times[work.branch] = began
+        wanted += [work.branch for work in works if work.branch and work.branch not in wanted]
+    if not wanted:
+        return {}, {}
+    try:
+        times = newest_creations(api, wanted)
+    except GitHubError:
+        times = {}
+    refused = {}
+    for branch in wanted:
+        if branch in times:
+            continue
+        try:
+            began = branch_made_at(api, branch)
+        except GitHubError as problem:
+            refused[branch] = f"{problem}{github_words(problem)}"
+            continue
+        if began:
+            times[branch] = began
+    return times, refused
+
+
+def newest_creations(api, branches):
+    """When the newest push that made each of these branches came, for those
+    the repository's newest ACTIVITY_PAGE branch creations name: one call,
+    the activity filtered to branch creations and listed newest first, so
+    the first entry for a branch is its newest creation. A refusal other
+    than a 404 raises."""
+    wanted = {f"refs/heads/{branch}": branch for branch in branches}
+    listed = api.get(f"/repos/{api.repo}/activity", {"activity_type": "branch_creation", "direction": "desc",
+                                                     "per_page": ACTIVITY_PAGE}, missing_ok=True) or []
+    times = {}
+    for activity in listed if isinstance(listed, list) else []:
+        made = made_at(activity)
+        branch = wanted.get(activity.get("ref")) if made and isinstance(activity.get("ref"), str) else None
+        if branch and branch not in times:
+            times[branch] = made
     return times
 
 
 def branch_made_at(api, branch):
     """When the newest push that made the branch came, as GitHub writes the
     time, or "" when GitHub records none: the activity list, filtered to the
-    branch and to branch creations, gives the newest first. A refusal other
+    branch and to branch creations and listed newest first. A refusal other
     than a 404 raises."""
-    listed = api.get(f"/repos/{api.repo}/activity", {"ref": f"refs/heads/{branch}",
-                                                     "activity_type": "branch_creation", "per_page": 1},
-                     missing_ok=True) or []
+    listed = api.get(f"/repos/{api.repo}/activity", {"ref": f"refs/heads/{branch}", "activity_type": "branch_creation",
+                                                     "direction": "desc", "per_page": 1}, missing_ok=True) or []
     for activity in listed if isinstance(listed, list) else []:
-        if activity.get("ref") == f"refs/heads/{branch}" and activity.get("activity_type") == "branch_creation":
-            return activity.get("timestamp") or ""
+        if made_at(activity) and activity.get("ref") == f"refs/heads/{branch}":
+            return made_at(activity)
     return ""
+
+
+def made_at(activity):
+    """The time of an entry of the activity that records a push making a
+    branch, "" for any other entry."""
+    if not isinstance(activity, dict) or activity.get("activity_type") != "branch_creation":
+        return ""
+    return activity.get("timestamp") or ""
+
+
+def began_refused_lines(snapshot):
+    """A line for each branch of overlapping work GitHub refused to date in
+    this run, for the workflow's log, since the page orders its work as
+    work nothing dates and says nothing of why: a token that may not read
+    the repository's activity would otherwise leave every claim undated on
+    every run unseen."""
+    snap = board.as_snapshot(snapshot)
+    return [f"{branch}: GitHub refused to say when the branch was made ({answer}), so the Overlaps order its "
+            f"work as work nothing dates" for branch, answer in sorted(snap.began_refused.items())]
 
 
 def snapshot(api, sha, default_branch, now=None):
@@ -1001,27 +1058,28 @@ class GitHubWorld:
 
     def pull_of(self, branch):
         """The branch's open pull request, settled, or None."""
-        found = self.api.open_pull(branch)
+        found = self.api.pull_detail(branch)
         return settled(self.api, found) if found else None
 
     def behind_by(self, pull):
         """How many commits of the pull request's base its head lacks, from
-        GitHub's comparison of the two; None when GitHub cannot say."""
+        GitHub's comparison of the two; None when there is nothing to
+        compare or GitHub has no such comparison (a 404). Any other refusal
+        raises."""
         return behind_by(self.api, pull, self.default_branch)
 
     def standing(self, branch):
         """Unknown for a branch with no open pull request: GitHub computes
-        mergeability only for one, and the gate asks only about those. The
-        standing open_pull read is taken as it is, so the branch is compared
-        once."""
+        mergeability only for one, and the gate asks only about those.
+        Where GitHub's word is opaque the branch is read through mergeable
+        and one comparison (standing_of), a comparison GitHub refuses
+        reading as unknown, the same whether GitHub had computed the pull
+        request's mergeability at the first read or only after the pause."""
         pull = self.pull_of(branch)
         if pull is None:
             return gate.UNKNOWN
-        if pull.get("standing"):
-            return pull["standing"]
-        if pull.get("mergeable_state") in OPAQUE_STATES and pull.get("mergeable"):
-            return standing_word(pull, self.behind_by(pull))
-        return standing_word(pull)
+        found = standing_of(self.api, pull)
+        return found if found is not None else standing_word(pull)
 
     def check(self, branch):
         sha = self.branch_sha(branch)
@@ -1036,7 +1094,7 @@ class GitHubWorld:
         if self.policy.who_merges != gate.GATE:
             raise NotAllowed(f"{gate.MOVERS[self.policy.who_merges]} merges here, not the gate; "
                              f"{branch} waits for it")
-        pull = self.api.open_pull(branch)
+        pull = self.api.pull_detail(branch)
         if pull is None:
             raise MergeRefused(f"{branch} has no open pull request to merge; open one first")
         try:
@@ -1051,7 +1109,9 @@ class GitHubWorld:
         a pull request it will not merge and 409 when the head moved: main
         moved when the branch, read again, no longer fits the default
         branch, and otherwise the author has something to fix (a review, a
-        rule, a push to look at). Any other answer is the gate failing."""
+        rule, a push to look at), which is also the answer when GitHub will
+        not compare the branch, since the standing is then unknown. Any
+        other answer is the gate failing."""
         said = f": {problem.detail}" if problem.detail else ""
         if problem.status not in (405, 409):
             return GateFailed(f"GitHub did not merge #{pull['number']}: {problem}{said}")

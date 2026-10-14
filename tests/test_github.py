@@ -128,6 +128,29 @@ class FakeOpener:
         return [json.loads(c.data) for c in self.calls if c.get_method() == method]
 
 
+class Turns(list):
+    """The answers to one path, given in turn, the last for every ask after
+    it, as GitHub answers a pull request's detail before and after it has
+    computed the pull request's mergeability."""
+
+    def __init__(self, *answers):
+        super().__init__(answers)
+
+
+class InTurn(FakeOpener):
+    """A FakeOpener that answers a path given Turns with them in turn."""
+
+    def open(self, call, timeout=None):
+        turns = self.answers.get(call.selector)
+        if not isinstance(turns, Turns):
+            return super().open(call, timeout)
+        self.answers = dict(self.answers, **{call.selector: turns[0]})
+        try:
+            return super().open(call, timeout)
+        finally:
+            self.answers[call.selector] = Turns(*turns[1:]) if len(turns) > 1 else turns
+
+
 def too_large_to_give(path, ref):
     """What GitHub answers through the contents API's default media type
     for a file it gives no text of, as it answered on 2026-10-13 for a
@@ -483,7 +506,13 @@ def fixture_answers(name="board.json"):
 def activity_path(branch):
     """The one activity call branch_made_at makes for a branch."""
     return "/repos/o/r/activity?" + urllib.parse.urlencode(
-        {"ref": f"refs/heads/{branch}", "activity_type": "branch_creation", "per_page": 1})
+        {"ref": f"refs/heads/{branch}", "activity_type": "branch_creation", "direction": "desc", "per_page": 1})
+
+
+# The one call newest_creations makes: the whole repository's newest branch
+# creations.
+NEWEST_CREATIONS = "/repos/o/r/activity?" + urllib.parse.urlencode(
+    {"activity_type": "branch_creation", "direction": "desc", "per_page": 100})
 
 
 def made(branch, timestamp, kind="branch_creation"):
@@ -502,6 +531,7 @@ def wide_answers(forks=()):
     for pull in snap["pulls"]:
         detail = {k: v for k, v in pull.items() if k != "files"}
         detail["head"] = dict(detail["head"], repo={"full_name": "x/fork" if pull["number"] in forks else "o/r"})
+        detail["base"] = {"ref": "main", "repo": {"full_name": "o/r"}}
         answers[f"/repos/o/r/pulls/{pull['number']}"] = FakeAnswer(detail)
     return snap, answers
 
@@ -536,32 +566,77 @@ class WhenWorkBegan(unittest.TestCase):
         with self.assertRaises(github.GitHubError):
             github.branch_made_at(api, "claude/7")
 
-    def test_collect_asks_once_for_each_branch_of_work_in_the_overlaps_and_never_for_a_fork(self):
+    def test_one_read_dates_every_branch_the_newest_creations_name(self):
+        page = [made("claude/8", "2026-10-01T10:00:00Z"), made("claude/7", "2026-10-01T09:00:00Z"),
+                made("claude/8", "2026-10-01T08:00:00Z"), made("claude/9", "2026-10-01T07:00:00Z", "push"),
+                made("claude/10", ""), dict(made("claude/9", "2026-10-01T06:00:00Z"), ref=["refs/heads/claude/9"]),
+                "an entry that is no object"]
+        api, opener = client({NEWEST_CREATIONS: FakeAnswer(page)})
+        self.assertEqual(github.newest_creations(api, ["claude/7", "claude/8", "claude/9", "claude/10"]),
+                         {"claude/8": "2026-10-01T10:00:00Z", "claude/7": "2026-10-01T09:00:00Z"})
+        self.assertEqual([c.selector for c in opener.calls], [NEWEST_CREATIONS])
+        for answer in ([], {}, None):
+            with self.subTest(answer=answer):
+                api, _ = client({NEWEST_CREATIONS: FakeAnswer(answer)})
+                self.assertEqual(github.newest_creations(api, ["claude/7"]), {})
+        api, _ = client({NEWEST_CREATIONS: Refusal(502)})
+        with self.assertRaises(github.GitHubError):
+            github.newest_creations(api, ["claude/7"])
+
+    def test_collect_reads_the_newest_creations_once_then_each_branch_they_miss_and_never_a_fork(self):
         snap, answers = wide_answers(forks=(66,))
-        answers[activity_path("claude/22")] = FakeAnswer([made("claude/22", "2026-09-20T08:00:00Z")])
+        answers[NEWEST_CREATIONS] = FakeAnswer([made("claude/22", "2026-09-20T08:00:00Z"),
+                                                made("claude/34", "2026-09-21T08:00:00Z")])
         answers[activity_path("claude/5")] = FakeAnswer([made("claude/5", "2026-09-19T08:00:00Z")])
         api, opener = client(answers)
         found = github.collect(api, snap["sha"], snap["default_branch"])
         self.assertEqual(found["began"], {"claude/22": "2026-09-20T08:00:00Z", "claude/5": "2026-09-19T08:00:00Z"})
-        self.assertEqual(activity_asked(opener), sorted(activity_path(b) for b in ("claude/22", "claude/31", "claude/5")))
+        self.assertNotIn("began_refused", found)
+        self.assertEqual(activity_asked(opener), sorted([NEWEST_CREATIONS] + [activity_path(b) for b in ("claude/31",
+                                                                                                         "claude/5")]))
+
+    def test_nothing_is_read_where_nothing_overlaps(self):
+        snap, answers = fixture_answers()
+        api, opener = client(answers)
+        self.assertEqual(github.collect(api, snap["sha"], snap["default_branch"])["began"], {})
+        self.assertEqual(activity_asked(opener), [])
 
     def test_the_overlaps_land_in_the_order_the_work_began(self):
         snap, answers = wide_answers()
-        answers[activity_path("claude/22")] = FakeAnswer([made("claude/22", "2026-09-20T08:00:00Z")])
-        answers[activity_path("claude/34")] = FakeAnswer([made("claude/34", "2026-09-18T08:00:00Z")])
+        answers[NEWEST_CREATIONS] = FakeAnswer([made("claude/22", "2026-09-20T08:00:00Z"),
+                                                made("claude/34", "2026-09-18T08:00:00Z")])
         api, _ = client(answers)
         self.assertIn("| a.md | #66, #61 |", board.render(github.snapshot(api, snap["sha"], snap["default_branch"])))
 
-    def test_a_refused_read_leaves_that_branch_out_and_fails_no_run(self):
+    def test_a_refused_read_of_the_newest_creations_asks_each_branch_on_its_own(self):
         snap, answers = wide_answers()
+        answers[NEWEST_CREATIONS] = Refusal(502)
         answers[activity_path("claude/22")] = FakeAnswer([made("claude/22", "2026-09-20T08:00:00Z")])
+        answers[activity_path("claude/34")] = FakeAnswer([made("claude/34", "2026-09-18T08:00:00Z")])
+        api, opener = client(answers)
+        found = github.collect(api, snap["sha"], snap["default_branch"])
+        self.assertEqual(found["began"], {"claude/22": "2026-09-20T08:00:00Z", "claude/34": "2026-09-18T08:00:00Z"})
+        self.assertNotIn("began_refused", found)
+        self.assertEqual(activity_asked(opener), sorted([NEWEST_CREATIONS] + [
+            activity_path(b) for b in ("claude/22", "claude/34", "claude/31", "claude/5")]))
+
+    def test_a_refused_read_leaves_that_branch_out_says_so_and_fails_no_run(self):
+        snap, answers = wide_answers()
+        answers[NEWEST_CREATIONS] = FakeAnswer([made("claude/22", "2026-09-20T08:00:00Z")])
         for code in (403, 422, 500, 502, 503):
-            answers[activity_path("claude/31")] = Refusal(code)
+            answers[activity_path("claude/31")] = Refusal(code, {"message": "no"})
             with self.subTest(code=code):
                 api, _ = client(answers)
                 found = github.collect(api, snap["sha"], snap["default_branch"])
                 self.assertEqual(found["began"], {"claude/22": "2026-09-20T08:00:00Z"})
-                self.assertIn("| docs/b.md | #63, #5 |", board.render(board.Snapshot.from_dict(found)))
+                self.assertEqual(list(found["began_refused"]), ["claude/31"])
+                self.assertIn(f"HTTP {code}", found["began_refused"]["claude/31"])
+                live = board.Snapshot.from_dict(found)
+                self.assertIn("| docs/b.md | #63, #5 |", board.render(live))
+                self.assertEqual(github.began_refused_lines(live), [
+                    f"claude/31: GitHub refused to say when the branch was made "
+                    f"({found['began_refused']['claude/31']}), so the Overlaps order its work as work nothing dates"])
+        self.assertEqual(github.began_refused_lines(board.Snapshot.from_dict(snap)), [])
 
 
 class Collect(unittest.TestCase):
@@ -1778,11 +1853,11 @@ class Standing(unittest.TestCase):
             pull = github.pull_with_detail(api, 7)
             self.assertEqual((pull["standing"], board.Pull.from_dict(pull).state), ("unknown", "blocked"), status)
 
-    def test_open_pull_carries_the_standing_the_clerk_reads_and_the_gate_takes_it_as_it_is(self):
+    def test_open_pull_carries_the_standing_the_clerk_reads_and_the_gate_compares_once(self):
         """The clerk deals a claim back when its pull request is behind, and
         where GitHub's word is opaque only the standing says so; the gate's
-        world reads the same standing rather than comparing the branch
-        twice."""
+        world reads the pull request without one and compares the branch
+        itself, once."""
         listed = "/repos/o/r/pulls?state=open&head=o%3Aclaude%2F7"
         answers = {**detail_answers("blocked", behind_by=3), listed: FakeAnswer([{"number": 7}])}
         api, opener = client(answers)
@@ -1794,6 +1869,41 @@ class Standing(unittest.TestCase):
         api, opener = client({**detail_answers("clean"), listed: FakeAnswer([{"number": 7}])})
         self.assertNotIn("standing", api.open_pull("claude/7"))
         self.assertEqual(compares_asked(opener), [])
+
+    def test_neither_a_draft_for_the_clerk_nor_the_merge_pays_for_a_comparison(self):
+        """The clerk carries a draft whatever its standing, and the merge
+        asks GitHub to merge the head it read, so neither compares the
+        branch: a comparison is made only where it can change the answer."""
+        behind = {COMPARE: FakeAnswer({"behind_by": 2})}
+        api, opener = client({**pull_answers(state="blocked", draft=True), **behind})
+        self.assertNotIn("standing", api.open_pull("claude/7"))
+        self.assertTrue(team.claim_needs_work(api, 7))
+        self.assertEqual(compares_asked(opener), [])
+        place, opener = world({**pull_answers(state="blocked"), **behind,
+                               "PUT /repos/o/r/pulls/507/merge": FakeAnswer({"sha": "m1", "merged": True})})
+        self.assertEqual(place.merge("claude/7"), gate.MergeResult("m1"))
+        self.assertEqual(compares_asked(opener), [])
+
+    def test_a_refused_comparison_reads_unknown_however_late_github_computed_mergeability(self):
+        """The gate's world compares the branch itself, so a comparison
+        GitHub refuses reads as unknown whether the pull request's
+        mergeability was computed at the first read or only at the read
+        after the pause, and a refused merge is then GitHub's own refusal,
+        never the gate failing."""
+        blocked = {"number": 507, "draft": False, "mergeable": True, "mergeable_state": "blocked",
+                   "head": {"ref": "claude/7", "sha": "sha7"}, "base": {"ref": "main"}}
+        computing = dict(blocked, mergeable=None, mergeable_state="unknown")
+        put = "PUT /repos/o/r/pulls/507/merge"
+        for first in (blocked, computing):
+            with self.subTest(first=first["mergeable_state"]):
+                answers = {PULL_LIST: FakeAnswer([{"number": 507}]),
+                           "/repos/o/r/pulls/507": Turns(FakeAnswer(first), FakeAnswer(blocked)),
+                           COMPARE: Refusal(502), put: Refusal(405, {"message": "Required status check is expected"})}
+                api = github.GitHub("t", "o/r", opener=InTurn(answers), sleep=lambda seconds: None)
+                place = github.GitHubWorld(api, gate.Policy(who_merges=gate.GATE))
+                self.assertEqual(place.standing("claude/7"), gate.UNKNOWN)
+                with self.assertRaises(gate.MergeRefused):
+                    place.merge("claude/7")
 
 
 # Names a person writes, with characters outside ASCII and the characters

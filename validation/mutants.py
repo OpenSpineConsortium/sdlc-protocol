@@ -301,6 +301,21 @@ def comments_unguarded(api, due):
     return lines
 
 
+def began_times_unguarded(api, found):
+    """github.began_times letting a refused read of the repository's
+    activity escape, so one branch GitHub will not date fails the run (F13's
+    review)."""
+    wanted = []
+    for works in board.overlaps(found).values():
+        wanted += [work.branch for work in works if work.branch and work.branch not in wanted]
+    times = github.newest_creations(api, wanted) if wanted else {}
+    for branch in wanted:
+        began = times.get(branch) or github.branch_made_at(api, branch)
+        if began:
+            times[branch] = began
+    return times, {}
+
+
 MUTANTS = {
     "idle at exactly 24 hours": Mutant(
         claims, "is_idle", lambda last, now, idle_after=claims.IDLE_AFTER: now - claims.parse_time(last) >= idle_after,
@@ -338,6 +353,12 @@ MUTANTS = {
     "the landing order by number": Mutant(
         board, "landing_key", lambda work: (not work.blocker, not work.ready, work.number),
         "G7", "the oldest work lands first, by when GitHub says the push that made its branch came, not by its number (F13)"),
+    "a pull request dated by its opening": Mutant(
+        board, "pull_began", lambda snap, pull: pull.created_at,
+        "G7", "a claim and the pull request later opened from its branch are one piece that began at the claim (F13)"),
+    "a refused activity read stops the run": Mutant(
+        github, "began_times", began_times_unguarded,
+        "G15", "a branch GitHub will not date leaves its work undated, never a failed run (F13)"),
     "an opaque state read by GitHub's word alone": Mutant(
         github, "standing_of", lambda api, detail, default_branch=None: None, "G10",
         "a pull request GitHub only calls blocked, or a draft, is read through mergeable and the comparison, as the gate reads it, so it hears main moved (F9)"),

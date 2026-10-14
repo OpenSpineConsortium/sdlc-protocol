@@ -68,6 +68,8 @@ TRACES = {
     "each leg dealt from its own look": "the regression traces",
     "given to workers needing the label todo": "the regression traces",
     "the landing order by number": "the regression traces",
+    "a pull request dated by its opening": "the regression traces",
+    "a refused activity read stops the run": "the regression traces",
     "an overlap marker read on any line": ([CLAIM, Verb("claim", "b", (2,)), Verb("overlap-quote", "a", (1, (2,))),
                                             BOARD], SHARED),
     "an overlap marker trusted from any author": ([CLAIM, Verb("claim", "b", (2,)),
@@ -99,7 +101,7 @@ class TheLane(unittest.TestCase):
         since one that undoes it (F7's first), so the bound is widened to
         40 and the count noted."""
         self.assertTrue(10 <= len(mutants.MUTANTS) <= 40)
-        self.assertEqual(len(mutants.MUTANTS), 35)
+        self.assertEqual(len(mutants.MUTANTS), 37)
         self.assertEqual(sorted(TRACES), sorted(mutants.MUTANTS))
 
     def test_every_mutant_names_a_rule_the_library_still_has(self):
@@ -134,6 +136,21 @@ class EachMutantIsCaught(unittest.TestCase):
                 with mutants.switched_on(mutants.MUTANTS[name]):
                     found = violations(steps, scope)
                 self.assertNotEqual(found, [])
+
+
+class TheSearchesCatchWhatTheyWereAddedFor(unittest.TestCase):
+    def test_a_draft_github_calls_blocked_catches_both_of_f9_s_mutants(self):
+        """The lane credits a mutant to the first catcher, the regression
+        traces for F9's two, so the search added with F9's fix (DESIGN.md,
+        7 and section 13) is held here: it finds nothing on the library and
+        a G10 violation under each mutant, which it can only while the
+        search starts with GitHub calling the draft blocked."""
+        search = next(s for s in mutants.SEARCHES if s.name == "a draft GitHub calls blocked")
+        self.assertTrue(search.opaque_pulls)
+        self.assertEqual(mutants.violations(search), {})
+        for name in ("an opaque state read by GitHub's word alone", "the comparison read by ahead_by"):
+            with self.subTest(mutant=name), mutants.switched_on(mutants.MUTANTS[name]):
+                self.assertIn("G10", {guarantee for guarantee, _ in mutants.violations(search)})
 
 
 class TheHarnessFixesTheLaneAskedFor(unittest.TestCase):
