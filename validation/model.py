@@ -17,9 +17,10 @@ it: the board reads only what the fake GitHub (fake_github.py) answers.
 canonical() is the state key (DESIGN.md, 6.3): everything a guarantee,
 the oracle or a scripted worker reads, comment bodies whole, the label
 events, every head a claim branch ever had, the tracking refs, the
-board's last page and whether GitHub hides a held branch's standing
-(opaque_pulls) included, so two states with one key behave the same under
-every verb. The reductions of section 6.4
+board's last page, whether GitHub hides a held branch's standing
+(opaque_pulls) and whether it calls a branch that is behind clean
+(lenient_rules) included, so two states with one key behave the same
+under every verb. The reductions of section 6.4
 (times capped, workers by symmetry) come with the checker's fast lane.
 """
 
@@ -146,6 +147,12 @@ class RepoModel:
     # given; rather than clean or behind (F9). Part of the key, since the
     # fake's answers turn on it.
     opaque_pulls: bool = False
+    # Whether GitHub's word for an open pull request whose branch is behind
+    # the default branch is "clean", as GitHub gives under a rule that does
+    # not require the branch to be up to date before merging, as the
+    # template's crowd ruleset, or under no rule; rather than "behind",
+    # which it gives only under one that does (F16). Part of the key.
+    lenient_rules: bool = False
     # The board branch's STATE.md: written only by a board run that exits 0.
     board_text: str = ""
     # The board workflow's concurrency group (DESIGN.md, 3.3), each run as
@@ -396,6 +403,7 @@ class RepoModel:
             tuple(sorted((w, tuple(sorted(refs.items()))) for w, refs in self.tracking.items())),
             self.board_text,
             self.opaque_pulls,
+            self.lenient_rules,
         )
 
     def digest(self):
@@ -419,6 +427,7 @@ class RepoModel:
             label_events=self.label_events, creators=dict(self.creators), created=dict(self.created),
             tracking={w: dict(refs) for w, refs in self.tracking.items()}, board_text=self.board_text,
             queued=self.queued, pending=self.pending, running=None, opaque_pulls=self.opaque_pulls,
+            lenient_rules=self.lenient_rules,
         )
 
 

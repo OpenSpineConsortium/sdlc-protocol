@@ -61,6 +61,13 @@ RECENT_MERGED = board.RECENT_MERGED
 # branch stops the merge, a rule, a review or the draft itself: how the
 # branch stands to its base is then read from mergeable and a comparison.
 OPAQUE_STATES = {"blocked", "draft"}
+# GitHub's words that say how the branch stands to its base under any rule:
+# behind, which GitHub gives only under a rule that asks for an up-to-date
+# branch, and dirty, a conflict. Every other word, clean, unstable and
+# has_hooks among them, GitHub gives a branch that is behind too, under a
+# rule that does not ask for an up-to-date branch or under none, so only
+# a comparison tells such a branch apart (F16).
+STANDING_STATES = {"behind", "dirty"}
 # The permissions whose holders' release comments count when GitHub's
 # author_association does not vouch for them: write and above, in the old
 # permission word and in the role name.
@@ -249,16 +256,14 @@ class GitHub:
 
     def open_pull(self, branch):
         """The open pull request from a branch of this repository, as
-        pull_detail gives it, with its standing where GitHub's word says
-        only that something else stops the merge (standing_of), so the
-        clerk deals a claim back for a branch behind its base, as the board
-        tells one behind the default branch "main moved"; or None. A draft
-        is not compared, since the clerk carries a draft whatever its
-        standing. No default branch is named, so a pull request stacked on
-        another branch is compared with that base, which the clerk reads as
-        a base it has fallen behind and the board leaves to GitHub's word;
-        the template's rulesets hold only the default branch, so GitHub
-        never calls such a pull request blocked there."""
+        pull_detail gives it, with its standing where GitHub's word does not
+        say how the branch stands (standing_of), so the clerk deals a claim
+        back for a branch behind its base, as the board tells one behind the
+        default branch "main moved"; or None. A draft is not compared, since
+        the clerk carries a draft whatever its standing. No default branch
+        is named, so a pull request stacked on another branch is compared
+        with that base, which the clerk reads as a base it has fallen behind
+        and the board leaves to GitHub's word."""
         detail = self.pull_detail(branch)
         if detail and not detail.get("draft"):
             standing = standing_of(self, detail)
@@ -325,7 +330,8 @@ def settled(api, detail):
 
 def pull_with_detail(api, number, default_branch=None):
     """One pull request with its mergeable_state settled, its standing read
-    where that word is opaque, and its file paths."""
+    where that word does not say how the branch stands (standing_of), and
+    its file paths."""
     path = f"/repos/{api.repo}/pulls/{number}"
     detail = settled(api, api.get(path))
     standing = standing_of(api, detail, default_branch)
@@ -337,30 +343,38 @@ def pull_with_detail(api, number, default_branch=None):
 
 def standing_of(api, detail, default_branch=None):
     """How the pull request's branch stands to its base, in the board's
-    words, where GitHub's mergeable_state says only that something else
-    stops the merge (a rule, a review, the draft itself): mergeable tells
-    a conflict apart, and the comparison tells behind from clean, as the
-    gate's world reads such a pull request (F9: until this the board read
-    blocked as blocked and draft as unknown, and neither heard "main
-    moved"). None where GitHub's word is one the board reads as it is, and
-    for a pull request stacked on a branch other than the default branch
-    the caller names, since "main moved" speaks of the default branch. A
-    comparison GitHub refuses, a 5xx, a 422 or a rate limit's 403, reads
-    as unknown, which keeps GitHub's own word, as the coordinator's own
-    comparison does (holding): one pull request GitHub will not compare
-    must not fail the board's whole run."""
-    if detail.get("mergeable_state") not in OPAQUE_STATES:
+    words, where GitHub's mergeable_state does not say it. Where that word
+    says only that something else stops the merge (a rule, a review, the
+    draft itself), mergeable tells a conflict apart, and the comparison
+    tells behind from clean, as the gate's world reads such a pull request
+    (F9: until this the board read blocked as blocked and draft as unknown,
+    and neither heard "main moved"). Where it is any other word but behind
+    and dirty, clean, unstable, has_hooks or unknown, the comparison tells
+    a branch that is behind, which GitHub calls clean under a rule that does
+    not ask for an up-to-date branch or under no rule (F16: until this such
+    a pull request never heard "main moved"), and a branch that is not keeps
+    GitHub's word. None where GitHub's word says how the branch stands
+    (STANDING_STATES), and for a pull request stacked on a branch other than
+    the default branch the caller names, since "main moved" speaks of the
+    default branch. A comparison GitHub refuses, a 5xx, a 422 or a rate
+    limit's 403, reads as unknown, which keeps GitHub's own word, as the
+    coordinator's own comparison does (holding): one pull request GitHub
+    will not compare must not fail the board's whole run."""
+    word = detail.get("mergeable_state")
+    if word in STANDING_STATES:
         return None
     base = (detail.get("base") or {}).get("ref")
     if default_branch and base and base != default_branch:
         return None
-    if not detail.get("mergeable"):
+    if word in OPAQUE_STATES and not detail.get("mergeable"):
         return standing_word(detail)
     try:
         behind = behind_by(api, detail, default_branch)
     except GitHubError:
         behind = None
-    return standing_word(detail, behind)
+    if word in OPAQUE_STATES:
+        return standing_word(detail, behind)
+    return gate.BEHIND if behind else None
 
 
 def behind_by(api, pull, default_branch=None):
@@ -1091,10 +1105,13 @@ class GitHubWorld:
     def standing(self, branch):
         """Unknown for a branch with no open pull request: GitHub computes
         mergeability only for one, and the gate asks only about those.
-        Where GitHub's word is opaque the branch is read through mergeable
-        and one comparison (standing_of), a comparison GitHub refuses
-        reading as unknown, the same whether GitHub had computed the pull
-        request's mergeability at the first read or only after the pause."""
+        Where GitHub's word does not say how the branch stands, the branch
+        is read through one comparison, and mergeable where the word is
+        opaque (standing_of), so a branch GitHub calls clean while it is
+        behind is behind here too, as the gate's own words have it (F16); a
+        comparison GitHub refuses reads as unknown, the same whether GitHub
+        had computed the pull request's mergeability at the first read or
+        only after the pause."""
         pull = self.pull_of(branch)
         if pull is None:
             return gate.UNKNOWN

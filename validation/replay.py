@@ -46,7 +46,7 @@ from .model import HOUR, OWNER
 from .scenarios import Expect, Scenario, Step
 
 TRACES = Path(__file__).resolve().parent / "traces"
-FINDINGS = tuple(f"F{n}" for n in range(1, 16))
+FINDINGS = tuple(f"F{n}" for n in range(1, 17))
 SET_FIELDS = ("labels", "told")
 BOARD_VERBS = ("board", "board-start", "board-finish")
 
@@ -107,7 +107,8 @@ def scenario_of(data):
                     {w: None for w in data["workers"]}, steps_of(data["steps"]), tuple(data.get("people", (OWNER,))),
                     tuple((int(n), tuple(paths)) for n, paths in data.get("files", {}).items()),
                     data.get("careless", False), tuple(data.get("events", (cycle.SCHEDULE,))),
-                    data.get("split_board", False), data.get("opaque_pulls", False))
+                    data.get("split_board", False), data.get("opaque_pulls", False),
+                    data.get("lenient_rules", False))
 
 
 def load(path):

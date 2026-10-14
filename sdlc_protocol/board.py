@@ -121,8 +121,8 @@ class Pull:
     and a pull request whose draft state is not given counts as ready. The
     dict shape is the API's, head and all, so a pull request detail from
     GitHub is a fixture as it is; standing is the adapter's own key, how
-    the branch stands where GitHub's word says only that something else
-    stops the merge (adapters.github.standing_of). created_at, when the
+    the branch stands where GitHub's word does not say it
+    (adapters.github.standing_of). created_at, when the
     pull request was opened, is when its work began where GitHub says
     nothing of its branch (open_work); fork, whether its branch stands in
     another repository, or in none, a fork since deleted, whose branch a
@@ -143,13 +143,15 @@ class Pull:
     @property
     def state(self):
         """The board's word for the pull request: GitHub's mergeable_state
-        as state_word reads it, except where that word says only that
-        something else stops the merge (blocked, or the draft itself) and
-        the adapter read how the branch stands through mergeable and a
-        comparison (F9): behind and conflicting win, since the main-moved
-        rule speaks to them, and a draft whose branch is clean reads clean
-        rather than unknown; a blocked branch that is clean stays blocked,
-        which says what still stops it."""
+        as state_word reads it, except where the adapter read how the
+        branch stands: through mergeable and a comparison where that word
+        says only that something else stops the merge, blocked or the draft
+        itself (F9), and through the comparison where it is clean while the
+        branch is behind, as under a rule that does not ask for an
+        up-to-date branch (F16). Behind and conflicting win, since the
+        main-moved rule speaks to them, and a draft whose branch is clean
+        reads clean rather than unknown; a blocked branch that is clean
+        stays blocked, which says what still stops it."""
         word = state_word(self.mergeable_state)
         if self.standing in ("behind", "conflicting"):
             return self.standing

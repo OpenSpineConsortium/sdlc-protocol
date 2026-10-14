@@ -50,6 +50,7 @@ TRACES = {
     "a board comment posted again": (HELD + [WAIT, BOARD, Verb("push-old-head", "a", (1, "released/1-6d6ae03")),
                                              BOARD], Scope()),
     "an opaque state read by GitHub's word alone": "the regression traces",
+    "a clean word taken as GitHub gives it": "the regression traces",
     "the comparison read by ahead_by": "the regression traces",
     "main moved told only in the push's run": "the regression traces",
     "the rename skipped": (HELD + [WAIT, BOARD], Scope()),
@@ -114,7 +115,7 @@ class TheLane(unittest.TestCase):
         F13's and F15's fixes more, so the bound is widened to 60 and the
         count noted."""
         self.assertTrue(10 <= len(mutants.MUTANTS) <= 60)
-        self.assertEqual(len(mutants.MUTANTS), 46)
+        self.assertEqual(len(mutants.MUTANTS), 47)
         self.assertEqual(sorted(TRACES), sorted(mutants.MUTANTS))
 
     def test_every_mutant_names_a_rule_the_library_still_has(self):
@@ -170,6 +171,16 @@ class TheSearchesCatchWhatTheyWereAddedFor(unittest.TestCase):
             with self.subTest(mutant=name), mutants.switched_on(mutants.MUTANTS[name]):
                 self.assertIn("G10", {guarantee for guarantee, _ in mutants.violations(search)})
 
+
+    def test_a_draft_github_calls_clean_while_it_is_behind_catches_f16_s_mutant(self):
+        """As F9's search: the lane credits F16's mutant to the regression
+        traces, so the search added with the fix is held here, which can
+        catch it only while GitHub calls the branch clean when behind."""
+        search = next(s for s in mutants.SEARCHES if s.name == "a draft GitHub calls clean while it is behind")
+        self.assertTrue(search.lenient_rules)
+        self.assertEqual(mutants.violations(search), {})
+        with mutants.switched_on(mutants.MUTANTS["a clean word taken as GitHub gives it"]):
+            self.assertIn("G10", {guarantee for guarantee, _ in mutants.violations(search)})
 
     def test_the_searches_from_f15_s_review_catch_its_mutants(self):
         """The lane credits these mutants to the searches F15's review added
