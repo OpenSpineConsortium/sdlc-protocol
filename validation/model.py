@@ -16,9 +16,10 @@ it: the board reads only what the fake GitHub (fake_github.py) answers.
 
 canonical() is the state key (DESIGN.md, 6.3): everything a guarantee,
 the oracle or a scripted worker reads, comment bodies whole, the label
-events, every head a claim branch ever had, the tracking refs and the
-board's last page included, so two states with one key behave the same
-under every verb. The reductions of section 6.4
+events, every head a claim branch ever had, the tracking refs, the
+board's last page and whether GitHub hides a held branch's standing
+(opaque_pulls) included, so two states with one key behave the same under
+every verb. The reductions of section 6.4
 (times capped, workers by symmetry) come with the checker's fast lane.
 """
 
@@ -140,8 +141,10 @@ class RepoModel:
     # Each worker's remote-tracking refs, as its last fetch or push left them.
     tracking: dict = field(default_factory=dict)
     # Whether GitHub's word for an open pull request that is not in conflict
-    # is "blocked", as in a repository whose default branch requires a
-    # check (every copy of the template), rather than clean or behind (F9).
+    # is "blocked", as a rule that holds it gives: a required check pending
+    # or red, as on a draft whose check has not passed, or a review not yet
+    # given; rather than clean or behind (F9). Part of the key, since the
+    # fake's answers turn on it.
     opaque_pulls: bool = False
     # The board branch's STATE.md: written only by a board run that exits 0.
     board_text: str = ""
@@ -392,6 +395,7 @@ class RepoModel:
             tuple(sorted(self.created.items())),
             tuple(sorted((w, tuple(sorted(refs.items()))) for w, refs in self.tracking.items())),
             self.board_text,
+            self.opaque_pulls,
         )
 
     def digest(self):

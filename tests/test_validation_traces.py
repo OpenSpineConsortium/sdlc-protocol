@@ -28,8 +28,10 @@ BUDGET_SECONDS = 10
 # of its fix, the step the trace then goes red at (numbered as played, an
 # announce counting as three) and the guarantee DESIGN.md's table names;
 # F6's fix has two parts, the render's sort key and the quoted path. F9's
-# trace goes red at its board run, step 3, where the draft behind main
-# hears nothing once the adapter reads GitHub's opaque word as unknown.
+# trace goes red at its first board run, step 2, where the draft level
+# with main is told it moved once the adapter reads the comparison's
+# ahead_by for behind_by, and at its second, step 4, where the draft
+# behind main hears nothing once the adapter takes GitHub's word alone.
 UNDONE = {
     "F1": [("the comment before the labels", 5, "G3L")],
     "F3": [("the guard passes --force", 1, "G11a")],
@@ -38,7 +40,7 @@ UNDONE = {
     "F5": [("a claim number with leading zeros", 2, "G1")],
     "F6": [("a sort key that calls int after isdigit", 1, "G15"), ("a branch name sent unquoted", 3, "G15")],
     "F7": [("the guard passes a lease onto another's claim", 1, "G11a")],
-    "F9": [("an opaque state read as unknown", 3, "G10")],
+    "F9": [("an opaque state read by GitHub's word alone", 4, "G10"), ("the comparison read by ahead_by", 2, "G10")],
     "F10": [("a finished draft's release by hand not seen", 9, "G5")],
     "F11": [("a refused comment stops the run", 6, "G15")],
     "F12": [("main moved told only in the push's run", 8, "G10")],

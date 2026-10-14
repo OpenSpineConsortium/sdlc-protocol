@@ -10,7 +10,10 @@
   "steps": [
     {"verb": "claim", "actor": "a", "args": [1]},
     {"verb": "open-draft", "actor": "a", "args": [1], "expect": {"pulls": [100]}},
+    {"verb": "board", "event": "pull_request", "expect": {"comments": {"100": {}}, "standing": {"100": "clean"}},
+     "note": "GitHub's word for the draft is blocked, as for a draft whose required check has not passed, or one a review rule holds; the draft is one commit ahead of main, its claim, and none behind, so nothing is owed; under the mutant that reads the comparison's ahead_by as how far it is behind, the run tells it main moved and G10 is red"},
     {"at": 1, "verb": "move-main", "actor": "owner"},
-    {"verb": "board", "event": "push", "ref": "main", "expect": {"comments": {"100": {"main-moved": 1}}, "standing": {"100": "behind"}}, "note": "GitHub's word for the draft is blocked here, as in a repository whose default branch requires a check (C0 read live drafts answering clean and dirty, never draft, on 2026-10-14); the draft is behind main, and since the fix the adapter reads mergeable and the comparison and the run owes it the word; under the mutant that reads the opaque word as unknown nothing is told and G10 is red"}
+    {"verb": "board", "event": "push", "ref": "main", "expect": {"comments": {"100": {"main-moved": 1}}, "standing": {"100": "behind"}},
+     "note": "GitHub's word for the draft is still blocked (C0 read live drafts answering clean and dirty, never draft, on 2026-10-14); the draft is behind main, and since the fix the adapter reads mergeable and the comparison and the run owes it the word; under the mutant that takes GitHub's word alone nothing is told and G10 is red"}
   ]
 }

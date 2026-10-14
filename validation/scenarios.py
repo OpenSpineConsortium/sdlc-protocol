@@ -93,8 +93,9 @@ class Scenario(NamedTuple):
     careless: bool = False
     events: tuple = (cycle.SCHEDULE,)
     split_board: bool = False
-    # GitHub's word for a pull request not in conflict is "blocked", as
-    # under a required check (model.RepoModel.opaque_pulls, F9).
+    # GitHub's word for a pull request not in conflict is "blocked", as a
+    # rule that holds it gives: a required check pending or red, or a
+    # review not yet given (model.RepoModel.opaque_pulls, F9).
     opaque_pulls: bool = False
 
 
