@@ -392,6 +392,91 @@ class Rules(unittest.TestCase):
         self.assertEqual([p["number"] for p in board.idle_pulls(pulls, now)], [1])
 
 
+class Standing(unittest.TestCase):
+    """How the board reads a pull request whose GitHub word says only that
+    something else stops the merge, once the adapter has read how its branch
+    stands (F9): a draft hears "main moved" like any other pull request."""
+
+    def test_a_blocked_pull_takes_the_standing_main_moved_speaks_to(self):
+        """GitHub answers "blocked" for a pull request a rule holds and says
+        nothing of its branch, so the board read every such pull request as
+        blocked and never told it "main moved" (F9). The adapter's standing
+        says whether the branch is behind or conflicting, and that wins."""
+        self.assertEqual(Pull(1, mergeable_state="blocked", standing="behind").state, "behind")
+        self.assertEqual(Pull(1, mergeable_state="blocked", standing="conflicting").state, "conflicting")
+
+    def test_a_blocked_pull_whose_branch_is_clean_stays_blocked(self):
+        """A clean branch a rule holds is not behind, so the main-moved rule
+        has nothing to say to it, and "blocked" says what still stops it
+        where "clean" would say nothing does (F9)."""
+        self.assertEqual(Pull(1, mergeable_state="blocked", standing="clean").state, "blocked")
+
+    def test_a_draft_word_with_a_standing_reads_the_standing(self):
+        """state_word reads GitHub's older answer "draft" as unknown, since
+        the word says nothing of the branch (F9). With the standing read the
+        board knows, so a clean draft reads clean rather than unknown and a
+        draft behind reads behind."""
+        self.assertEqual(board.state_word("draft"), "unknown")
+        self.assertEqual(Pull(1, mergeable_state="draft", standing="clean").state, "clean")
+        self.assertEqual(Pull(1, mergeable_state="draft", standing="behind").state, "behind")
+
+    def test_a_pull_with_no_standing_reads_as_before(self):
+        """An adapter that reads no standing, the fixture and the in-memory
+        world among them, gets the word state_word gave before F9, for every
+        word it knows, so nothing that already rendered renders otherwise."""
+        for given in (*board.STATE_WORDS, *board.GITHUB_STATES, "draft", None):
+            pull = Pull(1, mergeable_state=given)
+            self.assertIsNone(pull.standing)
+            self.assertEqual(pull.state, board.state_word(given), given)
+
+    def test_main_moved_reaches_a_blocked_pull_once_its_standing_is_read(self):
+        """pulls_behind_main took only a GitHub word of behind or dirty, so a
+        draft or a blocked pull request, which every copy of the template
+        holds with a required check, never heard "main moved" (F9). With the
+        standing read it does, as a dict or a Pull alike, and one whose
+        branch is clean, or whose standing was not read, still does not."""
+        pulls = [
+            {"number": 1, "mergeable_state": "blocked", "standing": "behind"},
+            {"number": 2, "mergeable_state": "blocked", "standing": "clean"},
+            Pull(3, mergeable_state="blocked", standing="conflicting"),
+            Pull(4, mergeable_state="blocked", standing="clean"),
+            Pull(5, mergeable_state="blocked"),
+            {"number": 6, "mergeable_state": "draft", "standing": "behind"},
+        ]
+        picked = [board.as_pull(p).number for p in board.pulls_behind_main(pulls)]
+        self.assertEqual(picked, [1, 3, 6])
+
+    def test_the_standing_is_written_only_when_set_and_read_back(self):
+        """A snapshot goes through JSON and a Pull detail keeps the API's own
+        shape (F9): a standing the adapter read comes back the same both
+        ways, and one it did not read adds no key, so a fixture recorded
+        before F9 is a fixture still."""
+        read = Pull(1, "One", "claude/1", "abc", "blocked", standing="behind")
+        self.assertEqual(read.to_dict()["standing"], "behind")
+        self.assertEqual(Pull.from_dict(read.to_dict()), read)
+        unread = Pull(2, "Two", "claude/2", "def", "blocked")
+        self.assertNotIn("standing", unread.to_dict())
+        self.assertEqual(Pull.from_dict(unread.to_dict()), unread)
+        data = {
+            "number": 3, "title": "Three", "head": {"ref": "claude/3", "sha": "fed"},
+            "mergeable_state": "draft", "updated_at": "2026-10-14T09:00:00Z", "files": ["a.md"],
+            "draft": True, "standing": "clean",
+        }
+        self.assertEqual(Pull.from_dict(data).standing, "clean")
+        self.assertEqual(Pull.from_dict(data).to_dict(), data)
+        self.assertIsNone(Pull.from_dict({"number": 4}).standing)
+
+    def test_pr_state_reads_a_dicts_standing(self):
+        """pr_state takes the dict the API returns as it takes a Pull, so the
+        standing key the adapter wrote on the dict reads as the field does
+        and the rule picks the same pull requests from either (F9)."""
+        self.assertEqual(board.pr_state({"mergeable_state": "blocked", "standing": "behind"}), "behind")
+        self.assertEqual(board.pr_state({"mergeable_state": "blocked", "standing": "conflicting"}), "conflicting")
+        self.assertEqual(board.pr_state({"mergeable_state": "blocked", "standing": "clean"}), "blocked")
+        self.assertEqual(board.pr_state({"mergeable_state": "draft", "standing": "clean"}), "clean")
+        self.assertEqual(board.pr_state({"mergeable_state": "blocked"}), "blocked")
+
+
 class CommentsDue(unittest.TestCase):
     """What post_comments posted, now as a list for the adapter to post."""
 

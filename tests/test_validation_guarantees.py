@@ -7,6 +7,8 @@ checked. A spec edit that rewords one of those sentences fails here until
 the oracle and GUARANTEES.md follow."""
 
 import ast
+import importlib
+import importlib.util
 import re
 import sys
 import unittest
@@ -23,10 +25,33 @@ SPEC = (ROOT / "spec" / "PROTOCOL.md").read_text(encoding="utf-8")
 GUARANTEES = (ROOT / "validation" / "GUARANTEES.md").read_text(encoding="utf-8")
 ROW = re.compile(r"^\| (G\w+) \| (.+?) \| \"(.+?)\" \| (.+?) \|$")
 STATUSES = ("checked", "known (", "partly checked", "not checked yet")
+# A rule a status cites by its module and name, as board.given_rows; a file
+# is named by its path (validation/dealing.py), which the lookbehind leaves
+# out, or by its name alone when it lives elsewhere (the template's
+# workers.yml), which the suffixes leave out.
+CITED_RULE = re.compile(r"(?<![\w/])([a-z_]+)\.([a-z_]+)\b")
+FILE_SUFFIXES = {"py", "md", "yml", "json"}
+PACKAGES = ("sdlc_protocol", "sdlc_protocol.adapters", "validation")
 
 
 def rows():
     return {m.group(1): m for m in (ROW.match(line) for line in GUARANTEES.splitlines()) if m}
+
+
+def module_named(name):
+    """The module of the library or the harness a cited rule starts with,
+    or None for a word that names no module of theirs."""
+    for package in PACKAGES:
+        if importlib.util.find_spec(f"{package}.{name}") is not None:
+            return importlib.import_module(f"{package}.{name}")
+    return None
+
+
+def cited_rules():
+    """Every rule the rows cite, as (module, name), for the modules the
+    library and the harness have."""
+    return {(m.group(1), m.group(2)) for row in rows().values() for m in CITED_RULE.finditer(row.group(4))
+            if m.group(2) not in FILE_SUFFIXES and module_named(m.group(1)) is not None}
 
 
 class TheOracleSpeaksTheSpec(unittest.TestCase):
@@ -90,6 +115,18 @@ class GuaranteesMd(unittest.TestCase):
         named = {f for row in rows().values() if row.group(4).startswith("known (")
                  for f in re.findall(r"F\d+", row.group(4).split(":")[0])}
         self.assertEqual(named - oracle.AS_BUILT, set(), "every known finding is one the oracle reads as built")
+
+    def test_every_rule_a_row_cites_is_one_the_library_or_the_harness_has(self):
+        """A row that names the rule behind its status, as G9's names
+        board.given_rows and G10's github.standing_of, names one that
+        exists, so a rename that left the document pointing at nothing
+        fails here."""
+        cited = cited_rules()
+        self.assertTrue({("board", "given_rows"), ("github", "standing_of"), ("team", "deals"),
+                         ("clerk", "workflow_deals")} <= cited, cited)
+        for module, name in sorted(cited):
+            with self.subTest(rule=f"{module}.{name}"):
+                self.assertTrue(callable(getattr(module_named(module), name, None)))
 
 
 if __name__ == "__main__":
