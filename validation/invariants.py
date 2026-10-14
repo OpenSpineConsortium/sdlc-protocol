@@ -83,7 +83,8 @@ def identity(detail):
     with the clock and the tree, so one fault met from several prefixes
     showed as a violation per sha, each shortened and written on its own,
     and a shrink could take out no wait before the branch's head, since
-    the sha then differed. The trace file keeps the detail as met."""
+    the sha then differed. A trace file names the detail its own steps
+    show, sha and all (shrink.shown)."""
     return SHA_IN_DETAIL.sub(lambda m: (m.group(1) or m.group(2)) + "*", detail)
 
 

@@ -88,7 +88,10 @@ jobs:
       - name: Run the deep lane
         env:
           BUDGET: ${{ github.event.inputs.budget || '18000' }}
-        run: python3 scripts/validate.py deep --out validation-out --budget "$BUDGET"
+        # exec, so the lane is the step's own process: a cancellation or the
+        # job's timeout signals that process alone, and the shell would
+        # die of it and leave the lane running past the upload.
+        run: exec python3 scripts/validate.py deep --out validation-out --budget "$BUDGET"
 
       - name: Keep what it found
         if: always()

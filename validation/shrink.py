@@ -12,9 +12,13 @@ instead of one step per replay; the last pass tries every single step,
 so the result is 1-minimal, as before, when the budget lets the passes
 finish, and minimal for the detail as matched, a sha in it read as any
 sha (invariants.identity), so a step that only moves a number but a sha
-in the detail stays. A candidate is replayed from the search's own start, each verb taken only where the scope enables it, so
-the shortened trace is one the search could have met, and the violation
-it shows is the same guarantee with the same detail. The replay is the
+in the detail stays. A candidate is replayed from the search's own
+start, each verb taken only where the scope enables it, so the shortened
+trace is one the search could have met, and the violation it shows is
+the same guarantee with the same detail, a sha in it read as any sha;
+the detail it returns is the one the shortened trace shows, sha and all,
+since taking a wait out moves the clock a released branch's name is made
+from, and a file names what its own steps show. The replay is the
 search's own step: a copy per verb, the verb applied, every check run.
 """
 
@@ -28,32 +32,40 @@ class Shrunk(NamedTuple):
     trace: tuple  # the verbs, as Verb records
     tried: int
     seconds: float
+    detail: str = ""  # the target's detail as the trace shows it, its sha the trace's own
 
 
-def reproduces(start, scope, trace, target, known=oracle.AS_BUILT):
-    """Whether the trace, replayed from start, meets the violation target,
-    as (guarantee, detail), at any step; a verb the scope does not enable
-    where it comes ends the replay as not reproduced. A verb that names a
-    released branch symbolically (run.symbolic) is resolved where it
-    comes, since the sha in such a name is the clock's and the clock
-    moves when a wait is taken out, and the target's detail is matched
-    with its sha read as any sha for the same reason."""
+def shown(start, scope, trace, target, known=oracle.AS_BUILT):
+    """The detail of the first violation the trace, replayed from start,
+    meets that is the target, as (guarantee, detail), with its sha read as
+    any sha; None when it meets none, or a verb the scope does not enable
+    where it comes ends the replay. A verb that names a released branch
+    symbolically (run.symbolic) is resolved where it comes, since the sha
+    in such a name is the clock's and the clock moves when a wait is taken
+    out, and the target's detail is matched with its sha read as any sha
+    for the same reason; the detail returned is the one met, sha and all."""
     wanted = (target[0], invariants.identity(target[1]))
     model = start()
     for verb in trace:
         try:
             verb = run.concrete(model, verb)
         except (ValueError, IndexError):
-            return False
+            return None
         if verb not in verbs.enabled(model, scope):
-            return False
+            return None
         after = model.clone()
         outcome = verbs.apply(after, verb, scope)
-        if any((p.guarantee, invariants.identity(p.detail)) == wanted
-               for p in invariants.step_checks(model, after, verb, outcome, known)):
-            return True
+        for problem in invariants.step_checks(model, after, verb, outcome, known):
+            if (problem.guarantee, invariants.identity(problem.detail)) == wanted:
+                return problem.detail
         model = after
-    return False
+    return None
+
+
+def reproduces(start, scope, trace, target, known=oracle.AS_BUILT):
+    """Whether the trace, replayed from start, meets the violation target,
+    as (guarantee, detail), at any step, its sha read as any sha (shown)."""
+    return shown(start, scope, trace, target, known) is not None
 
 
 def chunks(length, count):
@@ -114,7 +126,8 @@ def shrink(start, scope, trace, target, known=oracle.AS_BUILT, budget=60.0):
     """The trace with every chunk, then every step, then every window of
     neighbouring steps taken out that can be, over again until nothing
     can, within the budget in seconds; start makes a fresh starting state
-    each time it is called."""
+    each time it is called. The result carries the detail the shortened
+    trace shows, which one more replay reads."""
     began, tried = time.perf_counter(), 0
     deadline = began + budget
     trace = tuple(trace)
@@ -130,4 +143,5 @@ def shrink(start, scope, trace, target, known=oracle.AS_BUILT, budget=60.0):
         if len(narrower) == len(trace):
             break
         trace = narrower
-    return Shrunk(trace, tried, time.perf_counter() - began)
+    detail = shown(start, scope, trace, target, known) or target[1]
+    return Shrunk(trace, tried, time.perf_counter() - began, detail)

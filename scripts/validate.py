@@ -14,13 +14,15 @@
     python3 scripts/validate.py mutants       the mutation lane (minutes)
     python3 scripts/validate.py deep          the deep lane (hours): the searches, the soak, the gate,
                                               the git world, the guard recorded again, conformance
-        --out DIR                             where the results and the counterexamples go (validation-out)
+        --out DIR                             where the results and the counterexamples go (validation-out); not
+                                              under validation/ (but validation/runs/) or sdlc_protocol/
         --only search,soak,gate,git,guard,conformance   some parts only
-        --jobs N                              processes at once (the processors); 1 or more
+        --jobs N                              processes at once, 1 or more; 0, like none, the processors
         --budget SECONDS                      stop each search there, counted from its first start; a stopped search is red
         --resume                              go on from DIR's deep.json and the searches' checkpoints; a stopped
                                               search goes on under a larger --budget or none
-        --quick                               a few steps of every part, for a look
+        --quick                               a few steps of the searches, the soak, the gate and conformance,
+                                              the git parts and the guard whole, for a look
 
 The tests under tests/ run the same lanes with their budgets; this script
 prints what they measure. Exit code 1 when a lane finds something.

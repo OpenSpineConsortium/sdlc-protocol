@@ -4,7 +4,9 @@ main, the rename GitHub makes, the board workflow's queue in its
 concurrency group, and a state key that keeps everything a guarantee
 reads."""
 
+import os
 import pickle
+import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -190,10 +192,25 @@ class TheKey(unittest.TestCase):
         self.assertTrue(self.differs(lambda m: setattr(m, "board_text", "# Board\n")))
         self.assertTrue(self.differs(lambda m: m.created.__setitem__("claude/1", 5)))
 
-    def test_the_digest_survives_a_pickle_round_trip(self):
-        # A search's checkpoint (deep.py) pickles the models on its stack;
-        # a set's order is not kept, so every set in the key is sorted.
-        self.assertEqual(pickle.loads(pickle.dumps(self.model)).digest(), self.model.digest())
+    def test_the_digest_survives_a_pickle_into_another_interpreter(self):
+        """A search's checkpoint (deep.py) pickles the models on its stack,
+        and a resume reads it in another process, whose hash seed orders a
+        set another way, so every set in the key is sorted. A round trip
+        within one process keeps a set's order and caught an unsorted set
+        about one run in six; fresh interpreters under eight seeds each
+        read the pickle as this process wrote it."""
+        self.model.add_label(1, "a", "claimed")
+        self.model.add_label(1, "a", "worker:a")
+        script = ("import pickle, sys\n"
+                  f"sys.path.insert(0, {str(ROOT)!r})\n"
+                  "print(pickle.loads(sys.stdin.buffer.read()).digest().hex())\n")
+        written = pickle.dumps(self.model)
+        read = set()
+        for seed in range(8):
+            done = subprocess.run([sys.executable, "-c", script], input=written, capture_output=True, check=True,
+                                  env={**os.environ, "PYTHONHASHSEED": str(seed)})
+            read.add(done.stdout.decode("ascii").strip())
+        self.assertEqual(read, {self.model.digest().hex()})
 
     def test_two_paths_to_one_state_meet(self):
         one, two = self.model.clone(), self.model.clone()

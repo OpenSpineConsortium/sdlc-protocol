@@ -14,6 +14,7 @@ the counterexamples a resumed search wrote, and refuses to start beside
 a run in progress. The real spaces run for hours (scripts/validate.py
 deep); here the spaces are small."""
 
+import errno
 import io
 import itertools
 import json
@@ -58,6 +59,31 @@ def broken_soak(seeds, steps, out):
 def dying_soak(seeds, steps, out):
     """A part whose worker process dies, as one killed for its memory does."""
     os._exit(3)
+
+
+def one_megabyte():
+    """A part whose result is more than a pipe holds."""
+    return "x" * 1_000_000
+
+
+def a_live_process(test):
+    """A process that lives until the test ends, standing for a run in
+    progress: a marker naming the test's own process reads as a dead
+    run's."""
+    process = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(600)"])
+    test.addCleanup(process.wait)
+    test.addCleanup(process.kill)
+    return process.pid
+
+
+def end_session(process):
+    """A process started in a session of its own, ended with every process
+    in its group, its workers among them, whatever the test saw."""
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    process.wait()
 
 
 def results_in(folder):
@@ -219,9 +245,11 @@ class TheIdentityOfAViolation(unittest.TestCase):
             renames = [f for f in found.found if "'rename'" in f.detail]
             self.assertEqual(len(renames), 1)
             self.assertGreater(renames[0].count, 10)
-            keys = {(f.guarantee, invariants.identity(f.detail)) for f in found.found}
-            self.assertEqual(len(keys), len(found.found))
             target = (renames[0].guarantee, renames[0].detail)
+            # The record is the first meeting whole: the detail is the one
+            # its own trace shows, not the last of the other prefixes'.
+            self.assertEqual(shrink.shown(ONE.start, ONE.scope, deep.symbolic_trace(ONE, renames[0].trace), target),
+                             renames[0].detail)
             shorter = shrink.shrink(ONE.start, ONE.scope, deep.symbolic_trace(ONE, renames[0].trace), target)
             self.assertEqual([v.name for v in shorter.trace], ["claim", "wait", "board"])
             with mock.patch.object(invariants, "step_checks", side_effect=lambda *a: [
@@ -256,6 +284,23 @@ class Shortening(unittest.TestCase):
         self.assertEqual(len(files), len(found.found))
         self.assertTrue(all(w["shortened_to"] == w["found_at"] for w in written), written)
 
+    def test_a_file_names_the_detail_its_own_steps_show(self):
+        """Taking a wait out of a trace moves the clock a released
+        branch's name is made from, so a shortened trace can show the
+        violation under another sha than the one it was met with; each
+        file, and what the lane keeps of it, names the detail a replay of
+        the file meets, sha and all."""
+        with tempfile.TemporaryDirectory() as folder, mock.patch.object(claims, "is_idle", at_exactly_24_hours):
+            found = deep.search_space(ONE)
+            written = deep.write_counterexamples(folder, ONE, found.found)
+            self.assertTrue(any("released/" in w["detail"] for w in written), written)
+            for w in written:
+                with self.subTest(file=Path(w["file"]).name):
+                    violated = json.loads(Path(w["file"]).read_text(encoding="ascii"))["violated"]
+                    self.assertEqual(violated, f"{w['guarantee']} {w['detail']}")
+                    record = replay.replay(replay.load(w["file"]))
+                    self.assertIn((w["guarantee"], w["detail"]), [(v.guarantee, v.detail) for _, v in record.violations])
+
     def test_a_counterexample_file_replays_red_in_memory_and_over_git(self):
         with tempfile.TemporaryDirectory() as folder:
             with mock.patch.object(claims, "is_idle", at_exactly_24_hours):
@@ -289,6 +334,32 @@ class Conformance(unittest.TestCase):
             differences = deep.compare(SMALL, path)
         self.assertTrue(differences)
         self.assertEqual({d["field"] for d in differences}, {"n"})
+
+    def test_the_files_a_claim_changes_are_compared_in_both_worlds(self):
+        """The files a branch changes fill the board's Files column and its
+        overlaps, and the memory model computes them where git is not
+        asked; a fault there leaves the trees equal, so nothing compared
+        saw it. Here the memory model diffs against main's tip in place
+        of the merge base, and main moved past the claim."""
+        right = M.RepoModel.files_changed
+
+        def against_main_s_tip(model, ref):
+            if model.store is not None:
+                return right(model, ref)
+            head = model.refs.get(ref, "")
+            return model.changed(model.refs[M.MAIN], head) if head else []
+
+        path = (Verb("claim", "a", (1,)), Verb("commit", "a", (1,)), Verb("open-draft", "a", (1,)),
+                Verb("move-main", M.OWNER), Verb("board", "board", (cycle.SCHEDULE, "")))
+        self.assertEqual(deep.compare(deep.SPACES["E-deep"], path), [])
+        with mock.patch.object(M.RepoModel, "files_changed", against_main_s_tip):
+            differences = deep.compare(deep.SPACES["E-deep"], path)
+        fields = {(d["step"], d["field"]) for d in differences}
+        self.assertIn((len(path), "files"), fields)
+        self.assertIn((len(path), "page"), fields)
+        page_at_the_board = next(d for d in differences if d["field"] == "page")
+        self.assertIn("README.md, docs/agents/claims/1.md", page_at_the_board["memory"])
+        self.assertNotIn("README.md", page_at_the_board["git"])
 
     def test_a_counterexample_red_in_one_world_alone_is_a_disagreement(self):
         """What observe reads says nothing of the checks, which read what
@@ -544,11 +615,12 @@ class TheLaneAsOneRun(unittest.TestCase):
             stale = Path(folder) / lanes.CHECKPOINTS / "E-two.pickle"
             stale.parent.mkdir()
             stale.write_bytes(b"a run's")
-            (Path(folder) / lanes.RUNNING).write_text(f"{os.getpid()}\n", encoding="ascii")
+            other = a_live_process(self)
+            (Path(folder) / lanes.RUNNING).write_text(f"{other}\n", encoding="ascii")
             for resume in (False, True):
                 with self.assertRaises(SystemExit) as refused:
                     lanes.run(lanes.Settings(folder, only=("search",), jobs=2, quick=True, resume=resume), io.StringIO())
-                self.assertIn(f"names process {os.getpid()}, a run in progress", str(refused.exception))
+                self.assertIn(f"names process {other}, a run in progress", str(refused.exception))
             self.assertTrue(stale.exists())
             ended = subprocess.Popen([sys.executable, "-c", "pass"])
             ended.wait()
@@ -637,11 +709,164 @@ class TheLaneAsOneRun(unittest.TestCase):
                 lanes.run(lanes.Settings(folder, only=("search",), jobs=2, quick=True, resume=True), io.StringIO())
             self.assertIn("other settings or other code", str(refused.exception))
             self.assertFalse(marker.exists())
-            lanes.take_marker(settings)
+            other = a_live_process(self)
+            marker.write_text(f"{other}\n", encoding="ascii")
             with self.assertRaises(SystemExit) as refused:
                 lanes.take_marker(settings)
-            self.assertIn(f"names process {os.getpid()}, a run in progress", str(refused.exception))
-            self.assertEqual(marker.read_text(encoding="ascii").strip(), str(os.getpid()))
+            self.assertIn(f"names process {other}, a run in progress", str(refused.exception))
+            self.assertEqual(marker.read_text(encoding="ascii"), f"{other}\n")
+            self.assertEqual([p.name for p in Path(folder).iterdir() if p.name.startswith(lanes.RUNNING)], [lanes.RUNNING])
+
+    def test_the_marker_appears_with_its_process_s_id_in_it(self):
+        """A marker made empty and written after read as no run to a
+        second run started in between, which replaced it and ran beside
+        the first; it is written under a name of the process's own and
+        linked into place, so it is never seen empty."""
+        with tempfile.TemporaryDirectory() as folder:
+            settings = lanes.Settings(folder, only=("search",), jobs=2, quick=True)
+            marker = Path(folder) / lanes.RUNNING
+            linked = []
+            real_link = os.link
+
+            def link(source, target):
+                linked.append((Path(source).read_text(encoding="ascii"), Path(target), marker.exists()))
+                real_link(source, target)
+
+            with mock.patch.object(lanes.os, "link", link):
+                lanes.take_marker(settings)
+            self.assertEqual(linked, [(f"{os.getpid()}\n", marker, False)])
+            self.assertEqual([p.name for p in Path(folder).iterdir()], [lanes.RUNNING])
+            self.assertEqual(marker.read_text(encoding="ascii"), f"{os.getpid()}\n")
+
+    def test_a_marker_naming_this_very_process_is_a_dead_run_s(self):
+        """A restart hands process numbers out again from the same low
+        range, so a resume can draw the dead run's, and a container whose
+        entry point is the lane is process 1 every time; a live run never
+        has this process's id, so the resume goes on, where it refused
+        itself."""
+        with tempfile.TemporaryDirectory() as folder:
+            settings = lanes.Settings(folder, only=("search",), jobs=2, quick=True, resume=True)
+            (Path(folder) / lanes.RUNNING).write_text(f"{os.getpid()}\n", encoding="ascii")
+            self.assertIsNone(lanes.running_process(settings))
+            self.assertEqual(lanes.run(settings, io.StringIO()), 0)
+            self.assertFalse((Path(folder) / lanes.RUNNING).exists())
+
+    def test_the_results_file_is_replaced_whole_and_one_that_cannot_be_read_is_not_resumed(self):
+        """deep.json was rewritten in place, so a write that failed or was
+        cut, on a full disk or by a kill, left a file a resume died on
+        with a traceback and the marker left, and the one way on removed
+        every checkpoint. It is written beside and moved into place, and
+        a file that cannot be read is refused by name."""
+        with tempfile.TemporaryDirectory() as folder:
+            settings = lanes.Settings(folder, only=("search",), jobs=2, quick=True)
+            results = lanes.fresh_results(settings)
+            lanes.write_results(settings, results, time.perf_counter())
+            file = Path(folder) / "deep.json"
+            before = file.read_text(encoding="ascii")
+            real_write = Path.write_text
+
+            def cut(path, text, encoding=None):
+                real_write(path, text[:len(text) // 2], encoding=encoding)
+                raise OSError(errno.ENOSPC, "No space left on device")
+
+            with mock.patch.object(Path, "write_text", cut), self.assertRaises(OSError):
+                lanes.write_results(settings, results, time.perf_counter() - 100.0)
+            self.assertEqual(file.read_text(encoding="ascii"), before)
+            file.write_text(before[:len(before) // 2], encoding="ascii")
+            with self.assertRaises(SystemExit) as refused:
+                lanes.run(lanes.Settings(folder, only=("search",), jobs=2, quick=True, resume=True), io.StringIO())
+            self.assertIn("cannot be read", str(refused.exception))
+            self.assertFalse((Path(folder) / lanes.RUNNING).exists())
+
+    def test_a_resume_under_another_git_is_refused(self):
+        """The guard part, the git scenarios and traces, the gate over git
+        and conformance are git's answers, so a run resumed under another
+        git kept the parts measured under the old one and could end green
+        on them."""
+        with tempfile.TemporaryDirectory() as folder:
+            settings = lanes.Settings(folder, only=("search",), jobs=2, quick=True, resume=True)
+            self.assertTrue(settings.record()["git"].startswith("git version "), settings.record()["git"])
+            (Path(folder) / "deep.json").write_text(json.dumps(lanes.fresh_results(settings)), encoding="ascii")
+            with mock.patch.object(lanes, "git_version", lambda: "git version 9.9.9"), \
+                    self.assertRaises(SystemExit) as refused:
+                lanes.run(settings, io.StringIO())
+            self.assertIn("(git differ)", str(refused.exception))
+            self.assertFalse((Path(folder) / lanes.RUNNING).exists())
+
+    def test_a_run_that_did_not_finish_says_so_in_its_file(self):
+        """A file left by a run killed, or by a job cancelled, before a
+        red part landed read green, with nothing it still owed named
+        anywhere; until both waves have landed the file says the run did
+        not finish, and that is red."""
+        def interrupted(settings, results):
+            raise KeyboardInterrupt
+
+        with tempfile.TemporaryDirectory() as folder:
+            with mock.patch.object(lanes, "second_wave", interrupted), self.assertRaises(KeyboardInterrupt):
+                lanes.run(lanes.Settings(folder, only=("search",), jobs=2, quick=True), io.StringIO())
+            stopped = results_in(folder)
+            self.assertFalse((Path(folder) / lanes.RUNNING).exists())
+            out = io.StringIO()
+            self.assertEqual(lanes.run(lanes.Settings(folder, only=("search",), jobs=2, quick=True, resume=True), out), 0,
+                             out.getvalue())
+            done = results_in(folder)
+        self.assertEqual(len(stopped["searches"]), 3)
+        self.assertIs(stopped["finished"], False)
+        self.assertEqual(stopped["red"], ["the run did not finish: the parts it had not landed are not in this file"])
+        self.assertIs(done["finished"], True)
+        self.assertEqual(done["red"], [])
+
+    def test_a_result_larger_than_the_pipe_holds_lands(self):
+        """A part's result is sent only as the parent reads it once it is
+        more than the pipe holds, so a parent that waited on the
+        process's end alone would wait for good; it waits on the pipe as
+        well. An alarm ends the test, not the suite, if it does wait."""
+        def waited_for_good(signum, frame):
+            raise AssertionError("the parent waited a minute for a part that had ended its work")
+
+        with tempfile.TemporaryDirectory() as folder:
+            settings = lanes.Settings(folder, only=("search",), jobs=2, quick=True)
+            results = lanes.fresh_results(settings)
+            taken = []
+            previous = signal.signal(signal.SIGALRM, waited_for_good)
+            self.addCleanup(signal.signal, signal.SIGALRM, previous)
+            self.addCleanup(lanes.end_workers)
+            signal.alarm(60)
+            try:
+                with mock.patch.object(lanes, "take", lambda results, part, result: taken.append((part, len(result)))):
+                    lanes.run_jobs(settings, [("a large part", one_megabyte, ())], results, time.perf_counter(), io.StringIO())
+            finally:
+                signal.alarm(0)
+        self.assertEqual(taken, [("a large part", 1_000_000)])
+        self.assertEqual(results["errors"], [])
+
+    def test_a_resumed_search_s_files_replace_the_ones_its_stopped_run_wrote(self):
+        """A search the budget stopped wrote the files of what it had met,
+        and the resumed search numbers its own anew; a file of the
+        stopped one that the new result does not name is no result's,
+        and goes."""
+        with tempfile.TemporaryDirectory() as folder:
+            files = [Path(folder) / f"G1-E-two-{n}.json" for n in (1, 2, 3)]
+            for file in files:
+                file.write_text("{}", encoding="ascii")
+            results = lanes.fresh_results()
+            results["searches"].append({"space": "E-two", "violations": [{"file": str(f)} for f in files[:2]]})
+            results["searches"].append({"space": "E-deep", "violations": []})
+            lanes.take(results, "search E-two", {"space": "E-two", "violations": [{"file": str(files[0])}, {"file": str(files[2])}]})
+            self.assertEqual([f.exists() for f in files], [True, False, True])
+        self.assertEqual(sorted(s["space"] for s in results["searches"]), ["E-deep", "E-two"])
+
+    def test_an_out_folder_among_the_code_the_run_is_stamped_by_is_refused(self):
+        """The code digest reads every .py and .json file under validation
+        and sdlc_protocol but validation/runs/, so a run into a folder
+        there counted its own deep.json and trace files as code: its
+        resume was refused as made under other code."""
+        for inside in ("validation/out", "sdlc_protocol/out", "validation"):
+            with self.assertRaises(ValueError) as refused:
+                lanes.Settings(deep.ROOT / inside)
+            self.assertIn("--out takes a folder outside validation and sdlc_protocol", str(refused.exception))
+        for outside in ("validation-out", "validation/runs/2026-10-14"):
+            self.assertEqual(lanes.Settings(deep.ROOT / outside).out, deep.ROOT / outside)
 
     def test_the_parts_are_forked_and_the_parent_forks_with_no_helper_thread(self):
         """A mutant a test patches into the harness reaches a part by fork
@@ -695,25 +920,32 @@ class TheLaneAsOneRun(unittest.TestCase):
     def test_a_sigterm_to_the_runner_ends_its_workers_and_removes_the_marker(self):
         """`kill <pid>` sends SIGTERM to the runner alone; with no handler
         the parent died at once, its finally never run, the marker left
-        naming a dead process and each pool's worker, which watches no
+        naming a dead process and each part's process, which watches no
         parent, running its search on for hours, orphaned. The handler
-        ends the run as Ctrl-C does."""
+        ends the workers and removes the marker, then ends the process by
+        the signal, where a SystemExit let a caller that catches one, as
+        a test runner does, go on after it. The runner is a session of
+        its own, so the test ends it and its workers whatever it sees."""
         if shutil.which("pgrep") is None:
             self.skipTest("pgrep is not installed")
         with tempfile.TemporaryDirectory() as folder:
+            out, went_on = Path(folder) / "out", Path(folder) / "went-on"
             script = ("import os, sys\n"
                       f"sys.path.insert(0, {str(ROOT)!r})\n"
                       "from validation import lanes\n"
-                      f"lanes.run(lanes.Settings({folder!r}, only=('search',), jobs=1), open(os.devnull, 'w'))\n")
-            runner = subprocess.Popen([sys.executable, "-c", script], stderr=subprocess.DEVNULL)
-            try:
-                marker = Path(folder) / lanes.RUNNING
-                workers = wait_for(lambda: children_of(runner.pid) if marker.exists() else [], 60)
-                self.assertTrue(workers, "no worker started within a minute")
-                runner.send_signal(signal.SIGTERM)
-                self.assertEqual(runner.wait(timeout=60), 128 + signal.SIGTERM)
-            finally:
-                runner.kill()
+                      "try:\n"
+                      f"    lanes.run(lanes.Settings({str(out)!r}, only=('search',), jobs=1), open(os.devnull, 'w'))\n"
+                      "except SystemExit:\n"
+                      f"    open({str(went_on)!r}, 'w').close()\n")
+            runner = subprocess.Popen([sys.executable, "-c", script], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                      start_new_session=True)
+            self.addCleanup(end_session, runner)
+            marker = out / lanes.RUNNING
+            workers = wait_for(lambda: children_of(runner.pid) if marker.exists() else [], 60)
+            self.assertTrue(workers, "no worker started within a minute")
+            runner.send_signal(signal.SIGTERM)
+            self.assertEqual(runner.wait(timeout=60), -signal.SIGTERM)
+            self.assertFalse(went_on.exists())
             self.assertFalse(marker.exists())
             self.assertTrue(wait_for(lambda: not any(alive(pid) for pid in workers), 30), "a worker outlived the runner")
 

@@ -27,9 +27,13 @@ sequences rather than a search, since a real repository cannot be copied
 per state: the S05g scenario of DESIGN.md 5.2, the arm's gate over two
 branches that change one line, and seeded random sequences of the acts
 under each policy, a bare repository per sequence, with the same checks
-after every act. A push that stands clean changes a file of the agent's
-own; one that conflicts changes the first line of app.py, as the owner's
-move of main does, so git finds the conflict the memory world declares.
+after every act. A push that stands clean adds to a file of the agent's
+own; one that conflicts rewrites app.py's second line, which the owner's
+move of main rewrites too. A sequence is drawn over MemoryWorld, which
+declares the conflict at the push, while git finds it only where main
+changed that line after the branch began, and finds one where an agent's
+clean pushes on two issues each add its own file; the checks read git's
+own standing, so each act is judged by what git found.
 """
 
 import copy
@@ -55,6 +59,10 @@ POLICIES = {
     "gated-check": gate.Policy(who_merges=gate.GATE),
 }
 BASE_TEXT = "def greet():\n    return 'hello'\n\n\ndef part():\n    return 'base'\n"
+# The code each of the gate's answers exits with (part 8): an answer's
+# code is its result's, as a refusal's is its kind's.
+ANSWER_CODES = {gate.MERGED: gate.EXIT_DONE, gate.READY: gate.EXIT_DONE, gate.MAIN_MOVED: gate.EXIT_MAIN_MOVED,
+                gate.NOT_MERGED: gate.EXIT_REFUSED, gate.GATE_FAILED: gate.EXIT_GATE_FAILED}
 
 
 class Act(NamedTuple):
@@ -164,7 +172,12 @@ def problems(policy, queue, step, merged_before):
     far, before this act. Part 8's expected code comes from the state the
     act found (step.anothers), not from the error raised, whose class and
     code always agree: a gate that refused another's claim with the plain
-    code would otherwise pass."""
+    code would otherwise pass. An answer's code is its result's
+    (ANSWER_CODES), and an attempt on a branch standing in conflict
+    answers main moved, whose code is 3: a gate that answered a second
+    main moved with 0 would otherwise pass. An act on another's work that
+    goes through breaks part 1 or 2 at once, before any pull request
+    shows it."""
     act, outcome, error = step.act, step.outcome, step.error
     moved = step.main_after != step.main_before
     found = []
@@ -175,7 +188,15 @@ def problems(policy, queue, step, merged_before):
             found.append(f"exit code {error.exit_code} for {type(error).__name__} where {owed}, which owes {expected}")
         if act.kind not in ("move_main", "push") and moved:
             found.append("a refusal moved main")
+    elif step.anothers:
+        found.append(f"{act} went through on another's work")
     if outcome is not None:
+        owed = ANSWER_CODES.get(outcome.result)
+        if outcome.exit_code != owed:
+            found.append(f"exit code {outcome.exit_code} for the answer {outcome.result}, which owes {owed}")
+        attempted = act.kind == "land" or policy.who_merges == gate.GATE
+        if attempted and step.standing_at_landing == gate.CONFLICTING and outcome.result != gate.MAIN_MOVED:
+            found.append(f"answer {outcome.result} for a branch standing conflicting, which owes main moved")
         if outcome.merged != moved:
             found.append(f"outcome {outcome.result} but main {'moved' if moved else 'stayed'}")
         if outcome.result == gate.MAIN_MOVED and moved:
@@ -379,8 +400,9 @@ class SharedRemote:
 
 class GitPusher:
     """The acts made with git: a push that stands clean adds a line to the
-    agent's own file; one that conflicts rewrites app.py's first line, as
-    the owner's move of main does, so the two meet in git. Each push goes
+    agent's own file; one that conflicts rewrites app.py's second line, as
+    the owner's move of main does, so the two meet in git once main has
+    moved after the branch began. Each push goes
     round the world's hold, which fetches once a hold, so the pusher
     tells the world its next read fetches, as the world does after its
     own merge: else the step would record main after the owner's move as

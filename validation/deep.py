@@ -24,9 +24,10 @@ shallower, since a plain seen-set is incomplete for a depth-bounded
 search: a state first reached deep would never be expanded when reached
 again shallower (DESIGN.md, 6.1). It goes on past a violation, as the
 breadth-first search does, and keeps each distinct violation once with
-the first trace it met it on, a violation's identity being its
-guarantee and its detail with any sha in it read as any sha
-(invariants.identity). The reductions of DESIGN.md 6.4 are not
+the first trace it met it on and the detail as that trace met it, a
+violation's identity being its guarantee and its detail with any sha in
+it read as any sha (invariants.identity), so a later meeting under
+another sha counts and changes neither. The reductions of DESIGN.md 6.4 are not
 applied: the time cap gave 5 percent at depth 5 (step 4) and a reduced
 key is a soundness risk the owner's rule, correctness over cost, does
 not take; the lane runs for as long as it takes.
@@ -244,8 +245,8 @@ def search(start, scope, depth, known=oracle.AS_BUILT, budget=None, say=None, ev
             for problem in invariants.step_checks(model, after, verb, outcome, known):
                 key = (problem.guarantee, invariants.identity(problem.detail))
                 first = found.get(key)
-                found[key] = Found(problem.guarantee, problem.detail, first.trace if first else path,
-                                   (first.count if first else 0) + 1)
+                found[key] = (first._replace(count=first.count + 1) if first
+                              else Found(problem.guarantee, problem.detail, path, 1))
             digest = after.digest()
             reached = seen.get(digest)
             if reached is None or reached > here + 1:
@@ -342,16 +343,20 @@ def write_counterexamples(folder, space, found, known=oracle.AS_BUILT, budget=60
     the files' paths with what each holds. budget bounds the shortening
     of one violation and total, when given, of them all, so a search that
     met many cannot spend the hours after it shortening them: a violation
-    the total has no time left for is written as the search met it."""
+    the total has no time left for is written as the search met it. The
+    detail written, in the file and in what is returned, is the one the
+    shortened trace shows, since a shortened trace can show the
+    violation under another sha (shrink.Shrunk.detail)."""
     written = []
     ends = None if total is None else time.perf_counter() + total
     for at, violation in enumerate(sorted(found, key=lambda f: (f.guarantee, f.detail)), 1):
         target = (violation.guarantee, violation.detail)
         allowed = budget if ends is None else max(0.0, min(budget, ends - time.perf_counter()))
         shorter = shrink.shrink(space.start, space.scope, symbolic_trace(space, violation.trace), target, known, allowed)
-        data = trace_json(space, shorter.trace, f"{violation.guarantee} {violation.detail}", depth=depth)
+        detail = shorter.detail or violation.detail
+        data = trace_json(space, shorter.trace, f"{violation.guarantee} {detail}", depth=depth)
         path = write_trace(folder, f"{violation.guarantee}-{space.name}-{at}", data)
-        written.append({"guarantee": violation.guarantee, "detail": violation.detail, "count": violation.count,
+        written.append({"guarantee": violation.guarantee, "detail": detail, "count": violation.count,
                         "trace": [str(v) for v in shorter.trace], "found_at": len(violation.trace),
                         "shortened_to": len(shorter.trace), "file": str(path)})
     return written
@@ -408,10 +413,12 @@ def observe(model, outcomes):
     """What a step left that both worlds must agree on: whether the step
     was taken and, when not, whether the guard or git refused it (git's
     words differ from the model's), the refs by name with a released name's
-    sha replaced, each claim branch's tree and standing, the issues'
-    labels and states, the pull requests, the bot's comments by kind, and
-    the board's sections. The shas themselves differ between the worlds,
-    so none is compared."""
+    sha replaced, each claim branch's tree, standing and the files it
+    changes, the issues' labels and states, the pull requests, the bot's
+    comments by kind, and the board's sections, the Claims section's rows
+    whole, since the files a branch changes fill its Files column and the
+    overlaps and differ where the trees agree. The shas themselves differ
+    between the worlds, so none is compared."""
     shown = model.board_text
     named = {}
     for ref in sorted(model.refs):
@@ -426,12 +433,13 @@ def observe(model, outcomes):
         "refs": named,
         "trees": trees,
         "standing": {ref: model.standing(ref) for ref in sorted(model.refs) if ref.startswith(oracle.CLAIM_PREFIX)},
+        "files": {ref: tuple(model.files_changed(ref)) for ref in sorted(model.refs) if ref.startswith(oracle.CLAIM_PREFIX)},
         "issues": {n: (i.state, tuple(sorted(i.labels))) for n, i in sorted(model.issues.items())},
         "pulls": {n: (p.head, p.draft, p.state) for n, p in sorted(model.pulls.items())},
         "comments": {n: tuple(sorted(Counter(oracle.comment_kind(c.body) for c in model.comments_on(n)
                                              if c.author == BOT).items()))
                      for n in sorted(set(model.issues) | set(model.pulls))},
-        "page": (page.queue(shown), tuple(sorted(page.given(shown).items())), tuple(sorted(page.claim_workers(shown).items())),
+        "page": (page.queue(shown), tuple(sorted(page.given(shown).items())), tuple(page.claim_rows(shown)),
                  page.not_claims(shown), tuple(sorted(page.overlaps(shown).items())), page.merged(shown), page.pulls(shown)),
     }
 

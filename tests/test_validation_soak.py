@@ -6,6 +6,7 @@ seeds for two hundred steps; here a few seeds walk a few steps."""
 
 import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -14,7 +15,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from sdlc_protocol import board, claims  # noqa: E402
-from validation import invariants, model as M, oracle, replay, soak  # noqa: E402
+from validation import deep, invariants, lanes, model as M, oracle, replay, shrink, soak  # noqa: E402
 
 LEADS = ROOT / "validation" / "runs" / "2026-10-14-partial" / "traces"
 
@@ -55,11 +56,33 @@ class TheSoak(unittest.TestCase):
         self.assertNotEqual(soak.walk(7, 30).verbs, soak.walk(8, 30).verbs)
 
     def test_a_mutant_is_met_on_a_walk_and_the_step_is_named(self):
+        """The step a walk names is the one the violation first shows at:
+        the walk's verbs to it, replayed from the start, show the detail
+        as named, and without its last verb show nothing of it."""
         with mock.patch.object(claims, "is_idle", at_exactly_24_hours):
             walks = [soak.walk(seed, 80) for seed in range(6)]
-        met = [v for w in walks for v in w.violations]
-        self.assertTrue(met, "no walk of six met the mutant")
-        self.assertTrue(all(0 <= at < 80 for _, _, at in met))
+            met = [(walk, violation) for walk in walks for violation in walk.violations]
+            self.assertTrue(met, "no walk of six met the mutant")
+            for walk, (guarantee, detail, at) in met:
+                with self.subTest(seed=walk.seed, step=at):
+                    trace = deep.symbolic_trace(soak.SPACE, walk.verbs[:at + 1])
+                    self.assertEqual(shrink.shown(soak.SPACE.start, soak.SCOPE, trace, (guarantee, detail)), detail)
+                    self.assertIsNone(shrink.shown(soak.SPACE.start, soak.SCOPE, trace[:-1], (guarantee, detail)))
+
+    def test_a_file_names_the_detail_its_own_steps_show(self):
+        """The lane shortens a walk's violation before it writes it, and
+        taking a wait out moves the clock a released branch's name is made
+        from; each file names the detail a replay of it meets, sha and
+        all, not the one the walk met."""
+        with tempfile.TemporaryDirectory() as folder, mock.patch.object(claims, "is_idle", at_exactly_24_hours):
+            result = lanes.run_soak([3], 12, folder)
+            self.assertTrue(any("released/" in v["detail"] for v in result["violations"]), result["violations"])
+            for v in result["violations"]:
+                with self.subTest(file=Path(v["file"]).name):
+                    violated = json.loads(Path(v["file"]).read_text(encoding="ascii"))["violated"]
+                    self.assertEqual(violated, f"{v['guarantee']} {v['detail']}")
+                    record = replay.replay(replay.load(v["file"]))
+                    self.assertIn((v["guarantee"], v["detail"]), [(x.guarantee, x.detail) for _, x in record.violations])
 
 
 def delete_ref_keeping_pulls(self, ref):

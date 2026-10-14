@@ -57,6 +57,7 @@ import multiprocessing
 import os
 import shutil
 import signal
+import subprocess
 import sys
 import tempfile
 import threading
@@ -106,6 +107,12 @@ class Settings:
         if unknown:
             raise ValueError(f"--only takes {', '.join(PARTS)}, not {', '.join(unknown)}")
         self.out = Path(out)
+        if inside_the_code(self.out):
+            # The digest would count the run's own results and trace files
+            # as code, so a resume would be refused and every checkpoint
+            # read as another search's.
+            raise ValueError(f"--out takes a folder outside {' and '.join(deep.CODE_DIRS)}, whose files stamp the "
+                             f"run's code, or one under {deep.NOT_CODE[0]}, not {out}")
         self.only = tuple(only)
         self.jobs = jobs or os.cpu_count() or 2
         if self.jobs < 1:
@@ -135,11 +142,30 @@ class Settings:
     def record(self):
         """What shapes the run's results: a file made under other settings
         or other code is not continued."""
-        return {"library": __version__, "code": deep.code_digest(), "quick": self.quick,
+        return {"library": __version__, "code": deep.code_digest(), "git": git_version(), "quick": self.quick,
                 "depths": {name: self.depths.get(name, space.depth) for name, space in deep.SPACES.items()},
                 "soak": {"seeds": self.soak_seeds, "steps": self.soak_steps, "chunk": self.soak_chunk},
                 "conformance": {"paths": self.conformance_paths, "length": self.conformance_length},
                 "gate": {"depth": self.gate_depth, "sequences": self.gate_sequences, "length": self.gate_length}}
+
+
+def inside_the_code(out):
+    """Whether a folder lies among the files deep.code_digest reads."""
+    where = out.resolve()
+    for folder in deep.CODE_DIRS:
+        code = (deep.ROOT / folder).resolve()
+        if where == code or code in where.parents:
+            kept = [(deep.ROOT / name).resolve() for name in deep.NOT_CODE]
+            return not any(where == k or k in where.parents for k in kept)
+    return False
+
+
+def git_version():
+    """The git the run's git parts answer under, as `git --version` says
+    it: the guard part, the git scenarios and traces, the gate over git
+    and conformance are git's answers, so a run is not resumed under
+    another git."""
+    return subprocess.run(["git", "--version"], capture_output=True, text=True, timeout=60).stdout.strip()
 
 
 # --- the parts, each a function a process runs ---------------------------------
@@ -166,7 +192,8 @@ def run_soak(seeds, steps, out):
     that met it and written as a trace file, numbered within its walk,
     since one step can show several details under one guarantee (a run
     that releases a claim not due makes both the comment and the rename
-    G3's) and the files of two must not share a name."""
+    G3's) and the files of two must not share a name; the detail written
+    is the one the shortened trace shows (shrink.Shrunk.detail)."""
     walks, written = [], []
     ends = time.perf_counter() + SHRINK_TOTAL
     for seed in seeds:
@@ -177,9 +204,10 @@ def run_soak(seeds, steps, out):
             allowed = max(0.0, min(SHRINK_BUDGET, ends - time.perf_counter()))
             shorter = shrink.shrink(soak.SPACE.start, soak.SCOPE, deep.symbolic_trace(soak.SPACE, walk.verbs[:at + 1]),
                                     target, oracle.AS_BUILT, allowed)
-            data = deep.trace_json(soak.SPACE, shorter.trace, f"{guarantee} {detail}")
+            shown = shorter.detail or detail
+            data = deep.trace_json(soak.SPACE, shorter.trace, f"{guarantee} {shown}")
             path = deep.write_trace(out, f"{guarantee}-soak-{seed}-{at}-{n}", data)
-            written.append({"seed": seed, "step": at, "guarantee": guarantee, "detail": detail,
+            written.append({"seed": seed, "step": at, "guarantee": guarantee, "detail": shown,
                             "shortened_to": len(shorter.trace), "file": str(path)})
     return {"seeds": [seeds[0], seeds[-1]], **soak.summary(walks), "violations": written}
 
@@ -306,8 +334,15 @@ def fresh_results(settings=None):
 def take(results, part, result):
     """The part's result into the results, in place of any the part left
     before, as a search run again from its checkpoint or a chunk run
-    again after it raised."""
+    again after it raised; a search's earlier files that the new result
+    does not name are removed, since its files are numbered anew."""
     if part.startswith("search "):
+        before = [s for s in results["searches"] if s["space"] == result["space"]]
+        named = {v["file"] for v in result["violations"]}
+        for file in {v["file"] for s in before for v in s["violations"]} - named:
+            # A search the budget stopped wrote files the resumed one
+            # numbers anew: what it no longer names is no result's.
+            Path(file).unlink(missing_ok=True)
         results["searches"] = [s for s in results["searches"] if s["space"] != result["space"]] + [result]
     elif part.startswith("soak "):
         results["soak"]["chunks"] = [c for c in results["soak"]["chunks"] if c["seeds"] != result["seeds"]] + [result]
@@ -324,8 +359,13 @@ def take(results, part, result):
 
 
 def red_lines(results):
-    """Why the run is red, one line each; none when it is green."""
+    """Why the run is red, one line each; none when it is green. A file a
+    run writes before its end says the run is not finished, so a run
+    killed, or a job cancelled, before a red part landed does not read
+    green."""
     lines = [f"{e['part']} raised: {e['error']}" for e in results.get("errors", [])]
+    if results.get("finished") is False:
+        lines.append("the run did not finish: the parts it had not landed are not in this file")
     for s in results["searches"]:
         if s["stopped"]:
             lines.append(f"search {s['space']}: stopped by the budget after {s['states']} states, not done")
@@ -371,7 +411,13 @@ def write_results(settings, results, began):
     results["seconds"] = round(time.perf_counter() - began, 1)
     results["red"] = red_lines(results)
     settings.out.mkdir(parents=True, exist_ok=True)
-    (settings.out / "deep.json").write_text(json.dumps(results, indent=1, ensure_ascii=True) + "\n", encoding="ascii")
+    # Written beside the file and moved into place, as a checkpoint is, so
+    # a write that fails or is cut leaves the one before, which a resume
+    # reads.
+    file = settings.out / "deep.json"
+    partial = file.with_name(file.name + ".partial")
+    partial.write_text(json.dumps(results, indent=1, ensure_ascii=True) + "\n", encoding="ascii")
+    partial.replace(file)
 
 
 def summary_lines(results):
@@ -422,11 +468,15 @@ def running_process(settings):
     after a process and sends it nothing; on Windows os.kill with any
     signal but Ctrl-C's ends the process named, so there the file is
     taken at its word and a stale one is deleted by hand, as the
-    refusal says."""
+    refusal says. A file naming this very process is a dead run's whose
+    number a restart handed out again, since a live run never has this
+    process's id."""
     file = settings.out / RUNNING
     try:
         pid = int(file.read_text(encoding="ascii").strip()[:9])
     except (OSError, ValueError):
+        return None
+    if pid == os.getpid():
         return None
     if os.name == "nt":
         return pid
@@ -444,36 +494,46 @@ def take_marker(settings):
     removed: made exclusively, so that of two runs started at the same
     moment the second finds the first's file and is refused, where a file
     written after the liveness check let both pass it, both remove the
-    checkpoints and both write one results file. A file a dead process
-    left, as the machine's restart leaves one, is replaced."""
+    checkpoints and both write one results file. The file is written
+    under a name of this process's own and linked into place, so it
+    appears with the process's id in it: a file made empty and written
+    after read as no run to a second run in between. A file a dead
+    process left, as the machine's restart leaves one, is replaced."""
     file = settings.out / RUNNING
     settings.out.mkdir(parents=True, exist_ok=True)
-    mine = f"{os.getpid()}\n"
+    mine = file.with_name(f"{RUNNING}.{os.getpid()}")
+    mine.write_text(f"{os.getpid()}\n", encoding="ascii")
     try:
-        with file.open("x", encoding="ascii") as marker:
-            marker.write(mine)
+        os.link(mine, file)
     except FileExistsError:
         pid = running_process(settings)
         if pid is not None:
+            mine.unlink(missing_ok=True)
             raise SystemExit(f"{file} names process {pid}, a run in progress there, so this one does not start; wait "
                              f"for it, run into another --out, or delete the file if no run is in progress") from None
-        file.write_text(mine, encoding="ascii")
+        mine.replace(file)
+    else:
+        mine.unlink()
 
 
 def kept_results(settings):
     """A resumed run's results so far, from the file the last run left,
     counting its seconds on, when the file was made under this run's
     settings and code; a fresh run's otherwise, with what an earlier run
-    left under <out> removed. The marker is this run's by then (run); a
-    refusal here removes it, as the end of a run does."""
+    left under <out> removed. The marker is this run's by then, and run
+    removes it however this ends, a refusal here included. A file that
+    cannot be read is refused by name, not with a traceback."""
     file = settings.out / "deep.json"
     record = settings.record()
     if settings.resume and file.exists():
-        results = json.loads(file.read_text(encoding="ascii"))
+        try:
+            results = json.loads(file.read_text(encoding="ascii"))
+        except ValueError as error:
+            raise SystemExit(f"{file} cannot be read ({error}), so it is not resumed; run without --resume, "
+                             f"or into another --out") from None
         kept = results.get("run", {})
         differing = [name for name in record if kept.get(name) != record[name]]
         if differing:
-            (settings.out / RUNNING).unlink(missing_ok=True)
             raise SystemExit(f"{file} was made under other settings or other code ({', '.join(differing)} differ), "
                              f"so it is not resumed; run without --resume, or into another --out")
         results.setdefault("errors", [])
@@ -503,6 +563,11 @@ def run_part(connection, function, args):
         outcome = ("done", function(*args))
     except Exception as error:
         outcome = ("raised", repr(error), "".join(traceback.format_exception(error)))
+    except Terminated:
+        # The parent ended the part (end_workers), its handler inherited by
+        # the fork: the part's with blocks have run on the way out, and it
+        # ends quietly, as it did when the handler raised SystemExit.
+        raise SystemExit(128 + signal.SIGTERM) from None
     connection.send(outcome)
     connection.close()
 
@@ -565,13 +630,23 @@ def run_jobs(settings, jobs, results, began, out):
             print(f"    {part} done at {results['seconds']} s", file=out, flush=True)
 
 
+class Terminated(BaseException):
+    """A SIGTERM to the runner, raised where the parent waits, so run's
+    finally ends the workers and removes the marker; no except of the
+    parts' or a caller's catches it on its way, as it would a
+    SystemExit."""
+
+
 def stop_on_term(signum, frame):
     """What a SIGTERM to the runner does, the signal `kill <pid>` sends:
-    the run ends as it does on Ctrl-C, by an exception that reaches run's
-    finally. Without a handler the parent would die at once with the
-    marker left naming a dead process and each part's process, which
-    watches no parent, running its search on for hours, orphaned."""
-    raise SystemExit(128 + signum)
+    the run stops by an exception that reaches run's finally, which then
+    sends the signal again under the handler that was there before, so
+    the process ends as the signal ends it, and a caller such as a test
+    runner, which catches a SystemExit and goes on, does not outlive it.
+    Without a handler the parent would die at once with the marker left
+    naming a dead process and each part's process, which watches no
+    parent, running its search on for hours, orphaned."""
+    raise Terminated()
 
 
 def end_workers():
@@ -586,22 +661,35 @@ def run(settings, out=sys.stdout):
     come, and exit code 1 when any part is red. A part that raises is
     recorded, red, and the others go on. A SIGTERM to the runner ends the
     workers and removes the marker, as Ctrl-C and a signal to the whole
-    process group do; the handler can be set from the main thread alone,
-    where the script and the tests call this."""
+    process group do, and then ends the process by the signal; the
+    handler can be set from the main thread alone, where the script and
+    the tests call this. The results file says whether the run finished,
+    and one that did not is red. From the marker's taking on, whatever
+    ends the run, a refusal to resume included, the finally removes the
+    marker."""
     take_marker(settings)
-    results, began = kept_results(settings)
-    write_results(settings, results, began)
     marker = settings.out / RUNNING
     in_main_thread = threading.current_thread() is threading.main_thread()
     previous = signal.signal(signal.SIGTERM, stop_on_term) if in_main_thread else None
+    terminated = False
     try:
+        results, began = kept_results(settings)
+        results["finished"] = False
+        write_results(settings, results, began)
         for wave in (first_wave, second_wave):
             run_jobs(settings, wave(settings, results), results, began, out)
+        results["finished"] = True
+        write_results(settings, results, began)
+    except Terminated:
+        terminated = True
     finally:
         end_workers()
         if in_main_thread:
             signal.signal(signal.SIGTERM, previous)
         marker.unlink(missing_ok=True)
+    if terminated:
+        os.kill(os.getpid(), signal.SIGTERM)
+        raise SystemExit(128 + signal.SIGTERM)
     for line in summary_lines(results):
         print(line, file=out)
     for line in results["red"]:

@@ -128,13 +128,29 @@ class TheStore(unittest.TestCase):
         self.assertIn("a 1440", model.tree(model.refs["claude/1"])["src/shared.py"])
 
     def test_standing_and_files_changed_come_from_git(self):
-        with attached() as (store, model):
-            verbs.apply(model, Verb("claim", "a", (1,)), Scope())
-            verbs.apply(model, Verb("commit", "a", (1,)), Scope())
-            self.assertEqual(model.standing("claude/1"), M.CLEAN)
-            verbs.apply(model, Verb("move-main", M.OWNER), Scope())
-            self.assertEqual(model.standing("claude/1"), M.BEHIND)
-            self.assertIn("docs/agents/claims/1.md", model.files_changed("claude/1"))
+        """git answers a branch's standing at line level and the memory
+        model at file level, and the two part only where three pieces of
+        work change one file, which the lanes never reach; on a path that
+        reaches it the attached model answers as git does and its
+        detached copy as the memory rule does. The path this test took
+        before had both rules agree, so it passed with git's answers
+        bypassed. The files a branch changes are the store's too."""
+        shared = ("src/shared.py",)
+        scope = Scope(workers=("a", "b", "c"), issues=(1, 2, 3), files=((1, shared), (2, shared), (3, shared)))
+        path = (Verb("claim", "a", (1,)), Verb("claim", "b", (2,)), Verb("commit", "a", (1,)), Verb("commit", "b", (2,)),
+                Verb("open-draft", "a", (1,)), Verb("mark-ready", "a", (100,)), Verb("merge", M.OWNER, (100,)),
+                Verb("claim", "c", (3,)), Verb("commit", "c", (3,)), Verb("merge-main", "b", (2,)),
+                Verb("open-draft", "b", (2,)), Verb("mark-ready", "b", (101,)), Verb("merge", M.OWNER, (101,)))
+        with git_store.GitStore() as store:
+            model = M.seeded(issues=(1, 2, 3), writers=("a", "b", "c"))
+            store.attach(model, ("a", "b", "c"))
+            for verb in path:
+                verbs.apply(model, verb, scope)
+            self.assertEqual(model.standing("claude/3"), M.BEHIND)
+            self.assertEqual(model.clone().standing("claude/3"), M.DIRTY)
+            self.assertEqual(model.files_changed("claude/3"), ["docs/agents/claims/3.md", "src/shared.py"])
+            with mock.patch.object(store, "files_changed", return_value=["what/git/said.py"]):
+                self.assertEqual(model.files_changed("claude/3"), ["what/git/said.py"])
 
 
 if __name__ == "__main__":
