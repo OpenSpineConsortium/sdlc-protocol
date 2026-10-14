@@ -1,0 +1,152 @@
+name: Canary
+
+# The validation harness's live lane (validation/DESIGN.md, section 11):
+# scripts/canary.py drives a scripted worker on the canary repository,
+# OpenSpineConsortium/symphony-protocol-canary, an internal repository
+# adopted from the template so that its own board workflow runs the
+# library's copy, and reads what GitHub and that run did with throwaway
+# claims: the race for one claim branch (C1), the board's concurrency
+# group beside a merge (C2), branch names outside ASCII (C3), the
+# activity API after a lease push (C5) and a release end to end (C6).
+# Monthly, and by hand with the checks named; C0 and C7 run only by hand,
+# C7 from a clone with a token that administers the canary, since the
+# ruleset it makes is an administrator's (scripts/canary.py's docstring).
+#
+# The driver writes there with a token of the GitHub App SymphonyBoard
+# minted for the canary repository alone, from the sync's SDLC_APP_ID and
+# SDLC_APP_PRIVATE_KEY, with contents, issues and pull requests write, as
+# the sync mints one for a consumer; a push made with it starts the
+# canary's own workflows, as a worker's push does. C2 and C6 also read the
+# board's runs, which takes Actions read, a permission the App has only
+# once the owner adds it: the first mint asks for it and, refused, the
+# second asks without, and the driver then records the runs as not read
+# rather than failing. The token is revoked when the job ends. Where
+# SDLC_APP_ID is not set the run says so in its summary and stops, green.
+#
+# The records, canary.json, are the run's artifact and its summary; on a
+# failed check the job opens one issue here, "Canary failed: <checks>",
+# with the run's own token, and updates it on later failures rather than
+# opening another. A canary repository not adopted yet is the summary's
+# word, not an issue. One run at a time, and a newer one waits for it,
+# since two drivers on one repository would race each other's claims.
+
+on:
+  schedule:
+    - cron: "43 4 3 * *"
+  workflow_dispatch:
+    inputs:
+      checks:
+        description: The checks to run, separated by spaces (C0 C1 C2 C3 C5 C6)
+        default: C1 C2 C3 C5 C6
+        type: string
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: canary
+  cancel-in-progress: false
+
+env:
+  CANARY_REPO: OpenSpineConsortium/symphony-protocol-canary
+  CHECKS: ${{ inputs.checks || 'C1 C2 C3 C5 C6' }}
+
+jobs:
+  canary:
+    runs-on: ubuntu-latest
+    # The App's token lives an hour from its mint, and the driver stops
+    # its checks at 55 minutes (TOKEN_LIFE) to clean up while the token
+    # still works; the rest is the set-up, the clean-up and a margin.
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Is the App set up, and which repository is the canary?
+        id: plan
+        env:
+          APP_ID: ${{ vars.SDLC_APP_ID }}
+        run: |
+          set -eu
+          if [ -z "$APP_ID" ]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "## Canary" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "Not run: the variable SDLC_APP_ID is not set, so no token can be minted for the canary repository (README.md, \"The owner's one-time setup for the sync\")." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
+          echo "owner=${CANARY_REPO%%/*}" >> "$GITHUB_OUTPUT"
+          echo "name=${CANARY_REPO#*/}" >> "$GITHUB_OUTPUT"
+
+      # First with Actions read, for the run counts; GitHub refuses the
+      # mint while the App lacks the permission, and the next step asks
+      # without it.
+      - uses: actions/create-github-app-token@v1
+        id: with-runs
+        if: steps.plan.outputs.enabled == 'true'
+        continue-on-error: true
+        with:
+          app-id: ${{ vars.SDLC_APP_ID }}
+          private-key: ${{ secrets.SDLC_APP_PRIVATE_KEY }}
+          owner: ${{ steps.plan.outputs.owner }}
+          repositories: ${{ steps.plan.outputs.name }}
+          permission-contents: write
+          permission-issues: write
+          permission-pull-requests: write
+          permission-checks: read
+          permission-actions: read
+          permission-metadata: read
+
+      - uses: actions/create-github-app-token@v1
+        id: without-runs
+        if: steps.plan.outputs.enabled == 'true' && steps.with-runs.outcome != 'success'
+        with:
+          app-id: ${{ vars.SDLC_APP_ID }}
+          private-key: ${{ secrets.SDLC_APP_PRIVATE_KEY }}
+          owner: ${{ steps.plan.outputs.owner }}
+          repositories: ${{ steps.plan.outputs.name }}
+          permission-contents: write
+          permission-issues: write
+          permission-pull-requests: write
+          permission-checks: read
+          permission-metadata: read
+
+      - name: Run the checks on the canary repository
+        id: run
+        if: steps.plan.outputs.enabled == 'true'
+        continue-on-error: true
+        env:
+          CANARY_TOKEN: ${{ steps.with-runs.outputs.token || steps.without-runs.outputs.token }}
+          CANARY_RUNS: ${{ steps.with-runs.outcome == 'success' }}
+        run: |
+          set -eu
+          # The list of checks is split on spaces, as the input says.
+          # shellcheck disable=SC2086
+          python3 scripts/canary.py run --checks $CHECKS --repo "$CANARY_REPO" \
+            --out canary-out/canary.json --summary "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: steps.plan.outputs.enabled == 'true' && hashFiles('canary-out/canary.json') != ''
+        with:
+          name: canary
+          path: canary-out/canary.json
+
+      - name: Open or update the failure issue
+        if: steps.run.outcome == 'failure' && hashFiles('canary-out/canary.json') != ''
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CANARY_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: python3 scripts/canary.py issue canary-out/canary.json
+
+      - name: Fail the job when a check did, or the canary is not ready
+        if: steps.run.outcome == 'failure'
+        run: |
+          echo "a check failed, or the canary repository is not ready: the summary says which"
+          exit 1

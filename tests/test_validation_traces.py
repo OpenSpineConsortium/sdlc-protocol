@@ -17,6 +17,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+import sdlc_protocol  # noqa: E402
 from validation import invariants, known, mutants, oracle, replay, scenarios  # noqa: E402
 
 DESIGN = (ROOT / "validation" / "DESIGN.md").read_text(encoding="ascii")
@@ -171,6 +172,29 @@ class KnownJson(unittest.TestCase):
                          ["trace F4 as built: recorded red and green: step 9, G14"])
         self.assertEqual(known.differences("trace", "F1", {(0, "G3")}),
                          ["trace F1 as built: red and not recorded: step 0, G3"])
+
+    def test_a_finding_fixed_on_main_is_recorded_with_the_last_version_that_has_it(self):
+        """fixed_after is the canary's: it runs the release the canary
+        repository vendors, so a finding fixed on main is still known there
+        at that version and before, and new from the next release on."""
+        self.assertEqual(known.FIXED_AFTER, {"F7": "0.4.1", "F12": "0.4.1"})
+        current = known.version_key(sdlc_protocol.__version__)
+        for finding, version in known.FIXED_AFTER.items():
+            with self.subTest(finding=finding):
+                self.assertIn(finding, FINDINGS_IN_DESIGN)
+                self.assertNotIn(finding, known.AS_BUILT, "a finding is as built or fixed, never both")
+                self.assertIsNotNone(known.version_key(version))
+                self.assertLessEqual(known.version_key(version), current,
+                                     "the last version with a finding is one main has stated, never a later one")
+        self.assertEqual(known.as_built_for("0.4.1"), known.AS_BUILT | {"F7", "F12"})
+        self.assertEqual(known.as_built_for("0.4.0"), known.AS_BUILT | {"F7", "F12"})
+        self.assertEqual(known.as_built_for("0.4.2"), known.AS_BUILT, "the next release carries the fixes")
+        self.assertEqual(known.as_built_for("0.5.0"), known.AS_BUILT)
+        self.assertEqual(known.as_built_for("1.0.0"), known.AS_BUILT)
+        for none in (None, "", "unknown", "0.4", "0.4.1-dirty", "1" * 10 + ".0.0"):
+            self.assertEqual(known.as_built_for(none), known.AS_BUILT, none)
+        self.assertEqual(known.version_key("0.4.1"), (0, 4, 1))
+        self.assertGreater(known.version_key("0.10.0"), known.version_key("0.9.9"))
 
 
 if __name__ == "__main__":

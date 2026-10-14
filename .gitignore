@@ -1,3 +1,6 @@
+# What the canary writes (scripts/canary.py), uploaded as the run's artifact
+canary-out/
+
 # Python caches
 __pycache__/
 *.pyc
