@@ -725,7 +725,7 @@ class TheRecords(unittest.TestCase):
         self.assertEqual(canary.vendored_version("sdlc-protocol 0.5.0 unknown"), "0.5.0")
         self.assertIsNone(canary.vendored_version("unreadable"))
         self.assertIsNone(canary.vendored_version(None))
-        self.assertEqual(canary.known_for(first_line), canary.known.AS_BUILT | {"F4", "F7", "F12"})
+        self.assertEqual(canary.known_for(first_line), canary.known.AS_BUILT | {"F4", "F7", "F12", "F14"})
         self.assertEqual(canary.known_for(f"sdlc-protocol 0.5.0 {COMMIT}"), canary.known.AS_BUILT)
         self.assertEqual(canary.known_for("unreadable"), canary.known.AS_BUILT)
         self.assertEqual(canary.known_words(frozenset({"F12", "F2", "F13", "F99"})),
@@ -740,10 +740,10 @@ class TheRecords(unittest.TestCase):
             self.assertIn("F12 (fixed after 0.4.1)", out.getvalue())
             self.assertEqual(canary.run_site(FakeSite(vendoring="0.5.0"), ["C2"], path, None, out), 1)
             data = json.loads(path.read_text())
-            self.assertEqual(data["known_for"], ["F2", "F9", "F13", "F14"])
+            self.assertEqual(data["known_for"], ["F2", "F9", "F13"])
             self.assertEqual(data["results"][0]["status"], "failed")
             text = canary.issue_text(data, None)
-            self.assertIn("This run reads a missed expectation as known when it fails for F2, F9, F13, F14, which "
+            self.assertIn("This run reads a missed expectation as known when it fails for F2, F9, F13, which "
                           "the vendored release still has", text)
 
     def test_the_records_file_and_the_issue(self):

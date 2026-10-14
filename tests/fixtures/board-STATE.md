@@ -28,7 +28,7 @@ As of commit 0123abc on main. Rewritten by .github/workflows/board.yml; do not e
 | --- | --- | --- |
 | #14 | Write the release notes | todo |
 
-## Given to workers (open issues labelled todo that a worker's label names, not yet claimed)
+## Given to workers (open issues a worker's label names, not yet claimed)
 
 | Issue | Title | Worker |
 | --- | --- | --- |

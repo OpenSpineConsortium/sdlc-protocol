@@ -194,16 +194,21 @@ class Rendering(unittest.TestCase):
         snap["issues"].append({"number": 23, "title": "For main", "labels": ["account:main", "todo"]})
         snap["issues"].append({"number": 24, "title": "Taken", "labels": ["claimed", "todo", "worker:nightly"]})
         snap["issues"].append({"number": 25, "title": "Not queued", "labels": ["worker:nightly"]})
+        snap["issues"].append({"number": 26, "title": "An epic for nightly", "labels": ["epic", "worker:nightly"]})
         page = board.render(snap)
         queue = page.split(board.QUEUE_HEADING)[1].split(board.GIVEN_HEADING)[0]
         given = page.split(board.GIVEN_HEADING)[1].split(board.BLOCKER_HEADING)[0]
-        for number in ("#20", "#21", "#22", "#23", "#24", "#25"):
+        for number in ("#20", "#21", "#22", "#23", "#24", "#25", "#26"):
             self.assertNotIn(number, queue)
         self.assertIn("#14", queue)
         self.assertIn("| #21 | A member's task | w1 |", given)
         self.assertIn("| #22 | For nightly | nightly |", given)
         self.assertIn("| #23 | For main | main |", given)
-        for number in ("#20", "#24", "#25", "#14"):
+        # An issue a worker's label names is that worker's whatever else it
+        # is labelled (F14): with no todo, and an epic given to a worker.
+        self.assertIn("| #25 | Not queued | nightly |", given)
+        self.assertIn("| #26 | An epic for nightly | nightly |", given)
+        for number in ("#20", "#24", "#14"):
             self.assertNotIn(number, given)
 
     def test_work_given_to_a_worker_leaves_the_given_rows_once_claimed_by_branch(self):
