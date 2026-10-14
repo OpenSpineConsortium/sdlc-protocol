@@ -1,0 +1,24 @@
+    soak 0 done at 23.4 s
+    soak 50 done at 47.1 s
+    soak 100 done at 68.4 s
+    search E-faults done at 74.0 s
+    soak 150 done at 91.8 s
+    soak 200 done at 99.4 s
+    soak 250 done at 116.2 s
+    soak 300 done at 120.6 s
+    soak 350 done at 138.2 s
+    soak 450 done at 161.5 s
+    soak 500 done at 183.3 s
+    soak 400 done at 368.5 s
+    soak 600 done at 391.7 s
+    soak 650 done at 414.2 s
+    soak 700 done at 436.3 s
+    soak 750 done at 456.5 s
+    soak 800 done at 477.6 s
+    soak 850 done at 498.3 s
+    soak 900 done at 519.9 s
+    soak 550 done at 1716.4 s
+    gate done at 1947.6 s
+    git scenarios done at 1966.6 s
+    git traces done at 1973.1 s
+    guard done at 2044.8 s

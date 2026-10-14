@@ -1,0 +1,107 @@
+{
+ "finding": "",
+ "title": "a counterexample of the deep lane's E-faults",
+ "status": "counterexample",
+ "violated": "G1 the board names b for claude/1, whose holder is a",
+ "breaks": [
+  "G1"
+ ],
+ "library": {
+  "version": "0.4.1"
+ },
+ "scope": {
+  "name": "E-faults",
+  "depth": 4,
+  "workers": [
+   "a",
+   "b"
+  ],
+  "issues": [
+   1
+  ],
+  "faults": [
+   "comment-500",
+   "comment-lost",
+   "comment-rate-limited",
+   "label-delete-500",
+   "label-post-500",
+   "rename-403",
+   "rename-422",
+   "ref-delete-422",
+   "compare-404",
+   "comments-read-500"
+  ],
+  "waits": [
+   24,
+   25
+  ],
+  "skews": [
+   -48,
+   72
+  ]
+ },
+ "issues": {
+  "1": [
+   "todo"
+  ]
+ },
+ "workers": [
+  "a",
+  "b"
+ ],
+ "people": [
+  "owner",
+  "dana",
+  "sam"
+ ],
+ "files": {},
+ "careless": true,
+ "events": [
+  "schedule"
+ ],
+ "split_board": false,
+ "world": "memory",
+ "steps": [
+  {
+   "verb": "board",
+   "event": "schedule",
+   "ref": "",
+   "faults": [],
+   "at": 0
+  },
+  {
+   "verb": "claim",
+   "actor": "a",
+   "args": [
+    1
+   ],
+   "at": 0
+  },
+  {
+   "verb": "label-on",
+   "actor": "a",
+   "args": [
+    1,
+    "claimed"
+   ],
+   "at": 0
+  },
+  {
+   "verb": "label-on",
+   "actor": "a",
+   "args": [
+    1,
+    "worker:a"
+   ],
+   "at": 0
+  },
+  {
+   "verb": "lease-onto",
+   "actor": "b",
+   "args": [
+    1
+   ],
+   "at": 0
+  }
+ ]
+}
