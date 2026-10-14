@@ -153,7 +153,9 @@ class Rename(unittest.TestCase):
 class Delete(unittest.TestCase):
     """GitHub closes the open pull requests a deleted branch was the head of
     (managing-branches-within-your-repository.md:71), as the board's
-    delete of a branch pushed again at the head a release kept meets."""
+    delete of a branch pushed again at the head a release kept meets. The
+    soak's G9 lead (seed 427) met the model keeping such a draft open,
+    which the next run told "idle", and F17's work met it too."""
 
     def setUp(self):
         self.model = M.seeded()
@@ -172,23 +174,6 @@ class Delete(unittest.TestCase):
         self.model.delete_ref("claude/1")
         self.assertEqual(self.model.pulls[100].state, "merged")
         self.assertEqual(self.model.pulls[101].state, "open")
-
-
-class Delete(unittest.TestCase):
-    def test_closes_the_open_pull_request_as_github_does(self):
-        # The soak's G9 lead (seed 427): the board deleted a branch pushed
-        # again at a released head, and the model kept its draft open, which
-        # the next run told "idle".
-        model = M.seeded()
-        model.push("a", "claude/1", claim_commit(model, "a"))
-        model.pulls[100] = M.PullRequest(100, "claude/1", "a", "Closes #1")
-        model.pulls[101] = M.PullRequest(101, "claude/1", "a", "Closes #1")
-        model.pulls[101].state = "merged"
-        model.delete_ref("claude/1")
-        self.assertEqual(model.pulls[100].state, "closed")
-        self.assertEqual(model.pulls[101].state, "merged")
-        self.assertNotIn("claude/1", model.refs)
-        self.assertNotIn("claude/1", model.creators)
 
 
 class TheKey(unittest.TestCase):

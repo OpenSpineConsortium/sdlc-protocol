@@ -3,9 +3,10 @@
 A search reaches every state within a few steps; the soak reaches the
 states that take a hundred: five workers on six issues over days of the
 scenario clock, claims released and claimed again, released heads
-pushed again, branches renamed and renamed back, main moving under open pull requests,
-every fault kind, the owner releasing by hand, a stranger posting
-markers. Each walk is driven by a seed: every worker gets a scripted
+pushed again, branches renamed and renamed back, main moving under open
+pull requests, every fault kind but the two on posting an issue's
+labels, which never fire here (deep.py, above SPACES), the owner
+releasing by hand, a stranger posting markers. Each walk is driven by a seed: every worker gets a scripted
 policy (policies.py) drawn by the seed, and at each step the seed picks
 who acts, a worker by its policy or by a verb of its own, a person, the
 clock or the board, so a walk replays exactly from its seed, and the

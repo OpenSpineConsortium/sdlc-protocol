@@ -89,7 +89,15 @@ HELD = (CLAIM, Verb("label-on", "a", (1, "claimed")), Verb("label-on", "a", (1, 
 # The board reads the repository's activity only for the work in the
 # Overlaps (F13), which E-faults' one issue never has, so the faults on
 # that read never fired there; E-activity meets them from two claims on
-# one file.
+# one file. The two on posting an issue's labels, label-post-500 and
+# F15's label-post-lost, fire in no space here nor in the soak: the board
+# posts a label only to put todo on an issue that has none of todo, epic
+# and blocker, or to put back what a release whose next step failed took
+# off, and every issue here starts with todo, which no verb takes off,
+# while a board run meets one fault, which the failed step spends; the
+# fast lane meets them from a due claim on a task given by a label alone.
+# No space has a pull request from a fork (F17) or lenient rules (F16),
+# which the mutation lane's searches and the traces of F16 and F17 meet.
 ACTIVITY_FAULTS = tuple(name for name, fault in verbs.FAULTS.items() if fault.path == "/activity")
 BOTH_CLAIMED = (CLAIM, Verb("claim", "b", (2,)))
 SPACES = {

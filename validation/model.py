@@ -188,6 +188,17 @@ class RepoModel:
     # commits and standings are git's; None in the memory world. It is no
     # part of the key: the key is read from the model, which mirrors it.
     store: object = None
+    # git's word for how each branch it was asked about stands to main, by
+    # the branch's head and main's, which the attached model keeps and its
+    # detached copies share and read before the model's own rule: git
+    # judges a conflict at line level and the model at file level, so
+    # where three pieces of work change one file the two part, behind
+    # against dirty, and since F16 a branch behind main under lenient
+    # rules is owed nothing where a dirty one is owed "main moved", so the
+    # oracle and G9's quiet second run, which read copies, must hear git's
+    # word. None in the memory world; no part of the key, since git's word
+    # for two commits never changes.
+    standings: object = None
 
     # --- commits ------------------------------------------------------------
 
@@ -324,18 +335,26 @@ class RepoModel:
 
     def standing(self, ref):
         """How the branch of this name here stands to main: in the git
-        world, git's own answer, at line level; in memory, standing_at's."""
+        world, git's own answer, at line level, kept in standings for the
+        model's copies; in memory, standing_at's."""
         if self.store is not None:
-            return self.store.standing(ref, MAIN)
+            answer = self.store.standing(ref, MAIN)
+            self.standings[(self.refs.get(ref, ""), self.refs[MAIN])] = answer
+            return answer
         return self.standing_at(self.refs.get(ref, ""))
 
     def standing_at(self, head):
-        """clean, behind or dirty against main, by the model's own rule:
-        behind when main is not in the commit, dirty when a path both sides
-        changed since the merge base differs between them. The git world
-        judges a fork's head by it too, since the bare repository holds
-        none of a fork's commits."""
+        """clean, behind or dirty against main: git's word, where git gave
+        one for this head and main (standings, which a copy of a model in
+        the git world shares), else by the model's own rule: behind when
+        main is not in the commit, dirty when a path both sides changed
+        since the merge base differs between them. The git world judges a
+        fork's head by the rule too, since the bare repository holds none
+        of a fork's commits."""
         main = self.refs[MAIN]
+        said = self.standings.get((head, main)) if self.standings else None
+        if said is not None:
+            return said
         if not head or self.is_ancestor(main, head):
             return CLEAN
         base = self.merge_base(head, main)
@@ -503,12 +522,15 @@ class RepoModel:
         halves holds a client over this model, so a model with one is
         copied whole. A copy of a model in the git world is detached from
         the store: it keeps the refs, commits and trees the model read
-        from git, and answers from them, so a verb or a run on a copy
-        (the dealing lane's looks, the quiet second run of G9) never
-        changes the one repository the model is attached to."""
+        from git, and answers from them, and shares the standings git
+        gave, so a verb or a run on a copy (the dealing lane's looks, the
+        quiet second run of G9) never changes the one repository the
+        model is attached to, and a branch git calls behind stands behind
+        on the copy too."""
         if self.running is not None:
             copied = copy.deepcopy(self)
             copied.store = None
+            copied.standings = self.standings
             return copied
         return RepoModel(
             now=self.now, commits=dict(self.commits), refs=dict(self.refs),
@@ -519,7 +541,7 @@ class RepoModel:
             made=dict(self.made), made_count=self.made_count,
             tracking={w: dict(refs) for w, refs in self.tracking.items()}, board_text=self.board_text,
             queued=self.queued, pending=self.pending, running=None, opaque_pulls=self.opaque_pulls,
-            lenient_rules=self.lenient_rules,
+            lenient_rules=self.lenient_rules, standings=self.standings,
         )
 
 

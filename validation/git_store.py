@@ -19,6 +19,17 @@ branch's standing to main and the files it changes come from git
 (merge-tree --write-tree, as adapters/bare_git.py reads them; diff
 --name-only from the merge base).
 
+A pull request from a fork (F17) is the one exception: its head is a
+commit the model makes on main's tip, which no ref here names and the
+bare repository never holds, so its standing and files are the model's
+rule's in both worlds. A copy of an attached model is detached from the
+store and answers from what the model read, and for a branch's standing
+with the word git gave the attached model (model.standings): the oracle
+and G9's second run read copies, git's word and the model's rule part
+where three pieces of work change one file, behind against dirty, and
+under lenient rules (F16) a branch behind main is owed nothing where a
+dirty one is owed "main moved".
+
 So the two worlds differ only where git decides (DESIGN.md, 3.6): whether
 a push is taken, and whether two changes conflict, which git judges at
 line level and the model at file level. A conflict a verb meets in git
@@ -196,6 +207,7 @@ class GitStore:
         model.ever_heads = frozenset(shas[s] for s in model.ever_heads)
         model.tracking = {w: {r: shas[s] for r, s in refs.items()} for w, refs in model.tracking.items()}
         model.store = self
+        model.standings = {}
         self.sync(model)
         for actor in actors:
             self.clone_of(actor)

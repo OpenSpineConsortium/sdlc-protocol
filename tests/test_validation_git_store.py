@@ -16,12 +16,23 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from validation import deep, git_store, known, model as M, replay, run, scenarios, verbs  # noqa: E402
+from validation import deep, fake_github, git_store, invariants, known, model as M, replay, run, scenarios, verbs  # noqa: E402
 from validation.verbs import Scope, Verb  # noqa: E402
 
 # A guard against a hung git, not against a slow runner: the lane's own
 # timing is what scripts/validate.py measures.
 BUDGET_SECONDS = 300
+
+# Three pieces of work change one file, where git and the model's rule
+# part: git merges claude/3 into main at line level, so it stands behind,
+# where the model, judging by file, calls it dirty. c opens #102 last.
+SHARED = ("src/shared.py",)
+THREE = Scope(workers=("a", "b", "c"), issues=(1, 2, 3), files=((1, SHARED), (2, SHARED), (3, SHARED)))
+THREE_PIECES = (Verb("claim", "a", (1,)), Verb("claim", "b", (2,)), Verb("commit", "a", (1,)), Verb("commit", "b", (2,)),
+                Verb("open-draft", "a", (1,)), Verb("mark-ready", "a", (100,)), Verb("merge", M.OWNER, (100,)),
+                Verb("claim", "c", (3,)), Verb("commit", "c", (3,)), Verb("merge-main", "b", (2,)),
+                Verb("open-draft", "b", (2,)), Verb("mark-ready", "b", (101,)), Verb("merge", M.OWNER, (101,)),
+                Verb("open-draft", "c", (3,)))
 
 
 def results(record):
@@ -131,26 +142,50 @@ class TheStore(unittest.TestCase):
         """git answers a branch's standing at line level and the memory
         model at file level, and the two part only where three pieces of
         work change one file, which the lanes never reach; on a path that
-        reaches it the attached model answers as git does and its
-        detached copy as the memory rule does. The path this test took
-        before had both rules agree, so it passed with git's answers
-        bypassed. The files a branch changes are the store's too."""
-        shared = ("src/shared.py",)
-        scope = Scope(workers=("a", "b", "c"), issues=(1, 2, 3), files=((1, shared), (2, shared), (3, shared)))
-        path = (Verb("claim", "a", (1,)), Verb("claim", "b", (2,)), Verb("commit", "a", (1,)), Verb("commit", "b", (2,)),
-                Verb("open-draft", "a", (1,)), Verb("mark-ready", "a", (100,)), Verb("merge", M.OWNER, (100,)),
-                Verb("claim", "c", (3,)), Verb("commit", "c", (3,)), Verb("merge-main", "b", (2,)),
-                Verb("open-draft", "b", (2,)), Verb("mark-ready", "b", (101,)), Verb("merge", M.OWNER, (101,)))
+        reaches it the attached model answers as git does, in its pull
+        request's detail first of all, which the merge of F17 nearly had
+        the fake read by the model's rule, and its detached copy answers
+        with the word git gave (model.standings), where the model's own
+        rule says dirty. The path this test took before had both rules
+        agree, so it passed with git's answers bypassed. The files a
+        branch changes are the store's too."""
         with git_store.GitStore() as store:
             model = M.seeded(issues=(1, 2, 3), writers=("a", "b", "c"))
             store.attach(model, ("a", "b", "c"))
-            for verb in path:
-                verbs.apply(model, verb, scope)
+            for verb in THREE_PIECES:
+                verbs.apply(model, verb, THREE)
+            self.assertEqual(fake_github.pull_detail(model, model.pulls[102])["mergeable_state"], "behind")
+            self.assertEqual(model.pull_standing(model.pulls[102]), M.BEHIND)
             self.assertEqual(model.standing("claude/3"), M.BEHIND)
-            self.assertEqual(model.clone().standing("claude/3"), M.DIRTY)
+            copied = model.clone()
+            self.assertEqual(copied.standing("claude/3"), M.BEHIND)
+            self.assertEqual(fake_github.pull_detail(copied, copied.pulls[102])["mergeable_state"], "behind")
+            copied.standings = None
+            self.assertEqual(copied.standing("claude/3"), M.DIRTY)
             self.assertEqual(model.files_changed("claude/3"), ["docs/agents/claims/3.md", "src/shared.py"])
             with mock.patch.object(store, "files_changed", return_value=["what/git/said.py"]):
                 self.assertEqual(model.files_changed("claude/3"), ["what/git/said.py"])
+
+    def test_under_lenient_rules_a_branch_git_calls_behind_is_owed_nothing_over_git_too(self):
+        """Under a rule that does not require an up-to-date branch (F16) a
+        branch behind main is owed nothing, one in conflict "main moved".
+        The oracle and G9's quiet second run read a copy of the model,
+        which answered by the model's rule, so over git, on a branch git
+        calls behind and the rule dirty, they owed the notice and then
+        posted it, two violations the library did not commit (the review
+        of F16's merge); a copy shares the word git gave."""
+        with git_store.GitStore() as store:
+            model = M.seeded(issues=(1, 2, 3), writers=("a", "b", "c"))
+            model.lenient_rules = True
+            store.attach(model, ("a", "b", "c"))
+            red = []
+            for verb in THREE_PIECES + (Verb("board", "board", ("schedule", "")),):
+                before = model.clone()
+                outcome = verbs.apply(model, verb, THREE)
+                red += [(str(verb), v.guarantee, v.detail) for v in invariants.step_checks(before, model, verb, outcome)]
+            self.assertEqual(red, [])
+            self.assertEqual(model.standing("claude/3"), M.BEHIND)
+            self.assertEqual([c.body for c in model.comments_on(102)], [])
 
 
 if __name__ == "__main__":
