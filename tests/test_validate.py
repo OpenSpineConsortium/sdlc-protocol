@@ -57,6 +57,21 @@ class TheScript(unittest.TestCase):
             validate.main(["deep", "--quick", "--only", "search", "--out", folder, "--jobs"], io.StringIO())
         self.assertIn("--jobs takes a value", str(refused.exception))
 
+    def test_deep_refuses_an_option_it_does_not_know_and_keeps_the_checkpoints(self):
+        """A misspelt --resume, read as absent, would start a fresh run,
+        which removes the checkpoints the resume was for."""
+        with tempfile.TemporaryDirectory() as folder:
+            stale = Path(folder) / "checkpoints" / "E-two.pickle"
+            stale.parent.mkdir()
+            stale.write_bytes(b"a run's")
+            for wrong in (["--resum"], ["--resume=1"], ["--Resume"], ["--quick", "--out", folder, "--jobs", "2", "--resum"],
+                          ["--out", folder, "--budget", "0", "--only", "search", "resume"]):
+                with self.subTest(options=wrong), self.assertRaises(SystemExit) as refused:
+                    validate.main(["deep", *wrong], io.StringIO())
+                self.assertIn(f"deep does not take {wrong[-1]}", str(refused.exception))
+                self.assertIn("python3 scripts/validate.py deep", str(refused.exception))
+            self.assertTrue(stale.exists())
+
     def test_deep_refuses_a_part_only_does_not_name(self):
         """A misspelt part would run nothing and say ok."""
         with tempfile.TemporaryDirectory() as folder, self.assertRaises(SystemExit) as refused:

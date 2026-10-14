@@ -8,12 +8,17 @@ the guard grammar recorded again match the file; known.json's search
 entries are empty, since E-faults meets no known finding after F7's fix;
 a search continues from its own checkpoint and starts over from
 another's; and the lane as one run writes deep.json, resumes only its
-own, and lands the other parts when one raises. The real spaces run for
-hours (scripts/validate.py deep); here the spaces are small."""
+own, lands the other parts when one raises or its worker process dies,
+runs a part again on resume once it raised or a budget stopped it, plays
+the counterexamples a resumed search wrote, and refuses to start beside
+a run in progress. The real spaces run for hours (scripts/validate.py
+deep); here the spaces are small."""
 
 import io
 import itertools
 import json
+import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -42,6 +47,40 @@ def red(record):
 def broken_soak(seeds, steps, out):
     """A part that raises, at module level so the pool's workers get it by name."""
     raise RuntimeError("a walk that raised")
+
+
+def dying_soak(seeds, steps, out):
+    """A part whose worker process dies, as one killed for its memory does."""
+    os._exit(3)
+
+
+def results_in(folder):
+    return json.loads((Path(folder) / "deep.json").read_text(encoding="ascii"))
+
+
+class TheCodeDigest(unittest.TestCase):
+    def test_it_covers_the_source_and_the_data_and_not_the_docs_or_the_kept_runs(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            for name in ("validation/a.py", "validation/known.json", "validation/README.md", "validation/runs/x/deep.json",
+                         "validation/runs/x/traces/G1-E-two-1.json", "sdlc_protocol/b.py", "sdlc_protocol/spec/PROTOCOL.md"):
+                (root / name).parent.mkdir(parents=True, exist_ok=True)
+                (root / name).write_text("one\n", encoding="ascii")
+            self.assertEqual(deep.code_files(root), ["validation/a.py", "validation/known.json", "sdlc_protocol/b.py"])
+            first = deep.code_digest(root)
+            for name in ("validation/README.md", "validation/runs/x/deep.json", "sdlc_protocol/spec/PROTOCOL.md"):
+                (root / name).write_text("two\n", encoding="ascii")
+            self.assertEqual(deep.code_digest(root), first)
+            (root / "validation/known.json").write_text("two\n", encoding="ascii")
+            second = deep.code_digest(root)
+            self.assertNotEqual(second, first)
+            (root / "sdlc_protocol/b.py").write_text("two\n", encoding="ascii")
+            self.assertNotEqual(deep.code_digest(root), second)
+        files = deep.code_files()
+        for name in ("validation/known.json", "validation/guard_git.json", "validation/unproven.json", "validation/traces/F7.json",
+                     "validation/deep.py", "sdlc_protocol/claims.py"):
+            self.assertIn(name, files)
+        self.assertFalse([f for f in files if f.startswith("validation/runs/") or f.endswith(".md")])
 
 
 class TheSearch(unittest.TestCase):
@@ -268,6 +307,14 @@ class TheLaneAsOneRun(unittest.TestCase):
             self.assertEqual(sorted(p.stem for p in (Path(folder) / lanes.CHECKPOINTS).glob("*.pickle")),
                              sorted(deep.SPACES))
             self.assertEqual(lanes.done_parts(stopped), set())
+            # Each checkpoint, stopped at the first state, is given a
+            # thousand seconds, which the search counts on only when it
+            # reads the file: so the resumed figures tell a resume from a
+            # search started over.
+            for checkpoint in (Path(folder) / lanes.CHECKPOINTS).glob("*.pickle"):
+                kept = deep.read_checkpoint(checkpoint)
+                deep.write_checkpoint(checkpoint, kept["stamp"], kept["seen"], kept["stack"], kept["found"],
+                                      kept["transitions"], 1000.0)
             again = io.StringIO()
             settings = lanes.Settings(folder, only=("search",), jobs=2, quick=True, resume=True)
             self.assertEqual(lanes.run(settings, again), 0, again.getvalue())
@@ -278,7 +325,115 @@ class TheLaneAsOneRun(unittest.TestCase):
         self.assertEqual(len(resumed["searches"]), 3)
         self.assertEqual({s["space"]: s["states"] for s in resumed["searches"]}, whole)
         self.assertFalse(any(s["stopped"] for s in resumed["searches"]))
+        self.assertTrue(all(s["seconds"] >= 1000.0 for s in resumed["searches"]), resumed["searches"])
         self.assertEqual(resumed["red"], [])
+
+    def test_a_gate_exploration_the_budget_stopped_is_run_again_on_resume(self):
+        with tempfile.TemporaryDirectory() as folder:
+            out = io.StringIO()
+            settings = lanes.Settings(folder, only=("gate",), jobs=2, quick=True, budget=0.0)
+            self.assertEqual(lanes.run(settings, out), 1, out.getvalue())
+            stopped = results_in(folder)
+            self.assertTrue(all(m["stopped"] for m in stopped["gate"]["memory"]))
+            self.assertNotIn("gate", lanes.done_parts(stopped))
+            again = io.StringIO()
+            settings = lanes.Settings(folder, only=("gate",), jobs=2, quick=True, resume=True)
+            self.assertEqual(lanes.run(settings, again), 0, again.getvalue())
+            resumed = results_in(folder)
+        self.assertTrue(all(line.startswith("gate ") and line.endswith("not done") for line in stopped["red"]), stopped["red"])
+        self.assertIn("    gate done at", again.getvalue())
+        self.assertFalse(any(m["stopped"] for m in resumed["gate"]["memory"]))
+        self.assertIn("gate", lanes.done_parts(resumed))
+        self.assertEqual(resumed["red"], [])
+
+    def test_a_part_that_raised_is_run_again_on_resume_and_its_error_goes_when_it_lands(self):
+        with tempfile.TemporaryDirectory() as folder:
+            with mock.patch.object(lanes, "run_soak", broken_soak):
+                settings = lanes.Settings(folder, only=("soak",), jobs=2, quick=True)
+                self.assertEqual(lanes.run(settings, io.StringIO()), 1)
+            self.assertEqual(sorted(e["part"] for e in results_in(folder)["errors"]), ["soak 0", "soak 2"])
+            again = io.StringIO()
+            settings = lanes.Settings(folder, only=("soak",), jobs=2, quick=True, resume=True)
+            self.assertEqual(lanes.run(settings, again), 0, again.getvalue())
+            resumed = results_in(folder)
+        self.assertEqual(again.getvalue().count(" done at "), 2)
+        self.assertEqual(resumed["errors"], [])
+        self.assertEqual(resumed["red"], [])
+        self.assertEqual(sorted(c["seeds"] for c in resumed["soak"]["chunks"]), [[0, 1], [2, 3]])
+
+    def test_a_part_whose_worker_process_dies_is_red_alone_and_the_run_finishes(self):
+        """One shared pool would mark every part in flight as raised when
+        one worker died and refuse the second wave; a pool per part loses
+        the part alone, and conformance still runs."""
+        with tempfile.TemporaryDirectory() as folder, mock.patch.object(lanes, "run_soak", dying_soak):
+            out = io.StringIO()
+            settings = lanes.Settings(folder, only=("search", "soak", "conformance"), jobs=2, quick=True)
+            self.assertEqual(lanes.run(settings, out), 1, out.getvalue())
+            self.assertFalse((Path(folder) / lanes.RUNNING).exists())
+            results = results_in(folder)
+        self.assertEqual(sorted(s["space"] for s in results["searches"]), ["E-deep", "E-faults", "E-two"])
+        self.assertEqual(sorted(c["space"] for c in results["conformance"]), ["E-deep", "E-faults", "E-two"])
+        self.assertEqual(sorted(e["part"] for e in results["errors"]), ["soak 0", "soak 2"])
+        self.assertTrue(all(e["error"].startswith("its worker process died") for e in results["errors"]), results["errors"])
+        self.assertEqual(len(results["red"]), 2)
+        self.assertIn("soak 0: its worker process died at", out.getvalue())
+        self.assertIn("deep lane: found something", out.getvalue())
+
+    def test_the_counterexamples_a_resumed_search_writes_go_through_conformance(self):
+        """The first run's searches stop at once and write nothing, and
+        its conformance plays the sampled paths; the resumed run's
+        searches, under the mutant that releases a claim at exactly 24
+        hours, write counterexamples, which the run then plays in both
+        worlds as a part of its own, owed again whenever a file is
+        added."""
+        with tempfile.TemporaryDirectory() as folder:
+            out = io.StringIO()
+            settings = lanes.Settings(folder, only=("search", "conformance"), jobs=2, quick=True, budget=0.0)
+            self.assertEqual(lanes.run(settings, out), 1, out.getvalue())
+            stopped = results_in(folder)
+            self.assertEqual(sorted(c["space"] for c in stopped["conformance"]), ["E-deep", "E-faults", "E-two"])
+            self.assertEqual(lanes.counterexample_files(stopped), [])
+            with mock.patch.object(claims, "is_idle", at_exactly_24_hours):
+                again = io.StringIO()
+                settings = lanes.Settings(folder, only=("search", "conformance"), jobs=2, quick=True, resume=True)
+                self.assertEqual(lanes.run(settings, again), 1, again.getvalue())
+            resumed = results_in(folder)
+        files = lanes.counterexample_files(resumed)
+        self.assertTrue(files)
+        self.assertEqual(sorted(c["space"] for c in resumed["conformance"]), ["E-deep", "E-faults", "E-two", "counterexamples"])
+        played = next(c for c in resumed["conformance"] if c["space"] == lanes.COUNTEREXAMPLES)
+        self.assertEqual(played["files"], files)
+        self.assertEqual((played["counterexamples"], played["paths"], played["disagreements"]), (len(files), 0, []))
+        self.assertIn("    conformance counterexamples done at", again.getvalue())
+        self.assertTrue(all("counterexamples" not in line for line in resumed["red"]), resumed["red"])
+        self.assertIn("conformance counterexamples", lanes.done_parts(resumed))
+        resumed["searches"][0]["violations"].append({"file": "one more"})
+        self.assertNotIn("conformance counterexamples", lanes.done_parts(resumed))
+
+    def test_a_run_is_refused_while_another_is_in_progress_in_the_folder(self):
+        """A fresh run removes the checkpoints and the trace files first,
+        which would take them from a run still writing them; the running
+        file names that run's process while it lives."""
+        with tempfile.TemporaryDirectory() as folder:
+            stale = Path(folder) / lanes.CHECKPOINTS / "E-two.pickle"
+            stale.parent.mkdir()
+            stale.write_bytes(b"a run's")
+            (Path(folder) / lanes.RUNNING).write_text(f"{os.getpid()}\n", encoding="ascii")
+            for resume in (False, True):
+                with self.assertRaises(SystemExit) as refused:
+                    lanes.run(lanes.Settings(folder, only=("search",), jobs=2, quick=True, resume=resume), io.StringIO())
+                self.assertIn(f"names process {os.getpid()}, a run in progress", str(refused.exception))
+            self.assertTrue(stale.exists())
+            ended = subprocess.Popen([sys.executable, "-c", "pass"])
+            ended.wait()
+            gone = ended.pid
+            (Path(folder) / lanes.RUNNING).write_text(f"{gone}\n", encoding="ascii")
+            out = io.StringIO()
+            self.assertEqual(lanes.run(lanes.Settings(folder, only=("search",), jobs=2, quick=True), out), 0, out.getvalue())
+            self.assertFalse((Path(folder) / lanes.RUNNING).exists())
+            self.assertFalse(stale.exists())
+            (Path(folder) / lanes.RUNNING).write_text("not a process\n", encoding="ascii")
+            self.assertEqual(lanes.run(lanes.Settings(folder, only=("search",), jobs=2, quick=True, resume=True), io.StringIO()), 0)
 
     def test_a_run_that_is_not_a_resume_starts_clean_and_a_resume_under_other_settings_is_refused(self):
         with tempfile.TemporaryDirectory() as folder:

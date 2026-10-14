@@ -154,14 +154,38 @@ def world_of(options):
     return world
 
 
+# The options of deep: True for one that takes a value, False for a switch.
+DEEP_OPTIONS = {"--out": True, "--only": True, "--jobs": True, "--budget": True, "--quick": False, "--resume": False}
+
+
+def deep_options(options):
+    """The options of deep by name: each value option's value and True
+    for each switch given. An option the lane does not know is refused,
+    since a misspelt --resume, read as absent, would start a fresh run,
+    which removes the checkpoints the resume was for."""
+    found, at = {}, 0
+    while at < len(options):
+        name = options[at]
+        if name not in DEEP_OPTIONS:
+            raise SystemExit(f"deep does not take {name}\n{__doc__}")
+        if DEEP_OPTIONS[name]:
+            found[name] = option(options[at:], name)
+            at += 2
+        else:
+            found[name] = True
+            at += 1
+    return found
+
+
 def run_deep(out, options):
-    only = option(options, "--only", "")
-    jobs = option(options, "--jobs")
-    budget = option(options, "--budget")
+    given = deep_options(options)
+    only = given.get("--only", "")
+    jobs = given.get("--jobs")
+    budget = given.get("--budget")
     try:
-        settings = lanes.Settings(option(options, "--out", str(lanes.deep.OUT)), [p for p in only.split(",") if p],
-                                 int(jobs) if jobs else None, float(budget) if budget else None, "--quick" in options,
-                                 "--resume" in options)
+        settings = lanes.Settings(given.get("--out", str(lanes.deep.OUT)), [p for p in only.split(",") if p],
+                                 int(jobs) if jobs else None, float(budget) if budget else None, "--quick" in given,
+                                 "--resume" in given)
     except ValueError as error:
         raise SystemExit(f"{error}\n{__doc__}")
     return lanes.run(settings, out)

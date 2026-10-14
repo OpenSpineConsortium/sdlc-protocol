@@ -19,18 +19,31 @@ a checkpoint of its state under <out>/checkpoints/ every quarter of an
 hour (deep.search), removed once its result is in the file and the
 search was not stopped; `--resume` starts a run again from the file and
 the checkpoints, running only the parts the file does not hold, a
-search a budget stopped among the parts it lacks, and continuing each
-search from where its checkpoint left it, so a restart of the machine
-costs a quarter of an hour and not the hours. The file records the
-settings and the code the run was made under (the "run" entry), and a
-resume under others is refused, since a part measured under other
-settings or other code is not this run's; a run that is not a resume
-starts clean, with the checkpoints and the trace files an earlier run
-left under <out> removed first. The run is red, exit code 1, on any
-violation, mismatch, disagreement, differing guard answer, a part that
-raised, or a search a budget stopped before it was done: a stopped
-search has not checked its space, and the owner's rule is that a missed
-violation costs more than the hours.
+search a budget stopped, a gate exploration a budget stopped and a part
+that raised among the parts it lacks, and continuing each search from
+where its checkpoint left it, so a restart of the machine costs a
+quarter of an hour and not the hours. The file records the settings and
+the code the run was made under (the "run" entry; the code is
+deep.code_digest, the harness's and the library's source and the
+harness's data files), and a resume under others is refused, since a
+part measured under other settings or other code is not this run's; a
+run that is not a resume starts clean, with the checkpoints and the
+trace files an earlier run left under <out> removed first. A run writes
+the file <out>/running, its process id, while it runs, and a second run
+into the same folder is refused while that process lives, resume or
+not, since the two would write one results file and the fresh one would
+remove the checkpoints the other is writing. Each part runs in a
+process pool of its own, one worker each, so a worker process that dies
+(killed for its memory, say) takes its own part alone, recorded as
+raised, where one shared pool would lose every part in flight and
+refuse the second wave. The counterexamples the searches and the soak
+wrote go through conformance as a part of their own, done only while
+the files it played are the files the results name, so a resumed search
+that writes more is followed by their conformance. The run is red, exit
+code 1, on any violation, mismatch, disagreement, differing guard
+answer, a part that raised, or a search a budget stopped before it was
+done: a stopped search has not checked its space, and the owner's rule
+is that a missed violation costs more than the hours.
 """
 
 import json
@@ -40,7 +53,8 @@ import sys
 import tempfile
 import time
 import traceback
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
+from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
 
 from sdlc_protocol import __version__
@@ -62,6 +76,11 @@ SHRINK_BUDGET = 600.0
 SHRINK_TOTAL = 1800.0
 # Where the searches keep their checkpoints under the output folder.
 CHECKPOINTS = "checkpoints"
+# The file under the output folder that names the process of a run in
+# progress there.
+RUNNING = "running"
+# The conformance part that plays the counterexample files.
+COUNTEREXAMPLES = "counterexamples"
 # The parts --only may name.
 PARTS = ("search", "soak", "gate", "git", "guard", "conformance")
 
@@ -167,21 +186,44 @@ def run_guard():
         return deep.guard_recorded_again(Path(scratch) / "guard_git.json")
 
 
-def run_conformance(name, counterexamples, count, length, seed):
-    results = deep.conformance([deep.SPACES[name]], counterexamples, count, length, seed)
+def run_conformance(name, count, length, seed):
+    """The sampled paths of one space, played in both worlds."""
+    results = deep.conformance([deep.SPACES[name]], (), count, length, seed)
     return {"space": name, **results}
+
+
+def run_conformance_files(files):
+    """Every counterexample file written so far, played in both worlds;
+    the files it played, so a resumed run knows whether it is owed
+    again."""
+    results = deep.conformance((), files, 0)
+    return {"space": COUNTEREXAMPLES, "files": list(files), **results}
 
 
 # --- the run ---------------------------------------------------------------------
 
+def counterexample_files(results):
+    """The trace files the searches and the soak wrote, in the order the
+    results name them."""
+    files = [v["file"] for s in results["searches"] for v in s["violations"]]
+    files += [v["file"] for s in results["soak"]["chunks"] for v in s["violations"]]
+    return files
+
+
 def done_parts(results):
     """The parts a results file already holds, by name, which a resumed
     run does not run again; a search the budget stopped is not done, and
-    a resume runs it again from its checkpoint."""
+    a resume runs it again from its checkpoint, nor a gate whose budget
+    stopped an exploration, nor the counterexamples' conformance once a
+    search or the soak has written files it did not play, nor a part
+    that raised, which the errors name and the results do not hold."""
     done = {f"search {s['space']}" for s in results["searches"] if not s["stopped"]}
     done |= {f"soak {c['seeds'][0]}" for c in results["soak"]["chunks"]}
-    done |= {f"conformance {c['space']}" for c in results["conformance"]}
-    if results["gate"] is not None:
+    files = counterexample_files(results)
+    done |= {f"conformance {c['space']}" for c in results["conformance"]
+             if c["space"] != COUNTEREXAMPLES or c["files"] == files}
+    gate = results["gate"]
+    if gate is not None and not any(m.get("stopped") for m in gate["memory"]):
         done.add("gate")
     if results["git"]["scenarios"]:
         done.add("git scenarios")
@@ -192,15 +234,15 @@ def done_parts(results):
     return done
 
 
-def first_wave(settings, pool, results):
-    """The parts that depend on nothing, submitted, but those the results
-    already hold; a future for each, with its part's name."""
+def first_wave(settings, results):
+    """The parts that depend on nothing, but those the results already
+    hold: each as its name, its function and the arguments."""
     done = done_parts(results)
-    futures = {}
+    jobs = []
 
     def submit(part, function, *args):
         if part not in done:
-            futures[pool.submit(function, *args)] = part
+            jobs.append((part, function, args))
 
     if settings.wanted("search"):
         for name in deep.SPACES:
@@ -219,24 +261,25 @@ def first_wave(settings, pool, results):
         submit("git traces", run_git_traces)
     if settings.wanted("guard"):
         submit("guard", run_guard)
-    return futures
+    return jobs
 
 
-def second_wave(settings, pool, results):
-    """Conformance, once the searches have written their counterexamples."""
-    futures = {}
+def second_wave(settings, results):
+    """Conformance, once the searches and the soak have written their
+    counterexamples: the sampled paths of each space, and the files."""
+    jobs = []
     if not settings.wanted("conformance"):
-        return futures
+        return jobs
     done = done_parts(results)
-    files = [v["file"] for s in results["searches"] for v in s["violations"]]
-    files += [v["file"] for s in results["soak"]["chunks"] for v in s["violations"]]
     spaces = list(deep.SPACES)
     share, left = divmod(settings.conformance_paths, len(spaces))
     for n, name in enumerate(spaces):
         if f"conformance {name}" not in done:
-            futures[pool.submit(run_conformance, name, files if n == 0 else (), share + (n < left),
-                                settings.conformance_length, 1000 * n)] = f"conformance {name}"
-    return futures
+            jobs.append((f"conformance {name}", run_conformance, (name, share + (n < left), settings.conformance_length, 1000 * n)))
+    files = counterexample_files(results)
+    if files and f"conformance {COUNTEREXAMPLES}" not in done:
+        jobs.append((f"conformance {COUNTEREXAMPLES}", run_conformance_files, (files,)))
+    return jobs
 
 
 def fresh_results(settings=None):
@@ -246,10 +289,13 @@ def fresh_results(settings=None):
 
 
 def take(results, part, result):
+    """The part's result into the results, in place of any the part left
+    before, as a search run again from its checkpoint or a chunk run
+    again after it raised."""
     if part.startswith("search "):
         results["searches"] = [s for s in results["searches"] if s["space"] != result["space"]] + [result]
     elif part.startswith("soak "):
-        results["soak"]["chunks"].append(result)
+        results["soak"]["chunks"] = [c for c in results["soak"]["chunks"] if c["seeds"] != result["seeds"]] + [result]
     elif part == "gate":
         results["gate"] = result
     elif part == "git scenarios":
@@ -259,7 +305,7 @@ def take(results, part, result):
     elif part == "guard":
         results["guard"] = result
     elif part.startswith("conformance "):
-        results["conformance"].append(result)
+        results["conformance"] = [c for c in results["conformance"] if c["space"] != result["space"]] + [result]
 
 
 def red_lines(results):
@@ -354,11 +400,34 @@ def summary_lines(results):
     return lines
 
 
+def running_process(settings):
+    """The process id the folder's running file names, when that process
+    lives; None otherwise, a file left by a run the machine's restart
+    killed among the cases."""
+    file = settings.out / RUNNING
+    try:
+        pid = int(file.read_text(encoding="ascii").strip()[:9])
+    except (OSError, ValueError):
+        return None
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return None
+    except PermissionError:
+        pass
+    return pid
+
+
 def kept_results(settings):
     """A resumed run's results so far, from the file the last run left,
     counting its seconds on, when the file was made under this run's
     settings and code; a fresh run's otherwise, with what an earlier run
-    left under <out> removed."""
+    left under <out> removed. Refused, before anything is removed, while
+    another run is in progress in the folder."""
+    pid = running_process(settings)
+    if pid is not None:
+        raise SystemExit(f"{settings.out / RUNNING} names process {pid}, a run in progress there, so this one does not "
+                         f"start; wait for it, run into another --out, or delete the file if no run is in progress")
     file = settings.out / "deep.json"
     record = settings.record()
     if settings.resume and file.exists():
@@ -375,30 +444,58 @@ def kept_results(settings):
     return fresh_results(settings), time.perf_counter()
 
 
+def run_jobs(settings, jobs, results, began, out):
+    """The jobs, each in a process pool of its own with one worker, as
+    many at once as the settings allow, each result taken as it ends and
+    the results written; a job that raises, or whose worker process
+    dies, is recorded as raised, in place of the error it left before,
+    and the others go on. A job that lands clears the error it left."""
+    pending = list(jobs)
+    running = {}
+    while pending or running:
+        while pending and len(running) < settings.jobs:
+            part, function, args = pending.pop(0)
+            pool = ProcessPoolExecutor(max_workers=1)
+            running[pool.submit(function, *args)] = (part, pool)
+        finished, _ = wait(list(running), return_when=FIRST_COMPLETED)
+        for future in finished:
+            part, pool = running.pop(future)
+            pool.shutdown(wait=False)
+            results["errors"] = [e for e in results["errors"] if e["part"] != part]
+            try:
+                result = future.result()
+            except BrokenProcessPool as error:
+                results["errors"].append({"part": part, "error": f"its worker process died: {error!r}",
+                                          "traceback": "".join(traceback.format_exception(error))})
+                write_results(settings, results, began)
+                print(f"    {part}: its worker process died at {results['seconds']} s", file=out, flush=True)
+                continue
+            except Exception as error:
+                results["errors"].append({"part": part, "error": repr(error),
+                                          "traceback": "".join(traceback.format_exception(error))})
+                write_results(settings, results, began)
+                print(f"    {part} raised at {results['seconds']} s: {error!r}", file=out, flush=True)
+                continue
+            take(results, part, result)
+            write_results(settings, results, began)
+            if part.startswith("search ") and not result["stopped"]:
+                settings.checkpoint(part[len("search "):]).unlink(missing_ok=True)
+            print(f"    {part} done at {results['seconds']} s", file=out, flush=True)
+
+
 def run(settings, out=sys.stdout):
     """The whole lane; the results, written to <out>/deep.json as they
     come, and exit code 1 when any part is red. A part that raises is
     recorded, red, and the others go on."""
     results, began = kept_results(settings)
     write_results(settings, results, began)
-    with ProcessPoolExecutor(max_workers=settings.jobs) as pool:
+    marker = settings.out / RUNNING
+    marker.write_text(f"{os.getpid()}\n", encoding="ascii")
+    try:
         for wave in (first_wave, second_wave):
-            futures = wave(settings, pool, results)
-            for future in as_completed(futures):
-                part = futures[future]
-                try:
-                    result = future.result()
-                except Exception as error:
-                    results["errors"].append({"part": part, "error": repr(error),
-                                              "traceback": "".join(traceback.format_exception(error))})
-                    write_results(settings, results, began)
-                    print(f"    {part} raised at {results['seconds']} s: {error!r}", file=out, flush=True)
-                    continue
-                take(results, part, result)
-                write_results(settings, results, began)
-                if part.startswith("search ") and not result["stopped"]:
-                    settings.checkpoint(part[len("search "):]).unlink(missing_ok=True)
-                print(f"    {part} done at {results['seconds']} s", file=out, flush=True)
+            run_jobs(settings, wave(settings, results), results, began, out)
+    finally:
+        marker.unlink(missing_ok=True)
     for line in summary_lines(results):
         print(line, file=out)
     for line in results["red"]:

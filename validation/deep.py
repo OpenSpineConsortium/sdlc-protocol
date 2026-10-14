@@ -115,22 +115,39 @@ class Deep(NamedTuple):
 # How often a search writes its checkpoint, in seconds.
 CHECKPOINT_EVERY = 900.0
 # The code a checkpoint or a results file was made under: the harness and
-# the library, every .py file of each.
+# the library, every .py file of each, and the harness's data files, the
+# .json files the searches and the git parts read (known.json, whose
+# as_built the oracle takes its switches from, guard_git.json, which the
+# guard part compares with, unproven.json and the regression traces); the
+# docs and the kept runs under validation/runs/ shape no result, so a run
+# goes on under a changed README or a run copied in beside it.
 CODE_DIRS = ("validation", "sdlc_protocol")
+CODE_SUFFIXES = (".py", ".json")
+NOT_CODE = ("validation/runs/",)
+ROOT = Path(__file__).resolve().parent.parent
 
 
-def code_digest():
-    """A digest of the harness's and the library's source, so a checkpoint
-    or a results file made under other code is told from one made under
-    this: a search continued under changed code would skip every state
-    the old code had seen and report the new code's result from the
-    old's."""
-    root = Path(__file__).resolve().parent.parent
-    digest = hashlib.sha256()
+def code_files(root=ROOT):
+    """The files the digest covers, in a fixed order, relative to root."""
+    found = []
     for folder in CODE_DIRS:
-        for file in sorted((root / folder).rglob("*.py")):
-            digest.update(str(file.relative_to(root)).encode("ascii"))
-            digest.update(b"\0" + file.read_bytes() + b"\0")
+        for file in sorted((root / folder).rglob("*")):
+            relative = file.relative_to(root).as_posix()
+            if file.is_file() and file.suffix in CODE_SUFFIXES and not relative.startswith(NOT_CODE):
+                found.append(relative)
+    return found
+
+
+def code_digest(root=ROOT):
+    """A digest of the harness's and the library's source and the
+    harness's data, so a checkpoint or a results file made under other
+    code is told from one made under this: a search continued under
+    changed code would skip every state the old code had seen and report
+    the new code's result from the old's."""
+    digest = hashlib.sha256()
+    for relative in code_files(root):
+        digest.update(relative.encode("ascii"))
+        digest.update(b"\0" + (root / relative).read_bytes() + b"\0")
     return digest.hexdigest()
 
 
@@ -477,7 +494,7 @@ def conformance(spaces, counterexamples=(), count=200, length=8, seed=0):
                     results["disagreements"].append({"file": str(file), "step": at, "field": field,
                                                      "memory": repr(one[field]), "git": repr(two[field])})
     spaces = list(spaces)
-    share, left = divmod(count, len(spaces))
+    share, left = divmod(count, len(spaces)) if spaces else (0, 0)
     for n, space in enumerate(spaces):
         for path in sample_paths(space, share + (n < left), length, seed + 1000 * n):
             results["paths"] += 1
