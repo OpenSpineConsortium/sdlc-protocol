@@ -207,6 +207,20 @@ class NextTest(unittest.TestCase):
         self.api.add_pull(2, state="blocked", conclusion="failure")
         self.assertEqual(team.next_for(self.api, "w1"), "carry 2")
 
+    def test_a_ready_claim_a_check_or_a_review_holds_is_carried_once_its_branch_is_behind(self):
+        """Where GitHub's word says only that a check or a review holds the
+        pull request, the standing the adapter reads says whether its branch
+        is behind its base or conflicts with it; the board tells it "main
+        moved" then (F9), so the clerk deals the claim back for the same
+        reason, and leaves it waiting while the branch is level."""
+        self.api.add_issue(2, ["claimed", "agent:w1"])
+        self.api.branches.add("claude/2")
+        self.api.add_pull(2, state="blocked", conclusion=None)
+        for standing, move in ((None, "none"), ("clean", "none"), ("unknown", "none"),
+                               ("behind", "carry 2"), ("conflicting", "carry 2")):
+            self.api.pulls["claude/2"]["standing"] = standing
+            self.assertEqual(team.next_for(self.api, "w1"), move, standing)
+
     def test_a_claim_waiting_on_its_checks_or_merge_costs_no_run(self):
         self.api.add_issue(2, ["claimed", "agent:w1"])
         self.api.branches.add("claude/2")

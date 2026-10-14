@@ -241,13 +241,31 @@ class GitHub:
         return [branch["name"] for branch in self.get_all(f"/repos/{self.repo}/branches")]
 
     def open_pull(self, branch):
+        """The open pull request from a branch of this repository, as
+        pull_detail gives it, with its standing where GitHub's word says
+        only that something else stops the merge (standing_of), so the
+        clerk deals a claim back for a branch behind its base, as the board
+        tells one behind the default branch "main moved"; or None. A draft
+        is not compared, since the clerk carries a draft whatever its
+        standing. No default branch is named, so a pull request stacked on
+        another branch is compared with that base, which the clerk reads as
+        a base it has fallen behind and the board leaves to GitHub's word;
+        the template's rulesets hold only the default branch, so GitHub
+        never calls such a pull request blocked there."""
+        detail = self.pull_detail(branch)
+        if detail and not detail.get("draft"):
+            standing = standing_of(self, detail)
+            if standing is not None:
+                detail["standing"] = standing
+        return detail
+
+    def pull_detail(self, branch):
         """The open pull request from a branch of this repository, in the
-        detail that holds mergeable_state and the head's sha, or None."""
+        detail that holds mergeable_state and the head's sha, as GitHub
+        gives it, or None."""
         owner = self.repo.split("/")[0]
         found = self.get(f"/repos/{self.repo}/pulls", {"state": "open", "head": f"{owner}:{branch}"}) or []
-        if not found:
-            return None
-        return self.get(f"/repos/{self.repo}/pulls/{found[0]['number']}")
+        return self.get(f"/repos/{self.repo}/pulls/{found[0]['number']}") if found else None
 
     def check_runs(self, sha):
         """Every check run on one commit, page by page: the endpoint wraps
@@ -298,12 +316,56 @@ def settled(api, detail):
     return detail
 
 
-def pull_with_detail(api, number):
-    """One pull request with its mergeable_state settled and its file paths."""
+def pull_with_detail(api, number, default_branch=None):
+    """One pull request with its mergeable_state settled, its standing read
+    where that word is opaque, and its file paths."""
     path = f"/repos/{api.repo}/pulls/{number}"
     detail = settled(api, api.get(path))
+    standing = standing_of(api, detail, default_branch)
+    if standing is not None:
+        detail["standing"] = standing
     detail["files"] = [f["filename"] for f in api.get_all(path + "/files")]
     return detail
+
+
+def standing_of(api, detail, default_branch=None):
+    """How the pull request's branch stands to its base, in the board's
+    words, where GitHub's mergeable_state says only that something else
+    stops the merge (a rule, a review, the draft itself): mergeable tells
+    a conflict apart, and the comparison tells behind from clean, as the
+    gate's world reads such a pull request (F9: until this the board read
+    blocked as blocked and draft as unknown, and neither heard "main
+    moved"). None where GitHub's word is one the board reads as it is, and
+    for a pull request stacked on a branch other than the default branch
+    the caller names, since "main moved" speaks of the default branch. A
+    comparison GitHub refuses, a 5xx, a 422 or a rate limit's 403, reads
+    as unknown, which keeps GitHub's own word, as the coordinator's own
+    comparison does (holding): one pull request GitHub will not compare
+    must not fail the board's whole run."""
+    if detail.get("mergeable_state") not in OPAQUE_STATES:
+        return None
+    base = (detail.get("base") or {}).get("ref")
+    if default_branch and base and base != default_branch:
+        return None
+    if not detail.get("mergeable"):
+        return standing_word(detail)
+    try:
+        behind = behind_by(api, detail, default_branch)
+    except GitHubError:
+        behind = None
+    return standing_word(detail, behind)
+
+
+def behind_by(api, pull, default_branch=None):
+    """How many commits of the pull request's base its head lacks, from
+    GitHub's comparison of the two; None when there is nothing to compare
+    or GitHub has no such comparison (404). Any other refusal raises."""
+    base = (pull.get("base") or {}).get("ref") or default_branch
+    head = (pull.get("head") or {}).get("sha")
+    if not head or not base:
+        return None
+    found = api.get(f"/repos/{api.repo}/compare/{quoted(base)}...{head}", missing_ok=True)
+    return (found or {}).get("behind_by")
 
 
 def claim_text(api, branch):
@@ -499,7 +561,8 @@ def collect(api, sha, default_branch, now=None):
     given."""
     repo = api.repo
     issues = [i for i in api.get_all(f"/repos/{repo}/issues", {"state": "open"}) if "pull_request" not in i]
-    pulls = [pull_with_detail(api, p["number"]) for p in api.get_all(f"/repos/{repo}/pulls", {"state": "open"})]
+    pulls = [pull_with_detail(api, p["number"], default_branch)
+             for p in api.get_all(f"/repos/{repo}/pulls", {"state": "open"})]
     listed = api.get_all(f"/repos/{repo}/branches")
     branches = board.claim_branches(listed)
     found_issues = claim_issues(api, branches, issues)
@@ -818,20 +881,20 @@ def github_words(problem):
 
 # --- the gate's world ---------------------------------------------------------
 
-def standing_word(pull, behind_by=None):
+def standing_word(pull, behind=None):
     """How a pull request's branch stands to its base, in the gate's four
     words, from the pull's mergeable_state as the board reads it. Where
     GitHub's word says only that something else blocks the merge (a rule,
-    a review, a draft), mergeable tells a conflict apart, and behind_by,
-    the commits of the base the head lacks, tells behind from clean; with
+    a review, a draft), mergeable tells a conflict apart, and behind, the
+    commits of the base the head lacks, tells behind from clean; with
     neither known the answer is unknown."""
     if pull.get("mergeable_state") not in OPAQUE_STATES:
         return board.pr_state(pull)
     if pull.get("mergeable") is False:
         return gate.CONFLICTING
-    if pull.get("mergeable") is None or behind_by is None:
+    if pull.get("mergeable") is None or behind is None:
         return gate.UNKNOWN
-    return gate.BEHIND if behind_by > 0 else gate.CLEAN
+    return gate.BEHIND if behind > 0 else gate.CLEAN
 
 
 def check_word(runs, name):
@@ -874,28 +937,28 @@ class GitHubWorld:
 
     def pull_of(self, branch):
         """The branch's open pull request, settled, or None."""
-        found = self.api.open_pull(branch)
+        found = self.api.pull_detail(branch)
         return settled(self.api, found) if found else None
 
     def behind_by(self, pull):
         """How many commits of the pull request's base its head lacks, from
-        GitHub's comparison of the two; None when GitHub cannot say."""
-        base = (pull.get("base") or {}).get("ref") or self.default_branch
-        head = (pull.get("head") or {}).get("sha")
-        if not head:
-            return None
-        found = self.api.get(f"/repos/{self.api.repo}/compare/{quoted(base)}...{head}", missing_ok=True)
-        return (found or {}).get("behind_by")
+        GitHub's comparison of the two; None when there is nothing to
+        compare or GitHub has no such comparison (a 404). Any other refusal
+        raises."""
+        return behind_by(self.api, pull, self.default_branch)
 
     def standing(self, branch):
         """Unknown for a branch with no open pull request: GitHub computes
-        mergeability only for one, and the gate asks only about those."""
+        mergeability only for one, and the gate asks only about those.
+        Where GitHub's word is opaque the branch is read through mergeable
+        and one comparison (standing_of), a comparison GitHub refuses
+        reading as unknown, the same whether GitHub had computed the pull
+        request's mergeability at the first read or only after the pause."""
         pull = self.pull_of(branch)
         if pull is None:
             return gate.UNKNOWN
-        if pull.get("mergeable_state") in OPAQUE_STATES and pull.get("mergeable"):
-            return standing_word(pull, self.behind_by(pull))
-        return standing_word(pull)
+        found = standing_of(self.api, pull)
+        return found if found is not None else standing_word(pull)
 
     def check(self, branch):
         sha = self.branch_sha(branch)
@@ -910,7 +973,7 @@ class GitHubWorld:
         if self.policy.who_merges != gate.GATE:
             raise NotAllowed(f"{gate.MOVERS[self.policy.who_merges]} merges here, not the gate; "
                              f"{branch} waits for it")
-        pull = self.api.open_pull(branch)
+        pull = self.api.pull_detail(branch)
         if pull is None:
             raise MergeRefused(f"{branch} has no open pull request to merge; open one first")
         try:
@@ -925,7 +988,9 @@ class GitHubWorld:
         a pull request it will not merge and 409 when the head moved: main
         moved when the branch, read again, no longer fits the default
         branch, and otherwise the author has something to fix (a review, a
-        rule, a push to look at). Any other answer is the gate failing."""
+        rule, a push to look at), which is also the answer when GitHub will
+        not compare the branch, since the standing is then unknown. Any
+        other answer is the gate failing."""
         said = f": {problem.detail}" if problem.detail else ""
         if problem.status not in (405, 409):
             return GateFailed(f"GitHub did not merge #{pull['number']}: {problem}{said}")

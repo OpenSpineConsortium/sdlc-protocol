@@ -73,6 +73,7 @@ def scope_of(scenario):
 def seeded(scenario):
     writers = tuple(w for w in scenario.workers if w != verbs.SAM) + (CAROL, DANA)
     model = M.seeded(tuple(scenario.issues), writers=writers)
+    model.opaque_pulls = scenario.opaque_pulls
     for number, labels in scenario.issues.items():
         model.issues[number].labels = frozenset(labels)
     return model

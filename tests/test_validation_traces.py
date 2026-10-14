@@ -3,8 +3,9 @@
 record of what is red on purpose: every trace loads and plays with no
 mismatch; its red results are exactly what known.json records, as built
 and with each open finding's switch off in the oracle; a trace of a
-finding fixed in 0.4.1 is green and turns red at the step the design's
-table names under the mutant that undoes the fix; and every entry of
+finding fixed, in 0.4.1 or on main after it, is green and turns red at
+the step the design's table names under the mutant that undoes the fix;
+and every entry of
 known.json names a trace or scenario, a step it has, a guarantee the
 invariants know and a finding of DESIGN.md's section 13."""
 
@@ -26,7 +27,11 @@ BUDGET_SECONDS = 10
 # A fixed finding, each mutant of validation/mutants.py that undoes a part
 # of its fix, the step the trace then goes red at (numbered as played, an
 # announce counting as three) and the guarantee DESIGN.md's table names;
-# F6's fix has two parts, the render's sort key and the quoted path.
+# F6's fix has two parts, the render's sort key and the quoted path. F9's
+# trace goes red at its first board run, step 2, where the draft level
+# with main is told it moved once the adapter reads the comparison's
+# ahead_by for behind_by, and at its second, step 4, where the draft
+# behind main hears nothing once the adapter takes GitHub's word alone.
 UNDONE = {
     "F1": [("the comment before the labels", 5, "G3L")],
     "F3": [("the guard passes --force", 1, "G11a")],
@@ -35,11 +40,14 @@ UNDONE = {
     "F5": [("a claim number with leading zeros", 2, "G1")],
     "F6": [("a sort key that calls int after isdigit", 1, "G15"), ("a branch name sent unquoted", 3, "G15")],
     "F7": [("the guard passes a lease onto another's claim", 1, "G11a")],
+    "F9": [("an opaque state read by GitHub's word alone", 4, "G10"), ("the comparison read by ahead_by", 2, "G10")],
     "F10": [("a finished draft's release by hand not seen", 9, "G5")],
     "F11": [("a refused comment stops the run", 6, "G15")],
     "F12": [("main moved told only in the push's run", 8, "G10")],
 }
-FIXED = ("F1", "F3", "F4", "F5", "F6", "F7", "F10", "F11", "F12", "F14")
+# The eleven fixed findings: F1, F3, F5, F6, F10 and F11 in 0.4.1, and F4,
+# F7, F9, F12 and F14 on main after it (known.json's fixed_after).
+FIXED = ("F1", "F3", "F4", "F5", "F6", "F7", "F9", "F10", "F11", "F12", "F14")
 # Findings red as built, which no rule of the library answers: none since
 # F4's fix; the test keeps the case for the next one.
 RED_AS_BUILT = ()
@@ -146,7 +154,7 @@ class TheTraces(unittest.TestCase):
 class KnownJson(unittest.TestCase):
     def test_the_oracle_s_switches_are_the_file_s(self):
         self.assertEqual(oracle.AS_BUILT, known.AS_BUILT)
-        self.assertEqual(known.AS_BUILT, frozenset({"F2", "F9", "F13"}))
+        self.assertEqual(known.AS_BUILT, frozenset({"F2", "F13"}))
 
     def test_every_entry_names_a_step_of_a_trace_or_scenario_a_guarantee_and_a_finding(self):
         traces = replay.traces()
@@ -186,7 +194,8 @@ class KnownJson(unittest.TestCase):
         """fixed_after is the canary's: it runs the release the canary
         repository vendors, so a finding fixed on main is still known there
         at that version and before, and new from the next release on."""
-        self.assertEqual(known.FIXED_AFTER, {"F4": "0.4.1", "F7": "0.4.1", "F12": "0.4.1", "F14": "0.4.1"})
+        self.assertEqual(known.FIXED_AFTER,
+                         {"F4": "0.4.1", "F7": "0.4.1", "F9": "0.4.1", "F12": "0.4.1", "F14": "0.4.1"})
         current = known.version_key(sdlc_protocol.__version__)
         for finding, version in known.FIXED_AFTER.items():
             with self.subTest(finding=finding):
@@ -195,8 +204,8 @@ class KnownJson(unittest.TestCase):
                 self.assertIsNotNone(known.version_key(version))
                 self.assertLessEqual(known.version_key(version), current,
                                      "the last version with a finding is one main has stated, never a later one")
-        self.assertEqual(known.as_built_for("0.4.1"), known.AS_BUILT | {"F4", "F7", "F12", "F14"})
-        self.assertEqual(known.as_built_for("0.4.0"), known.AS_BUILT | {"F4", "F7", "F12", "F14"})
+        self.assertEqual(known.as_built_for("0.4.1"), known.AS_BUILT | {"F4", "F7", "F9", "F12", "F14"})
+        self.assertEqual(known.as_built_for("0.4.0"), known.AS_BUILT | {"F4", "F7", "F9", "F12", "F14"})
         self.assertEqual(known.as_built_for("0.4.2"), known.AS_BUILT, "the next release carries the fixes")
         self.assertEqual(known.as_built_for("0.5.0"), known.AS_BUILT)
         self.assertEqual(known.as_built_for("1.0.0"), known.AS_BUILT)

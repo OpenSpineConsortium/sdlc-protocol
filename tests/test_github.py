@@ -128,6 +128,29 @@ class FakeOpener:
         return [json.loads(c.data) for c in self.calls if c.get_method() == method]
 
 
+class Turns(list):
+    """The answers to one path, given in turn, the last for every ask after
+    it, as GitHub answers a pull request's detail before and after it has
+    computed the pull request's mergeability."""
+
+    def __init__(self, *answers):
+        super().__init__(answers)
+
+
+class InTurn(FakeOpener):
+    """A FakeOpener that answers a path given Turns with them in turn."""
+
+    def open(self, call, timeout=None):
+        turns = self.answers.get(call.selector)
+        if not isinstance(turns, Turns):
+            return super().open(call, timeout)
+        self.answers = dict(self.answers, **{call.selector: turns[0]})
+        try:
+            return super().open(call, timeout)
+        finally:
+            self.answers[call.selector] = Turns(*turns[1:]) if len(turns) > 1 else turns
+
+
 def too_large_to_give(path, ref):
     """What GitHub answers through the contents API's default media type
     for a file it gives no text of, as it answered on 2026-10-13 for a
@@ -1486,6 +1509,20 @@ class World(unittest.TestCase):
         self.assertEqual(place.standing("claude/7"), "unknown")
         self.assertEqual(waits, [github.MERGEABLE_RETRY_SECONDS])
 
+    def test_behind_by_is_the_modules_through_the_same_compare(self):
+        """The world's behind_by is the module's, so the gate and the board
+        read one comparison the same way; the world's default branch stands
+        in where the pull request names no base, and a pull request with no
+        head has nothing to compare, so neither asks GitHub for it."""
+        dev = "/repos/o/r/compare/dev...sha7"
+        api, opener = client({COMPARE: FakeAnswer({"behind_by": 3}), dev: FakeAnswer({"behind_by": 4})})
+        place = github.GitHubWorld(api, gate.Policy(), "dev")
+        with_base, without = {"base": {"ref": "main"}, "head": {"sha": "sha7"}}, {"head": {"sha": "sha7"}}
+        self.assertEqual((place.behind_by(with_base), github.behind_by(api, with_base, "dev")), (3, 3))
+        self.assertEqual((place.behind_by(without), github.behind_by(api, without, "dev")), (4, 4))
+        self.assertIsNone(place.behind_by({"base": {"ref": "main"}}))
+        self.assertEqual(compares_asked(opener), [COMPARE, COMPARE, dev, dev])
+
     def test_check_reads_the_required_check_on_the_head(self):
         runs = "/repos/o/r/commits/sha7/check-runs?per_page=100"
         cases = (
@@ -1552,6 +1589,185 @@ class World(unittest.TestCase):
         outcome = gate.mark_ready(policy, place, queue, 7, "w1")
         self.assertEqual((outcome.result, outcome.main, outcome.exit_code), (gate.MERGED, "m1", gate.EXIT_DONE))
         self.assertEqual(len(opener.sent("PUT")), 1)
+
+
+DETAIL = "/repos/o/r/pulls/7"
+
+
+def detail_answers(state, mergeable=True, base="main", behind_by=None):
+    """Pull request #7 from claude/7 at sha7 as GitHub details it, with one
+    file, and GitHub's comparison of its base to its head where behind_by is
+    given; base None leaves the base out, which a detail from GitHub never
+    does, for a caller that hands the adapter a pull request read elsewhere."""
+    pull = {"number": 7, "mergeable": mergeable, "mergeable_state": state, "head": {"ref": "claude/7", "sha": "sha7"}}
+    if base is not None:
+        pull["base"] = {"ref": base}
+    answers = {DETAIL: FakeAnswer(pull), DETAIL + "/files?per_page=100": FakeAnswer([{"filename": "a.md"}])}
+    if behind_by is not None:
+        answers[f"/repos/o/r/compare/{base}...sha7"] = FakeAnswer({"behind_by": behind_by})
+    return answers
+
+
+def compares_asked(opener):
+    """The comparison paths the fake was asked, in the order it was asked."""
+    return [c.full_url.replace(github.API, "") for c in opener.calls if "/compare/" in c.full_url]
+
+
+class Standing(unittest.TestCase):
+    """What pull_with_detail reads for a pull request whose mergeable_state
+    says only that something else stops the merge (F9): a rule, a review or
+    the draft itself, each of which GitHub answers as blocked, or draft in
+    older answers, without saying whether the branch is behind."""
+
+    def test_an_opaque_state_is_resolved_through_one_compare_into_a_standing(self):
+        """Until this the board read blocked as blocked and draft as unknown
+        and told neither "main moved"; one comparison tells behind from
+        clean, and GitHub's own word stays on the detail, since a fixture
+        is a detail as GitHub gave it."""
+        for state in ("blocked", "draft"):
+            for behind_by, word in ((0, "clean"), (2, "behind")):
+                api, opener = client(detail_answers(state, behind_by=behind_by))
+                pull = github.pull_with_detail(api, 7)
+                self.assertEqual((pull["standing"], pull["mergeable_state"], pull["files"]),
+                                 (word, state, ["a.md"]), (state, behind_by))
+                self.assertEqual(compares_asked(opener), [COMPARE], (state, behind_by))
+
+    def test_a_comparison_github_cannot_make_leaves_the_standing_unknown(self):
+        """A comparison GitHub has no answer to (404, missing_ok) or answers
+        without behind_by says nothing about the branch, so the standing is
+        unknown rather than a guess at clean, as standing_word reads None."""
+        api, opener = client(detail_answers("draft"))
+        self.assertEqual(github.pull_with_detail(api, 7)["standing"], "unknown")
+        self.assertEqual(compares_asked(opener), [COMPARE])
+        api, _ = client({**detail_answers("blocked"), COMPARE: FakeAnswer({})})
+        self.assertEqual(github.pull_with_detail(api, 7)["standing"], "unknown")
+
+    def test_mergeable_false_under_an_opaque_state_is_conflicting_with_no_compare(self):
+        """GitHub's mergeable flag already tells a conflict apart, so the
+        comparison, one more call on every board run for each pull request
+        GitHub calls blocked or draft, is made only where it can change the
+        answer."""
+        for state in ("blocked", "draft"):
+            api, opener = client(detail_answers(state, mergeable=False))
+            self.assertEqual(github.pull_with_detail(api, 7)["standing"], "conflicting", state)
+            self.assertEqual(compares_asked(opener), [], state)
+
+    def test_a_state_the_board_reads_as_it_is_gets_no_standing_and_no_compare(self):
+        """clean, behind and dirty already say how the branch stands and
+        unknown is GitHub still computing, so a standing beside them would
+        be a second word for the same thing on a dict no fixture ever held."""
+        for state, mergeable in (("clean", True), ("behind", True), ("dirty", False), ("unknown", None)):
+            waits = []
+            api, opener = client(detail_answers(state, mergeable=mergeable), waits)
+            pull = github.pull_with_detail(api, 7)
+            self.assertNotIn("standing", pull, state)
+            self.assertEqual((pull["mergeable_state"], compares_asked(opener)), (state, []), state)
+            self.assertEqual(waits, [github.MERGEABLE_RETRY_SECONDS] if mergeable is None else [], state)
+            self.assertIsNone(github.standing_of(api, {"mergeable_state": state, "mergeable": mergeable}))
+
+    def test_standing_of_compares_against_the_base_and_leaves_a_stacked_pull_request_alone(self):
+        """A detail from GitHub names its base. On the default branch the
+        caller names, or with none named, the branch is compared against
+        that base; stacked on another branch it gets no standing and keeps
+        GitHub's word, since "main moved" speaks of the default branch, and
+        a branch behind its own base would hear it on every commit of main
+        with nothing to do about it. A pull request handed in without a base
+        is compared against the default branch given, and with neither there
+        is no branch to compare against, so the standing is unknown with no
+        call."""
+        trunk = "/repos/o/r/compare/trunk...sha7"
+        api, opener = client({**detail_answers("blocked", base=None), trunk: FakeAnswer({"behind_by": 1})})
+        self.assertEqual(github.pull_with_detail(api, 7, "trunk")["standing"], "behind")
+        self.assertEqual(compares_asked(opener), [trunk])
+        api, opener = client({COMPARE: FakeAnswer({"behind_by": 0})})
+        named = {"mergeable": True, "mergeable_state": "draft", "base": {"ref": "main"}, "head": {"sha": "sha7"}}
+        self.assertEqual(github.standing_of(api, named, "main"), "clean")
+        self.assertEqual(github.standing_of(api, named), "clean")
+        self.assertEqual(compares_asked(opener), [COMPARE, COMPARE])
+        api, opener = client({})
+        for mergeable in (True, False):
+            self.assertIsNone(github.standing_of(api, dict(named, mergeable=mergeable), "trunk"), mergeable)
+        unnamed = {"mergeable": True, "mergeable_state": "draft", "head": {"sha": "sha7"}}
+        self.assertEqual(github.standing_of(api, unnamed), "unknown")
+        self.assertEqual(opener.calls, [])
+
+    def test_collect_names_the_default_branch_so_a_stacked_pull_request_keeps_github_s_word(self):
+        """collect hands standing_of the default branch, so a held pull
+        request stacked on another branch is compared with nothing and shows
+        GitHub's word; one on the default branch is compared."""
+        snap, answers = fixture_answers()
+        held = {"number": 40, "mergeable": True, "mergeable_state": "blocked",
+                "head": {"ref": "claude/12", "sha": "aaaaaaa1111111"}}
+        compare = "/repos/o/r/compare/main...aaaaaaa1111111"
+        for base, standing, asked in (("feature", None, []), ("main", "behind", [compare])):
+            api, opener = client({**answers, "/repos/o/r/pulls/40": FakeAnswer(dict(held, base={"ref": base})),
+                                  compare: FakeAnswer({"behind_by": 2})})
+            pull = next(p for p in github.collect(api, "abc", "main")["pulls"] if p["number"] == 40)
+            self.assertEqual((pull.get("standing"), compares_asked(opener)), (standing, asked), base)
+
+    def test_a_comparison_github_refuses_reads_as_unknown_and_keeps_github_s_word(self):
+        """A 5xx, a 422 or a secondary rate limit's 403 on one pull
+        request's comparison leaves its standing unknown, so the board shows
+        GitHub's own word for it, as the coordinator's own comparison does,
+        rather than failing the whole run: let through, the error stopped the
+        board and every release on every run while that pull request stayed
+        open and held."""
+        for status in (403, 422, 500, 502, 503):
+            api, _ = client({**detail_answers("blocked"), COMPARE: Refusal(status)})
+            pull = github.pull_with_detail(api, 7)
+            self.assertEqual((pull["standing"], board.Pull.from_dict(pull).state), ("unknown", "blocked"), status)
+
+    def test_open_pull_carries_the_standing_the_clerk_reads_and_the_gate_compares_once(self):
+        """The clerk deals a claim back when its pull request is behind, and
+        where GitHub's word is opaque only the standing says so; the gate's
+        world reads the pull request without one and compares the branch
+        itself, once."""
+        listed = "/repos/o/r/pulls?state=open&head=o%3Aclaude%2F7"
+        answers = {**detail_answers("blocked", behind_by=3), listed: FakeAnswer([{"number": 7}])}
+        api, opener = client(answers)
+        self.assertEqual(api.open_pull("claude/7")["standing"], "behind")
+        self.assertEqual(compares_asked(opener), [COMPARE])
+        api, opener = client(answers)
+        world = github.GitHubWorld(api, gate.Policy(), "main")
+        self.assertEqual((world.standing("claude/7"), compares_asked(opener)), (gate.BEHIND, [COMPARE]))
+        api, opener = client({**detail_answers("clean"), listed: FakeAnswer([{"number": 7}])})
+        self.assertNotIn("standing", api.open_pull("claude/7"))
+        self.assertEqual(compares_asked(opener), [])
+
+    def test_neither_a_draft_for_the_clerk_nor_the_merge_pays_for_a_comparison(self):
+        """The clerk carries a draft whatever its standing, and the merge
+        asks GitHub to merge the head it read, so neither compares the
+        branch: a comparison is made only where it can change the answer."""
+        behind = {COMPARE: FakeAnswer({"behind_by": 2})}
+        api, opener = client({**pull_answers(state="blocked", draft=True), **behind})
+        self.assertNotIn("standing", api.open_pull("claude/7"))
+        self.assertTrue(team.claim_needs_work(api, 7))
+        self.assertEqual(compares_asked(opener), [])
+        place, opener = world({**pull_answers(state="blocked"), **behind,
+                               "PUT /repos/o/r/pulls/507/merge": FakeAnswer({"sha": "m1", "merged": True})})
+        self.assertEqual(place.merge("claude/7"), gate.MergeResult("m1"))
+        self.assertEqual(compares_asked(opener), [])
+
+    def test_a_refused_comparison_reads_unknown_however_late_github_computed_mergeability(self):
+        """The gate's world compares the branch itself, so a comparison
+        GitHub refuses reads as unknown whether the pull request's
+        mergeability was computed at the first read or only at the read
+        after the pause, and a refused merge is then GitHub's own refusal,
+        never the gate failing."""
+        blocked = {"number": 507, "draft": False, "mergeable": True, "mergeable_state": "blocked",
+                   "head": {"ref": "claude/7", "sha": "sha7"}, "base": {"ref": "main"}}
+        computing = dict(blocked, mergeable=None, mergeable_state="unknown")
+        put = "PUT /repos/o/r/pulls/507/merge"
+        for first in (blocked, computing):
+            with self.subTest(first=first["mergeable_state"]):
+                answers = {PULL_LIST: FakeAnswer([{"number": 507}]),
+                           "/repos/o/r/pulls/507": Turns(FakeAnswer(first), FakeAnswer(blocked)),
+                           COMPARE: Refusal(502), put: Refusal(405, {"message": "Required status check is expected"})}
+                api = github.GitHub("t", "o/r", opener=InTurn(answers), sleep=lambda seconds: None)
+                place = github.GitHubWorld(api, gate.Policy(who_merges=gate.GATE))
+                self.assertEqual(place.standing("claude/7"), gate.UNKNOWN)
+                with self.assertRaises(gate.MergeRefused):
+                    place.merge("claude/7")
 
 
 # Names a person writes, with characters outside ASCII and the characters
