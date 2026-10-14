@@ -374,6 +374,8 @@ def release_order(actual):
             later = actual[at + 1:]
             if any(e.kind == "label-off" and e.target == effect.target for e in later):
                 problems.append(Violation("G3", f"#{effect.target}: a label came off after the release comment"))
+            if oracle.Effect("label-on", effect.target, (oracle.TODO,)) in later:
+                problems.append(Violation("G3", f"#{effect.target}: todo went on after the release comment"))
         if effect.kind == "rename":
             number = oracle.claim_number(effect.target)
             if oracle.Effect("comment", number, "claim-released") in actual[at + 1:]:
@@ -394,23 +396,44 @@ def releases_only_due(before, actual):
     return problems
 
 
+def is_put_back(effect, number):
+    """A label put on the issue that is no release's todo: what a failed
+    release puts back (spec, Release)."""
+    return effect.kind == "label-on" and effect.target == number and effect.detail != (oracle.TODO,)
+
+
 def labels_put_back(before, after, calls, actual):
     """A run that fails between the labels and the comment puts back what it
-    took off (spec, Release), unless GitHub refused the putting back too;
-    and one whose comment was written, its answer lost or not, puts back
-    nothing, since the comment makes the release whole (G3L)."""
+    took off and takes off the todo it put on (spec, Release), unless GitHub
+    refused the putting back too; and one whose comment was written, its
+    answer lost or not, puts back nothing, since the comment makes the
+    release whole (G3L)."""
     problems = []
-    for number in sorted({e.target for e in actual if e.kind == "label-off"}):
+    todo_on = {e.target for e in actual if e == oracle.Effect("label-on", e.target, (oracle.TODO,))}
+    for number in sorted({e.target for e in actual if e.kind == "label-off"} | todo_on):
         if oracle.Effect("comment", number, "claim-released") in actual:
-            if any(e.kind == "label-on" and e.target == number for e in actual):
+            taken_back = oracle.Effect("label-off", number, oracle.TODO) in actual
+            if taken_back or any(is_put_back(e, number) for e in actual):
                 problems.append(Violation("G3L", f"#{number}: the release comment stands and its labels "
                                                  f"were put back"))
             continue
-        put_back_refused = any(c.method == "POST" and c.path == f"/issues/{number}/labels" and not c.applied
-                               for c in calls)
-        if not put_back_refused and after.issues[number].labels != before.issues[number].labels:
+        if not put_back_refused(calls, number) and after.issues[number].labels != before.issues[number].labels:
             problems.append(Violation("G3L", f"#{number}: the release failed and its labels were not put back"))
     return problems
+
+
+def put_back_refused(calls, number):
+    """Whether GitHub refused a step of putting the issue back: the labels
+    taken off, put on again, or the todo put on, taken off again. A refused
+    todo is the release failing, not its putting back."""
+    for c in calls:
+        if c.applied:
+            continue
+        if c.method == "POST" and c.path == f"/issues/{number}/labels" and c.body["labels"] != [oracle.TODO]:
+            return True
+        if c.method == "DELETE" and c.path == f"/issues/{number}/labels/{oracle.TODO}":
+            return True
+    return False
 
 
 def nothing_lost(start, planned, found, after, actual):
@@ -435,7 +458,7 @@ def labels_name_the_holder(after, actual):
     for effect in actual:
         if effect.kind == "comment" and effect.detail == "claim-released":
             left = oracle.labels_released(after, effect.target)
-            if left and not any(e.kind == "label-on" and e.target == effect.target for e in actual):
+            if left and not any(is_put_back(e, effect.target) for e in actual):
                 problems.append(Violation("G8", f"#{effect.target} keeps {left} after its release"))
     return problems
 

@@ -172,28 +172,50 @@ def plan_line(text, key, new):
 
 def labels_released(snapshot, key):
     """The labels a release takes off the issue: claimed and every label
-    that names a worker, so the issue is nobody's and, labelled todo, back
-    in the open queue."""
+    that names a worker, so the issue is nobody's; labels_put_on says what
+    goes on, so it is back in the open queue."""
     issue = board.as_snapshot(snapshot).claim_issues.get(key)
     names = issue.labels if issue else []
     return [name for name in names if name == labels.CLAIMED or name.startswith(labels.HOLDER_PREFIXES)]
 
 
-def after_release(snapshot, key, released_at, taken_off):
+def labels_put_on(snapshot, key):
+    """The labels a release puts on the issue: todo, when it carries
+    neither todo nor epic, since the Queue lists only an issue labelled
+    todo and the spec has a released claim's issue listed there again,
+    while a task a worker's label alone gave carries none (F15: until its
+    fix such an issue was shown nowhere once its claim was released). An
+    epic gets none, since the Queue never lists one and its tasks are the
+    work, and so does an issue the snapshot knows nothing of, which no
+    release is due on (is_candidate)."""
+    issue = board.as_snapshot(snapshot).claim_issues.get(key)
+    if issue is None or labels.TODO in issue.labels or labels.EPIC in issue.labels:
+        return []
+    return [labels.TODO]
+
+
+def after_release(snapshot, key, released_at, taken_off, put_on=()):
     """The snapshot as GitHub knows it once the claim with this key is
     released: the comment made at released_at, the labels taken off its
-    issue in both places the board reads them, so the same run renders the
-    release and renames the branch without asking GitHub again. A Snapshot
-    given is changed in place, and returned."""
+    issue and put on it in both places the board reads them, so the same
+    run renders the release and renames the branch without asking GitHub
+    again. A Snapshot given is changed in place, and returned."""
     snap = board.as_snapshot(snapshot)
     release = snap.releases[key]
     snap.releases[key] = board.Release(released_at, release.sha, release.committed_at)
     issue = snap.claim_issues[key]
-    issue.labels = [name for name in issue.labels if name not in taken_off]
+    issue.labels = relabelled(issue.labels, taken_off, put_on)
     for listed in snap.issues:
         if str(listed.number) == key:
-            listed.labels = [name for name in listed.labels if name not in taken_off]
+            listed.labels = relabelled(listed.labels, taken_off, put_on)
     return snap
+
+
+def relabelled(names, taken_off, put_on):
+    """An issue's labels once a release took taken_off off and put put_on
+    on: those kept, then those put on that it did not carry."""
+    kept = [name for name in names if name not in taken_off]
+    return kept + [name for name in put_on if name not in kept]
 
 
 # --- overlaps -----------------------------------------------------------------

@@ -1,0 +1,23 @@
+{
+  "finding": "F15",
+  "title": "a task given by a worker's label alone is shown nowhere once its claim is released",
+  "status": "fixed after 0.4.1: a release puts todo on an issue that carries neither todo nor epic, so the Queue lists it again, and a release that fails takes it off again (DESIGN.md, 13)",
+  "breaks": ["G3", "G3L"],
+  "world": "memory",
+  "issues": {"1": ["worker:a"]},
+  "workers": ["a"],
+  "steps": [
+    {"verb": "board", "expect": {"given": {"1": ["a"]}, "queue": []},
+     "note": "the coordinator gave #1 to a by a's label alone, as it gives a planned task, so it carries no todo and is shown under Given to workers"},
+    {"verb": "claim", "actor": "a", "args": [1], "expect": {"holders": {"1": "a"}}},
+    {"verb": "announce", "actor": "a", "args": [1], "expect": {"labels": {"1": ["claimed", "worker:a"]}}},
+    {"verb": "board", "expect": {"given": {}, "queue": []}},
+    {"at": 25, "verb": "board", "faults": ["comment-500"],
+     "expect": {"labels": {"1": ["claimed", "worker:a"]}, "comments": {"1": {}}, "refs": {"claude/1": true}, "queue": []},
+     "note": "the claim is due; the run takes claimed and worker:a off and puts todo on, then GitHub refuses the release comment, so the run puts the labels back and takes the todo off again, and the issue is as the run found it; under the mutant that leaves the todo on, it is not (G3L)"},
+    {"verb": "board",
+     "expect": {"labels": {"1": ["todo"]}, "comments": {"1": {"claim-released": 1, "released": 1}},
+                "refs": {"claude/1": false}, "released": {"1": 1}, "queue": [1], "given": {}},
+     "note": "the next run releases the claim: claimed and worker:a come off and todo goes on, so the Queue lists #1 again, as the spec says of a released claim; until the fix nothing went on, and an issue with neither todo nor a worker's label was shown in neither section, which the mutant that puts nothing on again shows (G3)"}
+  ]
+}

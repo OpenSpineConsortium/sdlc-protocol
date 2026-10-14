@@ -27,8 +27,8 @@ DUE = (Verb("claim", "a", (1,)), Verb("label-on", "a", (1, "claimed")), Verb("la
 PREFIXES = {"S02": 6, "S03": 12, "S04": 6, "S05a": 23}
 
 
-def start(scope=Scope(), prefix=()):
-    model = M.seeded()
+def start(scope=Scope(), prefix=(), labels=("todo",)):
+    model = M.seeded(labels=labels)
     cycle.board_run(model)
     for verb in prefix:
         verbs.apply(model, verb, scope)
@@ -70,6 +70,19 @@ class TheFastLane(unittest.TestCase):
             with self.subTest(fault=fault):
                 scope = Scope(workers=("a",), people=(), waits=(25,), faults=(fault,))
                 found = explore.explore(start(scope, DUE), scope, 3)
+                self.assertGreater(found.states, 20)
+                self.assertEqual(broken(found), [])
+        self.assertLess(time.perf_counter() - began, 30)
+
+    def test_the_faults_one_kind_at_a_time_from_a_due_claim_on_a_task_given_by_a_label_alone(self):
+        """F15: the release puts todo on such a task's issue, so a fault
+        between the labels and the comment has the todo to take off as
+        well as the labels to put back (G3L)."""
+        began = time.perf_counter()
+        for fault in verbs.FAULTS:
+            with self.subTest(fault=fault):
+                scope = Scope(workers=("a",), people=(), waits=(25,), faults=(fault,))
+                found = explore.explore(start(scope, DUE, labels=("worker:a",)), scope, 3)
                 self.assertGreater(found.states, 20)
                 self.assertEqual(broken(found), [])
         self.assertLess(time.perf_counter() - began, 30)

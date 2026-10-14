@@ -60,9 +60,10 @@ SPEC = {
     "finished": "an issue labelled in-review, a pull request marked ready, or a draft whose author's latest comment "
                 "on it starts with \"finished; ready to mark\" waits for review however long it takes.",
     "order": "The coordinator first takes the label claimed and every worker's label off the issue, a label "
-             "already gone counting as taken off; then it posts a comment on the issue whose first line is "
-             "`<!-- sdlc-coordinator: claim-released -->`",
-    "put back": "A run that fails between the two puts back the labels it took off",
+             "already gone counting as taken off, and puts the label todo on it when it carries neither todo nor "
+             "epic, so the Queue lists it again even when a worker's label alone gave it to the worker; then it "
+             "posts a comment on the issue whose first line is `<!-- sdlc-coordinator: claim-released -->`",
+    "put back": "A run that fails between the two puts back the labels it took off and takes off the todo it put on",
     "candidates": "It takes its candidates from the open issues that have a branch `claude/<issue>`, whatever "
                   "their labels, and skips a claim whose latest release comment came more than 24 hours after "
                   "the branch's last commit, which is a claim already released",
@@ -292,6 +293,13 @@ def labels_released(model, number):
     return sorted(n for n in model.issues[number].labels if n == CLAIMED or is_worker_label(n))
 
 
+def labels_put_on(model, number):
+    """The label a release puts on (SPEC["order"]): todo, when the issue
+    carries neither todo nor epic."""
+    names = model.issues[number].labels
+    return () if TODO in names or EPIC in names else (TODO,)
+
+
 # --- overlaps -----------------------------------------------------------------
 
 class Piece(NamedTuple):
@@ -466,9 +474,13 @@ def expected_effects(before, event="schedule", ref_name="", known=AS_BUILT):
     model = before.clone()
     effects = []
     for number in sorted(n for n in model.issues if due(model, n)):
+        put_on = labels_put_on(model, number)
         for name in labels_released(model, number):
             effects.append(Effect("label-off", number, name))
             model.issues[number].labels = model.issues[number].labels - {name}
+        if put_on:
+            effects.append(Effect("label-on", number, put_on))
+            model.issues[number].labels = model.issues[number].labels | set(put_on)
         effects.append(Effect("comment", number, "claim-released"))
         model.issues[number].comments += (Comment(BOT, "NONE", model.now, RELEASE_MARKER),)
     effects += overlap_effects(model, known)

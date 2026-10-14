@@ -699,16 +699,20 @@ def holding(api, default_branch, sha):
 
 
 def release_one(api, snap, key, now):
-    """Release one claim: the labels first, then the comment, in the
+    """Release one claim: the labels first, claimed and every worker's off
+    and todo on where the issue lacks it, then the comment, in the
     protocol's order, and the board counts a release only once both are
-    done. A run that fails between them puts back the labels it took off,
-    so the issue is as the run found it and the next run starts the
-    release over, unless the comment turns out to be there after all, one
-    GitHub wrote and lost its answer to, which makes the release whole.
-    Only when GitHub refuses the putting back too are the labels left off
-    with no comment, until a run releases the claim or a person puts them
-    back. What was done, in a line."""
-    release, names, taken_off = snap.releases[key], coordinator.labels_released(snap, key), []
+    done. A run that fails between them puts back the labels it took off
+    and takes off the todo it put on, so the issue is as the run found it
+    and the next run starts the release over, unless the comment turns out
+    to be there after all, one GitHub wrote and lost its answer to, which
+    makes the release whole. Only when GitHub refuses the putting back too
+    are the labels left as the failure left them with no comment, until a
+    run releases the claim or a person puts them back. What was done, in a
+    line."""
+    release = snap.releases[key]
+    names, put_on = coordinator.labels_released(snap, key), coordinator.labels_put_on(snap, key)
+    taken_off = []
     try:
         for name in names:
             if take_label_off(api, key, name):
@@ -716,6 +720,12 @@ def release_one(api, snap, key, now):
     except GitHubError as problem:
         return (f"#{key}: not released, taking the labels off failed: {problem}{github_words(problem)}"
                 + put_back(api, key, taken_off))
+    if put_on:
+        try:
+            api.post(f"/repos/{api.repo}/issues/{key}/labels", {"labels": put_on})
+        except GitHubError as problem:
+            return (f"#{key}: not released, putting {', '.join(put_on)} on failed: {problem}{github_words(problem)}"
+                    + put_back(api, key, taken_off, put_on))
     text = coordinator.release_text(snap, key, holding(api, snap.default_branch, release.sha))
     lost = ""
     try:
@@ -724,9 +734,9 @@ def release_one(api, snap, key, now):
         released_at = landed_release(api, key, release)
         if not released_at:
             return (f"#{key}: not released, the comment failed: {problem}{github_words(problem)}"
-                    + put_back(api, key, taken_off))
+                    + put_back(api, key, taken_off, put_on))
         lost = f" (GitHub's answer to the comment was lost, {problem}, but the comment is there)"
-    coordinator.after_release(snap, key, released_at or now.isoformat(), names)
+    coordinator.after_release(snap, key, released_at or now.isoformat(), names, put_on)
     return f"#{key}: claim released, idle since {release.committed_at}{lost}"
 
 
@@ -744,18 +754,29 @@ def take_label_off(api, key, name):
     return True
 
 
-def put_back(api, key, names):
+def put_back(api, key, names, put_on=()):
     """Put the labels a release took off back on its issue once a later step
-    failed, so the claim stays its holder's until a run releases it whole;
-    what was done, as the end of the release's line."""
-    if not names:
-        return ""
-    listed = ", ".join(names)
-    try:
-        api.post(f"/repos/{api.repo}/issues/{key}/labels", {"labels": names})
-    except GitHubError as problem:
-        return f"; putting {listed} back failed too, so they stay off: {problem}{github_words(problem)}"
-    return f"; {listed} put back"
+    failed, so the claim stays its holder's until a run releases it whole,
+    then take off the labels it put on, so the issue is as the run found
+    it; what was done, as the end of the release's line. A label put on
+    whose answer was an error is taken off too, since GitHub may have
+    written it and lost the answer; one that is not there counts as taken
+    off, as in the release itself."""
+    said = ""
+    if names:
+        listed = ", ".join(names)
+        try:
+            api.post(f"/repos/{api.repo}/issues/{key}/labels", {"labels": names})
+            said += f"; {listed} put back"
+        except GitHubError as problem:
+            said += f"; putting {listed} back failed too, so they stay off: {problem}{github_words(problem)}"
+    for name in put_on:
+        try:
+            if take_label_off(api, key, name):
+                said += f"; {name} taken off again"
+        except GitHubError as problem:
+            said += f"; taking {name} off again failed too, so it stays on: {problem}{github_words(problem)}"
+    return said
 
 
 def landed_release(api, key, release):

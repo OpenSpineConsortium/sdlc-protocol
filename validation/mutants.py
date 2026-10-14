@@ -94,6 +94,7 @@ ORIGINAL_COMMENTS_DUE = board.comments_due
 ORIGINAL_OVERLAPS_DUE = coordinator.overlap_comments_due
 ORIGINAL_REFUSAL = guard.refusal
 ORIGINAL_TOLD = coordinator.told_numbers
+ORIGINAL_PUT_BACK = github.put_back
 
 
 def comment_then_labels(api, snap, key, now):
@@ -388,6 +389,12 @@ MUTANTS = {
     "given to workers needing the label todo": Mutant(
         board, "given_rows", given_rows_needing_todo,
         "G9", "every open, unclaimed issue a worker's label names is shown under Given to workers, todo or not (F14)"),
+    "a release that leaves todo off": Mutant(
+        coordinator, "labels_put_on", lambda snapshot, key: [],
+        "G3", "a release puts todo on an issue that carries neither todo nor epic, so the Queue lists it again (F15)"),
+    "a failed release leaves its todo on": Mutant(
+        github, "put_back", lambda api, key, names, put_on=(): ORIGINAL_PUT_BACK(api, key, names),
+        "G3L", "a release that fails after putting todo on takes it off again, so the issue is as the run found it (F15)"),
     "an overlap marker read on any line": Mutant(
         coordinator, "told_numbers", told_on_any_line,
         "G7", "a comment that quotes the marker further down told nothing"),
