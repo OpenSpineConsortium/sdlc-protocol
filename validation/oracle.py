@@ -55,6 +55,7 @@ SPEC = {
     "given": "An issue a worker's label names is that worker's alone: it is left out of the board's Queue and "
              "shown under Given to workers until the worker claims it.",
     "todo": "An issue labelled todo and shown unclaimed on the board is free to take.",
+    "blockers": "The board lists every open issue labelled blocker under Blockers, claimed or not",
     "idle": "A claim whose branch has had no commit for more than 24 hours, by the committer date of its head, is "
             "released by the coordinator, unless it is finished",
     "finished": "an issue labelled in-review, a pull request marked ready, or a draft whose author's latest comment "
@@ -270,6 +271,12 @@ def queue(model):
     held = held_numbers(model)
     return sorted(n for n, i in model.issues.items() if i.state == "open" and TODO in i.labels
                   and CLAIMED not in i.labels and n not in held and not workers_named(i.labels))
+
+
+def blockers(model):
+    """Blockers: every open issue labelled blocker, claimed or not, in
+    number order (SPEC["blockers"])."""
+    return sorted(n for n, i in model.issues.items() if i.state == "open" and BLOCKER in i.labels)
 
 
 def given(model, known=AS_BUILT):

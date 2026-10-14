@@ -1,7 +1,8 @@
 """The harness's scripted workers (validation/policies.py), acting on the
 page alone: an idle holder released once after a day and the issue
 claimed again; a finished draft waiting for review however long it takes;
-a stranger's marker freeing nothing. Every step is checked against the
+a stranger's marker freeing nothing; and the issue a worker picks from
+the page, as the spec's Pick says. Every step is checked against the
 guarantees as it goes."""
 
 import sys
@@ -11,7 +12,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from validation import invariants, model as M, oracle, page, policies, verbs  # noqa: E402
+from validation import cycle, invariants, model as M, oracle, page, policies, verbs  # noqa: E402
 from validation.model import HOUR  # noqa: E402
 
 
@@ -67,6 +68,40 @@ class Workers(unittest.TestCase):
         drive(model, {"a": policies.EagerClaimer(k=30, pace=1), verbs.SAM: policies.Stranger()}, 30, self)
         self.assertEqual(model.creators["claude/1"], "a")
         self.assertEqual(bot_releases(model, 1), [])
+
+
+class Pick(unittest.TestCase):
+    """free_issue as the spec's Pick reads (spec/PROTOCOL.md): the issue the
+    Given to workers section gives the worker, else a blocker the Blockers
+    section lists that nobody has claimed and no worker's label gives to
+    another, whether or not it carries todo, else the first in the Queue;
+    never an issue labelled blocked. The second review of F15's fix found
+    that a worker reading the board never took a blocker carrying no todo,
+    as a released blocker or one the Blocker form makes, which the clerk
+    deals first."""
+
+    def picked(self, labelled, worker="a", steps=()):
+        model = M.seeded(tuple(sorted(labelled)), writers=("a", "b"))
+        for number, names in labelled.items():
+            model.issues[number].labels = frozenset(names)
+        for step in steps:
+            verbs.apply(model, step)
+        cycle.board_run(model)
+        return policies.free_issue(policies.view(model, worker))
+
+    def test_an_unclaimed_blocker_comes_before_the_queue_with_or_without_todo(self):
+        self.assertEqual(self.picked({1: {"todo"}, 2: {"blocker"}}), 2)
+        self.assertEqual(self.picked({1: {"todo"}, 2: {"blocker", "todo"}}), 2)
+
+    def test_a_blocker_someone_holds_or_was_given_is_left_to_them(self):
+        self.assertEqual(self.picked({1: {"todo"}, 2: {"blocker", "claimed"}}), 1)
+        self.assertEqual(self.picked({1: {"todo"}, 2: {"blocker"}}, steps=(verbs.Verb("claim", "b", (2,)),)), 1)
+        self.assertEqual(self.picked({1: {"todo"}, 2: {"blocker", "worker:b"}}), 1)
+        self.assertEqual(self.picked({1: {"todo"}, 2: {"blocker", "worker:b"}}, worker="b"), 2)
+
+    def test_an_issue_labelled_blocked_or_an_epic_blocker_is_never_taken(self):
+        self.assertEqual(self.picked({1: {"todo", "blocked"}, 2: {"todo"}}), 2)
+        self.assertEqual(self.picked({1: {"blocker", "blocked"}, 2: {"blocker", "epic"}}), None)
 
 
 if __name__ == "__main__":

@@ -22,7 +22,7 @@ sdlc_protocol.labels spells these names and the prefixes once, with the colour a
 
 ## Pick
 
-Fetch, then read the board (`git fetch origin +refs/heads/board:refs/remotes/origin/board && git show origin/board:STATE.md`). Take an issue the Given to workers section gives you first, but never an epic, which the coordinator plans (Planning); else an open issue labelled todo that the Queue section shows as unclaimed and that no open blocker stands in the way of, one in your area first when you have one. An issue with a branch `claude/<issue>` on origin, or a file `docs/agents/claims/<issue>.md` on the default branch, is another worker's, whatever its labels say. Before you start, read the board's Overlaps section: open work that changes the same files as the issue you take lands in the order it gives.
+Fetch, then read the board (`git fetch origin +refs/heads/board:refs/remotes/origin/board && git show origin/board:STATE.md`). Take an issue the Given to workers section gives you first; else a blocker the Blockers section lists that nobody has claimed and no worker's label gives to another, since a blocker stops everyone, whether or not it carries todo; else an open issue labelled todo that the Queue section shows as unclaimed and that no open blocker stands in the way of; one in your area first when you have one, and never an epic, which the coordinator plans (Planning), nor an issue labelled blocked, which waits on a peer or the coordinator. An issue with a branch `claude/<issue>` on origin, or a file `docs/agents/claims/<issue>.md` on the default branch, is another worker's, whatever its labels say. Before you start, read the board's Overlaps section: open work that changes the same files as the issue you take lands in the order it gives.
 
 ## Claim
 
@@ -60,7 +60,7 @@ The pull request deletes its claim file, says "Closes #N", passes the repository
 
 ## Blockers
 
-An issue labelled blocker stops everyone: work it stands in the way of waits until it is done. It is claimed like any other issue, by one worker, and nobody else fixes it in parallel; a second worker that sees it waits, or helps on the one pull request by review.
+An issue labelled blocker stops everyone: work it stands in the way of waits until it is done. The board lists every open issue labelled blocker under Blockers, claimed or not, and a worker takes an unclaimed one before the Queue (Pick). It is claimed like any other issue, by one worker, and nobody else fixes it in parallel; a second worker that sees it waits, or helps on the one pull request by review.
 
 ## Release
 

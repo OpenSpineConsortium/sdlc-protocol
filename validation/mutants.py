@@ -95,6 +95,7 @@ class Search(NamedTuple):
 ORIGINAL_IS_IDLE = claims.is_idle
 ORIGINAL_LABELS_RELEASED = coordinator.labels_released
 ORIGINAL_IS_RELEASED = board.is_released
+ORIGINAL_ISSUE_ROWS = board.issue_rows
 ORIGINAL_COMMENTS_DUE = board.comments_due
 ORIGINAL_OVERLAPS_DUE = coordinator.overlap_comments_due
 ORIGINAL_REFUSAL = guard.refusal
@@ -105,9 +106,11 @@ ORIGINAL_AFTER_RELEASE = coordinator.after_release
 
 def comment_then_labels(api, snap, key, now):
     """release_one with the spec's two steps swapped, the comment first, as
-    before 0.4.1 (F1), and every refusal still handled as release_one
+    before 0.4.1 (F1): the labels then come off and todo goes on where
+    labels_put_on says, and every refusal is still handled as release_one
     handles it, so the order is the one rule changed."""
     release, names, taken_off = snap.releases[key], coordinator.labels_released(snap, key), []
+    put_on = coordinator.labels_put_on(snap, key)
     text = coordinator.release_text(snap, key, github.holding(api, snap.default_branch, release.sha))
     try:
         released_at = (api.post(f"/repos/{api.repo}/issues/{key}/comments", {"body": text}) or {}).get("created_at")
@@ -121,8 +124,17 @@ def comment_then_labels(api, snap, key, now):
                 taken_off.append(name)
     except github.GitHubError as problem:
         return f"#{key}: taking the labels off failed: {problem}" + github.put_back(api, key, taken_off)
-    coordinator.after_release(snap, key, released_at or now.isoformat(), names)
+    refused = github.put_labels_on(api, key, put_on, taken_off)
+    if refused:
+        return refused
+    coordinator.after_release(snap, key, released_at or now.isoformat(), names, put_on)
     return f"#{key}: claim released"
+
+
+def issue_rows_but_blockers(snap, label, unclaimed_only):
+    """board.issue_rows with the Blockers section left empty, as a page
+    that left a blocker to the Queue would have it."""
+    return [] if label == labels.BLOCKER else ORIGINAL_ISSUE_ROWS(snap, label, unclaimed_only)
 
 
 def released_with_claimed_on(snap, key, idle_after=claims.IDLE_AFTER):
@@ -432,7 +444,7 @@ MUTANTS = {
         coordinator, "overlap_comments_due", lambda snapshot, told: ORIGINAL_OVERLAPS_DUE(snapshot, {}),
         "G7", "overlapping work is told once"),
     "the labels not put back": Mutant(
-        github, "put_back", lambda api, key, names: "",
+        github, "put_back", lambda api, key, names, put_on=(): "",
         "G3L", "a run that fails between the two puts back the labels it took off"),
     "a lost comment's release not seen": Mutant(
         github, "landed_release", lambda api, key, release: "",
@@ -486,6 +498,14 @@ MUTANTS = {
     "a blocker gets todo": Mutant(
         coordinator, "NEEDS_NO_TODO", frozenset({labels.TODO, labels.EPIC}),
         "G3", "a release puts no todo on a blocker, which the board lists under Blockers (F15's review)"),
+    "a blocked task gets no todo": Mutant(
+        coordinator, "NEEDS_NO_TODO", frozenset({labels.TODO, labels.EPIC, labels.BLOCKER, labels.BLOCKED}),
+        "G3", "a release puts todo on a task labelled blocked too, which the Queue then lists with blocked beside "
+              "it (F15's second review)"),
+    "the Blockers section left empty": Mutant(
+        board, "issue_rows", issue_rows_but_blockers,
+        "G9", "the board lists every open issue labelled blocker under Blockers, claimed or not, where a "
+              "released blocker is listed (F15's second review)"),
     "the release's own page without its todo": Mutant(
         coordinator, "after_release",
         lambda snapshot, key, released_at, taken_off, put_on=(): ORIGINAL_AFTER_RELEASE(snapshot, key, released_at,
@@ -570,6 +590,7 @@ SEARCHES = (
            Scope(workers=("a",), people=(), waits=(25,), faults=tuple(verbs.FAULTS)), 2, labels=("worker:a",)),
     Search("a released epic", DUE, Scope(workers=("a",), people=(), waits=(25,)), 1, labels=("epic",)),
     Search("a released blocker", DUE, Scope(workers=("a",), people=(), waits=(25,)), 1, labels=("blocker",)),
+    Search("a released blocked task", DUE, Scope(workers=("a",), people=(), waits=(25,)), 1, labels=("blocked",)),
     Search("careless workers on a held claim", (CLAIM, CLAIMED),
            Scope(workers=("a", "b"), people=(M.OWNER,), waits=(25,), careless=True), 3),
     Search("two claims on one file", (CLAIM, Verb("claim", "b", (2,))),

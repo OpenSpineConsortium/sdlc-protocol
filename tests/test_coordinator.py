@@ -157,8 +157,9 @@ class ReleaseText(unittest.TestCase):
         released issue was shown nowhere; an epic gets none, since the
         Queue never lists one, and a blocker none, since the board lists it
         under Blockers and the clerk deals it first without todo. A task
-        its worker labelled blocked gets todo, so the Queue lists it once
-        the coordinator has settled what it needs."""
+        its worker labelled blocked gets todo too: the Queue lists it with
+        blocked beside it, and nobody takes it, neither a worker reading
+        the board (Pick) nor the clerk, until blocked comes off."""
         snap = idle_claim()
         for names, put_on in ((["claimed", "worker:nightly"], ["todo"]), (["claimed", "todo", "worker:nightly"], []),
                               (["claimed", "epic", "worker:nightly"], []), (["blocker", "claimed"], []),

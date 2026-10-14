@@ -9,6 +9,7 @@ catching a mutant fails here too, naming the rule. A mutant of a rule no
 search runs names the cheap lane that catches it instead (step 4), and
 the test runs that lane."""
 
+import inspect
 import sys
 import unittest
 from pathlib import Path
@@ -78,6 +79,9 @@ TRACES = {
     "a todo written and lost stays on": ([TODO_OFF] + HELD + [WAIT, board_with("label-post-lost")], Scope()),
     "an epic gets todo": ([TODO_OFF, Verb("label-on", M.OWNER, (1, "epic"))] + HELD + [WAIT, BOARD], Scope()),
     "a blocker gets todo": ([TODO_OFF, Verb("label-on", M.OWNER, (1, "blocker"))] + HELD + [WAIT, BOARD], Scope()),
+    "a blocked task gets no todo": ([TODO_OFF, Verb("label-on", M.OWNER, (1, "blocked"))] + HELD + [WAIT, BOARD],
+                                    Scope()),
+    "the Blockers section left empty": ([Verb("label-on", M.OWNER, (1, "blocker")), BOARD], Scope()),
     "the landing order by number": "the regression traces",
     "a pull request dated by its opening": "the regression traces",
     "a refused activity read stops the run": "the regression traces",
@@ -115,7 +119,7 @@ class TheLane(unittest.TestCase):
         F13's and F15's fixes more, so the bound is widened to 60 and the
         count noted."""
         self.assertTrue(10 <= len(mutants.MUTANTS) <= 60)
-        self.assertEqual(len(mutants.MUTANTS), 47)
+        self.assertEqual(len(mutants.MUTANTS), 49)
         self.assertEqual(sorted(TRACES), sorted(mutants.MUTANTS))
 
     def test_every_mutant_names_a_rule_the_library_still_has(self):
@@ -130,6 +134,23 @@ class TheLane(unittest.TestCase):
                 else:
                     self.assertIs(type(target), type(mutant.replacement))
                 self.assertIn(mutant.guarantee, invariants.GUARANTEES)
+
+    def test_every_replacement_takes_what_its_target_is_called_with(self):
+        """A replacement that no longer takes its target's arguments is
+        caught only by the TypeError it raises, which proves nothing of the
+        rule it stands for: the second review of F15's fix found "the labels
+        not put back" caught so once put_back took the todo too. Each
+        replacement of a function takes every argument the function
+        declares."""
+        for name, mutant in mutants.MUTANTS.items():
+            target = getattr(mutant.module, mutant.name)
+            if not inspect.isfunction(target):
+                continue
+            with self.subTest(mutant=name):
+                declared = inspect.signature(target).parameters.values()
+                positional = [p for p in declared if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)]
+                keywords = {p.name: None for p in declared if p.kind == p.KEYWORD_ONLY}
+                inspect.signature(mutant.replacement).bind(*range(len(positional)), **keywords)
 
     def test_the_lanes_come_first_then_the_searches_cheapest_first(self):
         self.assertEqual([c.name for c in mutants.CATCHERS[:len(LANES)]], list(LANES))
@@ -188,16 +209,19 @@ class TheSearchesCatchWhatTheyWereAddedFor(unittest.TestCase):
         self.assertTrue(any("main-moved" in detail and "not owed" in detail for _, detail in found), found)
 
     def test_the_searches_from_f15_s_review_catch_its_mutants(self):
-        """The lane credits these mutants to the searches F15's review added
-        (DESIGN.md, section 13), which seed the issue with labels other than
-        todo: each search finds nothing on the library and the violation
-        named under each of its mutants, which it can only while its issue
-        is seeded so, since a release puts no todo on an issue that has it."""
+        """The lane credits these mutants to the searches F15's two reviews
+        added (DESIGN.md, section 13), which seed the issue with labels
+        other than todo: each search finds nothing on the library and the
+        violation named under each of its mutants, which it can only while
+        its issue is seeded so, since a release puts no todo on an issue
+        that has it, and only a blocker is listed under Blockers."""
         caught = {"a released task given by a label alone, under every fault": (
                       ("worker:a",), {"a refused todo puts no label back": "G3L",
                                       "a todo written and lost stays on": "G3L"}),
                   "a released epic": (("epic",), {"an epic gets todo": "G3"}),
-                  "a released blocker": (("blocker",), {"a blocker gets todo": "G3"})}
+                  "a released blocker": (("blocker",), {"a blocker gets todo": "G3",
+                                                        "the Blockers section left empty": "G9"}),
+                  "a released blocked task": (("blocked",), {"a blocked task gets no todo": "G3"})}
         for name, (seeded, guarantees) in caught.items():
             search = next(s for s in mutants.SEARCHES if s.name == name)
             self.assertEqual(search.labels, seeded)
