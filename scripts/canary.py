@@ -32,9 +32,11 @@ given it through a credential helper that reads the environment, and the
 library's errors name a method, a path and a status.
 
 A check's expectation is a sentence the spec makes; one that fails for a
-finding validation/known.json still lists as built is recorded as known,
-not failed, so the canary goes red on the day something new breaks and
-not every month until the owner's decision lands.
+finding validation/known.json still lists as built, or lists as fixed on
+main after the version the canary repository vendors, which no release
+it can vendor yet carries, is recorded as known, not failed, so the
+canary goes red on the day something new breaks and not every month
+until the owner's decision lands or the release reaches the canary.
 """
 
 import argparse
@@ -53,7 +55,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from sdlc_protocol import board, claims, labels  # noqa: E402
+from sdlc_protocol import board, claims, labels, vendoring  # noqa: E402
 from sdlc_protocol.adapters.github import GitHub, GitHubError  # noqa: E402
 from validation import known, page  # noqa: E402
 
@@ -634,9 +636,13 @@ def check_c1(site, seen):
 
 def check_c2(site, seen):
     """A merge fires four events at once, beside a worker's push: whether
-    the push to main's run survives the concurrency group and the pull
-    request behind main hears "main moved" (F12), and what each event's
-    run did."""
+    the pull request behind main hears "main moved" for main's new commit,
+    judged by the state, the marker on the pull request within the budget
+    whichever run posts it, as the library tells it since F12's fix;
+    whether the push to main's run survives the concurrency group, which
+    the copies' board.yml keeps with queue: max, F12's other half; and what
+    each event's run did. Both are F12's while the canary vendors a
+    release without the fix."""
     behind, merged = site.throwaway("C2 behind"), site.throwaway("C2 merged")
     clone_behind, clone_merged = site.clone(), site.clone()
     for clone, number in ((clone_behind, behind), (clone_merged, merged)):
@@ -688,6 +694,7 @@ def check_c2(site, seen):
         seen.note("the board's runs were not read: the token has no Actions read (the owner adds it to SymphonyBoard)")
         return
     seen.values["board runs by event"] = by_event(runs)
+    seen.values["board.yml queues its runs"] = "queue: max" in (site.main_file(".github/workflows/board.yml") or "")
     to_main = [r for r in runs if r.get("event") == "push" and r.get("head_branch") == site.default_branch]
     seen.expect("the push to main started a board run that was not cancelled",
                 any(r.get("conclusion") not in ("cancelled", "skipped") for r in to_main), finding="F12")
@@ -893,13 +900,46 @@ NEEDS_ADMIN = {"C7"}
 # --- running ----------------------------------------------------------------------
 
 def adopted(site):
-    """The library version the canary vendors, from its tools/VENDORED, or
-    None when the repository is not adopted yet."""
+    """The library the canary vendors, the first line of its tools/VENDORED
+    ("sdlc-protocol <version> <commit>"), or None when the repository is
+    not adopted yet."""
     record = site.main_file("tools/VENDORED")
     if not record:
         return None
     first = record.splitlines()[0].split() if record.strip() else []
     return " ".join(first[:3]) if first else "unreadable"
+
+
+def vendored_version(first_line):
+    """The version in a record's first line, or None when the line is not
+    one, as "unreadable" or an "unknown" commit's version are not: what
+    known.json's fixed_after is read against."""
+    found = vendoring.FIRST_LINE.fullmatch((first_line or "").strip())
+    return found.group(1) if found else None
+
+
+def known_for(first_line):
+    """The findings a failed expectation is known for on this canary: as
+    built on main, and fixed on main after the version the canary vendors
+    (known.as_built_for)."""
+    return known.as_built_for(vendored_version(first_line))
+
+
+def known_words(known_findings):
+    """Which findings a failed expectation is read as known for, and why
+    each: as built, or fixed on main after the version named."""
+    as_built = [f for f in by_number(known_findings) if f in known.AS_BUILT]
+    fixed = [f for f in by_number(known_findings) if f not in known.AS_BUILT]
+    parts = []
+    if as_built:
+        parts.append(f"{', '.join(as_built)} (as built)")
+    parts += [f"{f} (fixed after {known.FIXED_AFTER.get(f, 'an unrecorded version')})" for f in fixed]
+    return "; ".join(parts) or "none"
+
+
+def by_number(findings):
+    """Findings in the order of their numbers, F2 before F12."""
+    return sorted(findings, key=lambda f: (len(f), f))
 
 
 def run_checks(site, names, known_findings=None, out=sys.stdout):
@@ -931,10 +971,11 @@ def run_checks(site, names, known_findings=None, out=sys.stdout):
     return records
 
 
-def summary(records, version, repo):
+def summary(records, version, repo, known_findings=frozenset()):
     """The job summary: one line per check, then each expectation that did
     not hold and each note."""
-    lines = [SUMMARY_HEADING, "", f"Repository {repo}, vendoring {version}.", ""]
+    lines = [SUMMARY_HEADING, "", f"Repository {repo}, vendoring {version}. A failed expectation is known for: "
+                                  f"{known_words(known_findings)}.", ""]
     for seen in records:
         held = sum(1 for e in seen.expectations if e["holds"])
         lines.append(f"- {seen.check}: {seen.status}, {held} of {len(seen.expectations)} expectations held"
@@ -951,8 +992,9 @@ def summary(records, version, repo):
     return "\n".join(lines) + "\n"
 
 
-def write_results(path, records, version, repo, checks_asked):
+def write_results(path, records, version, repo, checks_asked, known_findings=frozenset()):
     data = {"repository": repo, "vendoring": version, "checks": checks_asked,
+            "known_for": by_number(known_findings),
             "ran_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "results": [seen.as_dict() for seen in records]}
     Path(path).parent.mkdir(parents=True, exist_ok=True)
@@ -969,6 +1011,8 @@ def issue_text(data, run_url):
     not hold, and where the run is."""
     lines = [f"The canary on {data.get('repository')} failed on {data.get('ran_at')}, vendoring "
              f"{data.get('vendoring')}. Run: {run_url or '(by hand)'}", ""]
+    if data.get("known_for"):
+        lines += [f"A failed expectation was known for {', '.join(data['known_for'])}; what follows is new.", ""]
     for record in data.get("results", []):
         if record["status"] not in ("failed", "known"):
             continue
@@ -1050,9 +1094,10 @@ def run_site(site, checks, out_path, summary_path, out=sys.stdout):
         if summary_path:
             append(summary_path, text)
         return 2
-    records = run_checks(site, checks, out=out)
-    data = write_results(out_path, records, version, site.repo, checks)
-    text = summary(records, version, site.repo)
+    known_findings = known_for(version)
+    records = run_checks(site, checks, known_findings, out=out)
+    data = write_results(out_path, records, version, site.repo, checks, known_findings)
+    text = summary(records, version, site.repo, known_findings)
     print(text, file=out)
     if summary_path:
         append(summary_path, text)

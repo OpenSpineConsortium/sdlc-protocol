@@ -9,6 +9,7 @@ repository here, the race included, and its REST side is the library's own
 adapter, tested with the library.
 """
 
+import base64
 import io
 import json
 import os
@@ -17,18 +18,23 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import urllib.parse
 from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(ROOT / "tests"))
 sys.path.insert(0, str(ROOT))
 
 import canary  # noqa: E402
 from sdlc_protocol import board, claims, labels  # noqa: E402
+from sdlc_protocol.adapters import github  # noqa: E402
+from test_github import FakeAnswer, FakeOpener, Refusal  # noqa: E402
 
 MAIN = "sha-main-1"
 BOT = "github-actions[bot]"
+COMMIT = "438844fbaca69df9e38a59ce4aa09635e39baf09"
 
 
 def page_text(fake):
@@ -98,8 +104,10 @@ class FakeSite:
     repo = "OpenSpineConsortium/symphony-protocol-canary"
     default_branch = "main"
 
-    def __init__(self, adopted=True, runs=None, admin=False, take_every_push=False):
-        self.vendored = "sdlc-protocol 0.4.1 438844f ...\nhash  file\n" if adopted else None
+    def __init__(self, adopted=True, runs=None, admin=False, take_every_push=False, vendoring="0.4.1", queued=True):
+        self.vendored = f"sdlc-protocol {vendoring} {COMMIT}\nhash  file\n" if adopted else None
+        # The copy's board.yml, with or without F12's queue: max.
+        self.board_yml = "concurrency:\n  group: board\n" + ("  queue: max\n" if queued else "")
         self.issues, self.pulls, self.branches = {}, {}, {MAIN: None}
         self.branches = {self.default_branch: MAIN}
         self.files, self.parents, self.dates = {MAIN: {}}, {MAIN: None}, {}
@@ -183,7 +191,7 @@ class FakeSite:
 
     # reading
     def main_file(self, path):
-        return self.vendored if path == "tools/VENDORED" else None
+        return {"tools/VENDORED": self.vendored, ".github/workflows/board.yml": self.board_yml}.get(path)
 
     def board(self):
         return page_text(self)
@@ -380,14 +388,34 @@ class TheChecks(unittest.TestCase):
         self.assertTrue(seen.values["merge"]["ok"])
         self.assertTrue(seen.values["push beside it"]["ok"])
         self.assertEqual(seen.values["checks on the merged head"], {"check": "success"})
+        self.assertTrue(seen.values["board.yml queues its runs"])
 
-    def test_c2_without_main_moved_is_known_while_f12_is_as_built(self):
+    def test_c2_without_main_moved_is_known_while_f12_is_known(self):
         site = FakeSite()
         seen, _ = run(site, "C2", frozenset({"F12"}))
         self.assertEqual(seen.status, "known")
         self.assertIn("the token has no Actions read", seen.notes[0])
         seen, _ = run(FakeSite(), "C2")
         self.assertEqual(seen.status, "failed")
+
+    def test_c2_fails_when_the_push_to_main_s_run_was_cancelled(self):
+        """The word arrived, told by another run's state, and the run the
+        push to main started was cancelled all the same: the copy's queue:
+        max did not keep it, which is F12's other half."""
+        runs = [{"event": "push", "head_branch": "main", "conclusion": "cancelled"},
+                {"event": "pull_request", "head_branch": "claude/102", "conclusion": "success"}]
+        site = FakeSite(runs=runs, queued=False)
+        site.reactions.append(main_moved)
+        seen, _ = run(site, "C2")
+        self.assertEqual(seen.status, "failed", seen.as_dict())
+        missed = [e["expectation"] for e in seen.expectations if not e["holds"]]
+        self.assertEqual(missed, ["the push to main started a board run that was not cancelled"])
+        self.assertFalse(seen.values["board.yml queues its runs"])
+        self.assertEqual(seen.values["board runs by event"]["push on main"], {"cancelled": 1})
+        site = FakeSite(runs=runs)
+        site.reactions.append(main_moved)
+        seen, _ = run(site, "C2", frozenset({"F12"}))
+        self.assertEqual(seen.status, "known")
 
     def test_c3_lists_each_odd_name_as_no_claim(self):
         site = FakeSite()
@@ -445,6 +473,17 @@ class TheChecks(unittest.TestCase):
         self.assertIn("C6: passed", out)
         self.assertTrue(site.cleaned)
 
+    def test_c6_fails_when_the_board_s_own_push_started_a_run(self):
+        runs = [{"event": "pull_request", "head_branch": "claude/101", "conclusion": "success"},
+                {"event": "push", "head_branch": "board", "conclusion": "success"}]
+        site = FakeSite(runs=runs)
+        site.reactions += [release(101, "sha-002"), delete_second_push(101)]
+        seen, _ = run(site, "C6")
+        self.assertEqual(seen.status, "failed", seen.as_dict())
+        missed = [e["expectation"] for e in seen.expectations if not e["holds"]]
+        self.assertEqual(missed, ["the board's own pushes started no board run"])
+        self.assertEqual(seen.values["board runs by event"]["push on board"], {"success": 1})
+
     def test_c6_fails_when_the_rename_never_comes(self):
         site = FakeSite()
         site.reactions.append(release(101, "sha-002", refuse_rename=True))
@@ -497,11 +536,43 @@ class TheRecords(unittest.TestCase):
     def test_the_summary_names_each_check_and_what_did_not_hold(self):
         records = self.records()
         records[1].expect("something more", False, "F99")
-        text = canary.summary(records, "sdlc-protocol 0.4.1 438844f", "o/r")
+        text = canary.summary(records, "sdlc-protocol 0.4.1 438844f", "o/r", frozenset({"F12", "F2", "F9"}))
         self.assertIn("## Canary", text)
+        self.assertIn("vendoring sdlc-protocol 0.4.1 438844f. A failed expectation is known for: F2, F9 (as built); "
+                      "F12 (fixed after 0.4.1).", text)
         self.assertIn("- C1: passed, 3 of 3 expectations held", text)
         self.assertIn("- C2: failed, 3 of 4 expectations held", text)
         self.assertIn("- C2: did not hold: something more", text)
+        self.assertIn("known for: none.", canary.summary(records, "v", "o/r"))
+
+    def test_a_failed_expectation_is_known_for_what_the_vendored_release_still_has(self):
+        """The canary runs the release the canary repository vendors, not
+        main: a finding fixed on main after that version is known there
+        until a release carries the fix (known.json, fixed_after)."""
+        first_line = f"sdlc-protocol 0.4.1 {COMMIT}"
+        self.assertEqual(canary.vendored_version(first_line), "0.4.1")
+        self.assertEqual(canary.vendored_version("sdlc-protocol 0.5.0 unknown"), "0.5.0")
+        self.assertIsNone(canary.vendored_version("unreadable"))
+        self.assertIsNone(canary.vendored_version(None))
+        self.assertEqual(canary.known_for(first_line), canary.known.AS_BUILT | {"F7", "F12"})
+        self.assertEqual(canary.known_for(f"sdlc-protocol 0.5.0 {COMMIT}"), canary.known.AS_BUILT)
+        self.assertEqual(canary.known_for("unreadable"), canary.known.AS_BUILT)
+        self.assertEqual(canary.known_words(frozenset({"F12", "F2", "F13", "F99"})),
+                         "F2, F13 (as built); F12 (fixed after 0.4.1); F99 (fixed after an unrecorded version)")
+        out = io.StringIO()
+        with tempfile.TemporaryDirectory() as scratch:
+            path = Path(scratch) / "c.json"
+            self.assertEqual(canary.run_site(FakeSite(), ["C2"], path, None, out), 0)
+            data = json.loads(path.read_text())
+            self.assertEqual(data["known_for"], ["F2", "F7", "F9", "F12", "F13", "F14"])
+            self.assertEqual(data["results"][0]["status"], "known")
+            self.assertIn("F12 (fixed after 0.4.1)", out.getvalue())
+            self.assertEqual(canary.run_site(FakeSite(vendoring="0.5.0"), ["C2"], path, None, out), 1)
+            data = json.loads(path.read_text())
+            self.assertEqual(data["known_for"], ["F2", "F9", "F13", "F14"])
+            self.assertEqual(data["results"][0]["status"], "failed")
+            text = canary.issue_text(data, None)
+            self.assertIn("A failed expectation was known for F2, F9, F13, F14; what follows is new.", text)
 
     def test_the_records_file_and_the_issue(self):
         records = self.records()
@@ -557,7 +628,8 @@ class TheRecords(unittest.TestCase):
         out = io.StringIO()
         with tempfile.TemporaryDirectory() as scratch:
             path = Path(scratch) / "c.json"
-            self.assertEqual(canary.run_site(FakeSite(), ["C2"], path, None, out), 0 if "F12" in canary.known.AS_BUILT else 1)
+            self.assertEqual(canary.run_site(FakeSite(), ["C2"], path, None, out), 0)
+            self.assertEqual(canary.run_site(FakeSite(vendoring="0.5.0"), ["C2"], path, None, out), 1)
             self.assertEqual(canary.run_site(FakeSite(take_every_push=True), ["C1"], path, None, out), 1)
 
     def test_the_script_lists_its_checks_and_needs_a_token(self):
@@ -648,12 +720,228 @@ class TheGitSide(unittest.TestCase):
         sha = clone.commit({"docs/canary/7.md": canary.FILE_TEXT}, "backdated", when)
         done = subprocess.run(["git", "-C", str(clone.path), "show", "-s", "--format=%cI", sha], capture_output=True,
                               text=True, env=self.env)
-        self.assertEqual(done.stdout.strip(), "2026-10-12T03:00:00+00:00")
+        # git 2.43 prints a UTC date as +00:00 and git 2.55 as Z; what the
+        # spec reads idleness by is the instant, which the library's own
+        # reader gives for either spelling.
+        self.assertEqual(claims.parse_time(done.stdout.strip()), when)
         for name in canary.ODD_NAMES:
             clone.branch(name)
             clone.commit({"docs/canary/odd.md": canary.FILE_TEXT}, "odd")
             self.assertTrue(clone.push(name).ok, name)
             self.assertIsNotNone(self.remote_sha(name))
+
+
+REPO = "o/r"
+TOKEN = "secret-token"
+
+
+def key(path, **params):
+    """The selector a GET's answer is filed under in the FakeOpener: the
+    path and the query as the adapter encodes it."""
+    return path + ("?" + urllib.parse.urlencode(params) if params else "")
+
+
+def listed(path, **params):
+    """A list endpoint's first page, which the adapter asks for with the
+    page size last."""
+    return key(path, **params, per_page=github.PER_PAGE)
+
+
+def encoded(text):
+    """A file as the contents API gives it."""
+    return FakeAnswer({"encoding": "base64", "content": base64.b64encode(text.encode()).decode()})
+
+
+class TheSite(unittest.TestCase):
+    """canary.Site's REST side over the library's FakeOpener: each method
+    asks the path the live API has, reads the answer as GitHub shapes it,
+    and sends the token in the header alone."""
+
+    def setUp(self):
+        self.scratch = Path(tempfile.mkdtemp(prefix="canary-site-"))
+
+    def tearDown(self):
+        shutil.rmtree(self.scratch, ignore_errors=True)
+
+    def site(self, answers, admin=False, runs_allowed=False):
+        opener = FakeOpener(answers)
+        site = canary.Site(TOKEN, REPO, admin_token="admin-token" if admin else None, runs_allowed=runs_allowed,
+                           workdir=self.scratch, sleep=lambda seconds: None, opener=opener)
+        return site, opener
+
+    def paths(self, opener, method):
+        return [c.selector for c in opener.calls if c.get_method() == method]
+
+    def test_it_reads_files_the_board_and_branches_as_the_api_gives_them(self):
+        site, opener = self.site({
+            key("/repos/o/r/contents/tools/VENDORED", ref="main"): encoded(f"sdlc-protocol 0.4.1 {COMMIT}\nx  y\n"),
+            key("/repos/o/r/contents/STATE.md", ref="board"): encoded("# Board\n"),
+            key("/repos/o/r/contents/big.md", ref="main"): FakeAnswer({"encoding": "none", "content": ""}),
+            "/repos/o/r/git/ref/heads/claude/caf%C3%A9": FakeAnswer({"object": {"sha": "abc"}}),
+            "/repos/o/r/git/ref/heads/main": FakeAnswer({"object": {"sha": "m1"}}),
+            "DELETE /repos/o/r/git/refs/heads/claude/9": FakeAnswer(None),
+        })
+        self.assertEqual(site.main_file("tools/VENDORED"), f"sdlc-protocol 0.4.1 {COMMIT}\nx  y\n")
+        self.assertEqual(canary.adopted(site), f"sdlc-protocol 0.4.1 {COMMIT}")
+        self.assertEqual(site.board(), "# Board\n")
+        self.assertIsNone(site.main_file("big.md"), "a file GitHub gives no text of is no file")
+        self.assertIsNone(site.main_file("missing.md"))
+        self.assertEqual(site.branch_sha("claude/caf\u00e9"), "abc")
+        self.assertIsNone(site.branch_sha("released/5-abc1234"))
+        self.assertEqual(site.main_sha(), "m1")
+        site.delete_branch("claude/9")
+        site.delete_branch("gone")
+        self.assertEqual(self.paths(opener, "DELETE"),
+                         ["/repos/o/r/git/refs/heads/claude/9", "/repos/o/r/git/refs/heads/gone"])
+        for call in opener.calls:
+            self.assertNotIn(TOKEN, call.full_url)
+            self.assertEqual(call.get_header("Authorization"), f"Bearer {TOKEN}")
+
+    def test_it_reads_check_runs_the_activity_and_the_board_s_runs(self):
+        since = datetime(2026, 10, 14, 4, 0, tzinfo=timezone.utc)
+        runs_path = "/repos/o/r/actions/workflows/board.yml/runs"
+        answers = {
+            listed("/repos/o/r/commits/abc/check-runs"): FakeAnswer({"check_runs": [{"name": "check"}]}),
+            listed("/repos/o/r/activity", ref="refs/heads/claude/5", activity_type="force_push"):
+                FakeAnswer([{"activity_type": "force_push", "before": "a", "after": "b"}]),
+            listed(runs_path, created=">=2026-10-14T04:00:00Z"): FakeAnswer({"workflow_runs": [{"event": "push"}]}),
+        }
+        site, opener = self.site(answers)
+        self.assertEqual(site.check_runs("abc"), [{"name": "check"}])
+        self.assertEqual(site.activity("refs/heads/claude/5"), [{"activity_type": "force_push", "before": "a", "after": "b"}])
+        self.assertIsNone(site.runs_since(since), "without Actions read the runs are not asked for")
+        self.assertNotIn(listed(runs_path, created=">=2026-10-14T04:00:00Z"), self.paths(opener, "GET"))
+        site, _ = self.site(answers, runs_allowed=True)
+        self.assertEqual(site.runs_since(since), [{"event": "push"}])
+        for status in (403, 404):
+            site, _ = self.site({listed(runs_path, created=">=2026-10-14T04:00:00Z"): Refusal(status)}, runs_allowed=True)
+            self.assertIsNone(site.runs_since(since), f"a {status} is the permission missing, not a failure")
+        site, _ = self.site({listed(runs_path, created=">=2026-10-14T04:00:00Z"): Refusal(500)}, runs_allowed=True)
+        with self.assertRaises(canary.GitHubError):
+            site.runs_since(since)
+
+    def test_it_opens_labels_comments_pokes_and_closes_issues(self):
+        site, opener = self.site({
+            "POST /repos/o/r/issues": FakeAnswer({"number": 7}),
+            "/repos/o/r/issues/7": FakeAnswer({"number": 7, "labels": [{"name": "todo"}, {"name": "claimed"}]}),
+            "POST /repos/o/r/labels": Refusal(422, {"message": "Validation Failed"}),
+            "POST /repos/o/r/issues/7/labels": FakeAnswer([]),
+            "POST /repos/o/r/issues/7/comments": FakeAnswer({"id": 1}),
+            listed("/repos/o/r/issues/7/comments"): FakeAnswer([{"body": "hi"}]),
+            "PATCH /repos/o/r/issues/7": FakeAnswer({}),
+            listed("/repos/o/r/issues", state="open"): FakeAnswer([{"number": 1}, {"number": 2, "pull_request": {}}]),
+        })
+        self.assertEqual(site.throwaway("C1"), 7)
+        self.assertEqual(site.issues, [7])
+        made = opener.sent("POST")[0]
+        self.assertEqual((made["title"], made["labels"]), ("canary C1: throwaway", [labels.TODO]))
+        self.assertEqual(site.labels_of(7), ["claimed", "todo"])
+        site.add_labels(7, [labels.CLAIMED, "worker:canary"])
+        self.assertIn({"name": "worker:canary", "color": labels.WORKER_COLOUR}, opener.sent("POST"),
+                      "the worker's label is made first; a 422 is the label being there")
+        self.assertIn({"labels": [labels.CLAIMED, "worker:canary"]}, opener.sent("POST"))
+        site.remove_label(7, labels.CLAIMED)
+        self.assertEqual(self.paths(opener, "DELETE"), ["/repos/o/r/issues/7/labels/claimed"])
+        site.comment(7, "hi")
+        self.assertIn({"body": "hi"}, opener.sent("POST"))
+        self.assertEqual(site.comments(7), [{"body": "hi"}])
+        site.close_issue(7)
+        site.poke(7)
+        patched = opener.sent("PATCH")
+        self.assertEqual(patched[0], {"state": "closed", "state_reason": "not_planned"})
+        self.assertTrue(patched[1]["body"].startswith("Poked at "))
+        self.assertEqual(site.open_issues(), [{"number": 1}], "a pull request in the issues list is no issue")
+
+    def test_it_opens_reads_merges_and_closes_pull_requests(self):
+        site, opener = self.site({
+            "POST /repos/o/r/pulls": FakeAnswer({"number": 8}),
+            "/repos/o/r/pulls/8": FakeAnswer({"number": 8, "state": "open", "mergeable_state": "draft"}),
+            listed("/repos/o/r/pulls", state="open"): FakeAnswer([{"number": 8}]),
+            "PATCH /repos/o/r/pulls/8": FakeAnswer({}),
+            "PUT /repos/o/r/pulls/8/merge": FakeAnswer({"merged": True, "message": "Pull Request successfully merged"}),
+            "PUT /repos/o/r/pulls/9/merge": Refusal(405, {"message": "Pull Request is not mergeable"}),
+        })
+        self.assertEqual(site.open_pull("claude/5", "canary C0: a draft", "Closes #5", True), 8)
+        self.assertEqual(site.pulls, [8])
+        self.assertEqual(opener.sent("POST")[0], {"title": "canary C0: a draft", "head": "claude/5", "base": "main",
+                                                  "body": "Closes #5", "draft": True})
+        self.assertEqual(site.pull(8)["mergeable_state"], "draft")
+        self.assertEqual(site.open_pulls(), [{"number": 8}])
+        site.close_pull(8)
+        self.assertEqual(opener.sent("PATCH"), [{"state": "closed"}])
+        merged = site.merge(8)
+        self.assertEqual((merged.ok, merged.words), (True, "Pull Request successfully merged"))
+        refused = site.merge(9)
+        self.assertFalse(refused.ok)
+        self.assertIn("HTTP 405", refused.words)
+        self.assertIn("not mergeable", refused.words)
+        self.assertNotIn(TOKEN, refused.words)
+
+    def test_rulesets_take_the_administrator_s_token(self):
+        site, opener = self.site({
+            "POST /repos/o/r/rulesets": FakeAnswer({"id": 11}),
+            listed("/repos/o/r/rulesets"): FakeAnswer([{"id": 11, "name": canary.RULESET}]),
+            "DELETE /repos/o/r/rulesets/11": FakeAnswer(None),
+        }, admin=True)
+        self.assertEqual(site.ruleset_add(canary.RULESET, "refs/heads/claude/**", ["non_fast_forward"]), 11)
+        made = opener.sent("POST")[0]
+        self.assertEqual(made["conditions"], {"ref_name": {"include": ["refs/heads/claude/**"], "exclude": []}})
+        self.assertEqual((made["rules"], made["enforcement"]), ([{"type": "non_fast_forward"}], "active"))
+        self.assertEqual(site.rulesets(), [{"id": 11, "name": canary.RULESET}])
+        site.ruleset_delete(11)
+        self.assertEqual(self.paths(opener, "DELETE"), ["/repos/o/r/rulesets/11"])
+        for call in opener.calls:
+            self.assertEqual(call.get_header("Authorization"), "Bearer admin-token")
+        site, _ = self.site({})
+        self.assertIsNone(site.admin)
+
+    def test_the_sweep_closes_what_an_earlier_run_left_and_stops_on_a_refusal(self):
+        odd = canary.ODD_NAMES[0]
+        site, opener = self.site({
+            listed("/repos/o/r/pulls", state="open"): FakeAnswer([{"number": 3, "title": "canary C2: merged, #1"},
+                                                                  {"number": 4, "title": "Someone's own"}]),
+            listed("/repos/o/r/issues", state="open"): FakeAnswer([{"number": 5, "title": "canary C6: throwaway"},
+                                                                   {"number": 6, "title": "A real issue"}]),
+            f"/repos/o/r/git/ref/heads/{canary.quote(odd)}": FakeAnswer({"object": {"sha": "odd"}}),
+            "PATCH /repos/o/r/pulls/3": FakeAnswer({}),
+            "PATCH /repos/o/r/issues/5": FakeAnswer({}),
+            f"DELETE /repos/o/r/git/refs/heads/{canary.quote(odd)}": FakeAnswer(None),
+            listed("/repos/o/r/rulesets"): FakeAnswer([{"id": 11, "name": canary.RULESET}, {"id": 12, "name": "other"}]),
+            "DELETE /repos/o/r/rulesets/11": FakeAnswer(None),
+        }, admin=True)
+        said = site.sweep()
+        self.assertEqual(said, ["closed the pull request #3 an earlier run left", "closed the issue #5 an earlier run left",
+                                f"deleted the branch {canary.ascii_name(odd)} an earlier run left",
+                                f"deleted the ruleset {canary.RULESET} an earlier run left"])
+        self.assertEqual(self.paths(opener, "PATCH"), ["/repos/o/r/pulls/3", "/repos/o/r/issues/5"])
+        self.assertEqual(self.paths(opener, "DELETE"),
+                         [f"/repos/o/r/git/refs/heads/{canary.quote(odd)}", "/repos/o/r/rulesets/11"])
+        self.assertEqual(self.site({listed("/repos/o/r/pulls", state="open"): Refusal(500)})[0].sweep(),
+                         ["the sweep stopped: GET /repos/o/r/pulls: HTTP 500"])
+
+    def test_the_clean_up_closes_the_run_s_own_and_a_refusal_is_a_line(self):
+        site, opener = self.site({
+            "/repos/o/r/pulls/8": FakeAnswer({"state": "open"}),
+            "/repos/o/r/pulls/9": FakeAnswer({"state": "closed"}),
+            "PATCH /repos/o/r/pulls/8": FakeAnswer({}),
+            "PATCH /repos/o/r/issues/7": Refusal(500, {"message": "boom"}),
+            "DELETE /repos/o/r/git/refs/heads/claude/caf%C3%A9": FakeAnswer(None),
+        })
+        site.pulls, site.issues, site.extra_branches = [8, 9], [7], ["claude/caf\u00e9"]
+        said = site.clean_up()
+        self.assertEqual(said, ["issue #7 not closed: PATCH /repos/o/r/issues/7: HTTP 500"])
+        self.assertEqual(self.paths(opener, "PATCH"), ["/repos/o/r/pulls/8", "/repos/o/r/issues/7"])
+        self.assertEqual(self.paths(opener, "DELETE"), ["/repos/o/r/git/refs/heads/claude/caf%C3%A9"])
+
+    def test_wait_gives_up_at_once_on_a_403_and_retries_other_refusals(self):
+        waits = []
+        site, opener = self.site({"/repos/o/r/forbidden": Refusal(403), "/repos/o/r/flaky": Refusal(502)})
+        site.sleep = waits.append
+        value, held = site.wait(lambda: site.api.get("/repos/o/r/forbidden"), lambda v: True)
+        self.assertEqual((value, held, waits), ("not read: GET /repos/o/r/forbidden: HTTP 403", False, []))
+        value, held = site.wait(lambda: site.api.get("/repos/o/r/flaky"), lambda v: True, budget=20, every=10)
+        self.assertEqual((value, held, waits), ("not read: GET /repos/o/r/flaky: HTTP 502", False, [10, 10]))
+        self.assertEqual(len(self.paths(opener, "GET")), 4)
 
 
 class TheEnvironment(unittest.TestCase):
