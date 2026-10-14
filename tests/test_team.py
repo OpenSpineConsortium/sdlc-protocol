@@ -274,6 +274,105 @@ class NextTest(unittest.TestCase):
         self.assertEqual(self.api.labels, {"todo", "epic"})
 
 
+class CountingClient(FakeClient):
+    """The fake, counting the reads a look makes, and able to change what
+    GitHub answers between two reads, as a push to main does between two
+    workers' looks."""
+
+    def __init__(self):
+        super().__init__()
+        self.reads = {"open_issues": 0, "branch_names": 0, "open_pull": 0}
+        self.after_first_pull = None
+
+    def open_issues(self):
+        self.reads["open_issues"] += 1
+        return super().open_issues()
+
+    def branch_names(self):
+        self.reads["branch_names"] += 1
+        return super().branch_names()
+
+    def open_pull(self, branch):
+        self.reads["open_pull"] += 1
+        pull = super().open_pull(branch)
+        if self.after_first_pull:
+            self.after_first_pull()
+            self.after_first_pull = None
+        return pull
+
+
+class DealsTest(unittest.TestCase):
+    """deals answers for every worker of a run from one look (F4): the
+    workers' workflow asks once, in its first job, and hands each leg its
+    move."""
+
+    def held_ready_and_two_free(self, state="clean"):
+        """F4's state: a holds #5, its pull request ready and, as given,
+        clean or behind main; #6 and #7 are free."""
+        api = CountingClient()
+        api.add_issue(5, ["claimed", "worker:a"])
+        api.branches.add("claude/5")
+        api.add_pull(5, state=state)
+        api.add_issue(6, ["todo"])
+        api.add_issue(7, ["todo"])
+        return api
+
+    def test_one_look_gives_each_worker_what_next_for_gives_it(self):
+        for state in ("clean", "behind"):
+            api = self.held_ready_and_two_free(state)
+            api.add_issue(8, ["todo", "worker:c"])
+            members = ["a", "b", "c", "d"]
+            with self.subTest(state=state):
+                self.assertEqual(team.deals(api, members), {m: team.next_for(api, m, members) for m in members})
+
+    def test_the_run_reads_the_issues_the_branches_and_each_claim_once(self):
+        api = self.held_ready_and_two_free()
+        team.deals(api, ["a", "b", "c"])
+        self.assertEqual(api.reads, {"open_issues": 1, "branch_names": 1, "open_pull": 1})
+
+    def test_one_issue_is_never_dealt_to_two_workers_of_one_run(self):
+        """F4: a leg that looked while a's pull request was clean dealt a
+        the next issue and b the one after; a leg that looked after main
+        moved saw a carrying #5 and dealt b's leg #6, the same issue. From
+        one look the run's takes are distinct, whichever state it saw."""
+        members = ["a", "b", "c"]
+        clean, behind = self.held_ready_and_two_free("clean"), self.held_ready_and_two_free("behind")
+        self.assertEqual(team.deals(clean, members), {"a": "take 6", "b": "take 7", "c": "none"})
+        self.assertEqual(team.deals(behind, members), {"a": "carry 5", "b": "take 6", "c": "take 7"})
+        from_own_looks = [team.next_for(clean, "a", members), team.next_for(behind, "b", members)]
+        self.assertEqual(from_own_looks, ["take 6", "take 6"], "the double deal each leg's own look made")
+
+    def test_a_change_during_the_look_cannot_split_the_run(self):
+        api = self.held_ready_and_two_free("clean")
+
+        def main_moves():
+            api.pulls["claude/5"]["mergeable_state"] = "behind"
+
+        api.after_first_pull = main_moves
+        moves = team.deals(api, ["a", "b", "c"])
+        takes = [move for move in moves.values() if move.startswith("take ")]
+        self.assertEqual(len(takes), len(set(takes)), moves)
+
+    def test_the_moves_of_one_run_and_the_labels_made_for_its_takes(self):
+        api = self.held_ready_and_two_free()
+        labels = {"a": "worker:a", "b": "worker:b", "c": "worker:c"}
+        moves = team.deal_moves(api, ["a", "b", "c"], labels=labels, run=["b", "c"])
+        self.assertEqual(moves, {"b": "take 7", "c": "none"}, "a is dealt #6 though it is not in this run")
+        self.assertEqual(api.labels, {"todo", "epic", "worker:b"})
+
+    def test_a_worker_of_the_run_outside_the_team_is_dealt_after_it(self):
+        api = self.held_ready_and_two_free()
+        self.assertEqual(team.deal_moves(api, ["a"], run=["z", "a"]), {"z": "take 7", "a": "take 6"})
+        self.assertEqual(team.deal_moves(api, ["a", "b"]), {"a": "take 6", "b": "take 7"})
+
+    def test_shared_work_is_dealt_by_area_in_one_look(self):
+        api = CountingClient()
+        api.add_issue(4, ["todo"], body="### Files likely touched\n\nweb/app.js\n")
+        api.add_issue(5, ["todo"], body="### Files likely touched\n\napi/server.py\n")
+        areas = {"api": ("api/",), "web": ("web/**",)}
+        self.assertEqual(team.deals(api, ["api", "web"], areas), {"api": "take 5", "web": "take 4"})
+
+
 class SeedTest(unittest.TestCase):
     PLAN = {"plan": "w1 owns the parser, w2 the printer.",
             "tasks": [{"title": "Parser", "owner": "w1", "files": ["src/parse.py"], "body": "Parse it."},

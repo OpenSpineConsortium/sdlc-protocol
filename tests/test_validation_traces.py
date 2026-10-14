@@ -185,7 +185,7 @@ class KnownJson(unittest.TestCase):
         """fixed_after is the canary's: it runs the release the canary
         repository vendors, so a finding fixed on main is still known there
         at that version and before, and new from the next release on."""
-        self.assertEqual(known.FIXED_AFTER, {"F7": "0.4.1", "F12": "0.4.1"})
+        self.assertEqual(known.FIXED_AFTER, {"F4": "0.4.1", "F7": "0.4.1", "F12": "0.4.1"})
         current = known.version_key(sdlc_protocol.__version__)
         for finding, version in known.FIXED_AFTER.items():
             with self.subTest(finding=finding):
@@ -194,8 +194,8 @@ class KnownJson(unittest.TestCase):
                 self.assertIsNotNone(known.version_key(version))
                 self.assertLessEqual(known.version_key(version), current,
                                      "the last version with a finding is one main has stated, never a later one")
-        self.assertEqual(known.as_built_for("0.4.1"), known.AS_BUILT | {"F7", "F12"})
-        self.assertEqual(known.as_built_for("0.4.0"), known.AS_BUILT | {"F7", "F12"})
+        self.assertEqual(known.as_built_for("0.4.1"), known.AS_BUILT | {"F4", "F7", "F12"})
+        self.assertEqual(known.as_built_for("0.4.0"), known.AS_BUILT | {"F4", "F7", "F12"})
         self.assertEqual(known.as_built_for("0.4.2"), known.AS_BUILT, "the next release carries the fixes")
         self.assertEqual(known.as_built_for("0.5.0"), known.AS_BUILT)
         self.assertEqual(known.as_built_for("1.0.0"), known.AS_BUILT)

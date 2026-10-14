@@ -385,6 +385,43 @@ class TeamWithTheRegistry(unittest.TestCase):
                              (0, "take 5\n", ""))
         self.assertIn("worker:web", api.labels)
 
+    def test_deal_prints_every_run_workers_move_from_one_look(self):
+        api = FakeClient()
+        api.add_issue(4, ["todo"], body="### Files likely touched\n\nweb/a.js\n")
+        api.add_issue(5, ["todo"], body="### Files likely touched\n\napi/b.py\n")
+        api.add_issue(6, ["todo"])
+        with tempfile.TemporaryDirectory() as folder:
+            where = registry(folder, {"name": "api", "runs": "actions", "area": ["api/"]},
+                             {"name": "web", "runs": "actions", "area": ["web/"]},
+                             {"name": "spare", "runs": "actions"},
+                             {"name": "alice", "runs": "session"})
+            code, out, err = self.through_the_adapter(["deal", "--registry", where], api)
+            self.assertEqual((code, err), (0, ""))
+            # The registry's order, by name: spare, with no area, takes the
+            # first issue left, and web the one that names no files.
+            self.assertEqual(json.loads(out), {"api": "take 5", "spare": "take 4", "web": "take 6"})
+            self.assertEqual(out, '{"api":"take 5","spare":"take 4","web":"take 6"}\n',
+                             "one line, as a step's output takes it")
+            self.assertEqual(api.labels, {"todo", "epic", "worker:api", "worker:spare", "worker:web"})
+            code, out, _ = self.through_the_adapter(["deal", "--registry", where, "--workers", '["web"]'], api)
+        self.assertEqual((code, json.loads(out)), (0, {"web": "take 6"}), "spare is still dealt #4")
+
+    def test_deal_refuses_a_worker_list_the_registry_does_not_hold(self):
+        with tempfile.TemporaryDirectory() as folder:
+            where = registry(folder, {"name": "api", "runs": "actions"}, {"name": "alice", "runs": "session"})
+            for given in ('["alice"]', '"api"', "api", '["api", "ghost"]'):
+                with self.subTest(given=given):
+                    code, out, err = self.through_the_adapter(["deal", "--registry", where, "--workers", given],
+                                                              FakeClient())
+                    self.assertEqual((code, out), (1, ""))
+                    self.assertTrue(err.startswith("team: "), err)
+                    self.assertEqual(len(err.splitlines()), 1, err)
+
+    def test_deal_needs_the_registry(self):
+        with self.assertRaises(SystemExit) as caught, redirect_stderr(io.StringIO()):
+            cli.team_arguments(["deal"], self.ENVIRON)
+        self.assertEqual(caught.exception.code, 2)
+
     def test_seed_gives_tasks_to_every_registered_worker(self):
         api = FakeClient()
         api.add_issue(1, ["epic"])
