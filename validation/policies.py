@@ -66,16 +66,37 @@ def view(model, worker):
     return View(worker, model.now, model.board_text, tuple(mine), released)
 
 
+# The labels that keep a worker off an issue the Blockers section or the
+# Queue lists (spec/PROTOCOL.md, Pick): held, planned by the coordinator, or
+# waiting on a peer; a worker's label gives the issue to that worker alone.
+NOT_TO_TAKE = ("claimed", "epic", "blocked")
+WORKER_PREFIXES = (WORKER_LABEL, "account:", "agent:")
+
+
 def free_issue(seen, area=None):
-    """The issue a worker takes: one the Given to workers section gives it,
-    else the first in the Queue (spec/PROTOCOL.md, Pick)."""
+    """The issue a worker takes (spec/PROTOCOL.md, Pick): one the Given to
+    workers section gives it; else a blocker the Blockers section lists
+    that nobody has claimed and no worker's label gives to another, since
+    a blocker stops everyone, whether or not it carries todo; else the
+    first in the Queue. Of the Blockers and the Queue, whose rows show an
+    issue's labels, it takes only one in its area when it has an area, and
+    never an epic or an issue labelled blocked."""
     for number, workers in sorted(page.given(seen.page).items()):
         if seen.worker in workers:
             return number
-    for number in page.queue(seen.page):
-        if area is None or number in area:
+    held = set(page.claim_branches(seen.page))
+    for number, names in sorted(page.blockers(seen.page).items()):
+        if takable(names) and f"{CLAIM_PREFIX}{number}" not in held and (area is None or number in area):
+            return number
+    for number, names in sorted(page.queue_labelled(seen.page).items()):
+        if takable(names) and (area is None or number in area):
             return number
     return None
+
+
+def takable(names):
+    """Whether an issue's labels leave it free to take."""
+    return not any(name in NOT_TO_TAKE or name.startswith(WORKER_PREFIXES) for name in names)
 
 
 def announce(seen, claim):

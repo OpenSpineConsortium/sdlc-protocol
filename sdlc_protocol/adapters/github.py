@@ -764,15 +764,16 @@ def holding(api, default_branch, sha):
 
 def release_one(api, snap, key, now):
     """Release one claim: the labels first, claimed and every worker's off
-    and todo on where the issue lacks it, then the comment, in the
-    protocol's order, and the board counts a release only once both are
-    done. A run that fails between them puts back the labels it took off
-    and takes off the todo it put on, so the issue is as the run found it
-    and the next run starts the release over, unless the comment turns out
-    to be there after all, one GitHub wrote and lost its answer to, which
-    makes the release whole. Only when GitHub refuses the putting back too
-    are the labels left as the failure left them with no comment, until a
-    run releases the claim or a person puts them back. What was done, in a
+    and todo on where the issue carries none of todo, epic and blocker
+    (coordinator.labels_put_on), then the comment, in the protocol's
+    order, and the board counts a release only once both are done. A run
+    that fails between them puts back the labels it took off and takes off
+    the todo it put on, so the issue is as the run found it and the next
+    run starts the release over, unless the comment turns out to be there
+    after all, one GitHub wrote and lost its answer to, which makes the
+    release whole. Only when GitHub refuses the putting back too are the
+    labels left as the failure left them with no comment, until a run
+    releases the claim or a person puts them back. What was done, in a
     line."""
     release = snap.releases[key]
     names, put_on = coordinator.labels_released(snap, key), coordinator.labels_put_on(snap, key)
@@ -846,7 +847,7 @@ def put_back(api, key, names, put_on=()):
             api.post(f"/repos/{api.repo}/issues/{key}/labels", {"labels": names})
             said += f"; {listed} put back"
         except GitHubError as problem:
-            said += f"; putting {listed} back failed too, so they stay off: {problem}{github_words(problem)}"
+            said += f"; putting {listed} back failed too, so they may still be off: {problem}{github_words(problem)}"
     for name in put_on:
         try:
             if take_label_off(api, key, name):

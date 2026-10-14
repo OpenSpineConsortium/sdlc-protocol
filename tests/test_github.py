@@ -1257,7 +1257,7 @@ class Coordinate(unittest.TestCase):
         api, _ = client(answers)
         self.assertEqual(github.coordinate(api, idle_snapshot(), NOW), [
             "#12: not released, the comment failed: POST /repos/o/r/issues/12/comments: HTTP 502; putting claimed, "
-            "worker:nightly back failed too, so they stay off: POST /repos/o/r/issues/12/labels: HTTP 403: "
+            "worker:nightly back failed too, so they may still be off: POST /repos/o/r/issues/12/labels: HTTP 403: "
             "Resource not accessible"])
 
     def given_snapshot(self, names=("claimed", "worker:nightly")):
@@ -1555,7 +1555,7 @@ class ReleaseAcrossRuns(unittest.TestCase):
     def test_a_release_whose_labels_did_not_go_back_on_is_finished_by_the_next_run(self):
         repository, snap, page, first, second = self.runs(
             {"POST /repos/o/r/issues/12/comments": Refusal(502), LABELS_12: Refusal(502)})
-        self.assertIn("back failed too, so they stay off", first[0])
+        self.assertIn("back failed too, so they may still be off", first[0])
         self.assert_released(repository, snap, page)
 
     def test_a_holder_who_comes_back_after_a_failed_comment_keeps_the_claim_and_its_labels(self):
