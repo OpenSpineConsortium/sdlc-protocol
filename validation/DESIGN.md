@@ -39,7 +39,7 @@ The prototype and its critique found twelve things, and build step 1 two more. S
 | F9 | A draft pull request may never be told "main moved" | decision for the owner |
 | F10 | Releasing a finished draft by hand never takes effect | fixed in 0.4.1 |
 | F11 | One refused comment fails the whole board run, and the board branch is not written | fixed in 0.4.1 |
-| F12 | "Main moved" is lost when the board's concurrency group replaces the run the push to main started | open; the owner's choice of fix |
+| F12 | "Main moved" is lost when the board's concurrency group replaces the run the push to main started | fixed after 0.4.1: the word depends on the state, and the copies' board.yml queues runs (`queue: max`) |
 | F13 | The Overlaps' landing order reads "the oldest" as the lowest number, an issue's and a pull request's alike, so a claim made later lands before an older draft | found by step 1; the library or the spec, the owner's choice |
 | F14 | Given to workers needs the label todo and leaves epics out, which the spec's sentence does not say, so an issue labelled only worker:<name> is shown nowhere | found by step 1; the library or the spec, the owner's choice |
 
@@ -373,7 +373,7 @@ Expected outcome: the release comments are the owner's (10 h, frees nothing), th
 | 6 | 2 | board | run | Overlaps: src/shared.py with #100, #101 (both ready, so oldest first). |
 | 7 | 3 | owner | merges #100 | main moves |
 | 8 | 3 | board | run (push, ref main) | One "main moved" comment on #101, its marker carrying main's sha7, its text "main moved: this branch is conflicting with main at \<sha7\>; rebase or merge main before the next push." (board.py:435-440). |
-| 9 | 3 | board | run (pull_request closed) | No second "main moved" (the marker; github.comment_once). Variant S05q: this run's event arrives while step 8's run is still pending and replaces it; spec: #101 still hears "main moved" once for this sha; on cf3bdb0 it never does (F12, recorded red). |
+| 9 | 3 | board | run (pull_request closed) | No second "main moved" (the marker; github.comment_once). Variant S05q: this run's event arrives while step 8's run is still pending and replaces it; spec: #101 still hears "main moved" once for this sha; on cf3bdb0 it never did (F12, recorded red until the fix, which tells it in the delete's run). |
 | 10 | 4 | r | S05a: `git rebase origin/main`, resolve, `git push --force-with-lease origin claude/2`. S05b, under TEAM_POLICY: `git merge origin/main`, resolve, `git push origin claude/2`. | The guard passes both: a lease on its own `claude/` branch, and a plain push. Git takes both. `git push --force origin claude/2` is refused by the guard (guard.py:165-168). On cf3bdb0, `git push origin +claude/2` is let through (F3, recorded red). |
 | 11 | 4 | board | run (pull_request synchronize) | #101 clean. No "main moved". No overlaps. |
 | 12 | 5 | owner | merges #101; then a board run | Recently merged: #101, #100. Claims: none. Queue: none. |
@@ -814,8 +814,8 @@ Every reproduction runs from the repository's root, on the library as the checko
 - **Effect.** A secondary rate limit does the same. A comment GitHub refuses for good would freeze the board branch: the marker is never written, so every run tries the comment again and fails again.
 - **The fix, and the harness.** Catch the error per comment, as release_claim does; the harness adds G15 and faults on every write endpoint.
 
-**F12. "Main moved" is lost under the board's concurrency group.** Status: open, left so by 0.4.1; the owner's choice of fix (section 14).
-- **What happens.** "Main moved" is the only rule keyed on the event that started the run (board.py:469). symphony-template's board.yml:83-85 sets `group: board` with no `queue`, and by default a newer run replaces the one pending in the group (github/docs data/reusables/actions/actions-group-concurrency.md).
+**F12. "Main moved" is lost under the board's concurrency group.** Status: fixed after 0.4.1 (the owner's decision of 2026-10-13, section 14), both ways: board.comments_due tells every pull request behind or conflicting with main at its current commit on any run, once per commit by the marker's sha, so a replaced run costs nothing but a delay to the next run, which is at most the schedule's six hours; and symphony-template's board.yml adds `queue: max` to the concurrency group, which github.com offers, so the runs a merge fires wait in turn instead of replacing one another. The mutant that keys the word on the push's run again turns F12's trace and S05q red for G10. A refused "main moved" comment is now due again on the next run, as an idle one was already.
+- **What happened.** "Main moved" was the only rule keyed on the event that started the run (board.py:469 of 0.4.1). symphony-template's board.yml:83-85 set `group: board` with no `queue`, and by default a newer run replaces the one pending in the group (github/docs data/reusables/actions/actions-group-concurrency.md).
 - **Why it is common.** A merge fires pull_request closed, a push to main, issues closed and delete at nearly the same moment, and the push trigger at board.yml:62 has no branch filter, so every worker's push to a `claude/` branch also queues a run, whose job board.yml:94 then skips; that such a run still takes the pending slot is inferred, not measured. So the push to main's run is often replaced, and that commit's "main moved" comments are never posted.
 - **The fix's options.** Make "main moved" depend on state: on any run, tell each behind or conflicting pull request that has no marker for main's current sha. Or add `queue: max` to the group, which github.com offers (github/docs data/features/actions-nga.yml). The model has the transition "a pending run is replaced" (section 3.3), and canary C2 measures the drops.
 
@@ -843,7 +843,7 @@ Pull requests, in order:
 
 The owner's decisions:
 - **F2.** Which identity for a piece of open work in the overlap marker: the issue for as long as the claim lives, so opening the pull request tells nothing again, or the pull request once there is one, with the issue's markers read as told too?
-- **F12.** Make "main moved" depend on state, telling on any run each behind or conflicting pull request with no marker for main's current sha; or add `queue: max` to the board's concurrency group in the copies' board.yml.
+- **F12.** Make "main moved" depend on state, telling on any run each behind or conflicting pull request with no marker for main's current sha; or add `queue: max` to the board's concurrency group in the copies' board.yml. Decided 2026-10-13: both; built, section 13.
 - **F4.** Should one job deal the whole run and pass the deals to the matrix, or is the occasional wasted run accepted, since the lock still holds?
 - **F7.** Which second fence, if any: the guard reading the claim file on `origin/claude/N` before a lease push, the board reading the activity API's `force_push` events, or neither? A ruleset blocking forced pushes on `claude/**` is ruled out: it refuses the prescribed lease and makes renames an administrator's. Decided 2026-10-13 (the owner: fix whatever is broken, the library fix on every item): the guard reads the claim file; built, section 13.
 - **F8.** Keep the committer date, as the spec says, and state the trust it places in the pusher; or read the server's `pushed_at` from the activity API, once canary C5 shows it behaves as documented.

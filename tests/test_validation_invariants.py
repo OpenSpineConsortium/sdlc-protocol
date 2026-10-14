@@ -1,8 +1,9 @@
 """The harness's guarantees (validation/invariants.py) on hand-written
 traces: an honest release and reclaim breaks none; the 0.4.1 fixes hold;
 a run in two halves is judged by the states its halves read; the open
-findings F2, F9 and F12 show as soon as the oracle reads the spec, F12 by
-the run the concurrency group cancels, and F7's careless lease is refused.
+findings F2 and F9 show as soon as the oracle reads the spec; F7's
+careless lease is refused, and F12's lost run tells "main moved" under
+its mutant alone, by the run the concurrency group cancels.
 The mutants, the prototype's among them, are
 tests/test_validation_mutants.py's."""
 
@@ -211,18 +212,22 @@ class TheOpenFindingsShow(unittest.TestCase):
         self.assertEqual(violations(steps), [])
         self.assertEqual(guarantees(violations(steps, known=oracle.AS_BUILT - {"F9"})), ["G10"])
 
-    def test_f12_main_moved_told_only_in_the_run_the_push_started(self):
+    def test_f12_main_moved_is_told_by_whichever_run_finds_the_branch_behind(self):
+        """Fixed after 0.4.1; the mutant keys the word on the push's run again."""
         steps = [Verb("claim", "a", (1,)), Verb("open-draft", "a", (1,)), Verb("mark-ready", "a", (100,)),
                  Verb("move-main", M.OWNER), board_with(event=cycle.PULL_REQUEST)]
         self.assertEqual(violations(steps), [])
-        self.assertEqual(guarantees(violations(steps, known=oracle.AS_BUILT - {"F12"})), ["G10"])
+        with mutants.switched_on(mutants.MUTANTS["main moved told only in the push's run"]):
+            self.assertEqual(guarantees(violations(steps)), ["G10"])
 
     def test_f12_the_run_of_the_push_to_main_is_cancelled_behind_the_worker_s_own_push(self):
         """The mechanism (DESIGN.md, F12): the worker's push to the claim
         branch, with its pull request marked ready, holds the group while
         its job is skipped, main moves behind it, the worker's next push
-        replaces the run that waited, and the runs that follow owe nothing
-        as built; reading the spec, the pull request is owed the word."""
+        replaces the run that waited, and the runs that follow tell the
+        pull request, since the word depends on the state (F12's fix);
+        under the mutant that keys it on the push's run they owe it and
+        stay silent."""
         scope = Scope(events=cycle.EVENTS, split_board=True)
         steps = ([Verb("claim", "a", (1,))] + run(cycle.CREATE, "claude/1") + run(cycle.PUSH, "claude/1")
                  + [Verb("open-draft", "a", (1,))] + run(cycle.PULL_REQUEST) + [Verb("mark-ready", "a", (100,)),
@@ -230,7 +235,8 @@ class TheOpenFindingsShow(unittest.TestCase):
                  Verb("move-main", M.OWNER), Verb("commit", "a", (1,)), Verb("board-finish", "board")]
                  + run(cycle.PULL_REQUEST) + run(cycle.PUSH, "claude/1"))
         self.assertEqual(violations(steps, scope), [])
-        self.assertEqual(guarantees(violations(steps, scope, known=oracle.AS_BUILT - {"F12"})), ["G10"])
+        with mutants.switched_on(mutants.MUTANTS["main moved told only in the push's run"]):
+            self.assertEqual(guarantees(violations(steps, scope)), ["G10"])
 
     def test_f7_a_lease_after_a_fetch_onto_another_s_claim_is_refused(self):
         """Fixed after 0.4.1: git would take the lease (test_validation_model),

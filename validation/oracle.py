@@ -22,10 +22,11 @@ oracle reads the spec, and the finding shows as a disagreement. AS_BUILT
 holds the open findings the board's run can reach (DESIGN.md, 13), read
 from validation/known.json since build step 5 (known.py): F2,
 overlapping work told again once a claim opens its pull request; F9, a
-draft never told "main moved"; F12, "main moved" told only in the run the
-push to main started; F13, the landing order's "oldest" read as the lowest
-number; F14, Given to workers needing the label todo and leaving epics
-out. F13 and F14 are what the harness of build step 1 found when its
+draft never told "main moved"; F13, the landing order's "oldest" read as
+the lowest number; F14, Given to workers needing the label todo and
+leaving epics out. F12, "main moved" told only in the run the push to
+main started, was a switch until its fix, which tells it in whichever
+run finds the branch behind. F13 and F14 are what the harness of build step 1 found when its
 oracle was held to the spec's words (DESIGN.md, 13).
 """
 
@@ -414,11 +415,9 @@ def short_sha(sha):
 
 def main_moved_effects(model, event, ref_name, known=AS_BUILT):
     """Every open pull request but a released claim's that is behind or
-    conflicting with main hears so once for main's commit (DESIGN.md, G10);
-    with F12 known, only in the run a push to main started; with F9 known,
-    never a draft."""
-    if "F12" in known and not (event == "push" and ref_name == MAIN):
-        return []
+    conflicting with main hears so once for main's commit, in whichever
+    run finds it so (DESIGN.md, G10; the event and the ref no longer
+    decide, since F12's fix); with F9 known, never a draft."""
     marker = BOARD_MARKERS["main-moved"].format(sha=short_sha(model.refs[MAIN]))
     found = []
     for pull in pulls_spoken_to(model):

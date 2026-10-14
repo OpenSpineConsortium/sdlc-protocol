@@ -34,8 +34,9 @@ UNDONE = {
     "F7": [("the guard passes a lease onto another's claim", 1, "G11a")],
     "F10": [("a finished draft's release by hand not seen", 9, "G5")],
     "F11": [("a refused comment stops the run", 6, "G15")],
+    "F12": [("main moved told only in the push's run", 8, "G10")],
 }
-FIXED = ("F1", "F3", "F5", "F6", "F7", "F10", "F11")
+FIXED = ("F1", "F3", "F5", "F6", "F7", "F10", "F11", "F12")
 RED_AS_BUILT = ("F4",)
 
 
@@ -135,7 +136,7 @@ class TheTraces(unittest.TestCase):
 class KnownJson(unittest.TestCase):
     def test_the_oracle_s_switches_are_the_file_s(self):
         self.assertEqual(oracle.AS_BUILT, known.AS_BUILT)
-        self.assertEqual(known.AS_BUILT, frozenset({"F2", "F9", "F12", "F13", "F14"}))
+        self.assertEqual(known.AS_BUILT, frozenset({"F2", "F9", "F13", "F14"}))
 
     def test_every_entry_names_a_step_of_a_trace_or_scenario_a_guarantee_and_a_finding(self):
         traces = replay.traces()
@@ -164,7 +165,8 @@ class KnownJson(unittest.TestCase):
         self.assertEqual(known.expected("trace", "F7"), set())
         self.assertEqual(known.expected("trace", "F2"), set())
         self.assertEqual(known.expected("trace", "F2", "F2"), {(4, "G7")})
-        self.assertEqual(known.expected("scenario", "S05q", "F12"), {(23, "G10"), (24, "G10")})
+        self.assertEqual(known.expected("scenario", "S05q", "F2"), {(12, "G7")})
+        self.assertEqual(known.expected("scenario", "S05q", "F12"), set())
         self.assertEqual(known.differences("trace", "F4", set()),
                          ["trace F4 as built: recorded red and green: step 9, G14"])
         self.assertEqual(known.differences("trace", "F1", {(0, "G3")}),

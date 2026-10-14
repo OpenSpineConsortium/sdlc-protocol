@@ -1,7 +1,7 @@
 {
   "finding": "F12",
   "title": "main moved is lost under the board's concurrency group",
-  "status": "open; the owner's choice of fix (DESIGN.md, 14)",
+  "status": "fixed after 0.4.1: main moved depends on the state, not on the run's event (DESIGN.md, 13)",
   "breaks": ["G10"],
   "world": "memory",
   "issues": {"1": ["todo"], "2": ["todo"]},
@@ -17,9 +17,9 @@
     {"verb": "board", "event": "pull_request", "expect": {"comments": {"100": {}, "101": {}}}},
     {"at": 1, "verb": "merge", "actor": "owner", "args": [101], "expect": {"pulls": [100]},
      "note": "the merge fires its four events at once: a push to main, the pull request closed, the issue closed and the head deleted; one run starts and one waits"},
-    {"verb": "board", "event": "delete", "ref": "main", "shows": "F12", "expect": {"comments": {"100": {}}},
-     "note": "the delete's run starts first and tells nothing, since as built main moved is keyed on the event that started the run; reading the spec, any run tells a pull request behind main"},
-    {"verb": "board", "event": "pull_request", "shows": "F12", "expect": {"comments": {"100": {}}, "standing": {"100": "behind"}},
-     "note": "the pull request's run replaced the push's, which waited, so #100, behind main now, is never told as built; reading the spec, it is owed the word"}
+    {"verb": "board", "event": "delete", "ref": "main", "expect": {"comments": {"100": {"main-moved": 1}}, "standing": {"100": "behind"}},
+     "note": "the delete's run starts first and tells #100, behind main now, since the word depends on the state and not on the event that started the run (F12's fix); under the mutant that keys it on the push's run again, nothing is told here and G10 is red"},
+    {"verb": "board", "event": "pull_request", "expect": {"comments": {"100": {"main-moved": 1}}},
+     "note": "the pull request's run replaced the push's, which waited; #100 was told once already, for this commit of main, and hears no second word"}
   ]
 }

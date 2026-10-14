@@ -203,6 +203,25 @@ class BoardLiveRun(unittest.TestCase):
         self.assertNotIn("released", calls)
         self.assertEqual(calls["snapshot"][2], "fromenv")
 
+    def test_github_sha_stands_in_only_where_it_is_the_default_branch_s_head(self):
+        """Since F12's fix the main-moved marker carries the snapshot's sha
+        on every event, so GITHUB_SHA, a pull request's merge commit or
+        another branch's head, is not taken there."""
+        for event, ref, expected in (("push", "main", "fromenv"), ("schedule", "", "fromenv"),
+                                     ("issues", "main", "fromenv"), ("delete", "main", "fromenv"),
+                                     ("workflow_dispatch", "main", "fromenv"),
+                                     ("pull_request", "main", ""), ("pull_request_target", "main", ""),
+                                     ("push", "claude/7", "")):
+            environ = {**self.ENVIRON, "GITHUB_EVENT_NAME": event, "GITHUB_REF_NAME": ref}
+            with self.subTest(event=event, ref=ref), tempfile.TemporaryDirectory() as folder:
+                (code, _, _), calls = self.live(["--render-only", "--out", str(Path(folder) / "STATE.md")], environ)
+            self.assertEqual((code, calls["snapshot"][2]), (0, expected))
+        environ = {**self.ENVIRON, "GITHUB_EVENT_NAME": "pull_request"}
+        with tempfile.TemporaryDirectory() as folder:
+            (code, _, _), calls = self.live(["--render-only", "--sha", "given", "--out", str(Path(folder) / "STATE.md")],
+                                            environ)
+        self.assertEqual((code, calls["snapshot"][2]), (0, "given"), "--sha is taken as given on any event")
+
     def test_a_refused_call_is_one_line_and_exit_1(self):
         def refused(api, sha, default_branch, now):
             raise github.GitHubError("GET /repos/octo/widgets/issues: HTTP 403", 403)

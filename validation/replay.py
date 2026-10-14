@@ -18,8 +18,8 @@ the step where the finding showed, for the guarantee the table names,
 which tests/test_validation_traces.py holds it to. A trace of an open
 finding is red where known.json records it: as built for F4, which no
 rule of the library answers, and with the finding's switch off in the
-oracle for the ones the oracle reads as built (F2, F9, F12, F13 and
-F14). F8's trace breaks nothing and records the assumption under which
+oracle for the ones the oracle reads as built (F2, F9, F13 and F14).
+F8's trace breaks nothing and records the assumption under which
 G2 and G3 hold, that idleness is the committer date the pusher sets.
 
 The file's steps are objects: "verb" (a verb of verbs.py, or "announce",

@@ -80,7 +80,10 @@ def board_arguments(argv):
     parser.add_argument("--out", help=f"where to write the board (default: {board.STATE_PATH} in the current "
                                       "directory; stdout with --dry-run)")
     parser.add_argument("--default-branch", default="main", help="the default branch's name (default: main)")
-    parser.add_argument("--sha", help="the default branch's commit the board describes (default: GITHUB_SHA)")
+    parser.add_argument("--sha", help="the default branch's head, which the board describes and names in its "
+                        "main-moved comments on every event (default: GITHUB_SHA where that is the default "
+                        "branch's head, which it is not on a pull_request event or a push to another branch; "
+                        "then no main-moved comment is made)")
     return parser.parse_args(argv)
 
 
@@ -117,13 +120,30 @@ def plan_board(api, sha, default_branch, now, render_only=False, say=print):
 
 def act_on_board(api, snap, event_name, ref_name, now, say=print):
     """The second half, once the page is written: rename the released
-    claims' branches, then post the comments the event owes the pull
-    requests, both from the snapshot the first half read."""
+    claims' branches, then post the comments the pull requests are owed,
+    both from the snapshot the first half read; the event and the ref are
+    passed on, though since F12's fix no comment depends on them."""
     github = github_adapter()
     for line in github.release_claims(api, snap):
         say(line)
     for line in github.post_comments(api, board.comments_due(snap, event_name, ref_name, now)):
         say(line)
+
+
+def default_head_sha(environ, default_branch):
+    """GITHUB_SHA where it is the default branch's head: on a push to that
+    branch, and on every event but a pull request's and a push to another
+    branch, which carry the pull request's merge commit or that branch's
+    head, no commit of the default branch at all; there it is "", so the
+    board names no commit and tells nobody that main moved (board.
+    comments_due), since the word now goes out on every event and would
+    otherwise carry a sha that is not main's, once per such event. A
+    workflow that passes --sha from a checkout of the default branch, as
+    the template's does, never comes here."""
+    event, ref = environ.get("GITHUB_EVENT_NAME", ""), environ.get("GITHUB_REF_NAME", "")
+    if event.startswith("pull_request") or (event == "push" and ref != default_branch):
+        return ""
+    return environ.get("GITHUB_SHA", "")
 
 
 def board_live_run(args, environ):
@@ -132,8 +152,8 @@ def board_live_run(args, environ):
         raise CommandError("GITHUB_TOKEN and GITHUB_REPOSITORY must be set")
     api = github_adapter().GitHub(token, repo)
     now = datetime.now(timezone.utc)
-    snap, page = plan_board(api, args.sha or environ.get("GITHUB_SHA", ""), args.default_branch, now,
-                            args.render_only)
+    snap, page = plan_board(api, args.sha or default_head_sha(environ, args.default_branch), args.default_branch,
+                            now, args.render_only)
     out = Path(args.out) if args.out else board.STATE_PATH
     changed = board.write_if_changed(out, page)
     print(f"{out.as_posix()}: {'rewritten' if changed else 'unchanged'}")

@@ -404,10 +404,19 @@ class CommentsDue(unittest.TestCase):
         number, marker, text = due[0]
         self.assertEqual((number, marker), (40, board.MAIN_MOVED_MARKER.format(sha="0123abc")))
 
-    def test_any_other_event_speaks_only_to_the_idle_ones(self):
-        for event, ref in (("pull_request", "main"), ("push", "claude/12"), ("schedule", "")):
-            due = board.comments_due(snapshot(), event, ref, self.NOW)
-            self.assertEqual([(c.number, c.marker) for c in due], [(40, board.IDLE_MARKER), (41, board.IDLE_MARKER)], event)
+    def test_any_event_speaks_to_the_same_pulls_since_the_word_depends_on_the_state(self):
+        """The run a push to the default branch starts is lost when the
+        concurrency group replaces it (F12), so whichever run finds a pull
+        request behind tells it, once per commit of the default branch."""
+        on_push = board.comments_due(snapshot(), "push", "main", self.NOW)
+        for event, ref in (("pull_request", "main"), ("push", "claude/12"), ("schedule", ""), ("delete", "main")):
+            self.assertEqual(board.comments_due(snapshot(), event, ref, self.NOW), on_push, event)
+        self.assertEqual([(c.number, c.kind) for c in on_push], [(40, "main-moved"), (40, "idle"), (41, "idle")])
+
+    def test_a_snapshot_with_no_commit_tells_nobody_that_main_moved(self):
+        snap = Snapshot.from_dict(snapshot())
+        snap.sha = ""
+        self.assertEqual([c.kind for c in board.comments_due(snap, "push", "main", self.NOW)], ["idle", "idle"])
 
     def test_a_conflicting_pull_hears_the_conflicting_wording(self):
         snap = Snapshot.from_dict(snapshot())
@@ -451,14 +460,24 @@ class Parity(unittest.TestCase):
             again = Snapshot.from_json(Snapshot.from_dict(fixture(path)).to_json())
             self.assertEqual(board.render(again).encode("ascii"), golden(name), name)
 
-    def test_comments_due_are_what_the_template_posted(self):
+    def test_comments_due_are_what_the_template_posted_on_a_push_to_its_default_branch(self):
+        """The template told "main moved" only in the run of the push to
+        its default branch (the recorded case for push to trunk) and the
+        idle ones on every run; since F12's fix every run owes what that
+        run owed, so each recorded case is held to the push's answer."""
         recorded = fixture(FIXTURES / "board-wide-comments.json")["cases"]
         self.assertEqual(len(recorded), 4)
+        on_push = next(c for c in recorded if (c["event_name"], c["ref_name"]) == ("push", "trunk"))
+        self.assertEqual([m.split()[2] for n, m, t in on_push["comments"]], ["main-moved", "main-moved", "idle", "idle"])
         for case in recorded:
             now = datetime.fromisoformat(case["now"].replace("Z", "+00:00"))
+            self.assertEqual(now, datetime.fromisoformat(on_push["now"].replace("Z", "+00:00")))
             due = board.comments_due(fixture(WIDE), case["event_name"], case["ref_name"], now)
-            expected = [[n, m, board.IDLE_TEXT if t == TEMPLATE_IDLE_TEXT else t] for n, m, t in case["comments"]]
+            expected = [[n, m, board.IDLE_TEXT if t == TEMPLATE_IDLE_TEXT else t] for n, m, t in on_push["comments"]]
             self.assertEqual([list(c) for c in due], expected, case["event_name"])
+            if case is not on_push:
+                self.assertEqual([m.split()[2] for n, m, t in case["comments"]], ["idle", "idle"],
+                                 "the template told main moved only on the push to its default branch")
 
 
 class Leniency(unittest.TestCase):

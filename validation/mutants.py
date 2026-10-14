@@ -129,10 +129,15 @@ def released_with_claimed_on(snap, key, idle_after=claims.IDLE_AFTER):
         issue.labels = kept
 
 
-def main_moved_on_any_event(snapshot, event_name, ref_name, now, idle_after=claims.IDLE_AFTER):
-    """board.comments_due as if every run had been started by a push to main."""
+def main_moved_only_in_the_push_s_run(snapshot, event_name, ref_name, now, idle_after=claims.IDLE_AFTER):
+    """board.comments_due as 0.4.1 had it: "main moved" owed only by the run
+    a push to the default branch started, which the concurrency group
+    loses (F12)."""
     snap = board.as_snapshot(snapshot)
-    return ORIGINAL_COMMENTS_DUE(snap, "push", snap.default_branch, now, idle_after)
+    due = ORIGINAL_COMMENTS_DUE(snap, event_name, ref_name, now, idle_after)
+    if event_name == "push" and ref_name == snap.default_branch:
+        return due
+    return [c for c in due if c.marker == board.IDLE_MARKER]
 
 
 def any_line_is_a_marker(comment):
@@ -290,9 +295,9 @@ MUTANTS = {
     "a board comment posted again": Mutant(
         github, "has_marker", lambda api, number, marker: False,
         "G10", "each board comment is posted once, as its marker says"),
-    "main moved told after any event": Mutant(
-        board, "comments_due", main_moved_on_any_event,
-        "G10", "main moved is told after a push to the default branch"),
+    "main moved told only in the push's run": Mutant(
+        board, "comments_due", main_moved_only_in_the_push_s_run,
+        "G10", "main moved is told by whichever run finds the branch behind, once per commit of main (F12)"),
     "the rename skipped": Mutant(
         github, "release_claims", lambda api, snapshot: [],
         "G3", "a released claim's branch is renamed, so the name is free"),
