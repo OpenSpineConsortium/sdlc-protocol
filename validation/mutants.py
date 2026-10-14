@@ -137,6 +137,19 @@ def issue_rows_but_blockers(snap, label, unclaimed_only):
     return [] if label == labels.BLOCKER else ORIGINAL_ISSUE_ROWS(snap, label, unclaimed_only)
 
 
+def issue_rows_unclaimed_blockers(snap, label, unclaimed_only):
+    """board.issue_rows with the Blockers section listing only the blockers
+    nobody has claimed, as the Queue lists its issues."""
+    return ORIGINAL_ISSUE_ROWS(snap, label, unclaimed_only or label == labels.BLOCKER)
+
+
+def issue_rows_hiding_claimed(snap, label, unclaimed_only):
+    """board.issue_rows with the label claimed left out of each row's
+    labels, so a held blocker reads as free to take."""
+    return [[number, title, ", ".join(n for n in names.split(", ") if n != labels.CLAIMED)]
+            for number, title, names in ORIGINAL_ISSUE_ROWS(snap, label, unclaimed_only)]
+
+
 def released_with_claimed_on(snap, key, idle_after=claims.IDLE_AFTER):
     """board.is_released as if the label claimed were always off."""
     issue = snap.claim_issues.get(key)
@@ -506,6 +519,14 @@ MUTANTS = {
         board, "issue_rows", issue_rows_but_blockers,
         "G9", "the board lists every open issue labelled blocker under Blockers, claimed or not, where a "
               "released blocker is listed (F15's second review)"),
+    "the Blockers section without the held blockers": Mutant(
+        board, "issue_rows", issue_rows_unclaimed_blockers,
+        "G9", "the board lists every open issue labelled blocker under Blockers, claimed or not, so a worker sees "
+              "a held blocker is held (F15's third review)"),
+    "a held blocker's row without claimed": Mutant(
+        board, "issue_rows", issue_rows_hiding_claimed,
+        "G9", "a row of the Blockers shows its issue's labels, which a worker reads to leave a held blocker to its "
+              "holder (F15's third review)"),
     "the release's own page without its todo": Mutant(
         coordinator, "after_release",
         lambda snapshot, key, released_at, taken_off, put_on=(): ORIGINAL_AFTER_RELEASE(snapshot, key, released_at,
@@ -591,6 +612,8 @@ SEARCHES = (
     Search("a released epic", DUE, Scope(workers=("a",), people=(), waits=(25,)), 1, labels=("epic",)),
     Search("a released blocker", DUE, Scope(workers=("a",), people=(), waits=(25,)), 1, labels=("blocker",)),
     Search("a released blocked task", DUE, Scope(workers=("a",), people=(), waits=(25,)), 1, labels=("blocked",)),
+    Search("a held blocker", (CLAIM, CLAIMED, WORKER), Scope(workers=("a",), people=(), waits=(25,)), 2,
+           labels=("blocker",)),
     Search("careless workers on a held claim", (CLAIM, CLAIMED),
            Scope(workers=("a", "b"), people=(M.OWNER,), waits=(25,), careless=True), 3),
     Search("two claims on one file", (CLAIM, Verb("claim", "b", (2,))),

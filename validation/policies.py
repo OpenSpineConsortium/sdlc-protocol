@@ -42,6 +42,11 @@ class View(NamedTuple):
     page: str
     mine: tuple
     released: tuple  # (issue, released branch) for branches this worker's pushes made
+    # The labels of each open issue a worker's label gives this worker, by
+    # number, as the worker reads its own issues: the Given to workers
+    # section shows no labels, and Pick takes no epic and no issue labelled
+    # blocked from it.
+    given: dict = {}
 
 
 def view(model, worker):
@@ -63,26 +68,33 @@ def view(model, worker):
                          bool(pull and any(c.author == worker and c.body.startswith("finished") for c in pull.comments))))
     released = tuple(sorted((int(ref[len(RELEASED_PREFIX):].split("-")[0]), ref) for ref, who in model.creators.items()
                             if who == worker and ref.startswith(RELEASED_PREFIX)))
-    return View(worker, model.now, model.board_text, tuple(mine), released)
+    given = {number: issue.labels for number, issue in model.issues.items()
+             if issue.state == "open" and worker in workers_named(issue.labels)}
+    return View(worker, model.now, model.board_text, tuple(mine), released, given)
 
 
 # The labels that keep a worker off an issue the Blockers section or the
 # Queue lists (spec/PROTOCOL.md, Pick): held, planned by the coordinator, or
 # waiting on a peer; a worker's label gives the issue to that worker alone.
 NOT_TO_TAKE = ("claimed", "epic", "blocked")
+# What keeps a worker off an issue Given to workers gives it (Pick).
+NOT_TO_TAKE_GIVEN = ("epic", "blocked")
 WORKER_PREFIXES = (WORKER_LABEL, "account:", "agent:")
 
 
 def free_issue(seen, area=None):
     """The issue a worker takes (spec/PROTOCOL.md, Pick): one the Given to
-    workers section gives it; else a blocker the Blockers section lists
-    that nobody has claimed and no worker's label gives to another, since
-    a blocker stops everyone, whether or not it carries todo; else the
-    first in the Queue. Of the Blockers and the Queue, whose rows show an
-    issue's labels, it takes only one in its area when it has an area, and
-    never an epic or an issue labelled blocked."""
+    workers section gives it, but not an epic or one labelled blocked, as
+    the worker reads its own issues (View.given); else a blocker the
+    Blockers section lists, with or without todo, that nobody has claimed
+    and no worker's label gives to another; else the first in the Queue.
+    Of the Blockers and the Queue, whose rows show an issue's labels, it
+    takes only one in its area when it has an area, which Pick's "first"
+    allows, and never an epic or an issue labelled blocked. Whether an
+    open blocker stands in the way of a Queue issue is for the blocker's
+    issue to say, which no row shows, so it is not modelled here."""
     for number, workers in sorted(page.given(seen.page).items()):
-        if seen.worker in workers:
+        if seen.worker in workers and not set(seen.given.get(number, ())) & set(NOT_TO_TAKE_GIVEN):
             return number
     held = set(page.claim_branches(seen.page))
     for number, names in sorted(page.blockers(seen.page).items()):
@@ -95,8 +107,17 @@ def free_issue(seen, area=None):
 
 
 def takable(names):
-    """Whether an issue's labels leave it free to take."""
-    return not any(name in NOT_TO_TAKE or name.startswith(WORKER_PREFIXES) for name in names)
+    """Whether an issue's labels leave it free to take: none of NOT_TO_TAKE,
+    and no worker's label, a prefix with a name after it, as the board
+    reads one (labels.holder_names)."""
+    return not any(name in NOT_TO_TAKE or workers_named((name,)) for name in names)
+
+
+def workers_named(names):
+    """The workers the labels name, a prefix of WORKER_PREFIXES with a name
+    after it."""
+    return [name[len(prefix):] for name in names for prefix in WORKER_PREFIXES
+            if name.startswith(prefix) and name[len(prefix):]]
 
 
 def announce(seen, claim):
@@ -115,9 +136,9 @@ def announce(seen, claim):
 
 
 class EagerClaimer:
-    """Takes a Given row first, else the first Queue row in its area; claims,
-    announces, opens a draft, commits every pace hours and finishes after k
-    commits: deletes the claim file, marks ready, labels in-review."""
+    """Takes what free_issue picks, in its area; claims, announces, opens a
+    draft, commits every pace hours and finishes after k commits: deletes
+    the claim file, marks ready, labels in-review."""
 
     def __init__(self, pace=1, k=2, area=None):
         self.pace, self.k, self.area = pace, k, area

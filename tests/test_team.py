@@ -233,6 +233,14 @@ class NextTest(unittest.TestCase):
         self.api.add_issue(2, ["todo", "agent:w1", "blocked"])
         self.assertEqual(team.next_for(self.api, "w1"), "none")
 
+    def test_an_issue_labelled_blocked_is_dealt_from_neither_the_queue_nor_the_blockers(self):
+        """F15: Pick never takes an issue labelled blocked, which waits on a
+        peer or the coordinator, whether it carries todo or blocker."""
+        self.api.add_issue(2, ["todo", "blocked"])
+        self.api.add_issue(3, ["blocker", "blocked"])
+        self.assertEqual(team.next_for(self.api, "w1"), "none")
+        self.assertEqual(team.deals(self.api, ["w1", "w2"]), {"w1": "none", "w2": "none"})
+
     def test_a_task_another_account_claimed_is_never_carried(self):
         self.api.add_issue(6, ["todo", "agent:w1", "claimed", "account:second"])
         self.api.branches.add("claude/6")

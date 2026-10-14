@@ -475,9 +475,11 @@ def labels_name_the_holder(after, actual):
 
 def board_renders_the_state(after, record, known):
     """G9 (and G5 and G7 through it): the page lists what the oracle says,
-    its Claims, Queue, Given to workers, Blockers and Overlaps, is ASCII,
-    and renders again to the same bytes."""
+    its Claims, Queue, Given to workers, Blockers and Overlaps, each row of
+    the Queue and the Blockers with its issue's labels, is ASCII, and
+    renders again to the same bytes."""
     shown = record.page
+    calls = record.fake.calls if hasattr(record, "fake") else record.calls
     problems = []
     if not shown.isascii():
         problems.append(Violation("G9", "the page is not ASCII"))
@@ -494,10 +496,28 @@ def board_renders_the_state(after, record, known):
     if sorted(page.blockers(shown)) != oracle.blockers(after):
         problems.append(Violation("G9", f"the board's Blockers are {sorted(page.blockers(shown))}, the oracle's "
                                         f"{oracle.blockers(after)}"))
-    expected = oracle.overlaps(after, known, unsaid_branches(record.fake.calls if hasattr(record, "fake")
-                                                             else record.calls))
+    if not injected(calls):
+        problems += rows_show_labels(after, shown)
+    expected = oracle.overlaps(after, known, unsaid_branches(calls))
     if page.overlaps(shown) != expected:
         problems.append(Violation("G7", f"the board's Overlaps are {page.overlaps(shown)}, the oracle's {expected}"))
+    return problems
+
+
+def rows_show_labels(after, shown):
+    """G9: each row of the Queue and the Blockers shows its issue's labels,
+    which a worker reads to pick (spec, Pick: never an epic, an issue
+    labelled blocked, or a blocker someone claimed or a worker's label
+    gives to another). Judged only for a run no fault touched: a run that
+    gave a release up and could not put its labels back renders the labels
+    it read, which the next run corrects."""
+    problems = []
+    for name, rows in (("Queue", page.queue_labelled(shown)), ("Blockers", page.blockers(shown))):
+        for number, names in sorted(rows.items()):
+            issue = after.issues.get(number)
+            if issue is not None and sorted(names) != sorted(issue.labels):
+                problems.append(Violation("G9", f"the {name} row of #{number} shows {sorted(names)}, its issue "
+                                                f"carries {sorted(issue.labels)}"))
     return problems
 
 
