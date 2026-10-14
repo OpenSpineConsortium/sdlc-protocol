@@ -42,8 +42,9 @@ from .claims import PREFIX as CLAIM_PREFIX, issue_files, number_of
 # worker names itself with worker:<name>, and the older account:<name> and
 # agent:<name> are read as the same label.
 from .labels import (ACCOUNT_PREFIX, AGENT_PREFIX, BLOCKED as BLOCKED_LABEL,
-                     BLOCKER as BLOCKER_LABEL, EPIC as EPIC_LABEL, TODO as TODO_LABEL, WORKER_COLOUR,
-                     agent_label as agent_of, holders, label_names, worker_label)
+                     BLOCKER as BLOCKER_LABEL, CLAIMED as CLAIMED_LABEL, EPIC as EPIC_LABEL,
+                     TODO as TODO_LABEL, WORKER_COLOUR, agent_label as agent_of, holders, label_names,
+                     worker_label)
 from .workers import fits
 
 # The one check the ruleset requires and a member can fix; the board's own
@@ -55,6 +56,10 @@ EPIC_LINE = re.compile(r"^Epic: #(\d+)\s*$", re.MULTILINE)
 # A ready pull request with one of these states has fallen behind its
 # base or conflicts with it; any other state waits on checks or a merge.
 NEEDS_REBASE = {"behind", "dirty"}
+# The same, read where GitHub's word says only that something else stops
+# the merge: the standing the adapter reads through mergeable and a
+# comparison (adapters.github.standing_of), as the board does (F9).
+STANDING_NEEDS_REBASE = {"behind", "conflicting"}
 FAILED = {"failure", "timed_out"}
 # The colour a worker's label is made in; kept under team mode's name too.
 AGENT_COLOUR = WORKER_COLOUR
@@ -94,7 +99,9 @@ class Client(Protocol):
 
     def open_pull(self, branch: str) -> dict | None:
         """The open pull request from the branch, in the detail that holds
-        "mergeable_state" and the head's "sha", or None when there is none."""
+        "mergeable_state" and the head's "sha", or None when there is none;
+        where that word says only that something else stops the merge, a
+        "standing" may say how the branch stands to its base."""
 
     def check_runs(self, sha: str) -> list[dict]:
         """The check runs on one commit."""
@@ -197,11 +204,16 @@ def claim_needs_work(client, number):
     request yet, a draft, a base it has fallen behind or conflicts with, or
     a failed required check. One that is ready and only waiting for its
     checks or its merge needs nothing, and a run spent on it would be usage
-    wasted."""
+    wasted. A branch behind its base counts whether GitHub says so or the
+    pull request's standing does, where GitHub's word says only that a
+    check or a review holds it, since the board tells such a pull request
+    "main moved" (F9) and its holder should hear it from the clerk too."""
     pull = client.open_pull(f"{CLAIM_PREFIX}{number}")
     if not pull:
         return True
     if pull.get("draft") or pull.get("mergeable_state") in NEEDS_REBASE:
+        return True
+    if pull.get("standing") in STANDING_NEEDS_REBASE:
         return True
     runs = client.check_runs(pull["head"]["sha"]) or []
     return any(run.get("name") == REQUIRED_CHECK and run.get("conclusion") in FAILED
@@ -224,7 +236,18 @@ class Snapshot:
         return self.needs_work[number]
 
     def free(self, issue):
-        return issue["number"] not in self.claimed and BLOCKED_LABEL not in label_names(issue)
+        """Whether an issue may be taken: no claim branch holds it, and it
+        is labelled neither blocked nor claimed. The board shows an issue
+        labelled claimed in neither its Queue nor Given to workers, branch
+        or no branch, as when an issue is reopened after its merged branch
+        was deleted, or a release is undone before its branch is renamed
+        back, so a worker reading the board never takes it, and the clerk
+        never deals it: a worker in Actions that leaves such an issue alone
+        would otherwise be dealt it again on every run, its share of the
+        queue held back behind it."""
+        labels = label_names(issue)
+        return (issue["number"] not in self.claimed and BLOCKED_LABEL not in labels
+                and CLAIMED_LABEL not in labels)
 
     def own_move(self, agent):
         """A member's own work: a claim of its own that needs work, else

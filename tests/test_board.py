@@ -476,9 +476,10 @@ class Standing(unittest.TestCase):
         self.assertEqual(Pull(1, mergeable_state="draft", standing="behind").state, "behind")
 
     def test_a_pull_with_no_standing_reads_as_before(self):
-        """An adapter that reads no standing, the fixture and the in-memory
-        world among them, gets the word state_word gave before F9, for every
-        word it knows, so nothing that already rendered renders otherwise."""
+        """A snapshot with no standing, the fixtures' and the memory world's
+        with opaque_pulls off among them, gets the word state_word gave
+        before F9, for every word it knows, so nothing that already
+        rendered renders otherwise."""
         for given in (*board.STATE_WORDS, *board.GITHUB_STATES, "draft", None):
             pull = Pull(1, mergeable_state=given)
             self.assertIsNone(pull.standing)
@@ -486,10 +487,11 @@ class Standing(unittest.TestCase):
 
     def test_main_moved_reaches_a_blocked_pull_once_its_standing_is_read(self):
         """pulls_behind_main took only a GitHub word of behind or dirty, so a
-        draft or a blocked pull request, which every copy of the template
-        holds with a required check, never heard "main moved" (F9). With the
-        standing read it does, as a dict or a Pull alike, and one whose
-        branch is clean, or whose standing was not read, still does not."""
+        pull request GitHub called blocked, as it does while a required
+        check is pending or red or a review is not yet given, a draft's
+        included, never heard "main moved" (F9). With the standing read it
+        does, as a dict or a Pull alike, and one whose branch is clean, or
+        whose standing was not read, still does not."""
         pulls = [
             {"number": 1, "mergeable_state": "blocked", "standing": "behind"},
             {"number": 2, "mergeable_state": "blocked", "standing": "clean"},

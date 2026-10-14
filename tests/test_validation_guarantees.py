@@ -25,13 +25,15 @@ SPEC = (ROOT / "spec" / "PROTOCOL.md").read_text(encoding="utf-8")
 GUARANTEES = (ROOT / "validation" / "GUARANTEES.md").read_text(encoding="utf-8")
 ROW = re.compile(r"^\| (G\w+) \| (.+?) \| \"(.+?)\" \| (.+?) \|$")
 STATUSES = ("checked", "known (", "partly checked", "not checked yet")
-# A rule a status cites by its module and name, as board.given_rows; a file
-# is named by its path (validation/dealing.py), which the lookbehind leaves
-# out, or by its name alone when it lives elsewhere (the template's
-# workers.yml), which the suffixes leave out.
-CITED_RULE = re.compile(r"(?<![\w/])([a-z_]+)\.([a-z_]+)\b")
+# A rule a status cites by its module and name, as board.given_rows, or by
+# a longer dotted path, as github.GitHubWorld.standing; a file is named by
+# its path (validation/dealing.py), which the lookbehind leaves out, or by
+# its name alone when it lives elsewhere (the template's workers.yml),
+# which its suffix marks.
+CITED = re.compile(r"(?<![\w/])([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+)")
 FILE_SUFFIXES = {"py", "md", "yml", "json"}
 PACKAGES = ("sdlc_protocol", "sdlc_protocol.adapters", "validation")
+MISSING = object()
 
 
 def rows():
@@ -48,10 +50,38 @@ def module_named(name):
 
 
 def cited_rules():
-    """Every rule the rows cite, as (module, name), for the modules the
-    library and the harness have."""
-    return {(m.group(1), m.group(2)) for row in rows().values() for m in CITED_RULE.finditer(row.group(4))
-            if m.group(2) not in FILE_SUFFIXES and module_named(m.group(1)) is not None}
+    """Every dotted name the rows' statuses cite, but a file's."""
+    return {m.group(1) for row in rows().values() for m in CITED.finditer(row.group(4))
+            if m.group(1).rsplit(".", 1)[1] not in FILE_SUFFIXES}
+
+
+def resolved(dotted):
+    """What a cited name names: its first part a module of the library or
+    the harness, or its first parts one by the package's own path, each
+    further part an attribute of the one before; MISSING where any part
+    names nothing."""
+    parts = dotted.split(".")
+    found, rest = module_named(parts[0]), parts[1:]
+    if found is None and parts[0] in ("sdlc_protocol", "validation"):
+        found, rest = longest_module(parts)
+    if found is None:
+        return MISSING
+    for part in rest:
+        found = getattr(found, part, MISSING)
+        if found is MISSING:
+            return MISSING
+    return found
+
+
+def longest_module(parts):
+    """The module the longest leading run of parts names, and the parts
+    after it; (None, parts) when none does."""
+    for cut in range(len(parts), 0, -1):
+        try:
+            return importlib.import_module(".".join(parts[:cut])), parts[cut:]
+        except ImportError:
+            continue
+    return None, parts
 
 
 class TheOracleSpeaksTheSpec(unittest.TestCase):
@@ -119,14 +149,30 @@ class GuaranteesMd(unittest.TestCase):
     def test_every_rule_a_row_cites_is_one_the_library_or_the_harness_has(self):
         """A row that names the rule behind its status, as G9's names
         board.given_rows and G10's github.standing_of, names one that
-        exists, so a rename that left the document pointing at nothing
-        fails here."""
+        exists: every dotted name in a status but a file's resolves, so a
+        rename or a misspelling that left the document pointing at nothing
+        fails here, a module's name as much as a rule's."""
         cited = cited_rules()
-        self.assertTrue({("board", "given_rows"), ("github", "standing_of"), ("team", "deals"),
-                         ("clerk", "workflow_deals")} <= cited, cited)
-        for module, name in sorted(cited):
-            with self.subTest(rule=f"{module}.{name}"):
-                self.assertTrue(callable(getattr(module_named(module), name, None)))
+        self.assertTrue({"board.given_rows", "github.standing_of", "team.deals", "clerk.workflow_deals"} <= cited,
+                        cited)
+        for dotted in sorted(cited):
+            with self.subTest(rule=dotted):
+                self.assertIsNot(resolved(dotted), MISSING)
+
+    def test_a_name_that_resolves_to_nothing_is_told_apart(self):
+        """The resolver the citation check rests on: a class's method, a
+        harness module's function, a path from the package and a constant
+        resolve; a misspelled module, a rule that is not there and a part
+        below one do not."""
+        for dotted in ("github.GitHubWorld.standing", "dealing.run_lane", "validation.dealing.run_lane",
+                       "sdlc_protocol.adapters.github.standing_of"):
+            with self.subTest(dotted=dotted):
+                self.assertTrue(callable(resolved(dotted)))
+        self.assertEqual(resolved("github.OPAQUE_STATES"), github.OPAQUE_STATES)
+        for dotted in ("orakle.main_moved_effects", "board.no_such_rule", "board.Pull.no_such_field",
+                       "validation.no_such_lane.run", "sdlc_protocol.boards.render"):
+            with self.subTest(dotted=dotted):
+                self.assertIs(resolved(dotted), MISSING)
 
 
 if __name__ == "__main__":

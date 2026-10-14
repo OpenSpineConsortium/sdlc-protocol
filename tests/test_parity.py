@@ -233,7 +233,7 @@ class FakeRepo:
 
     def __init__(self):
         self.issues, self.pulls, self.files, self.contents = {}, {}, {}, {}
-        self.checks, self.comments = {}, {}
+        self.checks, self.comments, self.compares = {}, {}, {}
         self.branches = set()
         self.labels, self.sub_issues = {"todo", "epic"}, []
         self.refuse_sub_issues = False
@@ -337,6 +337,14 @@ class FakeRepo:
     def get_contents(self, rest, query, body):
         text = found(self.contents.get((query.get("ref"), "/".join(rest))))
         return {"content": base64.b64encode(text.encode("utf-8")).decode("ascii")}
+
+    def get_compare(self, rest, query, body):
+        """A comparison of a base with a head, as compares holds it; the
+        library asks for one where GitHub's word for a pull request is
+        opaque (F9), the template never did, and a comparison this GitHub
+        holds no history for answers 404, as GitHub's does."""
+        base, head = "/".join(rest).split("...", 1)
+        return found(self.compares.get((base, head)))
 
 
 class Sleeps:
@@ -554,12 +562,17 @@ class BoardParity(unittest.TestCase):
             old = template_board().collect(template_client(old_repo, old_sleep), sha, trunk)
             new = github.collect(library_client(new_repo, new_sleep), sha, trunk)
             with self.subTest(name):
-                # The template read no releases and no times work began
-                # (DeclaredDifferences); none of these repositories holds a
-                # release, GitHub records no activity in them, and the rest
-                # is the same.
+                # The template read no releases, no standing and no times
+                # work began (DeclaredDifferences): none of these
+                # repositories holds a release, none can compare a branch
+                # with its base, so a pull request whose word is opaque
+                # stands unknown, which renders as GitHub's word did, and
+                # GitHub records no activity in them; the rest is the same.
                 self.assertEqual(new.pop("releases"), {})
                 self.assertEqual(new.pop("began"), {})
+                standings = {pull["number"]: pull.pop("standing") for pull in new["pulls"] if "standing" in pull}
+                self.assertEqual(standings, {pull["number"]: "unknown" for pull in snap["pulls"]
+                                             if pull.get("mergeable_state") in github.OPAQUE_STATES})
                 self.assertEqual(new, old)
                 self.assertEqual(new_sleep.calls, old_sleep.calls)
                 self.assertEqual(*same_page(board.render(github.snapshot(library_client(new_repo), sha, trunk)),
@@ -1281,6 +1294,23 @@ class DeclaredDifferences(unittest.TestCase):
         self.assertNotIn("| #12 | Released | todo |", old)
         self.assertNotIn("| #12 | claude/12 |", new)
         self.assertIn("| #12 | Released | todo |", new.split(board.QUEUE_HEADING)[1])
+
+    def test_a_held_branch_main_left_behind_stands_behind_where_the_template_read_blocked(self):
+        # GitHub's word blocked says only that something else stops the
+        # merge; the library compares such a branch with its base (F9), so
+        # one main has left behind shows behind and is told "main moved",
+        # where the template took the word as it was.
+        snap = fixture(WIDE)
+        trunk = snap["default_branch"]
+        old_repo, new_repo = repo_from_snapshot(snap), repo_from_snapshot(snap)
+        new_repo.compares[(trunk, "4444444")] = {"ahead_by": 1, "behind_by": 2}
+        old = template_board().collect(template_client(old_repo), snap["sha"], trunk)
+        new = github.collect(library_client(new_repo), snap["sha"], trunk)
+        self.assertEqual({pull["number"]: pull.get("standing") for pull in new["pulls"] if pull.get("standing")},
+                         {63: "behind", 65: "unknown"})
+        self.assertFalse([pull for pull in old["pulls"] if "standing" in pull])
+        self.assertIn("| #63 | Blocked by review | claude/31 | blocked |", template_board().render(old))
+        self.assertIn("| #63 | Blocked by review | claude/31 | behind |", board.render(board.Snapshot.from_dict(new)))
 
     def test_a_task_is_given_by_a_workers_label_where_team_mode_used_an_agents(self):
         old_repo, new_repo = FakeRepo(), FakeRepo()

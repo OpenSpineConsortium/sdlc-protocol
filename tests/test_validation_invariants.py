@@ -2,9 +2,11 @@
 traces: an honest release and reclaim breaks none; the 0.4.1 fixes hold;
 a run in two halves is judged by the states its halves read; the open
 finding F2 shows as soon as the oracle reads the spec; F7's careless
-lease is refused, F9's draft hears "main moved" with its opaque word
-read as unknown under its mutant alone, and F12's lost run tells "main
-moved" under its mutant alone, by the run the concurrency group cancels.
+lease is refused, F9's draft misses "main moved" under the mutant that
+takes GitHub's opaque word alone, and is told it while level with main
+under the one that reads the comparison's other count, and F12's lost run
+tells "main moved" under its mutant alone, by the run the concurrency
+group cancels.
 The mutants, the prototype's among them, are
 tests/test_validation_mutants.py's."""
 
@@ -213,18 +215,24 @@ class TheOpenFindingsShow(unittest.TestCase):
 
     def test_f9_a_draft_behind_main_hears_main_moved_once_its_standing_is_read(self):
         """Fixed after 0.4.1: with the model's opaque_pulls on GitHub's word
-        for the draft is blocked, as under a required check, and the
-        adapter reads how its branch stands through mergeable and one
-        compare, so the run owes the draft the word; under the mutant that
-        reads the opaque word as unknown nothing is told. With opaque_pulls
-        off the fake answers behind itself and the mutant has nothing to
-        bite, so the finding is checked with it on."""
-        steps = [Verb("claim", "a", (1,)), Verb("open-draft", "a", (1,)), Verb("move-main", M.OWNER),
-                 board_with(event=cycle.PUSH, ref_name=M.MAIN)]
+        for the draft is blocked, as for a draft whose required check has
+        not passed, and the adapter reads how its branch stands through
+        mergeable and one compare, so the run owes the draft the word only
+        once main has moved; under the mutant that takes GitHub's word
+        alone nothing is told, and under the one that reads the
+        comparison's ahead_by the draft, its claim commit ahead and level
+        with main, is told before main moves. With opaque_pulls off the
+        fake answers behind itself and the mutants have nothing to bite,
+        so the finding is checked with it on."""
+        level = [Verb("claim", "a", (1,)), Verb("open-draft", "a", (1,)), board_with(event=cycle.PULL_REQUEST)]
+        steps = level + [Verb("move-main", M.OWNER), board_with(event=cycle.PUSH, ref_name=M.MAIN)]
         self.assertEqual(violations(steps), [])
         self.assertEqual(violations(steps, opaque_pulls=True), [])
-        with mutants.switched_on(mutants.MUTANTS["an opaque state read as unknown"]):
+        with mutants.switched_on(mutants.MUTANTS["an opaque state read by GitHub's word alone"]):
+            self.assertEqual(guarantees(violations(level, opaque_pulls=True)), [])
             self.assertEqual(guarantees(violations(steps, opaque_pulls=True)), ["G10"])
+        with mutants.switched_on(mutants.MUTANTS["the comparison read by ahead_by"]):
+            self.assertEqual(guarantees(violations(level, opaque_pulls=True)), ["G10"])
 
     def test_f12_main_moved_is_told_by_whichever_run_finds_the_branch_behind(self):
         """Fixed after 0.4.1; the mutant keys the word on the push's run again."""

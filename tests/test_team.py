@@ -171,6 +171,19 @@ class NextTest(unittest.TestCase):
         self.api.branches.add("claude/2")
         self.assertEqual(team.next_for(self.api, "w1"), "none")
 
+    def test_an_issue_labelled_claimed_is_dealt_to_nobody_branch_or_no_branch(self):
+        """The board shows an issue labelled claimed in neither its Queue
+        nor Given to workers, as one reopened after its merged branch was
+        deleted, so a worker reading the board never takes it and the clerk
+        never deals it; the worker it names takes its share of the queue."""
+        self.api.add_issue(2, ["claimed", "in-review", "worker:w1"])
+        self.api.add_issue(3, ["todo", "claimed"])
+        self.assertEqual(team.next_for(self.api, "w1"), "none")
+        self.assertEqual(team.next_for(self.api, "w2"), "none")
+        self.api.add_issue(4, ["todo"])
+        self.assertEqual(team.next_for(self.api, "w1"), "take 4")
+        self.assertEqual(team.deals(self.api, ["w1", "w2"]), {"w1": "take 4", "w2": "none"})
+
     def test_a_branch_that_writes_the_number_with_a_leading_zero_claims_nothing(self):
         # Only claude/2 holds #2: GitHub would take a first push of claude/2
         # beside claude/02, so a worker sent to #2 can still claim it.
@@ -193,6 +206,20 @@ class NextTest(unittest.TestCase):
         self.assertEqual(team.next_for(self.api, "w1"), "carry 2")
         self.api.add_pull(2, state="blocked", conclusion="failure")
         self.assertEqual(team.next_for(self.api, "w1"), "carry 2")
+
+    def test_a_ready_claim_a_check_or_a_review_holds_is_carried_once_its_branch_is_behind(self):
+        """Where GitHub's word says only that a check or a review holds the
+        pull request, the standing the adapter reads says whether its branch
+        is behind its base or conflicts with it; the board tells it "main
+        moved" then (F9), so the clerk deals the claim back for the same
+        reason, and leaves it waiting while the branch is level."""
+        self.api.add_issue(2, ["claimed", "agent:w1"])
+        self.api.branches.add("claude/2")
+        self.api.add_pull(2, state="blocked", conclusion=None)
+        for standing, move in ((None, "none"), ("clean", "none"), ("unknown", "none"),
+                               ("behind", "carry 2"), ("conflicting", "carry 2")):
+            self.api.pulls["claude/2"]["standing"] = standing
+            self.assertEqual(team.next_for(self.api, "w1"), move, standing)
 
     def test_a_claim_waiting_on_its_checks_or_merge_costs_no_run(self):
         self.api.add_issue(2, ["claimed", "agent:w1"])
