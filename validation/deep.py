@@ -14,7 +14,7 @@ the guard by. The soak and the gate's lanes are soak.py's and
 gate_search.py's; scripts/validate.py deep runs them all and writes what
 each found under an output folder, with every violation shortened
 (shrink.py) and written as a trace file replay.py plays
-(validation-out/traces/<guarantee>-<n>.json, DESIGN.md 6.6), so a
+(validation-out/traces/<guarantee>-<space>-<n>.json, DESIGN.md 6.6), so a
 finding is replayed with `python3 scripts/validate.py replay <file>`,
 in memory or over git.
 
@@ -30,6 +30,7 @@ key is a soundness risk the owner's rule, correctness over cost, does
 not take; the lane runs for as long as it takes.
 """
 
+import hashlib
 import json
 import pickle
 import random
@@ -113,9 +114,35 @@ class Deep(NamedTuple):
 
 # How often a search writes its checkpoint, in seconds.
 CHECKPOINT_EVERY = 900.0
+# The code a checkpoint or a results file was made under: the harness and
+# the library, every .py file of each.
+CODE_DIRS = ("validation", "sdlc_protocol")
 
 
-def write_checkpoint(path, seen, stack, found, transitions, seconds):
+def code_digest():
+    """A digest of the harness's and the library's source, so a checkpoint
+    or a results file made under other code is told from one made under
+    this: a search continued under changed code would skip every state
+    the old code had seen and report the new code's result from the
+    old's."""
+    root = Path(__file__).resolve().parent.parent
+    digest = hashlib.sha256()
+    for folder in CODE_DIRS:
+        for file in sorted((root / folder).rglob("*.py")):
+            digest.update(str(file.relative_to(root)).encode("ascii"))
+            digest.update(b"\0" + file.read_bytes() + b"\0")
+    return digest.hexdigest()
+
+
+def stamp_of(start, scope, depth):
+    """What makes a search the one it is: its start, its scope, its depth
+    and the code; a checkpoint is continued only by the search that wrote
+    it."""
+    return {"start": start.digest(), "scope": hashlib.sha256(repr(scope).encode("ascii")).hexdigest(),
+            "depth": depth, "library": __version__, "code": code_digest()}
+
+
+def write_checkpoint(path, stamp, seen, stack, found, transitions, seconds):
     """The search's whole state, so a restart continues it: written beside
     the path and moved into place, so a restart during the write finds the
     one before."""
@@ -123,14 +150,20 @@ def write_checkpoint(path, seen, stack, found, transitions, seconds):
     path.parent.mkdir(parents=True, exist_ok=True)
     partial = path.with_name(path.name + ".partial")
     with partial.open("wb") as file:
-        pickle.dump({"seen": seen, "stack": stack, "found": found, "transitions": transitions, "seconds": seconds},
-                    file, protocol=pickle.HIGHEST_PROTOCOL)
+        pickle.dump({"stamp": stamp, "seen": seen, "stack": stack, "found": found, "transitions": transitions,
+                     "seconds": seconds}, file, protocol=pickle.HIGHEST_PROTOCOL)
     partial.replace(path)
 
 
 def read_checkpoint(path):
     with Path(path).open("rb") as file:
         return pickle.load(file)
+
+
+def stamp_differences(kept, stamp):
+    """Why a checkpoint is not this search's: each field of its stamp that
+    differs, by name; none when it is."""
+    return [name for name in stamp if kept.get("stamp", {}).get(name) != stamp[name]]
 
 
 def search(start, scope, depth, known=oracle.AS_BUILT, budget=None, say=None, every=200000, checkpoint=None,
@@ -142,20 +175,31 @@ def search(start, scope, depth, known=oracle.AS_BUILT, budget=None, say=None, ev
     written to every checkpoint_every seconds and continued from when the
     file is there, so a search of hours survives a restart of the
     machine; the search is the same one, since its order is fixed, and
-    the budget and the seconds count from the first start. The caller
-    removes the file once it has kept the result. A model with a run
-    between its halves holds a client and cannot be pickled, so the
-    checkpoint is for the lane's spaces, none of which splits runs."""
+    the budget and the seconds count from the first start. The file
+    carries a stamp of the search that wrote it (stamp_of: the start, the
+    scope, the depth, the library and the code), and a file another
+    search wrote, or this one under other code, is left and the search
+    starts over, since continuing it would skip every state the other
+    had seen. The caller removes the file once it has kept the result. A
+    model with a run between its halves holds a client and cannot be
+    pickled, so the checkpoint is for the lane's spaces, none of which
+    splits runs."""
     began = time.perf_counter()
     seen = {start.digest(): 0}
     stack = [(start, ())]
     found, transitions, before = {}, 0, 0.0
+    stamp = stamp_of(start, scope, depth) if checkpoint is not None else None
     if checkpoint is not None and Path(checkpoint).exists():
         kept = read_checkpoint(checkpoint)
-        seen, stack, found, transitions, before = (kept["seen"], kept["stack"], kept["found"], kept["transitions"],
-                                                   kept["seconds"])
-        if say is not None:
-            say(f"continued from the checkpoint: {len(seen)} states, {transitions} transitions, {before:.0f} s")
+        differing = stamp_differences(kept, stamp)
+        if differing:
+            if say is not None:
+                say(f"the checkpoint is another search's ({', '.join(differing)} differ), so this one starts over")
+        else:
+            seen, stack, found, transitions, before = (kept["seen"], kept["stack"], kept["found"],
+                                                       kept["transitions"], kept["seconds"])
+            if say is not None:
+                say(f"continued from the checkpoint: {len(seen)} states, {transitions} transitions, {before:.0f} s")
     written = began
     stopped = False
 
@@ -167,7 +211,7 @@ def search(start, scope, depth, known=oracle.AS_BUILT, budget=None, say=None, ev
             stopped = True
             break
         if checkpoint is not None and time.perf_counter() - written > checkpoint_every:
-            write_checkpoint(checkpoint, seen, stack, found, transitions, elapsed())
+            write_checkpoint(checkpoint, stamp, seen, stack, found, transitions, elapsed())
             written = time.perf_counter()
             if say is not None:
                 say(f"checkpoint written: {len(seen)} states, {transitions} transitions, {elapsed():.0f} s")
@@ -192,7 +236,7 @@ def search(start, scope, depth, known=oracle.AS_BUILT, budget=None, say=None, ev
             if say is not None and transitions % every == 0:
                 say(f"{len(seen)} states, {transitions} transitions, {elapsed():.0f} s")
     if checkpoint is not None and stopped:
-        write_checkpoint(checkpoint, seen, stack, found, transitions, elapsed())
+        write_checkpoint(checkpoint, stamp, seen, stack, found, transitions, elapsed())
     return Deep("", len(seen), transitions, depth, elapsed(), tuple(found.values()), stopped)
 
 
@@ -238,11 +282,12 @@ def step_json(model, verb):
     return {"verb": name, "actor": actor, "args": listed, "at": at}
 
 
-def trace_json(space, trace, violated="", title=""):
+def trace_json(space, trace, violated="", title="", depth=None):
     """A counterexample as a trace file (replay.py's shape): the seeded
     repository, the first board run, the prefix and the trace, each step
     at its hour, with released branches named symbolically so the file
-    plays in any world."""
+    plays in any world; depth is the search's, which --quick lowers, else
+    the space's."""
     scenario = space.scenario()
     model = run.seeded(scenario)
     steps = [{"verb": "board", "event": cycle.SCHEDULE, "ref": "", "faults": [], "at": 0}]
@@ -254,7 +299,7 @@ def trace_json(space, trace, violated="", title=""):
         "finding": "", "title": title or f"a counterexample of the deep lane's {space.name}",
         "status": "counterexample", "violated": violated, "breaks": [violated.split()[0]] if violated else [],
         "library": {"version": __version__},
-        "scope": {"name": space.name, "depth": space.depth, "workers": list(space.scope.workers),
+        "scope": {"name": space.name, "depth": depth or space.depth, "workers": list(space.scope.workers),
                   "issues": list(space.scope.issues), "faults": list(space.scope.faults),
                   "waits": list(space.scope.waits), "skews": list(space.scope.skews)},
         "issues": {str(n): list(labels) for n, labels in scenario.issues.items()},
@@ -273,14 +318,14 @@ def write_trace(folder, name, data):
     return path
 
 
-def write_counterexamples(folder, space, found, known=oracle.AS_BUILT, budget=60.0):
+def write_counterexamples(folder, space, found, known=oracle.AS_BUILT, budget=60.0, depth=None):
     """Each violation of a search, shortened and written as a trace file;
     the files' paths with what each holds."""
     written = []
     for at, violation in enumerate(sorted(found, key=lambda f: (f.guarantee, f.detail)), 1):
         target = (violation.guarantee, violation.detail)
         shorter = shrink.shrink(space.start, space.scope, symbolic_trace(space, violation.trace), target, known, budget)
-        data = trace_json(space, shorter.trace, f"{violation.guarantee} {violation.detail}")
+        data = trace_json(space, shorter.trace, f"{violation.guarantee} {violation.detail}", depth=depth)
         path = write_trace(folder, f"{violation.guarantee}-{space.name}-{at}", data)
         written.append({"guarantee": violation.guarantee, "detail": violation.detail, "count": violation.count,
                         "trace": [str(v) for v in shorter.trace], "found_at": len(violation.trace),
@@ -337,7 +382,8 @@ def guard_recorded_again(scratch):
 
 def observe(model, outcomes):
     """What a step left that both worlds must agree on: whether the step
-    was taken and by what word, the refs by name with a released name's
+    was taken and, when not, whether the guard or git refused it (git's
+    words differ from the model's), the refs by name with a released name's
     sha replaced, each claim branch's tree and standing, the issues'
     labels and states, the pull requests, the bot's comments by kind, and
     the board's sections. The shas themselves differ between the worlds,

@@ -16,24 +16,34 @@ searches take hours and share nothing.
 The results file (<out>/deep.json) is rewritten as each part ends, so a
 run that is killed leaves what it had measured, and each search writes
 a checkpoint of its state under <out>/checkpoints/ every quarter of an
-hour (deep.search), removed once its result is in the file; `--resume`
-starts a run again from the file and the checkpoints, running only the
-parts the file does not hold and continuing each search from where its
-checkpoint left it, so a restart of the machine costs a quarter of an
-hour and not the hours. The run is red, exit code 1, on any violation,
-mismatch, disagreement, differing guard answer, or a search a budget
-stopped before it was done: a stopped search has not checked its space,
-and the owner's rule is that a missed violation costs more than the
-hours.
+hour (deep.search), removed once its result is in the file and the
+search was not stopped; `--resume` starts a run again from the file and
+the checkpoints, running only the parts the file does not hold, a
+search a budget stopped among the parts it lacks, and continuing each
+search from where its checkpoint left it, so a restart of the machine
+costs a quarter of an hour and not the hours. The file records the
+settings and the code the run was made under (the "run" entry), and a
+resume under others is refused, since a part measured under other
+settings or other code is not this run's; a run that is not a resume
+starts clean, with the checkpoints and the trace files an earlier run
+left under <out> removed first. The run is red, exit code 1, on any
+violation, mismatch, disagreement, differing guard answer, a part that
+raised, or a search a budget stopped before it was done: a stopped
+search has not checked its space, and the owner's rule is that a missed
+violation costs more than the hours.
 """
 
 import json
 import os
+import shutil
 import sys
 import tempfile
 import time
+import traceback
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
+
+from sdlc_protocol import __version__
 
 from . import deep, gate_search, known, oracle, shrink, soak
 
@@ -48,6 +58,8 @@ GATE_LENGTH = 12
 SHRINK_BUDGET = 600.0
 # Where the searches keep their checkpoints under the output folder.
 CHECKPOINTS = "checkpoints"
+# The parts --only may name.
+PARTS = ("search", "soak", "gate", "git", "guard", "conformance")
 
 # What --quick runs: a few steps of everything, for a look and for the tests.
 QUICK = {"depths": {"E-two": 3, "E-deep": 4, "E-faults": 2}, "soak_seeds": 4, "soak_steps": 40, "soak_chunk": 2,
@@ -59,6 +71,9 @@ class Settings:
 
     def __init__(self, out, only=(), jobs=None, budget=None, quick=False, resume=False,
                  checkpoint_every=deep.CHECKPOINT_EVERY):
+        unknown = [part for part in only if part not in PARTS]
+        if unknown:
+            raise ValueError(f"--only takes {', '.join(PARTS)}, not {', '.join(unknown)}")
         self.out = Path(out)
         self.only = tuple(only)
         self.jobs = jobs or os.cpu_count() or 2
@@ -82,6 +97,15 @@ class Settings:
     def checkpoint(self, name):
         return self.out / CHECKPOINTS / f"{name}.pickle"
 
+    def record(self):
+        """What shapes the run's results: a file made under other settings
+        or other code is not continued."""
+        return {"library": __version__, "code": deep.code_digest(), "quick": self.quick,
+                "depths": {name: self.depths.get(name, space.depth) for name, space in deep.SPACES.items()},
+                "soak": {"seeds": self.soak_seeds, "steps": self.soak_steps, "chunk": self.soak_chunk},
+                "conformance": {"paths": self.conformance_paths, "length": self.conformance_length},
+                "gate": {"depth": self.gate_depth, "sequences": self.gate_sequences, "length": self.gate_length}}
+
 
 # --- the parts, each a function a process runs ---------------------------------
 
@@ -93,7 +117,7 @@ def run_search(name, out, depth, budget, checkpoint=None, checkpoint_every=deep.
     space = deep.SPACES[name]
     found = deep.search_space(space, oracle.AS_BUILT, budget, lambda line: say(f"{name}: {line}"), depth, checkpoint,
                               checkpoint_every)
-    written = deep.write_counterexamples(out, space, found.found, oracle.AS_BUILT, SHRINK_BUDGET)
+    written = deep.write_counterexamples(out, space, found.found, oracle.AS_BUILT, SHRINK_BUDGET, found.depth)
     for violation in written:
         violation["finding"] = known.search_finding(name, violation["guarantee"], violation["detail"])
     return {"space": name, "depth": found.depth, "states": found.states, "transitions": found.transitions,
@@ -145,8 +169,9 @@ def run_conformance(name, counterexamples, count, length, seed):
 
 def done_parts(results):
     """The parts a results file already holds, by name, which a resumed
-    run does not run again."""
-    done = {f"search {s['space']}" for s in results["searches"]}
+    run does not run again; a search the budget stopped is not done, and
+    a resume runs it again from its checkpoint."""
+    done = {f"search {s['space']}" for s in results["searches"] if not s["stopped"]}
     done |= {f"soak {c['seeds'][0]}" for c in results["soak"]["chunks"]}
     done |= {f"conformance {c['space']}" for c in results["conformance"]}
     if results["gate"] is not None:
@@ -207,14 +232,15 @@ def second_wave(settings, pool, results):
     return futures
 
 
-def fresh_results():
-    return {"searches": [], "soak": {"chunks": []}, "gate": None, "git": {"scenarios": [], "traces": []},
-            "guard": None, "conformance": [], "seconds": 0.0, "red": []}
+def fresh_results(settings=None):
+    return {"run": settings.record() if settings is not None else None, "searches": [], "soak": {"chunks": []}, "gate": None,
+            "git": {"scenarios": [], "traces": []}, "guard": None, "conformance": [], "errors": [], "seconds": 0.0,
+            "red": []}
 
 
 def take(results, part, result):
     if part.startswith("search "):
-        results["searches"].append(result)
+        results["searches"] = [s for s in results["searches"] if s["space"] != result["space"]] + [result]
     elif part.startswith("soak "):
         results["soak"]["chunks"].append(result)
     elif part == "gate":
@@ -231,7 +257,7 @@ def take(results, part, result):
 
 def red_lines(results):
     """Why the run is red, one line each; none when it is green."""
-    lines = []
+    lines = [f"{e['part']} raised: {e['error']}" for e in results.get("errors", [])]
     for s in results["searches"]:
         if s["stopped"]:
             lines.append(f"search {s['space']}: stopped by the budget after {s['states']} states, not done")
@@ -245,6 +271,8 @@ def red_lines(results):
     gate = results["gate"]
     if gate is not None:
         for memory in gate["memory"]:
+            if memory.get("stopped"):
+                lines.append(f"gate {memory['policy']}: stopped by the budget after {memory['states']} states, not done")
             if memory["violation_count"]:
                 lines.append(f"gate {memory['policy']}: {memory['violation_count']} violations over MemoryWorld")
         for m in gate["s05g"]["mismatches"]:
@@ -261,7 +289,7 @@ def red_lines(results):
     if guard is not None and guard["differing"]:
         lines.append(f"guard: git answers {len(guard['differing'])} argument lists differently from guard_git.json, "
                      f"e.g. {guard['differing'][0]!r}")
-    if guard is not None and guard["missing"]:
+    if guard is not None and guard.get("missing"):
         lines.append(f"guard: guard_git.json holds {len(guard['missing'])} argument lists the grammar no longer makes, "
                      f"e.g. {guard['missing'][0]!r}")
     for c in results["conformance"]:
@@ -295,7 +323,8 @@ def summary_lines(results):
     if gate is not None:
         for m in gate["memory"]:
             lines.append(f"gate {m['policy']}: depth {m['depth']}, {m['states']} states, {m['transitions']} transitions, "
-                         f"{m['seconds']} s, {m['violation_count']} violations")
+                         f"{m['seconds']} s, {m['violation_count']} violations"
+                         f"{', stopped by the budget' if m.get('stopped') else ''}")
         lines.append(f"gate S05g: {len(gate['s05g']['timeline'])} acts, {len(gate['s05g']['mismatches'])} mismatches")
         g = gate["git"]
         lines.append(f"gate over git: {g['sequences']} sequences, {g['acts']} acts, {g['merges']} merges, "
@@ -309,7 +338,7 @@ def summary_lines(results):
     if results["guard"] is not None:
         lines.append(f"guard: {results['guard']['recorded']} argument lists recorded again under {results['guard']['git']}, "
                      f"{len(results['guard']['differing'])} differing from guard_git.json ({results['guard']['recorded_git']}), "
-                     f"{len(results['guard']['missing'])} of the file's missing")
+                     f"{len(results['guard'].get('missing', []))} of the file's missing")
     if results["conformance"]:
         lines.append(f"conformance: {sum(c['paths'] for c in results['conformance'])} paths and "
                      f"{sum(c['counterexamples'] for c in results['conformance'])} counterexamples in both worlds, "
@@ -320,17 +349,29 @@ def summary_lines(results):
 
 def kept_results(settings):
     """A resumed run's results so far, from the file the last run left,
-    counting its seconds on; a fresh run's otherwise."""
+    counting its seconds on, when the file was made under this run's
+    settings and code; a fresh run's otherwise, with what an earlier run
+    left under <out> removed."""
     file = settings.out / "deep.json"
+    record = settings.record()
     if settings.resume and file.exists():
         results = json.loads(file.read_text(encoding="ascii"))
+        kept = results.get("run", {})
+        differing = [name for name in record if kept.get(name) != record[name]]
+        if differing:
+            raise SystemExit(f"{file} was made under other settings or other code ({', '.join(differing)} differ), "
+                             f"so it is not resumed; run without --resume, or into another --out")
+        results.setdefault("errors", [])
         return results, time.perf_counter() - results["seconds"]
-    return fresh_results(), time.perf_counter()
+    for folder in (settings.out / CHECKPOINTS, settings.out / deep.TRACES):
+        shutil.rmtree(folder, ignore_errors=True)
+    return fresh_results(settings), time.perf_counter()
 
 
 def run(settings, out=sys.stdout):
     """The whole lane; the results, written to <out>/deep.json as they
-    come, and exit code 1 when any part is red."""
+    come, and exit code 1 when any part is red. A part that raises is
+    recorded, red, and the others go on."""
     results, began = kept_results(settings)
     write_results(settings, results, began)
     with ProcessPoolExecutor(max_workers=settings.jobs) as pool:
@@ -338,9 +379,17 @@ def run(settings, out=sys.stdout):
             futures = wave(settings, pool, results)
             for future in as_completed(futures):
                 part = futures[future]
-                take(results, part, future.result())
+                try:
+                    result = future.result()
+                except Exception as error:
+                    results["errors"].append({"part": part, "error": repr(error),
+                                              "traceback": "".join(traceback.format_exception(error))})
+                    write_results(settings, results, began)
+                    print(f"    {part} raised at {results['seconds']} s: {error!r}", file=out, flush=True)
+                    continue
+                take(results, part, result)
                 write_results(settings, results, began)
-                if part.startswith("search "):
+                if part.startswith("search ") and not result["stopped"]:
                     settings.checkpoint(part[len("search "):]).unlink(missing_ok=True)
                 print(f"    {part} done at {results['seconds']} s", file=out, flush=True)
     for line in summary_lines(results):

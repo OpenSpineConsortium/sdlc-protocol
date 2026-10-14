@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from sdlc_protocol import gate  # noqa: E402
-from validation import gate_search  # noqa: E402
+from validation import gate_search, git_store, lanes  # noqa: E402
 
 
 class OverMemory(unittest.TestCase):
@@ -23,6 +23,20 @@ class OverMemory(unittest.TestCase):
                 found = gate_search.explore(name, 4)
                 self.assertGreater(found.states, 500)
                 self.assertEqual(found.violations, ())
+
+    def test_an_exploration_the_budget_stops_says_so_and_the_lane_reds_it(self):
+        stopped = gate_search.explore("account", 8, budget=0.0)
+        self.assertTrue(stopped.stopped)
+        self.assertFalse(gate_search.explore("account", 2).stopped)
+        results = lanes.fresh_results()
+        results["gate"] = {"memory": [{"policy": "account", "depth": 8, "states": stopped.states, "transitions": 1,
+                                       "seconds": 0.0, "stopped": True, "violations": [], "violation_count": 0}],
+                           "s05g": {"timeline": [], "mismatches": [], "violations": []},
+                           "git": {"sequences": 0, "acts": 0, "merges": 0, "main_moved": 0, "refusals": 0, "violations": [],
+                                   "seconds": 0.0}}
+        self.assertTrue(gate_search.red(results["gate"]))
+        self.assertEqual(lanes.red_lines(results), [f"gate account: stopped by the budget after {stopped.states} states, not done"])
+        self.assertIn("stopped by the budget", lanes.summary_lines(results)[0])
 
     def test_a_landing_that_moves_main_without_saying_so_is_a_violation(self):
         policy = gate_search.POLICIES["arm"]
@@ -45,6 +59,21 @@ class OverGit(unittest.TestCase):
         self.assertEqual(results["sequences"], 3)
         self.assertEqual(results["violations"], [])
         self.assertGreater(results["merges"], 0)
+
+    def test_the_shared_remote_s_repositories_carry_the_git_world_s_settings(self):
+        """git hands the receive-pack of a local remote none of the pushing
+        side's -c settings, so the bare repository's own config must turn
+        the automatic maintenance off, or it races the folder's removal."""
+        remote = gate_search.SharedRemote()
+        try:
+            clone = remote.clone("a")
+            for repo in (remote.bare, remote.root / "seed", clone):
+                for name, value in git_store.SETTINGS:
+                    with self.subTest(repo=repo.name, setting=name):
+                        self.assertEqual(gate_search.git(repo, "config", "--local", "--get", name), value)
+        finally:
+            remote.close()
+        self.assertFalse(remote.root.exists())
 
     def test_a_sequence_mostly_follows_the_gate_s_steps(self):
         acts = gate_search.actions(("a", "b"), (1, 2), checks=False)

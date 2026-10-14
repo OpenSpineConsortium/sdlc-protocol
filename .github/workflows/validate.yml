@@ -16,7 +16,10 @@ name: Validate
 # not it is green. Each search runs for as long as it takes, under a
 # budget of five hours so the artifact is uploaded before the job's six
 # run out; a search the budget stopped is red, since it has not checked
-# its space. Both read the checkout and write nothing, so the token reads
+# its space. The searches' checkpoints (validation-out/checkpoints/, a
+# pickle of each search's state every quarter of an hour) stay out of
+# the artifact, since nothing resumes a run here and each is hundreds of
+# megabytes. Both read the checkout and write nothing, so the token reads
 # contents and nothing else. Neither is a required check: the required
 # check, "check", runs each mutant on its shortest trace
 # (tests/test_validation_mutants.py) and a few steps of the deep lane
@@ -28,7 +31,9 @@ on:
     paths:
       - "validation/**"
       - "sdlc_protocol/**"
+      - "scripts/validate.py"
       - "tests/test_validation_*.py"
+      - "tests/test_validate.py"
       - ".github/workflows/validate.yml"
   schedule:
     - cron: "37 5 * * 1"
@@ -82,5 +87,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: validation-out
-          path: validation-out/
+          path: |
+            validation-out/
+            !validation-out/checkpoints/
           if-no-files-found: ignore

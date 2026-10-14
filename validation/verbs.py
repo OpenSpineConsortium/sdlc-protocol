@@ -319,7 +319,9 @@ def carry_on(model, worker, number, released_ref):
     """The next worker carries a released claim's work on: it cherry-picks
     the released branch's commits after its own claim commit, all but the
     old claim file, which its own claim file replaces (.claude/skills/claim
-    in the template), and pushes."""
+    in the template), and pushes. A merge commit on the released branch
+    is skipped, as git's cherry-pick skips it (the git world's -n pick of
+    one fails with no -m), since what it merged in is on main already."""
     ref = claim_ref(number)
     head, main = model.refs[ref], model.refs[MAIN]
     own = model.in_order(model.ancestors(model.refs[released_ref]) - model.ancestors(main))
@@ -327,6 +329,8 @@ def carry_on(model, worker, number, released_ref):
     tip = head
     for sha in own:
         record, parent = model.commits[sha], (model.commits[sha].parents or ("",))[0]
+        if len(record.parents) > 1:
+            continue
         changed = [p for p in model.changed(parent, sha) if p != claim_path]
         if not changed:
             continue

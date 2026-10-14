@@ -1,10 +1,9 @@
 """The git world (validation/git_store.py): the scenarios and the regression
 traces play over a real bare repository with the results known.json
 records for the memory world, and git itself takes or refuses each push
-in its own words: a second claim is "fetch first", a lease with no
-remote-tracking ref "stale info", and the lease after a fetch is taken,
-which is F7, so the guard's fence, reading the claim files in the clone,
-stands before git and refuses it. The required check plays a few; the
+in its own words: a second claim is "fetch first", and the lease after
+a fetch is taken, which is F7, so the guard's fence, reading the claim
+files in the clone, stands before git and refuses it. The required check plays a few; the
 deep lane plays them all (scripts/validate.py deep)."""
 
 import sys
@@ -20,7 +19,9 @@ sys.path.insert(0, str(ROOT))
 from validation import git_store, known, model as M, replay, run, scenarios, verbs  # noqa: E402
 from validation.verbs import Scope, Verb  # noqa: E402
 
-BUDGET_SECONDS = 40
+# A guard against a hung git, not against a slow runner: the lane's own
+# timing is what scripts/validate.py measures.
+BUDGET_SECONDS = 300
 
 
 def results(record):
@@ -81,7 +82,7 @@ class TheStore(unittest.TestCase):
             self.assertIn("fetch first", second.note)
             lease = verbs.apply(model, Verb("lease-onto", "b", (1,)), Scope(careless=True))
             self.assertFalse(lease.taken, lease.note)
-            self.assertIn("a", lease.refused_by_guard)
+            self.assertIn("claude/1 on origin is a's claim", lease.refused_by_guard)
             self.assertFalse(lease.allowed_shape)
             self.assertIn("- Worker: a", model.tree(model.refs["claude/1"])["docs/agents/claims/1.md"])
             with mock.patch.object(git_store, "guard_says", lambda *args: None):

@@ -36,7 +36,7 @@ from sdlc_protocol import gate
 from sdlc_protocol.adapters.bare_git import BareGitWorld
 from sdlc_protocol.adapters.memory import MemoryWorld
 
-from .git_store import ENV, settings_arguments
+from .git_store import ENV, configure, settings_arguments
 
 POLICIES = {
     "account": gate.ACCOUNT_POLICY,
@@ -202,18 +202,22 @@ class Exploration(NamedTuple):
     depth: int
     seconds: float
     violations: tuple  # (trace of acts as strings, problems)
+    stopped: bool = False  # True when the budget ended it before it was done
 
 
 def explore(name, depth, agents=("a", "b"), issues=(1, 2), budget=None):
     """Every interleaving of the acts to depth over MemoryWorld under the
-    policy, breadth first, keyed by the world and the queue."""
+    policy, breadth first, keyed by the world and the queue; stopped, and
+    so not a check of its space, when the budget runs out."""
     policy, pusher = POLICIES[name], MemoryPusher()
     world, queue = World(), gate.Queue({n: "a" for n in issues}, open_queue=True)
     seen, frontier = {key(world, queue)}, deque([(world, queue, (), {})])
     violations, transitions, began = [], 0, time.perf_counter()
     acts = actions(agents, issues)
+    stopped = False
     while frontier:
         if budget is not None and time.perf_counter() - began > budget:
+            stopped = True
             break
         world, queue, trace, merged = frontier.popleft()
         if len(trace) >= depth:
@@ -234,7 +238,7 @@ def explore(name, depth, agents=("a", "b"), issues=(1, 2), budget=None):
             if k not in seen:
                 seen.add(k)
                 frontier.append((next_world, next_queue, trace + (act,), next_merged))
-    return Exploration(name, len(seen), transitions, depth, time.perf_counter() - began, tuple(violations))
+    return Exploration(name, len(seen), transitions, depth, time.perf_counter() - began, tuple(violations), stopped)
 
 
 # --- the git world --------------------------------------------------------------
@@ -251,16 +255,24 @@ def git(cwd, *args, check=True, actor="agent"):
 class SharedRemote:
     """A bare repository seeded with one commit on main and a clone per
     agent with the bare repository as its remote `team`, as
-    tests/test_bare_git.py builds them."""
+    tests/test_bare_git.py builds them. Each repository is told
+    git_store.SETTINGS in its own config, as the git world's are, since
+    git hands the receive-pack it starts for a local remote none of the
+    settings the pushing side carries, and git's automatic maintenance,
+    detached, would otherwise still write into the bare repository while
+    the folder is removed; the folder's removal ignores what it cannot
+    remove for the same reason."""
 
     def __init__(self):
-        self.tmp = tempfile.TemporaryDirectory(prefix="sdlc-gate-lane-")
+        self.tmp = tempfile.TemporaryDirectory(prefix="sdlc-gate-lane-", ignore_cleanup_errors=True)
         self.root = Path(self.tmp.name)
         self.bare = self.root / "team.git"
         git(self.root, "init", "--quiet", "--bare", "--initial-branch=main", str(self.bare))
+        configure(self.bare)
         seed = self.root / "seed"
         seed.mkdir()
         git(seed, "init", "--quiet", "--initial-branch=main")
+        configure(seed)
         (seed / "app.py").write_text(BASE_TEXT, encoding="utf-8")
         git(seed, "add", "app.py")
         git(seed, "commit", "--quiet", "-m", "base")
@@ -273,6 +285,7 @@ class SharedRemote:
         if agent not in self.clones:
             path = self.root / agent
             git(self.root, "clone", "--quiet", "--origin", "team", str(self.bare), str(path), actor=agent)
+            configure(path)
             self.clones[agent] = path
         return self.clones[agent]
 
@@ -481,7 +494,7 @@ def lane(depth=8, count=40, length=8, seed=0, budget=None):
     for name in POLICIES:
         found = explore(name, depth, budget=budget)
         results["memory"].append({"policy": name, "states": found.states, "transitions": found.transitions,
-                                  "depth": found.depth, "seconds": round(found.seconds, 1),
+                                  "depth": found.depth, "seconds": round(found.seconds, 1), "stopped": found.stopped,
                                   "violations": [{"trace": t, "problems": p} for t, p in found.violations[:20]],
                                   "violation_count": len(found.violations)})
     results["s05g"] = s05g()
@@ -490,5 +503,5 @@ def lane(depth=8, count=40, length=8, seed=0, budget=None):
 
 
 def red(results):
-    return (any(r["violation_count"] for r in results["memory"]) or results["s05g"]["mismatches"]
+    return (any(r["violation_count"] or r.get("stopped") for r in results["memory"]) or results["s05g"]["mismatches"]
             or results["s05g"]["violations"] or results["git"]["violations"])

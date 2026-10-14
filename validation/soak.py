@@ -2,8 +2,8 @@
 
 A search reaches every state within a few steps; the soak reaches the
 states that take a hundred: five workers on six issues over days of the
-scenario clock, claims released and claimed again, work carried on,
-branches renamed and renamed back, main moving under open pull requests,
+scenario clock, claims released and claimed again, released heads
+pushed again, branches renamed and renamed back, main moving under open pull requests,
 every fault kind, the owner releasing by hand, a stranger posting
 markers. Each walk is driven by a seed: every worker gets a scripted
 policy (policies.py) drawn by the seed, and at each step the seed picks
@@ -11,10 +11,12 @@ who acts, a worker by its policy or by a verb of its own, a person, the
 clock or the board, so a walk replays exactly from its seed, and the
 scope is verbs.enabled's, so every verb taken is one the search could
 have taken. Every guarantee is checked after every verb
-(invariants.step_checks); a violation is kept with the whole walk up to
-it, which the deep lane shortens (shrink.py) and writes as a trace file.
-The walks are independent, so the lane runs them over several
-processes.
+(invariants.step_checks); a violation is kept once, at the step it first
+shows, with the whole walk up to it, which the deep lane shortens
+(shrink.py) and writes as a trace file: a wrong cell or an open pull
+request that stays wrong is the same fault at every board run after it,
+and the search keeps it once too. The walks are independent, so the lane
+runs them over several processes.
 """
 
 import random
@@ -131,7 +133,8 @@ def walk(seed, steps=200, space=SPACE, known=oracle.AS_BUILT):
             for effect in invariants.effects_of(outcome.run.calls):
                 counts[f"{effect.kind}:{effect.detail}" if effect.kind == "comment" else effect.kind] += 1
         for problem in invariants.step_checks(before, model, verb, outcome, known):
-            violations.append((problem.guarantee, problem.detail, at))
+            if (problem.guarantee, problem.detail) not in {(g, d) for g, d, _ in violations}:
+                violations.append((problem.guarantee, problem.detail, at))
     return Walk(seed, len(taken), time.perf_counter() - began, tuple(taken), tuple(violations), dict(counts))
 
 

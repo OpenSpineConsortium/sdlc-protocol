@@ -136,14 +136,15 @@ RUNNERS = {"scenarios": run_scenarios, "traces": run_traces, "explore": run_expl
 
 
 def option(options, name, default=None):
-    """The value after --name in the options, or default; a flag with no
-    value answers True."""
+    """The value after --name in the options, or default; --name with no
+    value after it is refused, since every option here takes one (a
+    switch, --quick or --resume, is read by its presence alone)."""
     if name not in options:
         return default
     at = options.index(name)
     if at + 1 < len(options) and not options[at + 1].startswith("--"):
         return options[at + 1]
-    return True
+    raise SystemExit(f"{name} takes a value\n{__doc__}")
 
 
 def world_of(options):
@@ -157,9 +158,12 @@ def run_deep(out, options):
     only = option(options, "--only", "")
     jobs = option(options, "--jobs")
     budget = option(options, "--budget")
-    settings = lanes.Settings(option(options, "--out", str(lanes.deep.OUT)), [p for p in only.split(",") if p],
-                             int(jobs) if jobs else None, float(budget) if budget else None, "--quick" in options,
-                             "--resume" in options)
+    try:
+        settings = lanes.Settings(option(options, "--out", str(lanes.deep.OUT)), [p for p in only.split(",") if p],
+                                 int(jobs) if jobs else None, float(budget) if budget else None, "--quick" in options,
+                                 "--resume" in options)
+    except ValueError as error:
+        raise SystemExit(f"{error}\n{__doc__}")
     return lanes.run(settings, out)
 
 

@@ -51,6 +51,19 @@ class TheScript(unittest.TestCase):
             self.assertTrue((Path(folder) / "deep.json").exists())
         self.assertIn("deep lane: ok", out.getvalue())
 
+    def test_an_option_with_no_value_is_refused(self):
+        """--jobs with nothing after it would be read as True, which is 1."""
+        with tempfile.TemporaryDirectory() as folder, self.assertRaises(SystemExit) as refused:
+            validate.main(["deep", "--quick", "--only", "search", "--out", folder, "--jobs"], io.StringIO())
+        self.assertIn("--jobs takes a value", str(refused.exception))
+
+    def test_deep_refuses_a_part_only_does_not_name(self):
+        """A misspelt part would run nothing and say ok."""
+        with tempfile.TemporaryDirectory() as folder, self.assertRaises(SystemExit) as refused:
+            validate.main(["deep", "--quick", "--only", "searches", "--out", folder], io.StringIO())
+        self.assertIn("--only takes search, soak, gate, git, guard, conformance, not searches", str(refused.exception))
+        self.assertIn("python3 scripts/validate.py deep", str(refused.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

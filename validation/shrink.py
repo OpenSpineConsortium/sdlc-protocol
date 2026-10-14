@@ -9,7 +9,9 @@ each half tried without; when neither half can go, in four, and so on,
 each success resetting the split one coarser, down to single steps, so a
 walk of two hundred steps loses its idle stretches in a few replays
 instead of one step per replay; the last pass tries every single step,
-so the result is 1-minimal, as before. A candidate is replayed from the
+so the result is 1-minimal, as before, when the budget lets the passes
+finish, and minimal for the detail as matched, word for word, so a step
+that only moves a number in the detail stays. A candidate is replayed from the
 search's own start, each verb taken only where the scope enables it, so
 the shortened trace is one the search could have met, and the violation
 it shows is the same guarantee with the same detail. The replay is the
@@ -78,6 +80,8 @@ def by_chunks(trace, fits, deadline):
     while len(trace) >= 2 and time.perf_counter() < deadline:
         removed = False
         for low, high in chunks(len(trace), count):
+            if time.perf_counter() >= deadline:
+                return trace
             candidate = trace[:low] + trace[high:]
             if fits(candidate):
                 trace, count, removed = candidate, max(count - 1, 2), True
