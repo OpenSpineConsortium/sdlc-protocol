@@ -635,8 +635,36 @@ class WhenWorkBegan(unittest.TestCase):
                 self.assertIn("| docs/b.md | #63, #5 |", board.render(live))
                 self.assertEqual(github.began_refused_lines(live), [
                     f"claude/31: GitHub refused to say when the branch was made "
-                    f"({found['began_refused']['claude/31']}), so the Overlaps order its work as work nothing dates"])
+                    f"({found['began_refused']['claude/31']}), so the Overlaps date its pull request by when it "
+                    f"was opened"])
         self.assertEqual(github.began_refused_lines(board.Snapshot.from_dict(snap)), [])
+
+    def test_the_log_says_a_refused_claim_lands_last(self):
+        """F13's second review: a claim with no pull request yet is the work
+        nothing dates once GitHub refuses its branch, and lands last, where
+        a pull request's work is dated by its opening."""
+        snap, answers = wide_answers()
+        answers[NEWEST_CREATIONS] = FakeAnswer([made("claude/31", "2026-09-20T08:00:00Z")])
+        answers[activity_path("claude/5")] = Refusal(502)
+        api, _ = client(answers)
+        live = github.snapshot(api, snap["sha"], snap["default_branch"])
+        self.assertIn("| docs/b.md | #63, #5 |", board.render(live))
+        self.assertEqual(github.began_refused_lines(live), [
+            f"claude/5: GitHub refused to say when the branch was made ({live.began_refused['claude/5']}), "
+            f"so the Overlaps put its claim last, as work nothing dates"])
+
+    def test_a_branch_two_pull_requests_share_is_asked_about_once(self):
+        """F13's second review: two open pull requests from one head, as to
+        the default branch and to a release branch, are two pieces of work
+        on one branch, whose push GitHub is asked about once."""
+        snap, _ = wide_answers()
+        twin = dict(next(p for p in snap["pulls"] if p["number"] == 63), number=70)
+        snap["pulls"].append(twin)
+        api, opener = client({NEWEST_CREATIONS: FakeAnswer([])})
+        self.assertEqual([w.branch for w in board.overlaps(snap)["docs/b.md"]].count("claude/31"), 2)
+        self.assertEqual(github.began_times(api, snap), ({}, {}))
+        self.assertEqual(activity_asked(opener), sorted([NEWEST_CREATIONS] + [
+            activity_path(b) for b in ("claude/22", "claude/31", "claude/34", "claude/5")]))
 
 
 class Collect(unittest.TestCase):

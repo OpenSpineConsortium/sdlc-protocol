@@ -333,11 +333,14 @@ def claim_file_text(model, ref, number):
     return model.tree(model.refs.get(ref, "")).get(f"{CLAIM_DIR}{number}.md")
 
 
-def open_work(model, known=AS_BUILT):
+def open_work(model, known=AS_BUILT, unsaid=frozenset()):
     """Every piece of open work (SPEC["open work"]) but a released claim's.
     A claim and the pull request from its branch are one piece, which
     keeps the issue's number as its identity; with F2 known, the identity
-    is the number it is shown by, as the library reads it."""
+    is the number it is shown by, as the library reads it. unsaid names
+    the branches GitHub refused to date in the run, whose work then began
+    when nothing else says (SPEC["oldest"]): a pull request's at its
+    opening, and a claim's never."""
     pieces = []
     pulled = set()
     for pull in sorted(model.pulls.values(), key=lambda p: p.number):
@@ -350,14 +353,16 @@ def open_work(model, known=AS_BUILT):
         listed = listed_files(claim_file_text(model, pull.head, number)) if number is not None else []
         files = own(model.files_changed(pull.head)) or own(listed)
         identity = number if number is not None and "F2" not in known else pull.number
-        began = model.created.get(pull.head, pull.opened_at)
+        began = None if pull.head in unsaid else model.created.get(pull.head)
+        began = pull.opened_at if began is None else began
         pieces.append(Piece(identity, pull.number, files, not pull.draft, is_blocker(model, number), began))
     for ref in sorted(model.refs):
         number = claim_number(ref)
         if number is None or ref in pulled or released(model, number):
             continue
         files = own(listed_files(claim_file_text(model, ref, number)))
-        pieces.append(Piece(number, number, files, False, is_blocker(model, number), model.created.get(ref)))
+        began = None if ref in unsaid else model.created.get(ref)
+        pieces.append(Piece(number, number, files, False, is_blocker(model, number), began))
     return pieces
 
 
@@ -376,11 +381,11 @@ def landing(piece, known=AS_BUILT):
     return (not piece.blocker, not piece.ready, NOTHING_SAYS if piece.began is None else piece.began, piece.number)
 
 
-def overlaps(model, known=AS_BUILT):
+def overlaps(model, known=AS_BUILT, unsaid=frozenset()):
     """Each file more than one piece changes, with the numbers the pieces
-    are shown by, in landing order."""
+    are shown by, in landing order; unsaid as open_work takes it."""
     meeting = {}
-    for piece in open_work(model, known):
+    for piece in open_work(model, known, unsaid):
         for path in piece.files:
             meeting.setdefault(path, []).append(piece)
     return {path: [p.number for p in sorted(pieces, key=lambda p: landing(p, known))]

@@ -19,7 +19,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from sdlc_protocol import board, claims  # noqa: E402
+from sdlc_protocol import board, claims, coordinator  # noqa: E402
 from sdlc_protocol.board import DueComment, Issue, Merged, Pull, Release, Snapshot  # noqa: E402
 
 FIXTURES = ROOT / "tests" / "fixtures"
@@ -266,6 +266,11 @@ class Overlaps(unittest.TestCase):
         self.assertNotIn("claims/16.md", section)
 
     def drafts_meeting(self, began=None, opened="", fork=False):
+        """The numbers of the work on docs/agents/STATE.md in landing order,
+        in drafts_snapshot."""
+        return [w.number for w in board.overlaps(self.drafts_snapshot(began, opened, fork))["docs/agents/STATE.md"]]
+
+    def drafts_snapshot(self, began=None, opened="", fork=False):
         """#42, a draft from claude/16, and the claim on #17, with no pull
         request, both touching docs/agents/STATE.md, and #40 out of it:
         neither is a blocker or ready, so the oldest lands first. began is
@@ -281,7 +286,7 @@ class Overlaps(unittest.TestCase):
             snap["pulls"][2]["base"] = {"ref": "main", "repo": {"full_name": "o/r"}}
         if began is not None:
             snap["began"] = began
-        return [w.number for w in board.overlaps(snap)["docs/agents/STATE.md"]]
+        return snap
 
     def test_the_oldest_is_the_work_that_began_first_and_not_the_lowest_number(self):
         """F13: a claim is shown by its issue's number and a pull request by
@@ -313,6 +318,8 @@ class Overlaps(unittest.TestCase):
         self.assertEqual(self.drafts_meeting(dict(claim, **{"claude/16": "2026-09-22T09:10:00Z"}),
                                              opened="2026-09-22T08:30:00Z"), [17, 42],
                          "the push that made the branch wins over the opening of its pull request")
+        self.assertEqual(self.drafts_meeting(dict(claim, **{"claude/16": "yesterday"}), opened="2026-09-22T08:30:00Z"),
+                         [42, 17], "a time for the branch that does not read as one says nothing, so the opening counts")
 
     def test_a_time_that_does_not_read_as_one_counts_as_nothing_said(self):
         for word in ("yesterday", "2026-13-40T00:00:00Z", "\u0661\u0662", 1695369600, ["2026-09-22T08:00:00Z"]):
@@ -322,6 +329,14 @@ class Overlaps(unittest.TestCase):
         for opened in (1695369600, ["2026-09-22T08:00:00Z"], {"at": "2026-09-22T08:00:00Z"}):
             with self.subTest(opened=opened):
                 self.assertEqual(self.drafts_meeting({"claude/17": "2026-09-22T09:00:00Z"}, opened=opened), [17, 42])
+                # The coordinator keys the work it tells by the Work itself,
+                # so a value that is no text must not reach it whole (F13's
+                # second review: a list stopped the run there).
+                snap = self.drafts_snapshot({"claude/17": "2026-09-22T09:00:00Z"}, opened=opened)
+                told = {n: [w.number for w, _ in others] for n, others in coordinator.meeting(snap).items()}
+                self.assertEqual((told[17], told[42]), ([42], [17]))
+                self.assertEqual(sorted(due.number for due in coordinator.overlap_comments_due(snap, {})),
+                                 sorted(told))
 
     def test_a_pull_request_from_a_fork_began_when_it_was_opened_whatever_a_branch_here_of_its_name_says(self):
         """F13's review: the fork's branch is none of this repository's, so
@@ -355,6 +370,16 @@ class Overlaps(unittest.TestCase):
         self.assertEqual(Pull.from_dict(pull("someone/r").to_dict()), pull("someone/r"))
         self.assertTrue(Pull.from_dict({"number": 5, "fork": True}).fork)
         self.assertNotIn("fork", pull().to_dict())
+        ours, theirs = {"full_name": "o/r"}, {"ref": "main", "repo": {"full_name": "o/r"}}
+        for head_repo, base in ((ours, "main"), ("o/r", theirs), (ours, {"ref": "main", "repo": "o/r"}),
+                                ({"full_name": 7}, theirs), (ours, {"ref": "main", "repo": {"full_name": ["o/r"]}}),
+                                ({}, theirs)):
+            data = {"number": 5, "head": {"ref": "fix", "sha": "abc", "repo": head_repo}, "base": base}
+            with self.subTest(head_repo=head_repo, base=base):
+                # A shape written by hand that names no repository as the
+                # API does says so by the key fork (F13's second review).
+                self.assertFalse(Pull.from_dict(data).fork)
+                self.assertTrue(Pull.from_dict(dict(data, fork=True)).fork)
 
     def test_when_work_began_round_trips_and_is_left_out_where_nothing_says(self):
         snap = Snapshot.from_dict(dict(snapshot(), began={"claude/12": "2026-09-22T08:00:00Z", "claude/13": ""}))

@@ -48,6 +48,10 @@ PER_PAGE = 100
 # The branch creations one read of the repository's activity lists, the
 # most GitHub gives on a page (began_times).
 ACTIVITY_PAGE = 100
+# What the Overlaps do with the work of a branch GitHub refused to date
+# (began_refused_lines).
+UNDATED_PULL = "date its pull request by when it was opened"
+UNDATED_CLAIM = "put its claim last, as work nothing dates"
 # GitHub computes mergeability after the first ask; one more ask after a
 # pause is enough, and "unknown" is the honest word when it still has not.
 MERGEABLE_RETRY_SECONDS = 3
@@ -606,9 +610,8 @@ def began_times(api, found):
     order is the one thing the time is for, and one branch GitHub will not
     answer for must not fail the board's whole run, as a comparison GitHub
     refuses does not (standing_of)."""
-    wanted = []
-    for works in board.overlaps(found).values():
-        wanted += [work.branch for work in works if work.branch and work.branch not in wanted]
+    wanted = list(dict.fromkeys(work.branch for works in board.overlaps(found).values()
+                                for work in works if work.branch))
     if not wanted:
         return {}, {}
     try:
@@ -670,13 +673,17 @@ def made_at(activity):
 
 def began_refused_lines(snapshot):
     """A line for each branch of overlapping work GitHub refused to date in
-    this run, for the workflow's log, since the page orders its work as
-    work nothing dates and says nothing of why: a token that may not read
-    the repository's activity would otherwise leave every claim undated on
-    every run unseen."""
+    this run, for the workflow's log, since the page says nothing of why
+    that work stands where it does: a token that may not read the
+    repository's activity would otherwise leave every claim undated on
+    every run unseen. A pull request from such a branch is then dated by
+    its opening, and a claim with none yet is work nothing dates, which
+    lands last (board.pull_began, board.UNDATED)."""
     snap = board.as_snapshot(snapshot)
-    return [f"{branch}: GitHub refused to say when the branch was made ({answer}), so the Overlaps order its "
-            f"work as work nothing dates" for branch, answer in sorted(snap.began_refused.items())]
+    opened = {pull.branch for pull in snap.pulls if not pull.fork}
+    return [f"{branch}: GitHub refused to say when the branch was made ({answer}), so the Overlaps "
+            f"{UNDATED_PULL if branch in opened else UNDATED_CLAIM}"
+            for branch, answer in sorted(snap.began_refused.items())]
 
 
 def snapshot(api, sha, default_branch, now=None):
