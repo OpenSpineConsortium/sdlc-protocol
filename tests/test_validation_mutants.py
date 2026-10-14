@@ -28,6 +28,7 @@ SHARED = Scope(issues=(1, 2), files=((1, mutants.SHARED), (2, mutants.SHARED)))
 # The seeded issue carries todo; the searches F15's review added seed it
 # with other labels, which a trace here puts on by hand first.
 TODO_OFF = Verb("label-off", M.OWNER, (1, "todo"))
+BLOCKER = Verb("label-on", M.OWNER, (1, "blocker"))
 
 
 def board_with(fault):
@@ -80,7 +81,9 @@ TRACES = {
     "a blocker gets todo": ([TODO_OFF, Verb("label-on", M.OWNER, (1, "blocker"))] + HELD + [WAIT, BOARD], Scope()),
     "a blocked task gets no todo": ([TODO_OFF, Verb("label-on", M.OWNER, (1, "blocked"))] + HELD + [WAIT, BOARD],
                                     Scope()),
-    "the Blockers section left empty": ([Verb("label-on", M.OWNER, (1, "blocker")), BOARD], Scope()),
+    "the Blockers section left empty": ([BLOCKER, BOARD], Scope()),
+    "the Blockers section without the held blockers": ([BLOCKER] + HELD + [BOARD], Scope()),
+    "a held blocker's row without claimed": ([BLOCKER] + HELD + [BOARD], Scope()),
     "the landing order by number": "the regression traces",
     "a pull request dated by its opening": "the regression traces",
     "a refused activity read stops the run": "the regression traces",
@@ -118,7 +121,7 @@ class TheLane(unittest.TestCase):
         F13's and F15's fixes more, so the bound is widened to 60 and the
         count noted."""
         self.assertTrue(10 <= len(mutants.MUTANTS) <= 60)
-        self.assertEqual(len(mutants.MUTANTS), 48)
+        self.assertEqual(len(mutants.MUTANTS), 50)
         self.assertEqual(sorted(TRACES), sorted(mutants.MUTANTS))
 
     def test_every_mutant_names_a_rule_the_library_still_has(self):
@@ -140,7 +143,9 @@ class TheLane(unittest.TestCase):
         rule it stands for: the second review of F15's fix found "the labels
         not put back" caught so once put_back took the todo too. Each
         replacement of a function takes every argument the function
-        declares."""
+        declares, and, as the third review asked, the function's required
+        arguments alone, as a caller that leaves the optional ones out
+        calls it."""
         for name, mutant in mutants.MUTANTS.items():
             target = getattr(mutant.module, mutant.name)
             if not inspect.isfunction(target):
@@ -148,8 +153,11 @@ class TheLane(unittest.TestCase):
             with self.subTest(mutant=name):
                 declared = inspect.signature(target).parameters.values()
                 positional = [p for p in declared if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)]
-                keywords = {p.name: None for p in declared if p.kind == p.KEYWORD_ONLY}
-                inspect.signature(mutant.replacement).bind(*range(len(positional)), **keywords)
+                keywords = [p for p in declared if p.kind == p.KEYWORD_ONLY]
+                replacement = inspect.signature(mutant.replacement)
+                replacement.bind(*range(len(positional)), **{p.name: None for p in keywords})
+                required = [p for p in positional if p.default is p.empty]
+                replacement.bind(*range(len(required)), **{p.name: None for p in keywords if p.default is p.empty})
 
     def test_the_lanes_come_first_then_the_searches_cheapest_first(self):
         self.assertEqual([c.name for c in mutants.CATCHERS[:len(LANES)]], list(LANES))
@@ -193,19 +201,21 @@ class TheSearchesCatchWhatTheyWereAddedFor(unittest.TestCase):
 
 
     def test_the_searches_from_f15_s_review_catch_its_mutants(self):
-        """The lane credits these mutants to the searches F15's two reviews
-        added (DESIGN.md, section 13), which seed the issue with labels
-        other than todo: each search finds nothing on the library and the
-        violation named under each of its mutants, which it can only while
-        its issue is seeded so, since a release puts no todo on an issue
-        that has it, and only a blocker is listed under Blockers."""
+        """The lane credits these mutants to the searches F15's three
+        reviews added (DESIGN.md, section 13), which seed the issue with
+        labels other than todo: each search finds nothing on the library and
+        the violation named under each of its mutants, which it can only
+        while its issue is seeded so, since a release puts no todo on an
+        issue that has it, and only a blocker is listed under Blockers."""
         caught = {"a released task given by a label alone, under every fault": (
                       ("worker:a",), {"a refused todo puts no label back": "G3L",
                                       "a todo written and lost stays on": "G3L"}),
                   "a released epic": (("epic",), {"an epic gets todo": "G3"}),
                   "a released blocker": (("blocker",), {"a blocker gets todo": "G3",
                                                         "the Blockers section left empty": "G9"}),
-                  "a released blocked task": (("blocked",), {"a blocked task gets no todo": "G3"})}
+                  "a released blocked task": (("blocked",), {"a blocked task gets no todo": "G3"}),
+                  "a held blocker": (("blocker",), {"the Blockers section without the held blockers": "G9",
+                                                    "a held blocker's row without claimed": "G9"})}
         for name, (seeded, guarantees) in caught.items():
             search = next(s for s in mutants.SEARCHES if s.name == name)
             self.assertEqual(search.labels, seeded)

@@ -103,6 +103,21 @@ class Pick(unittest.TestCase):
         self.assertEqual(self.picked({1: {"todo", "blocked"}, 2: {"todo"}}), 2)
         self.assertEqual(self.picked({1: {"blocker", "blocked"}, 2: {"blocker", "epic"}}), None)
 
+    def test_an_epic_or_a_blocked_issue_given_to_the_worker_is_left_where_it_is(self):
+        """The third review of F15's fix: Pick takes what Given to workers
+        gives the worker first, but never an epic, which the coordinator
+        plans, nor an issue labelled blocked; that section shows no labels,
+        so the worker reads its own issue's (View.given)."""
+        self.assertEqual(self.picked({1: {"todo"}, 2: {"epic", "worker:a"}}), 1)
+        self.assertEqual(self.picked({1: {"todo"}, 2: {"blocked", "worker:a"}}), 1)
+        self.assertEqual(self.picked({1: {"todo"}, 2: {"worker:a"}}), 2)
+
+    def test_a_worker_prefix_with_no_name_gives_the_issue_to_nobody(self):
+        """As the board reads one (labels.holder_names), a label worker:
+        with nothing after it names no worker, so its issue stays in the
+        Queue and free to take."""
+        self.assertEqual(self.picked({1: {"todo", "worker:"}}), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

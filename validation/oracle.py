@@ -54,7 +54,8 @@ SPEC = {
     "older spellings": "The older spellings account:<name> and agent:<name> are read as the same label.",
     "given": "An issue a worker's label names is that worker's alone: it is left out of the board's Queue and "
              "shown under Given to workers until the worker claims it.",
-    "todo": "An issue labelled todo and shown unclaimed on the board is free to take.",
+    "todo": "An issue labelled todo and shown unclaimed on the board is free to take, unless it is also labelled "
+            "blocked (Pick).",
     "blockers": "The board lists every open issue labelled blocker under Blockers, claimed or not",
     "idle": "A claim whose branch has had no commit for more than 24 hours, by the committer date of its head, is "
             "released by the coordinator, unless it is finished",
