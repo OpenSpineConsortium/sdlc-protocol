@@ -48,7 +48,7 @@ def page_text(fake):
         worker = fake.worker_of(name)
         if number is not None:
             claimed.add(number)
-        claim_rows.append([board.cell(c) for c in (issue, name, worker, board.NO_PULL_YET, "-")])
+        claim_rows.append([board.cell(c) for c in (issue, board.escaped(name), worker, board.NO_PULL_YET, "-")])
     queue = [[f"#{n}", f"issue {n}", labels.TODO] for n, issue in sorted(fake.issues.items())
              if issue["state"] == "open" and labels.TODO in issue["labels"] and n not in claimed]
     lines = ["# Board", ""]
@@ -108,11 +108,12 @@ class FakeSite:
         self.runs = runs
         self.runs_allowed = runs is not None
         self.admin = object() if admin else None
-        self.rulesets, self.take_every_push = {}, take_every_push
+        self.rulesets_made, self.take_every_push = {}, take_every_push
         self.issues_opened, self.pulls_opened, self.extra_branches = [], [], []
         self.cleaned = False
         self.check_runs_by_sha = {}
         self.label_calls = []
+        self.pokes, self.swept = [], False
 
     # the lists Site keeps for the clean-up
     @property
@@ -155,7 +156,7 @@ class FakeSite:
             return canary.Pushed(True, "deleted")
         held = self.branches.get(branch)
         if lease:
-            if any(r["pattern"] == f"refs/heads/{claims.PREFIX}**" for r in self.rulesets.values()):
+            if any(r["pattern"] == f"refs/heads/{claims.PREFIX}**" for r in self.rulesets_made.values()):
                 return canary.Pushed(False, "! [remote rejected] (protected branch hook declined)")
             if held != lease:
                 return canary.Pushed(False, "! [rejected] (stale info)")
@@ -273,11 +274,24 @@ class FakeSite:
 
     # rulesets
     def ruleset_add(self, name, pattern, rule_types):
-        self.rulesets[7] = {"name": name, "pattern": pattern, "rules": rule_types}
+        self.rulesets_made[7] = {"name": name, "pattern": pattern, "rules": rule_types}
         return 7
 
     def ruleset_delete(self, ruleset_id):
-        self.rulesets.pop(ruleset_id, None)
+        self.rulesets_made.pop(ruleset_id, None)
+
+    def rulesets(self):
+        return [{"id": i, "name": r["name"]} for i, r in self.rulesets_made.items()]
+
+    def sweep(self):
+        self.swept = True
+        return []
+
+    def poke(self, number):
+        self.pokes.append(number)
+
+    def open_issues(self):
+        return [{"number": n, "title": i["title"]} for n, i in self.issues.items() if i["state"] == "open"]
 
     def clean_up(self):
         self.cleaned = True
@@ -290,12 +304,16 @@ def release(number, head, refuse_rename=False):
     draft and is said once, or, under a ruleset, the refusal said once."""
     def react(site):
         branch = claims.branch_of(number)
+        date = site.dates.get(site.branches.get(branch))
+        if date is None or site.now() - date <= claims.IDLE_AFTER:
+            site.reactions.insert(0, react)
+            return
         issue = site.issues[number]
         issue["labels"] -= {labels.CLAIMED, labels.WORKER_PREFIX + canary.WORKER}
         site.comment(number, claims.RELEASE_MARKER + "\nreleased: ...", BOT, "NONE")
         renamed = claims.released_branch(number, head)
         if refuse_rename:
-            site.comment(number, board.RENAME_REFUSED_MARKER.format(branch=branch) + "\nrename refused: "
+            site.comment(number, board.RENAME_REFUSED_MARKER.format(branch=renamed) + "\nrename refused: "
                          "GitHub refused ...\n\nThese rulesets apply to the two names:\n- canary C7: non_fast_forward",
                          BOT, "NONE")
             return
@@ -378,7 +396,7 @@ class TheChecks(unittest.TestCase):
         self.assertEqual(sorted(seen.values["pushes"]), ["claude/\\u00b2", "claude/caf\\u00e9"])
         self.assertEqual(sorted(site.extra_branches), sorted(canary.ODD_NAMES))
         self.assertIn("GitHub took 2 of 2", seen.notes[0])
-        self.assertEqual(board.cell(canary.ODD_NAMES[0]), "claude/2")
+        self.assertEqual(board.escaped(canary.ODD_NAMES[0]), "claude/\\u00b2")
 
     def test_c3_fails_when_the_board_is_not_written_after_the_push(self):
         site = FakeSite()
@@ -446,7 +464,7 @@ class TheChecks(unittest.TestCase):
         seen, _ = run(site, "C7")
         self.assertEqual(seen.status, "passed", seen.as_dict())
         self.assertFalse(seen.values["lease push under the ruleset"]["ok"])
-        self.assertEqual(site.rulesets, {})
+        self.assertEqual(site.rulesets_made, {})
         self.assertIn(("add", 101, (labels.BLOCKED,)), site.label_calls)
         self.assertIn(("remove", 101, labels.BLOCKED), site.label_calls)
 

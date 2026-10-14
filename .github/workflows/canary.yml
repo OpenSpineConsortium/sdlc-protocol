@@ -39,10 +39,6 @@ on:
         description: The checks to run, separated by spaces (C0 C1 C2 C3 C5 C6)
         default: C1 C2 C3 C5 C6
         type: string
-      repository:
-        description: The canary repository, as OWNER/NAME
-        default: OpenSpineConsortium/symphony-protocol-canary
-        type: string
 
 permissions:
   contents: read
@@ -53,7 +49,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  CANARY_REPO: ${{ inputs.repository || 'OpenSpineConsortium/symphony-protocol-canary' }}
+  CANARY_REPO: OpenSpineConsortium/symphony-protocol-canary
   CHECKS: ${{ inputs.checks || 'C1 C2 C3 C5 C6' }}
 
 jobs:
@@ -101,6 +97,7 @@ jobs:
           permission-contents: write
           permission-issues: write
           permission-pull-requests: write
+          permission-checks: read
           permission-actions: read
           permission-metadata: read
 
@@ -115,6 +112,7 @@ jobs:
           permission-contents: write
           permission-issues: write
           permission-pull-requests: write
+          permission-checks: read
           permission-metadata: read
 
       - name: Run the checks on the canary repository

@@ -73,6 +73,7 @@ MONTHLY = ("C1", "C2", "C3", "C5", "C6")
 # The names C3 pushes, as \u escapes so this file stays ASCII: a superscript
 # two, which reads as a digit and is none, and an e with an acute accent.
 ODD_NAMES = ("claude/\u00b2", "claude/caf\u00e9")
+RULESET = "canary C7"
 ISSUE_TITLE = "Canary failed: "
 ISSUE_LABEL = "canary"
 SUMMARY_HEADING = "## Canary"
@@ -296,6 +297,8 @@ class Site:
                 value = read()
             except GitHubError as problem:
                 value = f"not read: {problem}"
+                if problem.status == 403:
+                    return value, False
             else:
                 if holds(value):
                     return value, True
@@ -394,6 +397,15 @@ class Site:
     def close_issue(self, number):
         self.api.patch(f"/repos/{self.repo}/issues/{number}", {"state": "closed", "state_reason": "not_planned"})
 
+    def poke(self, number):
+        """One more event on the issue, issues edited, whose board run is
+        then the newest in the group: a run that reads after a push can be
+        the one a later event replaced, and this one nothing replaces."""
+        self.api.patch(f"/repos/{self.repo}/issues/{number}", {"body": f"Poked at {self.now().isoformat()}."})
+
+    def open_issues(self):
+        return [i for i in self.api.get_all(f"/repos/{self.repo}/issues", {"state": "open"}) if "pull_request" not in i]
+
     def open_pull(self, branch, title, body, draft):
         made = self.api.post(f"/repos/{self.repo}/pulls", {"title": title, "head": branch, "base": self.default_branch,
                                                             "body": body, "draft": draft})
@@ -427,6 +439,40 @@ class Site:
 
     def ruleset_delete(self, ruleset_id):
         self.admin.delete(f"/repos/{self.repo}/rulesets/{ruleset_id}", missing_ok=True)
+
+    def rulesets(self):
+        return self.admin.get_all(f"/repos/{self.repo}/rulesets")
+
+    # -- the start and the end of a run ---------------------------------------
+
+    def sweep(self):
+        """What an earlier run that died left behind: its pull requests
+        closed, then its issues, whose closing starts the template's tidy
+        workflow, which deletes their branches, then the names no issue
+        owns; with an administrator, the ruleset C7 makes. Each refusal is
+        a line, never a failure."""
+        said = []
+        try:
+            for pull in self.open_pulls():
+                if pull.get("title", "").startswith("canary "):
+                    self.close_pull(pull["number"])
+                    said.append(f"closed the pull request #{pull['number']} an earlier run left")
+            for issue in self.open_issues():
+                if issue.get("title", "").startswith("canary "):
+                    self.close_issue(issue["number"])
+                    said.append(f"closed the issue #{issue['number']} an earlier run left")
+            for name in ODD_NAMES:
+                if self.branch_sha(name):
+                    self.delete_branch(name)
+                    said.append(f"deleted the branch {ascii_name(name)} an earlier run left")
+            if self.admin:
+                for ruleset in self.rulesets():
+                    if ruleset.get("name") == RULESET:
+                        self.ruleset_delete(ruleset["id"])
+                        said.append(f"deleted the ruleset {RULESET} an earlier run left")
+        except GitHubError as problem:
+            said.append(f"the sweep stopped: {problem}")
+        return said
 
     # -- the end of a run -----------------------------------------------------
 
@@ -524,6 +570,10 @@ def by_event(runs):
     return counted
 
 
+def check_finished(runs):
+    return any(r.get("name") == "check" and r.get("status") == "completed" for r in runs)
+
+
 def wait_for_board(site, seen, sentence, holds, finding=None, budget=POLL_BUDGET):
     page_text, ok = site.wait(site.board, lambda text: text is not None and holds(text), budget=budget)
     seen.expect(sentence, ok, finding)
@@ -544,12 +594,16 @@ def check_c0(site, seen):
         claim(site, site.clone(), number)
         number = site.open_pull(claims.branch_of(number), f"canary C0: a draft for #{number}", f"Closes #{number}", True)
         seen.note(f"no open draft, so one was opened, #{number}")
-    detail = site.pull(number)
-    if detail.get("mergeable") is None:
-        site.sleep(3)
-        detail = site.pull(number)
+    detail, computed = site.wait(lambda: site.pull(number), mergeability_computed, budget=60, every=3)
+    detail = detail if isinstance(detail, dict) else {}
     seen.values["draft"] = {key: detail.get(key) for key in ("number", "draft", "mergeable", "mergeable_state")}
-    seen.expect("the draft's detail was read, with mergeable_state", detail.get("mergeable_state") is not None)
+    seen.expect("GitHub computed the draft's mergeability, so its mergeable_state is a word", computed)
+
+
+def mergeability_computed(detail):
+    """GitHub answers mergeable null and mergeable_state "unknown" until a
+    background check has run; only a computed answer settles F9."""
+    return detail.get("mergeable") is not None and detail.get("mergeable_state") not in (None, "unknown")
 
 
 def check_c1(site, seen):
@@ -595,19 +649,29 @@ def check_c2(site, seen):
             raise CanaryError(f"the second push of #{number} was not taken: {pushed.words}")
     pull_behind = site.open_pull(claims.branch_of(behind), f"canary C2: stays behind, #{behind}", f"Closes #{behind}", False)
     pull_merged = site.open_pull(claims.branch_of(merged), f"canary C2: merged, #{merged}", f"Closes #{merged}", False)
-    head = clone_merged.head()
-    runs, done = site.wait(lambda: site.check_runs(head),
-                           lambda found: any(r.get("name") == "check" and r.get("status") == "completed" for r in found),
-                           budget=CHECK_BUDGET)
-    checks = {r.get("name"): r.get("conclusion") or r.get("status") for r in (runs if isinstance(runs, list) else [])}
-    if not isinstance(runs, list):
-        seen.note(str(runs))
-    seen.values["checks on the merged head"] = checks
-    if not done:
-        seen.note("no check named check finished on the merged head within the budget; merging anyway")
+    # Both pull requests have their check done before the merge: the merge
+    # needs it on one, and the other must not read as blocked, which hides
+    # how it stands to main, when the push to main's run looks at it.
+    for which, clone in (("merged", clone_merged), ("behind", clone_behind)):
+        head = clone.head()
+        runs, done = site.wait(lambda: site.check_runs(head), check_finished, budget=CHECK_BUDGET)
+        checks = {r.get("name"): r.get("conclusion") or r.get("status") for r in (runs if isinstance(runs, list) else [])}
+        if not isinstance(runs, list):
+            seen.note(str(runs))
+        seen.values[f"checks on the {which} head"] = checks
+        if not done:
+            seen.note(f"no check named check finished on the {which} head within the budget; going on anyway")
+    # The worker's push beside the merge goes to a claim with no pull
+    # request, so the merge's four events meet one skipped run and nothing
+    # changes the pull request left behind while it waits for the word.
+    beside = site.throwaway("C2 beside")
+    clone_beside = site.clone()
+    pushed = claim(site, clone_beside, beside)
+    if not pushed.ok:
+        raise CanaryError(f"the claim of #{beside} was not taken: {pushed.words}")
+    clone_beside.commit({f"docs/canary/{beside}-beside.md": FILE_TEXT}, "A worker's push beside the merge")
     since = site.now()
-    clone_behind.commit({f"docs/canary/{behind}-beside.md": FILE_TEXT}, "A worker's push beside the merge")
-    merge, pushed = site.race([lambda: site.merge(pull_merged), lambda: clone_behind.push(claims.branch_of(behind))])
+    merge, pushed = site.race([lambda: site.merge(pull_merged), lambda: clone_beside.push(claims.branch_of(beside))])
     merge = merge if isinstance(merge, Pushed) else Pushed(False, str(merge))
     pushed = pushed if isinstance(pushed, Pushed) else Pushed(False, str(pushed))
     seen.values["merge"] = merge.as_dict()
@@ -648,10 +712,11 @@ def check_c3(site, seen):
     seen.note(f"GitHub took {len(taken)} of {len(ODD_NAMES)} names outside ASCII")
     if not taken:
         return
-    # The board renders every cell as ASCII (board.cell: NFKD, the rest
-    # dropped), so the names are looked for as it writes them.
+    # The board writes a branch outside ASCII escaped (board.escaped, each
+    # such character as \uXXXX), so the names are looked for as it writes
+    # them, never as the page's cell would fold them (claude/2).
     wait_for_board(site, seen, "the board was written after the push, listing each name as no claim",
-                   lambda text: all(board.cell(name) in page.not_claims(text) for name in taken))
+                   lambda text: all(board.escaped(name) in page.not_claims(text) for name in taken))
     seen.expect("no name outside ASCII is read as the issue's claim",
                 claim_row(site.board() or "", number) is None)
 
@@ -709,6 +774,9 @@ def check_c6(site, seen):
     updated["after the push"], _ = site.wait(lambda: site.pull(pull).get("updated_at"),
                                              lambda found: found != updated["after the comment"], budget=60)
     seen.values["draft updated_at"] = updated
+    # The push's runs may be the ones a burst replaces; one more event,
+    # nothing newer behind it, makes sure a run reads after the commit.
+    site.poke(number)
     seen.expect("the draft's updated_at moved with the comment and with the push",
                 len({v for v in updated.values() if v}) == 2)
     comments, released = site.wait(lambda: site.comments(number),
@@ -746,6 +814,7 @@ def check_c6(site, seen):
     seen.values["second push at the released head"] = again.as_dict()
     if not seen.expect("the freed name takes a push at the released head", again.ok):
         return
+    site.poke(number)
     _, deleted = site.wait(lambda: (site.branch_sha(branch), site.branch_sha(renamed)),
                            lambda pair: pair[0] is None and pair[1] == head)
     seen.expect("the next run deletes the second push, since the released branch keeps its head", deleted)
@@ -759,10 +828,10 @@ def check_c7(site, seen):
     if site.admin is None:
         seen.skip("C7 needs CANARY_ADMIN_TOKEN, a token with Administration on the canary repository, for its ruleset")
         return
-    ruleset = site.ruleset_add("canary C7", f"refs/heads/{claims.PREFIX}**", ["non_fast_forward"])
-    seen.values["ruleset"] = ruleset
     number = site.throwaway("C7")
     branch = claims.branch_of(number)
+    ruleset = site.ruleset_add(RULESET, f"refs/heads/{claims.PREFIX}**", ["non_fast_forward"])
+    seen.values["ruleset"] = ruleset
     try:
         clone = site.clone()
         pushed = claim(site, clone, number)
@@ -782,19 +851,25 @@ def check_c7(site, seen):
         pushed = clone.push(branch)
         if not pushed.ok:
             raise CanaryError(f"the backdated push was not taken: {pushed.words}")
+        site.poke(number)
         comments, released = site.wait(lambda: site.comments(number),
                                        lambda cs: bool(has_marker(cs, claims.RELEASE_MARKER)))
         if not seen.expect("the coordinator releases the claim under the ruleset", released):
             return
-        marker = board.RENAME_REFUSED_MARKER.format(branch=branch)
+        # The marker names the branch the rename was to make (board.py).
+        renamed = claims.released_branch(number, head)
+        marker = board.RENAME_REFUSED_MARKER.format(branch=renamed)
         comments, refused = site.wait(lambda: site.comments(number), lambda cs: len(has_marker(cs, marker)) == 1)
         seen.expect("the board says once that GitHub refused the rename", refused)
         if refused:
-            seen.expect("the saying names the ruleset", "canary C7" in has_marker(comments, marker)[0].get("body", ""))
+            seen.expect("the saying names the ruleset", RULESET in has_marker(comments, marker)[0].get("body", ""))
         seen.expect("the claim's name is still taken", site.branch_sha(branch) == head)
         seen.values["draft"] = site.pull(pull).get("state")
     finally:
-        site.ruleset_delete(ruleset)
+        try:
+            site.ruleset_delete(ruleset)
+        except GitHubError as problem:
+            seen.fail(f"the ruleset {RULESET} ({ruleset}) is still on the repository, delete it by hand: {problem}")
     site.add_labels(number, [labels.BLOCKED])
     site.remove_label(number, labels.BLOCKED)
     renamed = claims.released_branch(number, head)
@@ -828,12 +903,14 @@ def adopted(site):
 
 
 def run_checks(site, names, known_findings=None, out=sys.stdout):
-    """Every named check in order, each recorded whatever happens to it,
-    then the clean-up. The records, and the version the canary vendors."""
+    """The sweep of what an earlier run left, then every named check in
+    order, each recorded whatever happens to it, then the clean-up."""
     if known_findings is None:
         known_findings = frozenset(known.AS_BUILT)
     records = []
     try:
+        for line in site.sweep():
+            print(line, file=out, flush=True)
         for name in names:
             seen = Seen(name, known_findings)
             check, _ = CHECKS[name]
@@ -843,6 +920,8 @@ def run_checks(site, names, known_findings=None, out=sys.stdout):
                 check(site, seen)
             except (CanaryError, GitHubError) as problem:
                 seen.fail(f"stopped: {problem}")
+            except Exception as problem:  # noqa: BLE001 - a check's crash is a record, kept with the rest
+                seen.fail(f"stopped: {type(problem).__name__}: {problem}")
             seen.values["seconds"] = round(time.monotonic() - started)
             print(f"{name}: {seen.status}", file=out, flush=True)
             records.append(seen)
