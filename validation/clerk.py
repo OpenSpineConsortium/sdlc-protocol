@@ -15,11 +15,13 @@ one look for a whole run, since F4's fix.
 """
 
 from sdlc_protocol import claims, team
+from sdlc_protocol.adapters import github
 
 from . import fake_github
-from .model import Issue, OWNER
+from .model import OWNER, REPO, Issue, moment
 
 FIRST_ISSUE_ID = 1000
+TOKEN = "fake-token-for-the-clerk"
 
 
 def workflow_deals(clients, workers, looks, areas=None):
@@ -69,6 +71,14 @@ class ModelClient:
         if number is None or head is None:
             return None
         return self.model.tree(head).get(claims.claim_path(number))
+
+    def released(self, branch):
+        """Whether a release comment counts for the claim on the branch, as
+        the adapter reads it (github.claim_released) from the fake GitHub
+        at the model's now, so the clerk's reading of a release is the
+        library's own."""
+        api = github.GitHub(TOKEN, REPO, opener=self.fake, sleep=lambda seconds: None)
+        return github.claim_released(api, branch, now=moment(self.model.now))
 
     # --- writes, as seed and route make them --------------------------------
 

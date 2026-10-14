@@ -87,8 +87,10 @@ class TheClerkAgainstPick(unittest.TestCase):
         self.assertFalse(any("in-review" in names for names in mixes))
         cases = list(dealing.picking_cases())
         self.assertEqual(len(cases), 1024 * len(dealing.CLAIM_STATES) * 5)
-        self.assertEqual({case.state for case in cases}, set(dealing.CLAIM_STATES))
-        self.assertEqual({case.team for case in cases}, {("a", "b"), ("b", "a"), ("a",)})
+        self.assertEqual({case.state for case, _ in cases}, set(dealing.CLAIM_STATES))
+        self.assertEqual({case.team for case, _ in cases}, {("a", "b"), ("b", "a"), ("a",)})
+        self.assertEqual(sum(runs for _, runs in cases), 1024 * len(dealing.CLAIM_STATES) * 2,
+                         "a run of one worker in the first setting, both orders")
 
     def test_a_claim_is_carried_by_the_worker_its_file_names_whatever_the_labels_say(self):
         case = dealing.Case({1: ("todo", "worker:a")}, 1, "b", ("a", "b"))
@@ -128,6 +130,39 @@ class TheClerkAgainstPick(unittest.TestCase):
         self.assertEqual(dealing.judge_case(blocked), ({"a": "none", "b": "none"}, []))
         with mutants.switched_on(mutants.MUTANTS["the clerk dealing an issue labelled blocked"]):
             self.assertEqual(dealing.judge_case(blocked)[1], ["a takes #1, where Pick has it take from nothing []"])
+
+    def test_a_released_claim_is_nobody_s_and_its_issue_nobody_s_to_take_until_the_rename(self):
+        """F18's review: the claim file still names a, but the release made
+        the claim nobody's, as the board shows; and the branch, until the
+        board renames it, makes the issue another's to Pick."""
+        case = dealing.Case({1: ("todo",)}, 1, "released", ("a", "b"))
+        model = dealing.case_model(case)
+        self.assertTrue(ModelClient(model).released("claude/1"))
+        self.assertEqual(dealing.judge_case(case, runs=True), ({"a": "none", "b": "none"}, []))
+        with mutants.switched_on(mutants.MUTANTS["a released claim carried by its holder"]):
+            self.assertEqual(dealing.judge_case(case)[1], ["a carries #1, whose claim is nobody's"])
+        held = dealing.Case({1: ("claimed", "todo", "worker:a")}, 1, "released", ("a", "b"))
+        snap = team.Snapshot(ModelClient(dealing.case_model(held)))
+        self.assertFalse(snap.released(snap.issues[0]), "the label claimed is still on")
+        self.assertEqual(dealing.judge_case(held), ({"a": "carry 1", "b": "none"}, []))
+
+    def test_a_worker_line_that_names_nobody_leaves_the_claim_to_the_label(self):
+        case = dealing.Case({1: ("todo", "worker:b")}, 1, "blank", ("a", "b"))
+        self.assertEqual(dealing.judge_case(case), ({"a": "none", "b": "carry 1"}, []))
+        with mutants.switched_on(mutants.MUTANTS["a Worker line naming nobody taken for a name"]):
+            self.assertEqual(dealing.judge_case(case),
+                             ({"a": "none", "b": "none"}, ["b carries nothing though its claim on #1 is its own"]))
+
+    def test_a_run_of_one_worker_is_dealt_as_the_team_is(self):
+        """F18's review: a task two workers' labels give goes to the first of
+        them in the team's order, whether or not a run starts it, as the
+        shared work is dealt (F4), so the run of b alone leaves it to a."""
+        case = dealing.Case({1: ("todo", "worker:a", "worker:b")}, 1, "none", ("a", "b"))
+        self.assertEqual(dealing.judge_case(case, runs=True), ({"a": "take 1", "b": "none"}, []))
+        self.assertEqual(team.deal_moves(ModelClient(dealing.case_model(case)), ["a", "b"], run=["b"]), {"b": "none"})
+        with mutants.switched_on(mutants.MUTANTS["a run dealt as though it were the whole team"]):
+            self.assertEqual(dealing.judge_case(case, runs=True)[1],
+                             ["a run of b alone is dealt {'b': 'take 1'}, where the team's deal gives it none"])
 
     def test_a_claim_labelled_blocked_is_not_carried(self):
         case = dealing.Case({1: ("blocked", "todo")}, 1, "a", ("a", "b"))

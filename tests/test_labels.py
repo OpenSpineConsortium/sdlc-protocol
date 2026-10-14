@@ -87,7 +87,8 @@ class Names(unittest.TestCase):
         worker_of read the empty name first and said nobody was named."""
         self.assertEqual(labels.worker_of({"labels": ["worker:", "worker:a"]}), "a")
         # Of the labels of one spelling, the first by name, whatever order
-        # GitHub lists them in (F18).
+        # GitHub lists them in, since label_names sorts them: the clerk reads
+        # whose a claim is by this where no claim file names a worker (F18).
         self.assertEqual(labels.worker_of({"labels": ["worker:b", "agent:a", "worker:a"]}), "a")
         self.assertEqual(labels.worker_of({"labels": ["agent:b", "account:c", "agent:a"]}), "c")
         self.assertIsNone(labels.worker_of({"labels": ["worker:", "account:", "agent:"]}))

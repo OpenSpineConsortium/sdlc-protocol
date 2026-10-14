@@ -22,7 +22,7 @@ class FakeClient:
     def __init__(self):
         self.issues, self.branches, self.pulls, self.checks = {}, set(), {}, {}
         self.labels, self.sub_issues = {"todo", "epic"}, []
-        self.claims = {}
+        self.claims, self.released_claims = {}, set()
         self.next_number = 100
 
     def add_claim(self, issue, worker):
@@ -58,6 +58,9 @@ class FakeClient:
 
     def claim_text(self, branch):
         return self.claims.get(branch)
+
+    def released(self, branch):
+        return branch in self.released_claims
 
     def create_label(self, name, colour):
         self.labels.add(name)

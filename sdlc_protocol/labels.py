@@ -99,14 +99,12 @@ def holder_labels(issue):
 
 def worker_of(issue):
     """The worker an issue's label names, worker:<name> before the older
-    spellings and the first by name among the labels of one spelling, so
-    the answer never hangs on the order GitHub lists the labels in (F18),
-    or None when no label does."""
+    spellings, or None when no label does."""
     names = label_names(issue)
     for prefix in HOLDER_PREFIXES:
         found = names_with_prefix(names, prefix)
         if found:
-            return min(found)
+            return found[0]
     return None
 
 

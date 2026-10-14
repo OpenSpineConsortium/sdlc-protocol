@@ -43,8 +43,8 @@ from .claims import PREFIX as CLAIM_PREFIX, UNNAMED, claim_worker, issue_files, 
 # agent:<name> are read as the same label.
 from .labels import (ACCOUNT_PREFIX, AGENT_PREFIX, BLOCKED as BLOCKED_LABEL,
                      BLOCKER as BLOCKER_LABEL, CLAIMED as CLAIMED_LABEL, EPIC as EPIC_LABEL,
-                     TODO as TODO_LABEL, WORKER_COLOUR, agent_label as agent_of, holders, label_names,
-                     worker_label, worker_of)
+                     IN_REVIEW as IN_REVIEW_LABEL, TODO as TODO_LABEL, WORKER_COLOUR, agent_label as agent_of,
+                     holders, label_names, worker_label, worker_of)
 from .workers import fits
 
 # The one check the ruleset requires and a member can fix; the board's own
@@ -106,10 +106,19 @@ class Client(Protocol):
     def check_runs(self, sha: str) -> list[dict]:
         """The check runs on one commit."""
 
-    def claim_text(self, branch: str) -> str | None:
+    def claim_text(self, branch: str) -> str | bool | None:
         """The claim file on a claude/<issue> branch, at its head, or None
         when there is none; a file GitHub gives no text of, one over 1 MB,
         is False (board.UNREAD_CLAIM), never an empty claim file."""
+
+    def released(self, branch: str) -> bool:
+        """Whether a release comment counts for the claim on a claude/<issue>
+        branch, by its issue's comments and the branch's head
+        (claims.was_released): the latest by an author the repository
+        trusts came after the branch had gone more than a day without a
+        commit, and nothing was committed since. The clerk asks it only of
+        a claim whose labels and pull request leave a release possible
+        (Snapshot.released)."""
 
     def create_label(self, name: str, colour: str) -> None:
         """Make the label; one that exists already is left as it is, since
@@ -256,21 +265,48 @@ class Snapshot:
         return self.needs_work[number]
 
     def holder(self, issue):
-        """Whose the claim on this issue is, as a release names whose it was
-        (coordinator.holder): the worker its claim file names, else, where
-        the finishing pull request has deleted the file, no line names one
-        or GitHub gave no text of it, the worker the issue's label names;
-        None when neither does. The file is read once a look, the first
-        time it is asked for. Until F18's fix the clerk read the labels
-        alone, so a worker whose label an issue still carried was told to
-        carry the claim another worker had pushed and not yet announced,
-        and the claim's holder was told nothing."""
+        """Whose the claim on this issue is (named), or None for a claim
+        that counts as released (released), which is nobody's until the
+        board renames its branch, as the board shows its issue unclaimed
+        again, though its claim file still names its holder: the clerk
+        sends nobody back to a claim a release freed (F18's review). Each
+        claim is read once a look, the first time it is asked for. Until
+        F18's fix the clerk read the labels alone, so a worker whose label
+        an issue still carried was told to carry the claim another worker
+        had pushed and not yet announced, and the claim's holder was told
+        nothing."""
         number = issue["number"]
         if number not in self.holders:
-            text = self.client.claim_text(f"{CLAIM_PREFIX}{number}")
-            named = claim_worker(text) if text else UNNAMED
-            self.holders[number] = named if named != UNNAMED else worker_of(issue)
+            self.holders[number] = None if self.released(issue) else self.named(issue)
         return self.holders[number]
+
+    def named(self, issue):
+        """The worker a claim names, as a release names whose it was
+        (coordinator.holder): the one its claim file names, else, where the
+        finishing pull request has deleted the file, no line names one or
+        GitHub gave no text of it, the one the issue's label names; None
+        when neither does."""
+        text = self.client.claim_text(f"{CLAIM_PREFIX}{issue['number']}")
+        named = claim_worker(text) if text else UNNAMED
+        return named if named != UNNAMED else worker_of(issue)
+
+    def released(self, issue):
+        """Whether the claim on this issue counts as released, by the
+        board's rule (board.released_keys): its issue is labelled neither
+        claimed nor in-review, its own pull request, if any, is still a
+        draft, and a release comment that counts came after its branch had
+        gone more than a day without a commit, with none since
+        (Client.released). A claim whose issue is labelled claimed or
+        in-review costs no call, and any other one for its pull request
+        and what Client.released costs."""
+        names = label_names(issue)
+        if CLAIMED_LABEL in names or IN_REVIEW_LABEL in names:
+            return False
+        branch = f"{CLAIM_PREFIX}{issue['number']}"
+        pull = self.client.open_pull(branch)
+        if pull and not pull.get("draft"):
+            return False
+        return self.client.released(branch)
 
     def free(self, issue):
         """Whether an issue may be taken: no claim branch holds it, and it
@@ -317,8 +353,8 @@ class Snapshot:
         """A member's move that no peer's can change, which next_for answers
         from the member's own look: a claim of its own that needs work, else
         a task the labels give it alone. A task several workers' labels give
-        goes to the first of them in the run's order with nothing else to do
-        (moves_from), so it is no member's own move. None otherwise."""
+        goes to the first of them in the team's order with nothing else to
+        do (moves_from), so it is no member's own move. None otherwise."""
         carried = self.carry(agent)
         if carried:
             return carried
@@ -379,12 +415,15 @@ def deals(client, team, areas=None):
 def moves_from(snap, team, areas=None):
     """deals over a look already taken: each member's own move, its claim
     that needs work or else a task the labels give it alone; then the tasks
-    several workers' labels give, each member left with nothing in the
-    run's order taking the first given to it that no member before it took,
-    so such a task goes to the first of them with nothing else to do (F18:
-    until its fix it went to none of them); then the shared work dealt
-    among the members with none. A name repeated in team is one member,
-    dealt once, so no issue goes to a repetition and to nobody."""
+    several workers' labels give, each member left with nothing, in the
+    team's order, taking the first given to it that no member before it
+    took, so such a task goes to the first of them with nothing else to do
+    (F18: until its fix it went to none of them); then the shared work
+    dealt among the members with none. The team is every worker the deal
+    is for, whether or not a run starts it (deal_moves), so a worker
+    outside the run keeps its share and two runs dealt from one state
+    never give one issue to two workers. A name repeated in team is one
+    member, dealt once, so no issue goes to a repetition and to nobody."""
     team = list(dict.fromkeys(team))
     moves = {member: snap.own_move(member) for member in team}
     taken = set()
