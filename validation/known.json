@@ -1,5 +1,6 @@
 {
   "as_built": ["F2", "F9", "F13", "F14"],
+  "fixed_after": {"F7": "0.4.1", "F12": "0.4.1"},
   "red": [
     {"trace": "F2", "step": 4, "guarantee": "G7", "finding": "F2"},
     {"trace": "F9", "step": 3, "guarantee": "G10", "finding": "F9"},
