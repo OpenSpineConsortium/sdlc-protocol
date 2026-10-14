@@ -21,13 +21,15 @@ search goes on past it and reports it once, as known; without it, the
 oracle reads the spec, and the finding shows as a disagreement. AS_BUILT
 holds the open findings the board's run can reach (DESIGN.md, 13), read
 from validation/known.json since build step 5 (known.py): F2,
-overlapping work told again once a claim opens its pull request; F9, a
-draft never told "main moved"; F13, the landing order's "oldest" read as
-the lowest number. Two were switches until their fixes: F12, "main
-moved" told only in the run the push to main started, which is now told
-in whichever run finds the branch behind, and F14, Given to workers
-needing the label todo and leaving epics out, which now shows every
-open, unclaimed issue a worker's label names. F13 and F14 are what the
+overlapping work told again once a claim opens its pull request; F13,
+the landing order's "oldest" read as the lowest number. Three were
+switches until their fixes: F12, "main moved" told only in the run the
+push to main started, which is now told in whichever run finds the
+branch behind; F14, Given to workers needing the label todo and leaving
+epics out, which now shows every open, unclaimed issue a worker's label
+names; and F9, a draft never told "main moved", which the adapter now
+reads through mergeable and the comparison where GitHub's word is
+opaque, as it reads a blocked one. F13 and F14 are what the
 harness of build step 1 found when its oracle was held to the spec's
 words (DESIGN.md, 13).
 """
@@ -433,12 +435,11 @@ def main_moved_effects(model, event, ref_name, known=AS_BUILT):
     """Every open pull request but a released claim's that is behind or
     conflicting with main hears so once for main's commit, in whichever
     run finds it so (DESIGN.md, G10; the event and the ref no longer
-    decide, since F12's fix); with F9 known, never a draft."""
+    decide, since F12's fix, and a draft, or a pull request a rule or a
+    review blocks, hears it like any other, since F9's fix)."""
     marker = BOARD_MARKERS["main-moved"].format(sha=short_sha(model.refs[MAIN]))
     found = []
     for pull in pulls_spoken_to(model):
-        if "F9" in known and pull.draft:
-            continue
         if model.standing(pull.head) in ("behind", "dirty") and not has_marker(model, pull.number, marker):
             found.append(Effect("comment", pull.number, "main-moved"))
     return found

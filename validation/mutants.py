@@ -73,7 +73,8 @@ class Search(NamedTuple):
     """One breadth-first search: the verbs that bring the seeded repository
     to its start, the scope searched from there and how deep, and the
     violations, as (guarantee, detail), the library as it stands is known
-    to meet in it."""
+    to meet in it; opaque_pulls has GitHub call every pull request not in
+    conflict blocked, as a rule that holds it does (model.RepoModel)."""
 
     name: str
     prefix: tuple
@@ -81,6 +82,7 @@ class Search(NamedTuple):
     depth: int
     issues: tuple = (1,)
     known: tuple = ()
+    opaque_pulls: bool = False
 
 
 # --- the replacements ---------------------------------------------------------
@@ -127,6 +129,19 @@ def released_with_claimed_on(snap, key, idle_after=claims.IDLE_AFTER):
         return ORIGINAL_IS_RELEASED(snap, key, idle_after)
     finally:
         issue.labels = kept
+
+
+def ahead_read_as_behind(api, pull, default_branch=None):
+    """github.behind_by reading the comparison's other count, the commits
+    of the head its base lacks: a draft one commit ahead and one behind
+    reads the same either way, and one whose branch is level with main
+    but holds its claim commit reads as behind (F9)."""
+    base = (pull.get("base") or {}).get("ref") or default_branch
+    head = (pull.get("head") or {}).get("sha")
+    if not head or not base:
+        return None
+    found = api.get(f"/repos/{api.repo}/compare/{github.quoted(base)}...{head}", missing_ok=True)
+    return (found or {}).get("ahead_by")
 
 
 def main_moved_only_in_the_push_s_run(snapshot, event_name, ref_name, now, idle_after=claims.IDLE_AFTER):
@@ -319,6 +334,12 @@ MUTANTS = {
     "a board comment posted again": Mutant(
         github, "has_marker", lambda api, number, marker: False,
         "G10", "each board comment is posted once, as its marker says"),
+    "an opaque state read by GitHub's word alone": Mutant(
+        github, "standing_of", lambda api, detail, default_branch=None: None, "G10",
+        "a pull request GitHub only calls blocked, or a draft, is read through mergeable and the comparison, as the gate reads it, so it hears main moved (F9)"),
+    "the comparison read by ahead_by": Mutant(
+        github, "behind_by", ahead_read_as_behind, "G10",
+        "how far a held branch is behind is the comparison's behind_by, the commits of main it lacks, never its own commits (F9)"),
     "main moved told only in the push's run": Mutant(
         board, "comments_due", main_moved_only_in_the_push_s_run,
         "G10", "main moved is told by whichever run finds the branch behind, once per commit of main (F12)"),
@@ -397,8 +418,11 @@ SHARED = ("src/shared.py",)
 # library itself until the workflow's one look answered it, and the
 # careless search met F7, a lease after a fetch taking another's claim,
 # until the guard's fence refused it; nothing is known on the library now.
-# The last search runs each board run in its two halves (DESIGN.md, 3.3),
-# so a rule that reads the repository again in the second half is met.
+# The draft's search has GitHub call it blocked, as a rule that holds it
+# does (F9), so the adapter's reading of how a held branch stands is
+# searched and not only traced. The holder's search runs each board run in
+# its two halves (DESIGN.md, 3.3), so a rule that reads the repository
+# again in the second half is met.
 PLAIN_COMMANDS = [c for c in guard_grammar.commands() if c.prefix == "" and c.wrapper == "{}"]
 
 
@@ -440,6 +464,8 @@ SEARCHES = (
                  files=((1, SHARED), (2, SHARED))), 3, issues=(1, 2)),
     Search("a held claim, the clock and a release by hand", (CLAIM, CLAIMED, WORKER),
            Scope(workers=("a",), people=(M.OWNER, DANA, SAM), waits=(24, 25)), 4),
+    Search("a draft GitHub calls blocked", (CLAIM, Verb("open-draft", "a", (1,))),
+           Scope(workers=("a",), people=(M.OWNER,), waits=(25,)), 3, opaque_pulls=True),
     Search("the holder back between the halves of a run", (CLAIM, CLAIMED, WORKER, Verb("wait", "clock", (25,))),
            Scope(workers=("a",), people=(), waits=(25,), split_board=True), 3),
     Search("a stranger's marker on overlapping claims", (CLAIM, Verb("claim", "b", (2,))),
@@ -454,6 +480,7 @@ CATCHERS = LANES + SEARCHES
 def start(search):
     """The search's starting state, with the violations met on its prefix."""
     model = M.seeded(search.issues, writers=("a", "b", "c", CAROL, DANA))
+    model.opaque_pulls = search.opaque_pulls
     cycle.board_run(model)
     found = []
     for step in search.prefix:

@@ -212,6 +212,11 @@ class TheKey(unittest.TestCase):
             read.add(done.stdout.decode("ascii").strip())
         self.assertEqual(read, {self.model.digest().hex()})
 
+    def test_keeps_whether_github_hides_a_held_branch_s_standing(self):
+        """The fake answers blocked or the branch's own word by it (F9), so
+        two models alike but for it behave differently under the board."""
+        self.assertTrue(self.differs(lambda m: setattr(m, "opaque_pulls", True)))
+
     def test_two_paths_to_one_state_meet(self):
         one, two = self.model.clone(), self.model.clone()
         one.add_label(1, "a", "claimed")

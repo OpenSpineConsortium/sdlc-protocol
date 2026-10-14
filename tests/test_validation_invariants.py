@@ -1,9 +1,12 @@
 """The harness's guarantees (validation/invariants.py) on hand-written
 traces: an honest release and reclaim breaks none; the 0.4.1 fixes hold;
 a run in two halves is judged by the states its halves read; the open
-findings F2 and F9 show as soon as the oracle reads the spec; F7's
-careless lease is refused, and F12's lost run tells "main moved" under
-its mutant alone, by the run the concurrency group cancels.
+finding F2 shows as soon as the oracle reads the spec; F7's careless
+lease is refused, F9's draft misses "main moved" under the mutant that
+takes GitHub's opaque word alone, and is told it while level with main
+under the one that reads the comparison's other count, and F12's lost run
+tells "main moved" under its mutant alone, by the run the concurrency
+group cancels.
 The mutants, the prototype's among them, are
 tests/test_validation_mutants.py's."""
 
@@ -34,8 +37,12 @@ def run(event, ref_name=""):
     return [Verb("board-start", "board", (event, ref_name)), Verb("board-finish", "board")]
 
 
-def violations(steps, scope=Scope(), known=oracle.AS_BUILT, issues=(1,), labels=("todo",)):
+def violations(steps, scope=Scope(), known=oracle.AS_BUILT, issues=(1,), labels=("todo",), opaque_pulls=False):
     model = M.seeded(issues or scope.issues, writers=("a", "b", "c", verbs.CAROL, verbs.DANA), labels=labels)
+    # As validation/run.py sets it from a scenario: with it on the fake
+    # answers blocked for every mergeable pull request, as GitHub does
+    # under a required check (F9).
+    model.opaque_pulls = opaque_pulls
     cycle.board_run(model)
     found = []
     for step in steps:
@@ -265,11 +272,26 @@ class TheOpenFindingsShow(unittest.TestCase):
         self.assertEqual(violations(steps, SHARED, issues=None), [])
         self.assertEqual(guarantees(violations(steps, SHARED, oracle.AS_BUILT - {"F2"}, issues=None)), ["G7"])
 
-    def test_f9_a_draft_behind_main_is_never_told(self):
-        steps = [Verb("claim", "a", (1,)), Verb("open-draft", "a", (1,)), Verb("move-main", M.OWNER),
-                 board_with(event=cycle.PUSH, ref_name=M.MAIN)]
+    def test_f9_a_draft_behind_main_hears_main_moved_once_its_standing_is_read(self):
+        """Fixed after 0.4.1: with the model's opaque_pulls on GitHub's word
+        for the draft is blocked, as for a draft whose required check has
+        not passed, and the adapter reads how its branch stands through
+        mergeable and one compare, so the run owes the draft the word only
+        once main has moved; under the mutant that takes GitHub's word
+        alone nothing is told, and under the one that reads the
+        comparison's ahead_by the draft, its claim commit ahead and level
+        with main, is told before main moves. With opaque_pulls off the
+        fake answers behind itself and the mutants have nothing to bite,
+        so the finding is checked with it on."""
+        level = [Verb("claim", "a", (1,)), Verb("open-draft", "a", (1,)), board_with(event=cycle.PULL_REQUEST)]
+        steps = level + [Verb("move-main", M.OWNER), board_with(event=cycle.PUSH, ref_name=M.MAIN)]
         self.assertEqual(violations(steps), [])
-        self.assertEqual(guarantees(violations(steps, known=oracle.AS_BUILT - {"F9"})), ["G10"])
+        self.assertEqual(violations(steps, opaque_pulls=True), [])
+        with mutants.switched_on(mutants.MUTANTS["an opaque state read by GitHub's word alone"]):
+            self.assertEqual(guarantees(violations(level, opaque_pulls=True)), [])
+            self.assertEqual(guarantees(violations(steps, opaque_pulls=True)), ["G10"])
+        with mutants.switched_on(mutants.MUTANTS["the comparison read by ahead_by"]):
+            self.assertEqual(guarantees(violations(level, opaque_pulls=True)), ["G10"])
 
     def test_f12_main_moved_is_told_by_whichever_run_finds_the_branch_behind(self):
         """Fixed after 0.4.1; the mutant keys the word on the push's run again."""
