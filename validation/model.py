@@ -260,9 +260,17 @@ class RepoModel:
             self.ever_heads = self.ever_heads | {sha}
 
     def delete_ref(self, ref):
+        """GitHub's delete: the ref goes, and the open pull requests whose
+        head it was are closed (managing-branches-within-your-repository.md:71),
+        never one from a fork whose branch bears the same name, which is
+        another branch."""
         self.refs.pop(ref, None)
         self.creators.pop(ref, None)
         self.created.pop(ref, None)
+        for pull in self.pulls.values():
+            if pull.head == ref and pull.state == "open" and not pull.fork:
+                pull.state = "closed"
+                pull.updated_at = self.now
 
     def rename_ref(self, old, new):
         """GitHub's rename: the ref moves, and the open pull request whose

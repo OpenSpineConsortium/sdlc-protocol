@@ -1,8 +1,8 @@
 """The harness's memory world (validation/model.py): git's rule for a push
 as validation/prototype/gitprobe.py measured it, how a branch stands to
-main, the rename GitHub makes, the board workflow's queue in its
-concurrency group, and a state key that keeps everything a guarantee
-reads."""
+main, the rename and the delete GitHub make, the board workflow's queue
+in its concurrency group, and a state key that keeps everything a
+guarantee reads."""
 
 import sys
 import unittest
@@ -123,6 +123,37 @@ class Rename(unittest.TestCase):
         self.assertEqual(model.pulls[100].state, "closed")
         self.assertNotIn("claude/1", model.refs)
         self.assertEqual(model.creators["released/1-abcdef0"], "a")
+
+    def test_leaves_open_a_pull_request_from_a_fork_whose_branch_bears_the_name(self):
+        model = M.seeded()
+        model.push("a", "claude/1", claim_commit(model, "a"))
+        model.pulls[100] = M.PullRequest(100, "claude/1", "sam", "Closes #1", fork=True)
+        model.rename_ref("claude/1", "released/1-abcdef0")
+        self.assertEqual(model.pulls[100].state, "open")
+
+
+class Delete(unittest.TestCase):
+    """GitHub closes the open pull requests a deleted branch was the head of
+    (managing-branches-within-your-repository.md:71), as the board's
+    delete of a branch pushed again at the head a release kept meets."""
+
+    def setUp(self):
+        self.model = M.seeded()
+        self.model.push("a", "claude/1", claim_commit(self.model, "a"))
+
+    def test_closes_the_open_pull_request_whose_head_it_was(self):
+        self.model.pulls[100] = M.PullRequest(100, "claude/1", "a", "Closes #1")
+        self.model.delete_ref("claude/1")
+        self.assertEqual(self.model.pulls[100].state, "closed")
+        self.assertNotIn("claude/1", self.model.refs)
+        self.assertNotIn("claude/1", self.model.creators)
+
+    def test_leaves_a_merged_pull_request_merged_and_a_fork_s_open(self):
+        self.model.pulls[100] = M.PullRequest(100, "claude/1", "a", "Closes #1", state="merged")
+        self.model.pulls[101] = M.PullRequest(101, "claude/1", "sam", "Closes #1", fork=True)
+        self.model.delete_ref("claude/1")
+        self.assertEqual(self.model.pulls[100].state, "merged")
+        self.assertEqual(self.model.pulls[101].state, "open")
 
 
 class TheKey(unittest.TestCase):

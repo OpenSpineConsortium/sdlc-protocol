@@ -100,7 +100,7 @@ SPEC = {
     "fork": "A claim and its pull request live in the repository itself, so a pull request from a fork is no "
             "claim's, whatever its branch is called: the board lists it as a pull request of its own and tells it "
             "what it tells any other, it finishes no claim, marked ready or said finished, and a release's rename, "
-            "which closes the claim's own pull request, leaves it open.",
+            "which closes the claim's own pull request, leaves it open",
     "as it stands": "A pull request GitHub calls clean, unstable or has_hooks, a draft among them, since GitHub gives "
                     "a draft the word its branch has, is not held for being behind under the repository's rules, so "
                     "it hears nothing however far the default branch has moved; one GitHub calls dirty, in conflict "
