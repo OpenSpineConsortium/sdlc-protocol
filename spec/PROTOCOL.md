@@ -22,7 +22,7 @@ sdlc_protocol.labels spells these names and the prefixes once, with the colour a
 
 ## Pick
 
-Fetch, then read the board (`git fetch origin +refs/heads/board:refs/remotes/origin/board && git show origin/board:STATE.md`). Take an issue the Given to workers section gives you first; else an open issue labelled todo that the Queue section shows as unclaimed and that no open blocker stands in the way of, one in your area first when you have one. An issue with a branch `claude/<issue>` on origin, or a file `docs/agents/claims/<issue>.md` on the default branch, is another worker's, whatever its labels say. Before you start, read the board's Overlaps section: open work that changes the same files as the issue you take lands in the order it gives.
+Fetch, then read the board (`git fetch origin +refs/heads/board:refs/remotes/origin/board && git show origin/board:STATE.md`). Take an issue the Given to workers section gives you first, but never an epic, which the coordinator plans (Planning); else an open issue labelled todo that the Queue section shows as unclaimed and that no open blocker stands in the way of, one in your area first when you have one. An issue with a branch `claude/<issue>` on origin, or a file `docs/agents/claims/<issue>.md` on the default branch, is another worker's, whatever its labels say. Before you start, read the board's Overlaps section: open work that changes the same files as the issue you take lands in the order it gives.
 
 ## Claim
 
