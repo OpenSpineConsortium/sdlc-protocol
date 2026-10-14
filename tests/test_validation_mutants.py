@@ -62,7 +62,8 @@ TRACES = {
     "the guard passes --force": "the guard grammar against git's answers",
     "the guard passes a lease outside claude/": "the guard grammar against git's answers",
     "the guard passes a lease onto another's claim": "the regression traces",
-    "dealing without its taken set": "dealing from one look",
+    "dealing without its taken set": "dealing at every look",
+    "each leg dealt from its own look": "the regression traces",
     "an overlap marker read on any line": ([CLAIM, Verb("claim", "b", (2,)), Verb("overlap-quote", "a", (1, (2,))),
                                             BOARD], SHARED),
     "an overlap marker trusted from any author": ([CLAIM, Verb("claim", "b", (2,)),
@@ -94,7 +95,7 @@ class TheLane(unittest.TestCase):
         since one that undoes it (F7's first), so the bound is widened to
         40 and the count noted."""
         self.assertTrue(10 <= len(mutants.MUTANTS) <= 40)
-        self.assertEqual(len(mutants.MUTANTS), 30)
+        self.assertEqual(len(mutants.MUTANTS), 31)
         self.assertEqual(sorted(TRACES), sorted(mutants.MUTANTS))
 
     def test_every_mutant_names_a_rule_the_library_still_has(self):
@@ -109,7 +110,7 @@ class TheLane(unittest.TestCase):
         self.assertEqual([c.name for c in mutants.CATCHERS[:len(LANES)]], list(LANES))
         self.assertEqual(mutants.SEARCHES[-2].name, "the holder back between the halves of a run")
         self.assertEqual(mutants.SEARCHES[-1].name, "a stranger's marker on overlapping claims")
-        self.assertEqual([s.known for s in mutants.CATCHERS if s.known], [(mutants.F4,)])
+        self.assertEqual([s.known for s in mutants.CATCHERS if s.known], [], "nothing is known on the library now")
 
 
 class EachMutantIsCaught(unittest.TestCase):

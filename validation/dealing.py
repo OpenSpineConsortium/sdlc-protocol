@@ -1,32 +1,35 @@
 """The dealing lane (DESIGN.md, 9.1): three workers ask the clerk at once.
 
-The workers of one run of workers.yml ask team.next_for at the same
-moment, each from its own look at the repository, and the clerk deals the
-shared work so that no two start on one claim (G14: the shared work is
-dealt out, each issue to at most one worker). The lane starts from one
-state, a claimed issue with a ready and clean pull request and two free
-ones, and plays every ordering of the state changes that matter between
-the looks: main moves, so the ready pull request falls behind and its
+The workers of one run of workers.yml are dealt the shared work so that
+no two start on one claim (G14: the shared work is dealt out, each issue
+to at most one worker). The lane starts from one state, a claimed issue
+with a ready and clean pull request and two free ones, and plays every
+ordering of the state changes that matter between the moments a worker
+could look: main moves, so the ready pull request falls behind and its
 holder has work again, and a worker outside the run claims one of the
-free issues. Each worker looks at one of the moments between the
-changes; every assignment of moments to workers is tried. A deal in which
-two workers of the run get one issue is a double deal.
+free issues. Each worker's leg is given one of the moments between the
+changes; every assignment of moments to workers is tried, and the deal
+is the workflow's (clerk.workflow_deals). A deal in which two workers of
+the run get one issue is a double deal.
 
-What it finds, as built: from one look, never a double deal; from
-differing looks, one (F4): the holder's pull request is clean at one
-worker's look, so the holder is dealt an issue and the worker the next,
-and behind at another's, so the holder carries its own claim and that
-worker is dealt what the first worker's deal gave the holder. The lane
-fails on a double deal from one look, and expects the known one from
-differing looks, so the finding stays pinned until a fix answers it.
+What it found, as built until F4's fix, when each leg asked team.next_for
+from its own look: from one look, never a double deal; from differing
+looks, one (F4): the holder's pull request was clean at one worker's
+look, so the holder was dealt an issue and the worker the next, and
+behind at another's, so the holder carried its own claim and that worker
+was dealt what the first worker's deal gave the holder. Since the fix the
+workflow looks once for the run, in its first job (team.deals), and the
+lane fails on any double deal, from one look or from differing looks. On
+the library the 54 assignments of moments to legs give one deal per
+ordering and run moment, 6 distinct, which the lane counts and the report
+says; the assignments are still played, since the mutant that gives each
+leg its own look is judged on the same 54 and doubles 15 of them.
 """
 
 import itertools
 from typing import NamedTuple
 
-from sdlc_protocol import team
-
-from . import model as M, verbs
+from . import clerk, model as M, verbs
 from .clerk import ModelClient
 from .model import OWNER
 
@@ -88,16 +91,15 @@ def moments(order, model=None):
 
 def play(model, order, looks, workers=WORKERS):
     """One deal from the model as a trace left it: the changes in order,
-    each worker asking at the moment its look names (replay.py's "deal"
-    step)."""
+    each worker's leg at the moment its look names, dealt as the workflow
+    deals (replay.py's "deal" step)."""
     clients = moments(order, model)
-    moves = {w: team.next_for(clients[look], w, list(workers)) for w, look in zip(workers, looks)}
-    return Deal(tuple(order), tuple(looks), moves)
+    return Deal(tuple(order), tuple(looks), clerk.workflow_deals(clients, workers, looks))
 
 
 def violations(deal):
     """G14 on one deal, as (guarantee, detail) pairs: an issue dealt to two
-    workers, from one look or from differing looks (F4)."""
+    workers, from one look or from differing looks (F4, until its fix)."""
     looks = "one look" if deal.one_look else "differing looks"
     return [("G14", f"#{n} dealt twice from {looks}: {deal.moves}") for n in deal.doubled]
 
@@ -106,30 +108,37 @@ def deals():
     for order in itertools.permutations(CHANGES):
         clients = moments(order)
         for looks in itertools.product(range(len(clients)), repeat=len(WORKERS)):
-            moves = {w: team.next_for(clients[look], w, list(WORKERS)) for w, look in zip(WORKERS, looks)}
-            yield Deal(order, looks, moves)
+            yield Deal(order, looks, clerk.workflow_deals(clients, WORKERS, looks))
 
 
 class Lane(NamedTuple):
     deals: int
+    distinct: int  # how many of the deals differ in their order or their moves
     doubled_from_one_look: tuple
     doubled_from_differing_looks: tuple
 
 
 def run_lane():
-    one, differing, count = [], [], 0
+    one, differing, count, seen = [], [], 0, set()
     for deal in deals():
         count += 1
+        seen.add((deal.order, tuple(sorted(deal.moves.items()))))
         if not deal.doubled:
             continue
         (one if deal.one_look else differing).append(deal)
-    return Lane(count, tuple(one), tuple(differing))
+    return Lane(count, len(seen), tuple(one), tuple(differing))
+
+
+def doubled(lane):
+    """Every double deal, whatever the looks: none since F4's fix."""
+    return lane.doubled_from_one_look + lane.doubled_from_differing_looks
 
 
 def report(lane):
-    lines = [f"{lane.deals} deals; {len(lane.doubled_from_one_look)} doubled from one look, "
-             f"{len(lane.doubled_from_differing_looks)} from differing looks (F4)"]
-    for deal in lane.doubled_from_one_look + lane.doubled_from_differing_looks[:3]:
+    lines = [f"{lane.deals} deals over every assignment of moments to the legs, {lane.distinct} distinct; "
+             f"{len(lane.doubled_from_one_look)} doubled from one look, "
+             f"{len(lane.doubled_from_differing_looks)} from differing looks (F4 until its fix)"]
+    for deal in doubled(lane)[:4]:
         lines.append(f"  after {' then '.join(deal.order)}, looks at {deal.looks}: {deal.moves}")
     return "\n".join(lines)
 
@@ -137,7 +146,7 @@ def report(lane):
 def main():
     lane = run_lane()
     print(report(lane))
-    return 1 if lane.doubled_from_one_look else 0
+    return 1 if doubled(lane) else 0
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 {
   "finding": "F4",
   "title": "the clerk can deal one issue to two workers of the same run",
-  "status": "open; decision for the owner (DESIGN.md, 14)",
+  "status": "fixed after 0.4.1: the workers' workflow deals once for the run, from one look, in its first job (DESIGN.md, 13)",
   "breaks": ["G14"],
   "world": "memory",
   "issues": {"4": ["todo"], "5": ["todo"], "6": ["todo"]},
@@ -16,7 +16,7 @@
     {"verb": "open-draft", "actor": "a", "args": [4]},
     {"verb": "mark-ready", "actor": "a", "args": [100]},
     {"verb": "board", "expect": {"queue": [5, 6], "claims": {"claude/4": "a"}, "pulls": [100]}},
-    {"verb": "deal", "args": [["main-moves", "outsider-claims"], [0, 0, 1]], "shows": "F4",
-     "note": "a and b ask before main moves, so a's ready pull request is clean and a is dealt #5, b #6; c asks after, when a's pull request is behind and a carries its own claim, so c is dealt #6 too"}
+    {"verb": "deal", "args": [["main-moves", "outsider-claims"], [0, 0, 1]],
+     "note": "a's and b's legs would look before main moves and c's after; the run looks once, before any leg, when a's ready pull request is clean, so a is dealt #5, b #6 and c nothing. Until the fix each leg asked from its own look: c's, after main moved, found a's pull request behind and a carrying its own claim, and dealt c #6 too, which the mutant that puts the legs' own looks back shows (G14)"}
   ]
 }

@@ -10,13 +10,28 @@ an epic's tasks into one and reads the board that renders them.
 
 A snapshot is a client over a clone of the model at the moment the worker
 looked, so a change made after one worker's look and before another's is
-what the two see differently.
+what the two see differently; workflow_deals is the workers' workflow's
+one look for a whole run, since F4's fix.
 """
+
+from sdlc_protocol import team
 
 from . import fake_github
 from .model import Issue, OWNER
 
 FIRST_ISSUE_ID = 1000
+
+
+def workflow_deals(clients, workers, looks, areas=None):
+    """The moves of the workers of one run of the workers' workflow, as it
+    is built since F4's fix: the run's first job looks once and deals
+    (team.deals), and each leg reads its move from that look, so the
+    moments the legs would have looked at, looks, by worker, decide
+    nothing but when the run looked, no later than the earliest of them.
+    Until the fix each leg asked from its own look (team.next_for at
+    clients[look]), which the mutant "each leg dealt from its own look"
+    puts back."""
+    return team.deals(clients[min(looks)], list(workers), areas)
 
 
 class ModelClient:
