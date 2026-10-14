@@ -22,7 +22,13 @@ class FakeClient:
     def __init__(self):
         self.issues, self.branches, self.pulls, self.checks = {}, set(), {}, {}
         self.labels, self.sub_issues = {"todo", "epic"}, []
+        self.claims = {}
         self.next_number = 100
+
+    def add_claim(self, issue, worker):
+        """A claim branch whose claim file names the worker."""
+        self.branches.add(f"claude/{issue}")
+        self.claims[f"claude/{issue}"] = f"# Claim: #{issue}\n\n- Worker: {worker}\n- Branch: claude/{issue}\n"
 
     def add_issue(self, number, labels=(), body="", state="open", title="t"):
         self.issues[number] = {"number": number, "id": 9000 + number, "title": title, "body": body,
@@ -49,6 +55,9 @@ class FakeClient:
 
     def check_runs(self, sha):
         return self.checks.get(sha, [])
+
+    def claim_text(self, branch):
+        return self.claims.get(branch)
 
     def create_label(self, name, colour):
         self.labels.add(name)
@@ -256,6 +265,68 @@ class NextTest(unittest.TestCase):
         self.api.add_issue(6, ["todo", "agent:w1", "claimed", "account:second"])
         self.api.branches.add("claude/6")
         self.assertEqual(team.next_for(self.api, "w1"), "none")
+
+    def test_a_claim_is_carried_by_the_worker_its_claim_file_names_whatever_the_labels_say(self):
+        """F18: the issue still carries a's label, but b pushed the claim and
+        has not announced it yet, so the claim is b's, as the board's Claims
+        row and a release name it; until the fix the clerk read the labels
+        alone, told a to carry b's branch and told b nothing."""
+        self.api.add_issue(2, ["todo", "worker:a"])
+        self.api.add_claim(2, "b")
+        self.assertEqual(team.next_for(self.api, "a"), "none")
+        self.assertEqual(team.next_for(self.api, "b"), "carry 2")
+        self.assertEqual(team.deals(self.api, ["a", "b"]), {"a": "none", "b": "carry 2"})
+        self.api.add_issue(3, ["todo"])
+        self.assertEqual(team.deals(self.api, ["a", "b"]), {"a": "take 3", "b": "carry 2"})
+
+    def test_where_the_claim_file_says_nothing_the_label_says_whose_the_claim_is(self):
+        """The finishing pull request deletes the claim file, a hand may
+        leave its Worker line out, and GitHub gives no text of a file over
+        1 MB: the issue's label then names the holder, as a release names
+        whose the claim was (coordinator.holder)."""
+        self.api.add_issue(2, ["claimed", "in-review", "worker:a"])
+        self.api.branches.add("claude/2")
+        self.api.add_pull(2, state="behind")
+        self.assertEqual(team.deals(self.api, ["a", "b"]), {"a": "carry 2", "b": "none"})
+        for text in ("# Claim: #2\n\n## Plan\n\nNo worker line.\n", False):
+            self.api.claims["claude/2"] = text
+            self.assertEqual(team.deals(self.api, ["a", "b"]), {"a": "carry 2", "b": "none"}, text)
+
+    def test_a_task_several_workers_labels_give_goes_to_the_first_of_them_in_the_run_s_order(self):
+        """F18: the board shows such a task to each of them under Given to
+        workers, and Pick has each take it, so the clerk deals it to the
+        first of them with nothing else to do, and the others take their
+        share of the rest; until the fix it went to none of them."""
+        self.api.add_issue(2, ["todo", "worker:a", "agent:b"])
+        self.assertEqual(team.deals(self.api, ["a", "b"]), {"a": "take 2", "b": "none"})
+        self.assertEqual(team.deals(self.api, ["b", "a"]), {"b": "take 2", "a": "none"})
+        self.assertEqual(team.deals(self.api, ["c", "b", "a"]), {"c": "none", "b": "take 2", "a": "none"})
+        self.api.add_issue(3, ["todo"])
+        self.assertEqual(team.deals(self.api, ["a", "b"]), {"a": "take 2", "b": "take 3"})
+        for member in ("a", "b"):
+            self.assertEqual(team.next_for(self.api, member, ["a", "b"]), team.deals(self.api, ["a", "b"])[member])
+
+    def test_a_worker_carrying_its_claim_leaves_a_shared_task_to_the_next_of_them(self):
+        self.api.add_issue(2, ["claimed", "worker:a"])
+        self.api.add_claim(2, "a")
+        self.api.add_issue(3, ["todo", "worker:a", "worker:b"])
+        self.assertEqual(team.deals(self.api, ["a", "b"]), {"a": "carry 2", "b": "take 3"})
+        self.assertEqual(team.next_for(self.api, "b", ["a", "b"]), "take 3")
+
+    def test_a_task_given_to_one_alone_comes_before_a_shared_one(self):
+        """A worker with a task of its own has something else to do, so a
+        task it shares goes to the next of the workers it names, whatever
+        the numbers' order; next_for answers a task given alone from the
+        worker's own look, since no peer's move can change it, and a shared
+        one as the run deals it."""
+        self.api.add_issue(2, ["todo", "worker:a", "worker:b"])
+        self.api.add_issue(3, ["todo", "worker:a"])
+        for order in (["a", "b"], ["b", "a"]):
+            self.assertEqual(team.deals(self.api, order), {"a": "take 3", "b": "take 2"}, order)
+            for member in order:
+                self.assertEqual(team.next_for(self.api, member, order), team.deals(self.api, order)[member])
+        self.assertEqual(team.deals(self.api, ["a"]), {"a": "take 3"})
+        self.assertEqual(team.deals(self.api, ["a", "c"]), {"a": "take 3", "c": "none"})
 
     def test_a_failure_outside_the_required_check_costs_no_run(self):
         self.api.add_issue(2, ["claimed", "agent:w1"])

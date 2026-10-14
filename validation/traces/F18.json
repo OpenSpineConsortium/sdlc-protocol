@@ -1,0 +1,24 @@
+{
+  "finding": "F18",
+  "title": "the clerk reads whose a claim is, and whose a task is, from the issue's labels alone",
+  "status": "fixed after 0.4.1: a claim is the worker's its claim file names, the labels deciding only where no file names one, and a task the labels of several workers give goes to the first of them in the run's order with nothing else to do (team.Snapshot.holder, team.moves_from; DESIGN.md, 13)",
+  "breaks": ["G14"],
+  "world": "memory",
+  "issues": {"1": ["todo", "worker:a", "worker:b"], "2": ["todo", "worker:a"], "3": ["todo"]},
+  "workers": ["a", "b", "c"],
+  "steps": [
+    {"verb": "board", "expect": {"given": {"1": ["a", "b"], "2": ["a"]}, "queue": [3]},
+     "note": "#1 is given to a and to b, #2 to a alone, and #3 is in the Queue"},
+    {"verb": "deal", "args": [[], [0, 0, 0]],
+     "note": "a takes #2, given to it alone, b #1, which the labels of a and b give, and c #3. Until the fix the clerk dealt #1 to neither, since its labels name two workers, and b #3, which the mutant \"a shared task dealt to none\" shows; \"a shared task before one given alone\" deals a #1 (G14)"},
+    {"at": 1, "verb": "claim", "actor": "b", "args": [1], "expect": {"holders": {"1": "b"}},
+     "note": "b, the first of the two to claim #1, holds it"},
+    {"verb": "announce", "actor": "b", "args": [1], "expect": {"labels": {"1": ["claimed", "todo", "worker:a", "worker:b"]}},
+     "note": "Announce takes off only a label an earlier claim left, so a's stays: the coordinator gave #1 to a too"},
+    {"verb": "claim", "actor": "c", "args": [3]},
+    {"verb": "label-on", "actor": "c", "args": [3, "blocked"],
+     "note": "c's claim waits on a peer or the coordinator"},
+    {"verb": "deal", "args": [[], [0, 0, 0]],
+     "note": "b carries its claim, whose file names it, though the issue's labels name a too; a takes #2; c, whose claim waits, nothing. Until the fix nobody carried #1, its labels naming two workers, so b's claim lay idle until its release; the mutant \"the clerk carrying by labels alone\" tells a, the first they name, to carry b's claim, and \"a blocked claim carried\" tells c to carry its waiting claim (G14)"}
+  ]
+}

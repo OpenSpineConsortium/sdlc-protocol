@@ -734,7 +734,7 @@ class TheRecords(unittest.TestCase):
         self.assertIsNone(canary.vendored_version("unreadable"))
         self.assertIsNone(canary.vendored_version(None))
         self.assertEqual(canary.known_for(first_line),
-                         canary.known.AS_BUILT | {"F4", "F7", "F9", "F12", "F13", "F14", "F15", "F17"})
+                         canary.known.AS_BUILT | {"F4", "F7", "F9", "F12", "F13", "F14", "F15", "F17", "F18"})
         self.assertEqual(canary.known_for(f"sdlc-protocol 0.5.0 {COMMIT}"), canary.known.AS_BUILT)
         self.assertEqual(canary.known_for("unreadable"), canary.known.AS_BUILT)
         self.assertEqual(canary.known_words(frozenset({"F12", "F2", "F13", "F99"})),
@@ -745,7 +745,7 @@ class TheRecords(unittest.TestCase):
             path = Path(scratch) / "c.json"
             self.assertEqual(canary.run_site(FakeSite(), ["C2"], path, None, out), 0)
             data = json.loads(path.read_text())
-            self.assertEqual(data["known_for"], ["F2", "F4", "F7", "F9", "F12", "F13", "F14", "F15", "F17"])
+            self.assertEqual(data["known_for"], ["F2", "F4", "F7", "F9", "F12", "F13", "F14", "F15", "F17", "F18"])
             self.assertEqual(data["results"][0]["status"], "known")
             self.assertIn("F12 (fixed after 0.4.1)", out.getvalue())
             self.assertEqual(canary.run_site(FakeSite(vendoring="0.5.0"), ["C2"], path, None, out), 1)

@@ -289,6 +289,11 @@ class GitHub:
                 runs.extend(page.get("check_runs") or [])
         return runs
 
+    def claim_text(self, branch):
+        """The claim file on a claude/<issue> branch, as the board reads it
+        (claim_text below): the clerk reads whose a claim is from it (F18)."""
+        return claim_text(self, branch)
+
     def create_label(self, name, colour):
         """Make the label; GitHub answers 422 for one that exists, which is
         the label being there, not a failure."""

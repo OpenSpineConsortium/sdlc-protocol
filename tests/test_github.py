@@ -1767,6 +1767,25 @@ class TeamClient(unittest.TestCase):
         })
         self.assertEqual(team.next_for(api, "w1"), "take 4")
 
+    def test_the_clerk_reads_whose_a_claim_is_from_its_claim_file_over_rest(self):
+        """F18: #7 still carries a's label, but the claim file b pushed names
+        b, so b carries the claim and a is told nothing of it; the file is
+        read once for the look, through the contents API, as the board
+        reads it."""
+        claim = "# Claim: #7\n\n- Worker: b\n- Branch: claude/7\n"
+        path = "/repos/o/r/contents/docs/agents/claims/7.md?ref=claude%2F7"
+        api, opener = client({
+            "/repos/o/r/issues?state=open&per_page=100": FakeAnswer([
+                {"number": 7, "state": "open", "labels": [{"name": "todo"}, {"name": "worker:a"}]}]),
+            "/repos/o/r/branches?per_page=100": FakeAnswer([{"name": "main"}, {"name": "claude/7"}]),
+            path: FakeAnswer({"type": "file", "content": base64.b64encode(claim.encode()).decode()}),
+            PULL_LIST: FakeAnswer([]),
+        })
+        self.assertEqual(api.claim_text("claude/7"), claim)
+        self.assertEqual(team.deals(api, ["a", "b"]), {"a": "none", "b": "carry 7"})
+        asked = [c.full_url.replace(github.API, "") for c in opener.calls]
+        self.assertEqual(asked.count(path), 2)
+
 
 def world(answers, who_merges=gate.GATE, waits=None):
     api, opener = client(answers, waits)

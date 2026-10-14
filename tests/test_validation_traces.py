@@ -1,4 +1,4 @@
-"""The regression traces of DESIGN.md 5.3, one per finding F1 to F17
+"""The regression traces of DESIGN.md 5.3, one per finding F1 to F18
 (validation/traces/, played by validation/replay.py), and known.json, the
 record of what is red on purpose: every trace loads and plays with no
 mismatch; its red results are exactly what known.json records, as built
@@ -54,7 +54,14 @@ BUDGET_SECONDS = 10
 # hears nothing, or is left off the page, once the release's rename is
 # read as closing it; and at its last run, step 9, after main has moved
 # past sam's branch, which hears no "main moved" once a pull request from
-# a fork is left out of the word (F17's review).
+# a fork is left out of the word (F17's review). F18's at its first deal,
+# step 1, where #1, which the labels of a and b give, goes to neither once
+# such a task is dealt as one given alone, or a takes it before #2, given
+# to it alone, once the task given alone waits for the rest; and at its
+# second, step 8, after b has claimed #1 and c has claimed #3 and labelled
+# it blocked, where a is told to carry b's claim once whose a claim is is
+# read from the labels alone, and c its waiting claim once a claim
+# labelled blocked is carried.
 UNDONE = {
     "F1": [("the comment before the labels", 5, "G3L")],
     "F3": [("the guard passes --force", 1, "G11a")],
@@ -79,12 +86,15 @@ UNDONE = {
             ("a fork's pull request silenced with a released claim", 7, "G10"),
             ("a fork's pull request left off with a released claim", 7, "G9"),
             ("a fork's pull request never told main moved", 9, "G10")],
+    "F18": [("a shared task dealt to none", 1, "G14"), ("a shared task before one given alone", 1, "G14"),
+            ("the clerk carrying by labels alone", 8, "G14"), ("a blocked claim carried", 8, "G14")],
 }
-# The fifteen settled findings: F1, F3, F5, F6, F10 and F11 fixed in
-# 0.4.1; F4, F7, F9, F12, F13, F14, F15 and F17 fixed on main after it
-# (known.json's fixed_after); and F16, fixed in the spec's words, which the
-# library as built already keeps, so known.json names no version for it.
-FIXED = ("F1", "F3", "F4", "F5", "F6", "F7", "F9", "F10", "F11", "F12", "F13", "F14", "F15", "F16", "F17")
+# The sixteen settled findings: F1, F3, F5, F6, F10 and F11 fixed in
+# 0.4.1; F4, F7, F9, F12, F13, F14, F15, F17 and F18 fixed on main after
+# it (known.json's fixed_after); and F16, fixed in the spec's words, which
+# the library as built already keeps, so known.json names no version for
+# it.
+FIXED = ("F1", "F3", "F4", "F5", "F6", "F7", "F9", "F10", "F11", "F12", "F13", "F14", "F15", "F16", "F17", "F18")
 # Findings red as built, which no rule of the library answers: none since
 # F4's fix; the test keeps the case for the next one.
 RED_AS_BUILT = ()
@@ -164,6 +174,23 @@ class TheTraces(unittest.TestCase):
         self.assertEqual({(v.guarantee, v.detail) for _, v in record.violations},
                          {("G14", "#6 dealt twice from differing looks: {'a': 'take 5', 'b': 'take 6', 'c': 'take 6'}")})
 
+    def test_f18_s_trace_deals_by_pick_and_the_old_clerk_s_deals_are_red(self):
+        """Each deal of F18's trace is judged by Pick on the run's look,
+        where no claim has a pull request yet (dealing.pick_problems); with
+        the fix, #1 goes to b, the first of a and b with nothing else to
+        do, and b, once it holds #1, carries it."""
+        record = replay.replay(self.traces["F18"])
+        self.assertEqual(replay.results(record), set())
+        deals = [line for line in record.timeline if " deal " in line]
+        self.assertEqual(len(deals), 2)
+        self.assertIn("{'a': 'take 2', 'b': 'take 1', 'c': 'take 3'}", deals[0])
+        self.assertIn("{'a': 'take 2', 'b': 'carry 1', 'c': 'none'}", deals[1])
+        with mutants.switched_on(mutants.MUTANTS["the clerk carrying by labels alone"]):
+            record = replay.replay(self.traces["F18"])
+        self.assertEqual({(at, v.detail) for at, v in record.violations},
+                         {(8, "a carries #1, whose claim is b's"),
+                          (8, "b carries nothing though its claim on #1 is its own")})
+
     def test_f7_s_trace_is_green_and_red_for_g1_too_under_its_mutant(self):
         """The fence refuses the careless lease (G11a at the lease); with
         it gone git takes the lease and the board names b (G1 too)."""
@@ -233,7 +260,7 @@ class KnownJson(unittest.TestCase):
         at that version and before, and new from the next release on."""
         self.assertEqual(known.FIXED_AFTER,
                          {"F4": "0.4.1", "F7": "0.4.1", "F9": "0.4.1", "F12": "0.4.1", "F13": "0.4.1", "F14": "0.4.1",
-                          "F15": "0.4.1", "F17": "0.4.1"})
+                          "F15": "0.4.1", "F17": "0.4.1", "F18": "0.4.1"})
         current = known.version_key(sdlc_protocol.__version__)
         for finding, version in known.FIXED_AFTER.items():
             with self.subTest(finding=finding):
@@ -242,7 +269,7 @@ class KnownJson(unittest.TestCase):
                 self.assertIsNotNone(known.version_key(version))
                 self.assertLessEqual(known.version_key(version), current,
                                      "the last version with a finding is one main has stated, never a later one")
-        fixed_on_main = {"F4", "F7", "F9", "F12", "F13", "F14", "F15", "F17"}
+        fixed_on_main = {"F4", "F7", "F9", "F12", "F13", "F14", "F15", "F17", "F18"}
         self.assertEqual(known.as_built_for("0.4.1"), known.AS_BUILT | fixed_on_main)
         self.assertEqual(known.as_built_for("0.4.0"), known.AS_BUILT | fixed_on_main)
         self.assertEqual(known.as_built_for("0.4.2"), known.AS_BUILT, "the next release carries the fixes")

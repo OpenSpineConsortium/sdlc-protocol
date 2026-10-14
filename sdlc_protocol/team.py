@@ -17,9 +17,9 @@ ways, each run by a workflow step through the command line (cli.py's
   route  after an issue event, say what the coordinator does next:
          "plan <epic>", "integrate <epic>", "unblock <task>" or "none".
   next   for one worker, say what it does next: "carry <issue>" (its own
-         claim needs work), "take <issue>" (the task it was given, else its
-         share of the unclaimed blockers and todos that fit its area) or
-         "none".
+         claim, the one whose claim file names it, needs work), "take
+         <issue>" (the task it was given, else its share of the unclaimed
+         blockers and todos that fit its area) or "none".
   deal   for every worker of a run, from one look at the repository, the
          same answer next gives each, as JSON by worker: the workers'
          workflow deals once, in its first job, and hands each leg its
@@ -37,14 +37,14 @@ import json
 import re
 from typing import Protocol, runtime_checkable
 
-from .claims import PREFIX as CLAIM_PREFIX, issue_files, number_of
+from .claims import PREFIX as CLAIM_PREFIX, UNNAMED, claim_worker, issue_files, number_of
 # The label names and the prefixes are spelled once, in labels.py: a
 # worker names itself with worker:<name>, and the older account:<name> and
 # agent:<name> are read as the same label.
 from .labels import (ACCOUNT_PREFIX, AGENT_PREFIX, BLOCKED as BLOCKED_LABEL,
                      BLOCKER as BLOCKER_LABEL, CLAIMED as CLAIMED_LABEL, EPIC as EPIC_LABEL,
                      TODO as TODO_LABEL, WORKER_COLOUR, agent_label as agent_of, holders, label_names,
-                     worker_label)
+                     worker_label, worker_of)
 from .workers import fits
 
 # The one check the ruleset requires and a member can fix; the board's own
@@ -106,6 +106,11 @@ class Client(Protocol):
     def check_runs(self, sha: str) -> list[dict]:
         """The check runs on one commit."""
 
+    def claim_text(self, branch: str) -> str | None:
+        """The claim file on a claude/<issue> branch, at its head, or None
+        when there is none; a file GitHub gives no text of, one over 1 MB,
+        is False (board.UNREAD_CLAIM), never an empty claim file."""
+
     def create_label(self, name: str, colour: str) -> None:
         """Make the label; one that exists already is left as it is, since
         GitHub answers a second creation with 422 and that is not a failure."""
@@ -129,10 +134,18 @@ class Client(Protocol):
 # the clerk uses them under.
 
 def is_mine(issue, agent):
-    """An issue this worker was given or claimed, and nobody else holds:
-    another worker can claim a task before the one it was given gets to
-    it, and its branch is then that worker's."""
+    """An issue the labels give to this worker alone, so no peer's move can
+    take it from the worker. One that several workers' labels give is
+    each of theirs (given_to), and whose a claim is, its claim file says,
+    whatever the labels say (Snapshot.holder; F18)."""
     return holders(issue) == {agent}
+
+
+def given_to(issue, agent):
+    """Whether the issue's labels give it to this worker, alone or beside
+    others: the board shows it to each of them under Given to workers, and
+    Pick has each take it, the claim deciding whose it is (F18)."""
+    return agent in holders(issue)
 
 
 def epic_of(issue):
@@ -235,11 +248,29 @@ class Snapshot:
         self.issues = sorted(open_issues(client), key=lambda issue: issue["number"])
         self.claimed = claim_branches(client)
         self.needs_work = {}
+        self.holders = {}
 
     def claim_needs_work(self, number):
         if number not in self.needs_work:
             self.needs_work[number] = claim_needs_work(self.client, number)
         return self.needs_work[number]
+
+    def holder(self, issue):
+        """Whose the claim on this issue is, as a release names whose it was
+        (coordinator.holder): the worker its claim file names, else, where
+        the finishing pull request has deleted the file, no line names one
+        or GitHub gave no text of it, the worker the issue's label names;
+        None when neither does. The file is read once a look, the first
+        time it is asked for. Until F18's fix the clerk read the labels
+        alone, so a worker whose label an issue still carried was told to
+        carry the claim another worker had pushed and not yet announced,
+        and the claim's holder was told nothing."""
+        number = issue["number"]
+        if number not in self.holders:
+            text = self.client.claim_text(f"{CLAIM_PREFIX}{number}")
+            named = claim_worker(text) if text else UNNAMED
+            self.holders[number] = named if named != UNNAMED else worker_of(issue)
+        return self.holders[number]
 
     def free(self, issue):
         """Whether an issue may be taken: no claim branch holds it, and it
@@ -255,21 +286,44 @@ class Snapshot:
         return (issue["number"] not in self.claimed and BLOCKED_LABEL not in labels
                 and CLAIMED_LABEL not in labels)
 
-    def own_move(self, agent):
-        """A member's own work: a claim of its own that needs work, else
-        the task the lead gave it, an issue its label names whether or not
-        it also carries todo, since the board shows it under Given to
-        workers either way (F14) and the spec has the worker take it
-        first; never an epic, which the coordinator plans and nobody takes
-        whole. None when it has neither."""
-        mine = [i for i in self.issues if is_mine(i, agent) and BLOCKED_LABEL not in label_names(i)]
-        for issue in mine:
-            if issue["number"] in self.claimed and self.claim_needs_work(issue["number"]):
-                return f"carry {issue['number']}"
-        for issue in mine:
-            if self.free(issue) and EPIC_LABEL not in label_names(issue):
-                return f"take {issue['number']}"
+    def carry(self, agent):
+        """"carry <issue>" for the first claim of the member's own that needs
+        work, one whose holder is the member (holder), whatever the issue's
+        labels say, and that is not labelled blocked, which waits for help;
+        None when it has none."""
+        for issue in self.issues:
+            number = issue["number"]
+            if (number in self.claimed and BLOCKED_LABEL not in label_names(issue)
+                    and self.holder(issue) == agent and self.claim_needs_work(number)):
+                return f"carry {number}"
         return None
+
+    def given(self, agent, taken=(), alone=False):
+        """The first task the labels give the member, beside other workers
+        or, with alone, to the member alone (is_mine), that is free and no
+        epic, which the coordinator plans and nobody takes whole, and that
+        no member before it in the run took (taken), whether or not it also
+        carries todo, since the board shows it under Given to workers either
+        way (F14) and the spec has the worker take it first; None when there
+        is none."""
+        mine = is_mine if alone else given_to
+        for issue in self.issues:
+            if (issue["number"] not in taken and mine(issue, agent) and self.free(issue)
+                    and EPIC_LABEL not in label_names(issue)):
+                return issue
+        return None
+
+    def own_move(self, agent):
+        """A member's move that no peer's can change, which next_for answers
+        from the member's own look: a claim of its own that needs work, else
+        a task the labels give it alone. A task several workers' labels give
+        goes to the first of them in the run's order with nothing else to do
+        (moves_from), so it is no member's own move. None otherwise."""
+        carried = self.carry(agent)
+        if carried:
+            return carried
+        issue = self.given(agent, alone=True)
+        return f"take {issue['number']}" if issue is not None else None
 
     def pool(self):
         """The shared work: unclaimed issues labelled blocker or todo that
@@ -302,12 +356,15 @@ def deal(members, pool, areas=None):
 
 def deals(client, team, areas=None):
     """Every worker's next move, by name, from one look at the repository:
-    its own claims first, then the task it was given, then its share of the
-    shared work, which is dealt out (deal) among the workers with no work of
-    their own, in the order given, each taking the next issue that fits its
-    area; a worker with no issue left for it gets "none" and waits, rather
-    than start a session that would race a peer for the same claim. areas
-    maps a worker's name to its area; a worker not in it takes any issue.
+    its own claims first, the ones whose claim files name it, then the task
+    it was given, one given to it alone before one that several workers'
+    labels give, which goes to the first of them in the order given with
+    nothing else to do, then its share of the shared work, which is dealt
+    out (deal) among the workers with no work of their own, in the order
+    given, each taking the next issue that fits its area; a worker with no
+    issue left for it gets "none" and waits, rather than start a session
+    that would race a peer for the same claim. areas maps a worker's name
+    to its area; a worker not in it takes any issue.
 
     One look for the whole run is the point: a worker that looked for
     itself could see a peer's ready pull request clean, and be dealt the
@@ -320,12 +377,22 @@ def deals(client, team, areas=None):
 
 
 def moves_from(snap, team, areas=None):
-    """deals over a look already taken: each member's own move, then the
-    shared work dealt among the members with none. A name repeated in team
-    is one member, dealt once, so no issue goes to a repetition and to
-    nobody."""
+    """deals over a look already taken: each member's own move, its claim
+    that needs work or else a task the labels give it alone; then the tasks
+    several workers' labels give, each member left with nothing in the
+    run's order taking the first given to it that no member before it took,
+    so such a task goes to the first of them with nothing else to do (F18:
+    until its fix it went to none of them); then the shared work dealt
+    among the members with none. A name repeated in team is one member,
+    dealt once, so no issue goes to a repetition and to nobody."""
     team = list(dict.fromkeys(team))
     moves = {member: snap.own_move(member) for member in team}
+    taken = set()
+    for member in team:
+        issue = None if moves[member] else snap.given(member, taken)
+        if issue is not None:
+            moves[member] = f"take {issue['number']}"
+            taken.add(issue["number"])
     idle = [member for member in team if not moves[member]]
     dealt = deal(idle, snap.pool(), areas)
     for member in idle:
@@ -335,10 +402,10 @@ def moves_from(snap, team, areas=None):
 
 def next_for(client, agent, team=None, areas=None):
     """The worker's next move, as deals gives it: the same answer the run's
-    one look would give this worker, from the worker's own look. Its own
-    work is answered first, before any peer's claim is read: deals gives a
-    member with work of its own that work whatever the others do, and each
-    peer's pull request costs a call."""
+    one look would give this worker, from the worker's own look. A move no
+    peer's can change (Snapshot.own_move) is answered first, before any
+    peer's claim is read: deals gives a member such a move whatever the
+    others do, and each peer's pull request costs a call."""
     team = list(team or [agent])
     if agent not in team:
         team.append(agent)
