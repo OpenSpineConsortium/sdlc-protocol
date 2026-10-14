@@ -27,9 +27,12 @@ class TheScript(unittest.TestCase):
 
     def test_replay_takes_one_trace_file_and_prints_its_timeline(self):
         out = io.StringIO()
+        self.assertEqual(validate.main(["replay", str(ROOT / "validation" / "traces" / "F4.json")], out), 0)
+        self.assertIn("red: step 9 G14", out.getvalue())
+        self.assertIn("deal", out.getvalue())
         self.assertEqual(validate.main(["replay", str(ROOT / "validation" / "traces" / "F7.json")], out), 0)
-        self.assertIn("red: step 1 G1, step 2 G1", out.getvalue())
-        self.assertIn("lease-onto b 1", out.getvalue())
+        self.assertIn("red: none", out.getvalue())
+        self.assertIn("lease-onto b 1: refused by the guard", out.getvalue())
         self.assertEqual(validate.main(["replay"], out), 2)
 
 

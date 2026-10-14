@@ -11,8 +11,9 @@ by its place among the steps as played, an "announce" of a trace counting
 as its three verbs, with the guarantee it breaks and the finding that
 breaks it. An entry for a finding in
 "as_built" is red when that finding's switch is off and green as built;
-an entry for any other finding (F4, dealing from differing looks; F7, a
-careless lease) is red as built, since no rule of the board answers it.
+an entry for any other finding (F4, dealing from differing looks) is red
+as built, since no rule of the library answers it; a fix removes its
+entries, as F7's did.
 
 The suite passes when every result is what the file records
 (tests/test_validation_traces.py, tests/test_validation_scenarios.py):

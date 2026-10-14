@@ -13,10 +13,34 @@ after claude/, which reads as a claim and claims nothing, is not pushed.
 A refusal is the rule working; the answer to one is a pull request, a
 rebase or another branch, never a way around the hook.
 
+The lease is also the one push GitHub itself would let take another
+worker's claim: a worker that has fetched holds a remote-tracking ref
+that matches the remote, so its --force-with-lease onto claude/N is
+taken whoever claimed N, and a ruleset against forced pushes on claude/**
+would refuse the prescribed lease too (spec/PROTOCOL.md, Work in the
+open). So before a lease onto claude/N the guard reads whose the claim
+is, from the claim file docs/agents/claims/N.md on the branch the lease
+holds against (the commit a --force-with-lease=claude/N:<commit> names,
+else, or when git cannot show that commit, as a lease written with a
+shell variable names one, the remote-tracking ref refs/remotes/<remote>/
+claude/N as the fetch left it), and whose claim the branch pushed makes
+it, from the same file on that branch; on either side the file is read
+at the tip, or, once the branch has deleted it as a finished branch has,
+where its history last added it, the last so that an issue claimed again
+after a merge is judged by its new claim and not by the one main's
+history keeps. A lease whose two workers differ, or that would put a
+branch with no claim file where another worker's claim stands, is
+refused (other_holder). The file is read with git in the session's own
+clone, so the fence costs a few git calls on a lease push and nothing
+on any other command.
+
 The hook is the first fence and branch protection on GitHub the second,
 so anything this module cannot read it lets through rather than wedging
 the session: an unparseable command, a broken payload or a git that
-answers nothing all pass, and GitHub still refuses what matters. Git is
+answers nothing all pass, and GitHub still refuses what matters; a claim
+file git cannot show, on either side of a lease, as on a branch whose
+history never had one, is a claim the fence cannot judge, and the lease
+passes as it did before the fence. Git is
 found behind what the shell reads before a command: VAR=value
 assignments, the reserved words that open a compound command or negate a
 pipeline (!, {, if, then, else, elif, while, until, do, and function with
@@ -139,6 +163,18 @@ RESERVED = {"!", "{", "if", "then", "else", "elif", "while", "until", "do"}
 # claude/03, read as a claim and claim nothing, since GitHub's lock, the
 # refusal of a second push, works per name.
 CLAIM_NUMBER = re.compile(r"0|[1-9][0-9]{0,8}")
+# The claim file the protocol's Claim rule names, docs/agents/claims/N.md,
+# and the line in it that names the claim's worker, "- Worker: name" (or
+# the older "- Account: name"), with a note in parentheses after the name
+# left to the reader, as claims.WORKER_LINE and claims.TRAILING_NOTE read
+# it; tests/test_guard.py holds the two to each other.
+CLAIM_DIR = "docs/agents/claims"
+WORKER_LINE = re.compile(r"^\W*(?:worker|account)\W*:\s*(.+?)\s*$", re.IGNORECASE)
+TRAILING_NOTE = re.compile(r"\s*\(.*\)\s*$")
+# Where a fetch leaves a remote's branches in the clone, which a lease
+# that names no commit holds against; origin unless the push names a
+# remote (remote_ref).
+REMOTE_REFS = "refs/remotes/"
 
 # What ends a word for the shell: a # right after one of these starts a
 # comment; anywhere else it is part of the word.
@@ -332,7 +368,11 @@ def short_options(bundle, options):
 def push_words(args):
     """git push's arguments read as git reads them: the options in force,
     by name, in the order they were last given, and the positional words,
-    the remote and then the refspecs."""
+    the remote and then the refspecs. --force-with-lease is in force as
+    the list of what each giving of it named, "" for one given bare,
+    which holds every ref pushed to its remote-tracking ref, and
+    "ref" or "ref:commit" for one that names a ref (git push's --help);
+    --no-force-with-lease takes them all back, as git does."""
     options, positionals, i = {}, [], 0
     while i < len(args):
         word = args[i]
@@ -345,8 +385,12 @@ def push_words(args):
             if found is None:
                 continue
             name, negated = found
-            options.pop(name, None)
-            if not negated:
+            named = options.pop(name, None)
+            if negated:
+                continue
+            if PUSH_OPTIONS[name] == OPTIONAL:
+                options[name] = (named if isinstance(named, list) else []) + [word.partition("=")[2]]
+            else:
                 options[name] = True
                 if PUSH_OPTIONS[name] == VALUE and "=" not in word:
                     i += 1
@@ -378,29 +422,38 @@ def branch_named(name):
     return name.removeprefix("heads/")
 
 
-def targets_of(refspecs, current_branch, deleting):
-    """The branches a push writes, each with whether it deletes it: a
-    refspec's destination, after the colon when it has one, as git
-    resolves the name (branch_named), the current branch for HEAD, for @
-    alone, which git reads as HEAD, or for no refspec at all, and a
-    deletion under --delete or for a refspec with nothing before its
+def refspec_pairs(refspecs, current_branch, deleting):
+    """What a push writes, as (source, branch, deleted) for each refspec: the
+    branch is the refspec's destination, after the colon when it has one,
+    as git resolves the name (branch_named), the current branch for HEAD,
+    for @ alone, which git reads as HEAD, or for no refspec at all; the
+    source is what stands before the colon, else the refspec itself, HEAD
+    for @ alone and for no refspec, as git names what it would push; and
+    a deletion is one under --delete or a refspec with nothing before its
     colon."""
-    targets = []
+    pairs = []
     for spec in refspecs:
         name, deleted = spec.lstrip("+"), deleting
+        source = name
         if ":" in name:
             source, name = name.split(":", 1)
             deleted = deleted or not source
         elif name == "@":
-            name = "HEAD"
+            source = name = "HEAD"
         name = branch_named(name)
         if name in ("", "HEAD"):
             name = current_branch
         if name:
-            targets.append((name, deleted))
+            pairs.append((source, name, deleted))
     if not refspecs and current_branch:
-        targets.append((current_branch, deleting))
-    return targets
+        pairs.append(("HEAD", current_branch, deleting))
+    return pairs
+
+
+def targets_of(refspecs, current_branch, deleting):
+    """The branches a push writes, each with whether it deletes it
+    (refspec_pairs)."""
+    return [(name, deleted) for _, name, deleted in refspec_pairs(refspecs, current_branch, deleting)]
 
 
 def misnamed_claim(name):
@@ -417,10 +470,90 @@ def misnamed_claim(name):
             f"zero{own} (docs/agents/PROTOCOL.md, Claim)")
 
 
-def refusal(args, current_branch, default_branch):
-    """Why this push is refused, or None when it is allowed."""
+def claim_number(name):
+    """The issue a branch claims, as text, or None for any other name: the
+    protocol's Claim rule, CLAIM_NUMBER after claude/."""
+    key = name[len("claude/"):] if name.startswith("claude/") else ""
+    return key if CLAIM_NUMBER.fullmatch(key) else None
+
+
+def claim_path(number):
+    return f"{CLAIM_DIR}/{number}.md"
+
+
+def worker_named(text):
+    """The worker a claim file names (WORKER_LINE), or None when no line of
+    it does, or there is no file."""
+    for line in (text or "").splitlines():
+        match = WORKER_LINE.match(line)
+        if match:
+            return TRAILING_NOTE.sub("", match.group(1)).strip("`*_ ")
+    return None
+
+
+def lease_holds(values, name):
+    """How a --force-with-lease given as values (push_words) holds the
+    branch name: None when it does not, so git pushes that ref as a plain
+    push would; else the commit the lease expects there, "" for the
+    remote-tracking ref, as a bare --force-with-lease, which holds every
+    ref not named, or one that names the ref alone expects it. A giving
+    that names the ref holds it whatever a bare one says, the first such
+    giving winning, as git applies the first entry that matches the ref."""
+    for value in values:
+        ref, _, commit = value.partition(":")
+        if ref and branch_named(ref) == name:
+            return commit
+    return "" if "" in values else None
+
+
+def remote_ref(remote, name):
+    """The remote-tracking ref of a branch for the remote a push names,
+    a name with no slash or colon; a URL or a path has none, and origin's
+    stands in, as the clone's best knowledge of the branch."""
+    named = remote if remote and "/" not in remote and ":" not in remote else "origin"
+    return f"{REMOTE_REFS}{named}/{name}"
+
+
+def other_holder(name, source, expected, claim_file_at, remote="origin"):
+    """Why a lease onto the claim branch name is refused as another
+    worker's: the claim file on the branch the lease holds against
+    names a worker, and the claim file on the branch pushed, source,
+    names another or is not there. The branch the lease holds against is
+    the commit expected, when the lease names one git can show, else the
+    remote-tracking ref (remote_ref): a lease written with a shell
+    variable names a commit git cannot show, and the push lands only when
+    the remote stands at the commit meant, of which the remote-tracking
+    ref is the clone's best knowledge. claim_file_at gives a claim file's
+    text by a ref and an issue number, or None (claim_file_reader). None
+    when the lease is allowed, or when the fence cannot judge it."""
+    number = claim_number(name)
+    if number is None or expected is None:
+        return None
+    held = worker_named(claim_file_at(expected, number)) if expected else None
+    if held is None:
+        held = worker_named(claim_file_at(remote_ref(remote, name), number))
+    if held is None:
+        return None
+    pushed = worker_named(claim_file_at(source, number))
+    if pushed == held:
+        # The holder's own rebase, or a branch built on the holder's own
+        # claim commit, which keeps the holder's work and name: the fence
+        # judges whose claim a branch carries, not who pushes, since the
+        # session's own name is nowhere in the command (G11b).
+        return None
+    theirs = f"{name} on origin is {held}'s claim (its claim file {claim_path(number)} says so)"
+    yours = f"claims #{number} for {pushed}" if pushed else f"carries no claim file for #{number}"
+    return (f"a push with --force-with-lease to {name} is refused: {theirs} and the branch you push {yours}; "
+            f"never push to another worker's branch (.claude/rules/board.md)")
+
+
+def refusal(args, current_branch, default_branch, claim_file_at=None):
+    """Why this push is refused, or None when it is allowed. claim_file_at
+    reads a claim file by a ref and an issue number, for the fence on a
+    lease onto another worker's claim (other_holder); None, as a caller
+    with no clone to read gives, leaves that fence out."""
     options, positionals = push_words(args)
-    refspecs, deleting = positionals[1:], "delete" in options
+    remote, refspecs, deleting = (positionals or [""])[0], positionals[1:], "delete" in options
     wholesale = [name for name in options if name in WHOLESALE]
     if wholesale:
         return (f"a push with --{wholesale[-1]} moves branches wholesale; "
@@ -457,6 +590,13 @@ def refusal(args, current_branch, default_branch):
         if strays:
             return (f"--force-with-lease to {', '.join(strays)} is refused: a forced push "
                     "is for your own claude/ branch only (.claude/rules/board.md)")
+        for source, name, deleted in refspec_pairs(refspecs, current_branch, deleting):
+            if deleted or claim_file_at is None:
+                continue
+            reason = other_holder(name, source, lease_holds(options["force-with-lease"], name), claim_file_at,
+                                  remote)
+            if reason:
+                return reason
     return None
 
 
@@ -469,6 +609,27 @@ def git_line(args, cwd):
     if done.returncode != 0:
         return None
     return done.stdout.decode("utf-8", "replace").strip() or None
+
+
+def claim_file_reader(cwd):
+    """A reader of claim files in the clone at cwd, for the fence on a
+    lease (other_holder): the text of docs/agents/claims/N.md at a ref,
+    at its tip, else at the commit where the ref's history last added it,
+    since a finished branch has deleted the file; None when git shows
+    none, for a ref the clone lacks or a branch whose history never had
+    the file among other things, which the fence then does not judge.
+    The ref comes from the command, so it is handed to git after
+    --end-of-options, where one that starts with a dash is a ref and not
+    an option."""
+    def read(ref, number):
+        path = claim_path(number)
+        text = git_line(["show", "--end-of-options", f"{ref}:{path}"], cwd)
+        if text is None:
+            added = git_line(["log", "--format=%H", "--diff-filter=A", "-n", "1", "--end-of-options", ref, "--", path],
+                             cwd)
+            text = git_line(["show", "--end-of-options", f"{added}:{path}"], cwd) if added else None
+        return text
+    return read
 
 
 def branches(cwd):
@@ -506,7 +667,8 @@ def run(payload, cwd=None):
     not JSON pass, as this lets one that is not an object pass. Git is
     asked in the payload's own cwd, else in cwd, else here, and only once
     the command holds a push, so a session that never pushes never waits
-    on it."""
+    on it; and for the claim files a lease is judged by, only on a lease
+    push (other_holder)."""
     command = command_of(payload)
     if "push" not in command:
         return PASS, ""
@@ -514,9 +676,10 @@ def run(payload, cwd=None):
               if (args := push_arguments(argv)) is not None]
     if not pushes:
         return PASS, ""
-    current, default = branches(where_to_ask(payload, cwd))
+    where = where_to_ask(payload, cwd)
+    current, default = branches(where)
     for args in pushes:
-        reason = refusal(args, current, default)
+        reason = refusal(args, current, default, claim_file_reader(where))
         if reason:
             return REFUSE, reason
     return PASS, ""

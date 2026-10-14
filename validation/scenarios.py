@@ -13,10 +13,11 @@ scripted worker (policies.py) decide from the page alone until it has
 nothing to do, so the scenario shows what a worker that reads only
 STATE.md does; "look" changes nothing and checks what a worker would pick;
 "guard" asks the push guard about a command the actor might run. A step
-that names a finding (shows) is red for it: as built, for F7, which no
-board rule answers and the careless worker shows; with that finding's
-switch off in the oracle (oracle.AS_BUILT), for the findings the oracle
-reads as built. known.json records each such step with its guarantee
+that names a finding (shows) is red for it with that finding's switch
+off in the oracle (oracle.AS_BUILT), for the findings the oracle reads
+as built; S01c's careless lease showed F7 as built until the guard's
+fence refused it, and a step red as built would be recorded the same
+way. known.json records each such step with its guarantee
 (known.py, since build step 5), and tests/test_validation_traces.py holds
 the two to each other.
 """
@@ -127,9 +128,9 @@ def s01(name="S01", third=("todo", "worker:c"), careless=False):
         step(0, "b", "claim", 1, taken=False, holders={1: "a"}),
     )
     if careless:
-        steps += (step(0, "b", "lease-onto", 1, taken=True, holders={1: "a"}, shows="F7"),
-                  board(0, claims={"claude/1": "b"}, shows="F7"))
-        return Scenario(name, "a careless lease after a fetch takes another's claim", ("G1",),
+        steps += (step(0, "b", "lease-onto", 1, taken=False, holders={1: "a"}),
+                  board(0, claims={"claude/1": "a"}))
+        return Scenario(name, "a careless lease after a fetch is refused by the guard", ("G1", "G11a"),
                         {1: ("todo",), 2: ("todo",), 3: third}, {"a": None, "b": None, "c": None}, steps,
                         careless=True)
     steps += (

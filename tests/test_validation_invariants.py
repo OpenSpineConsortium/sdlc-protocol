@@ -1,9 +1,10 @@
 """The harness's guarantees (validation/invariants.py) on hand-written
 traces: an honest release and reclaim breaks none; the 0.4.1 fixes hold;
 a run in two halves is judged by the states its halves read; the open
-findings F2, F7, F9 and F12 show as soon as the oracle reads the spec,
-F12 by the run the concurrency group cancels. The mutants, the prototype's
-among them, are tests/test_validation_mutants.py's."""
+findings F2, F9 and F12 show as soon as the oracle reads the spec, F12 by
+the run the concurrency group cancels, and F7's careless lease is refused.
+The mutants, the prototype's among them, are
+tests/test_validation_mutants.py's."""
 
 import re
 import sys
@@ -15,6 +16,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from sdlc_protocol.adapters import github  # noqa: E402
+from sdlc_protocol import guard  # noqa: E402
 from validation import cycle, invariants, model as M, mutants, oracle, verbs  # noqa: E402
 from validation.verbs import Scope, Verb  # noqa: E402
 
@@ -230,9 +232,14 @@ class TheOpenFindingsShow(unittest.TestCase):
         self.assertEqual(violations(steps, scope), [])
         self.assertEqual(guarantees(violations(steps, scope, known=oracle.AS_BUILT - {"F12"})), ["G10"])
 
-    def test_f7_a_lease_after_a_fetch_takes_another_s_claim(self):
-        found = violations([Verb("claim", "a", (1,)), Verb("lease-onto", "b", (1,))], Scope(careless=True))
-        self.assertEqual(guarantees(found), ["G1"])
+    def test_f7_a_lease_after_a_fetch_onto_another_s_claim_is_refused(self):
+        """Fixed after 0.4.1: git would take the lease (test_validation_model),
+        and the guard refuses it by the claim file on origin."""
+        steps = [Verb("claim", "a", (1,)), Verb("lease-onto", "b", (1,)), BOARD]
+        self.assertEqual(violations(steps, Scope(careless=True)), [])
+        with mock.patch.object(guard, "other_holder", lambda *args: None):
+            found = violations(steps, Scope(careless=True))
+        self.assertEqual(guarantees(found), ["G1", "G11a"])
 
     def test_f13_the_landing_order_s_oldest_is_the_lowest_number(self):
         """Found by this step: a claim made five hours after another's draft

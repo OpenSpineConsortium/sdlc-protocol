@@ -62,6 +62,7 @@ TRACES = {
                                                        Scope(split_board=True)),
     "the guard passes --force": "the guard grammar against git's answers",
     "the guard passes a lease outside claude/": "the guard grammar against git's answers",
+    "the guard passes a lease onto another's claim": "the regression traces",
     "dealing without its taken set": "dealing from one look",
     "an overlap marker read on any line": ([CLAIM, Verb("claim", "b", (2,)), Verb("overlap-quote", "a", (1, (2,))),
                                             BOARD], SHARED),
@@ -90,10 +91,11 @@ def violations(steps, scope):
 class TheLane(unittest.TestCase):
     def test_it_holds_10_to_30_mutants_each_with_a_trace(self):
         """Section 7 asks for 10 to 20; step 4 added five for the rules its
-        lanes judge, and step 5 four that undo fixes of 0.4.1, so the
-        bound is widened to 30 and the count noted."""
-        self.assertTrue(10 <= len(mutants.MUTANTS) <= 30)
-        self.assertEqual(len(mutants.MUTANTS), 29)
+        lanes judge, step 5 four that undo fixes of 0.4.1, and each fix
+        since one that undoes it (F7's first), so the bound is widened to
+        40 and the count noted."""
+        self.assertTrue(10 <= len(mutants.MUTANTS) <= 40)
+        self.assertEqual(len(mutants.MUTANTS), 30)
         self.assertEqual(sorted(TRACES), sorted(mutants.MUTANTS))
 
     def test_every_mutant_names_a_rule_the_library_still_has(self):
@@ -108,7 +110,7 @@ class TheLane(unittest.TestCase):
         self.assertEqual([c.name for c in mutants.CATCHERS[:len(LANES)]], list(LANES))
         self.assertEqual(mutants.SEARCHES[-2].name, "the holder back between the halves of a run")
         self.assertEqual(mutants.SEARCHES[-1].name, "a stranger's marker on overlapping claims")
-        self.assertEqual([s.known for s in mutants.CATCHERS if s.known], [(mutants.F7, mutants.F4), (mutants.F7,)])
+        self.assertEqual([s.known for s in mutants.CATCHERS if s.known], [(mutants.F4,)])
 
 
 class EachMutantIsCaught(unittest.TestCase):
