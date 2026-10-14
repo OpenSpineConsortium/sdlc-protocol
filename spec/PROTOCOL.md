@@ -10,19 +10,19 @@ Each worker has a name, unique in the repository: its label is `worker:<name>` a
 
 ## Labels
 
-- todo: the queue. An issue labelled todo and shown unclaimed on the board is free to take, unless it is also labelled blocked (Pick).
+- todo: the queue. An issue labelled todo and shown unclaimed on the board is free to take as Pick says.
 - claimed: a worker has pushed its branch. The worker's own label goes on with it.
 - in-review: the pull request is ready; the owner merges it and the merge closes the issue.
-- blocker: the issue stops everyone until it is done.
+- blocker: the issue stops everyone: work it stands in the way of waits until it is done (Blockers).
 - worker:<name>: the worker that holds the issue, or that the coordinator gave it before any claim. An issue a worker's label names is that worker's alone: it is left out of the board's Queue and shown under Given to workers until the worker claims it. The older spellings account:<name> and agent:<name> are read as the same label.
-- epic: a request the coordinator plans into tasks (Planning, below).
+- epic: a request the coordinator plans into tasks (Planning, below). The board's Queue leaves an epic out, since nobody takes one whole.
 - blocked: a worker waits on a peer or the coordinator.
 
 sdlc_protocol.labels spells these names and the prefixes once, with the colour and description of every label a repository makes up front; a worker's label is made when the worker first needs it.
 
 ## Pick
 
-Fetch, then read the board (`git fetch origin +refs/heads/board:refs/remotes/origin/board && git show origin/board:STATE.md`). Take an issue the Given to workers section gives you first, but never an epic, which the coordinator plans (Planning). Else take a blocker, with or without todo, that the Blockers section lists, that nobody has claimed and that no worker's label gives to another, since a blocker comes before other work. Else take an open issue labelled todo that the Queue section shows as unclaimed and that no open blocker stands in the way of. Of the blockers and the Queue, take one in your area first when you have one; and never take an issue labelled blocked, which waits on a peer or the coordinator. An issue with a branch `claude/<issue>` on origin, or a file `docs/agents/claims/<issue>.md` on the default branch, is another worker's, whatever its labels say. Before you start, read the board's Overlaps section: open work that changes the same files as the issue you take lands in the order it gives.
+Fetch, then read the board (`git fetch origin +refs/heads/board:refs/remotes/origin/board && git show origin/board:STATE.md`). Take an issue the Given to workers section gives you first. Else take a blocker, with or without todo, that the Blockers section lists, that nobody has claimed and that no worker's label gives to another, since a blocker comes before the Queue. Else take an open issue labelled todo that the Queue section shows as unclaimed and that no open blocker stands in the way of. Of the blockers and the Queue, take only one in your area when you have an area; an issue that lists no files fits every area (Planning). Wherever an issue is listed, never take an epic, which the coordinator plans (Planning), nor an issue labelled blocked, which waits on a peer or the coordinator. An issue with a branch `claude/<issue>` on origin, or a file `docs/agents/claims/<issue>.md` on the default branch, is another worker's, whatever its labels say. Before you start, read the board's Overlaps section: open work that changes the same files as the issue you take lands in the order it gives.
 
 ## Claim
 

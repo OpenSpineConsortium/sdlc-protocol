@@ -144,8 +144,9 @@ def the_worker_line_round_trips(worker: str, spelling: str) -> None:
 
 def holder_names_each_once_in_order(names: list) -> None:
     """Each worker once, in the order its first label comes; any holder
-    label reserves the issue, and so does epic."""
-    assert len(names) <= 10
+    label reserves the issue, and so does epic; a bare prefix names nobody,
+    so a release leaves it on and no reader takes it for a worker."""
+    assert len(names) <= 11
     found = labels.holder_names(names)
     assert len(found) == len(set(found))
     firsts = []
@@ -158,6 +159,9 @@ def holder_names_each_once_in_order(names: list) -> None:
     issue = {"labels": names}
     assert labels.worker_of(issue) in (set(found) | {None})
     assert (labels.worker_of(issue) is None) == (not found)
+    named = [n for n in sorted(names) if any(n.startswith(p) and n[len(p):] for p in labels.HOLDER_PREFIXES)]
+    assert labels.holder_labels(issue) == named
+    assert all(labels.is_holder_label(n) == (n in named) for n in names)
 
 
 # --- the page ---------------------------------------------------------------------

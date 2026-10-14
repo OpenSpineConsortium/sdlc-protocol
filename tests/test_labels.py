@@ -80,6 +80,20 @@ class Names(unittest.TestCase):
         self.assertIsNone(labels.worker_of({"labels": ["todo"]}))
         self.assertIsNone(labels.worker_of(None))
 
+    def test_a_bare_prefix_names_nobody_for_any_reader(self):
+        """F15's fourth review: a bare worker: names no worker, as the board
+        reads it (holder_names), so worker_of passes over it to the worker
+        another label names, and a release leaves it on. Until then
+        worker_of read the empty name first and said nobody was named."""
+        self.assertEqual(labels.worker_of({"labels": ["worker:", "worker:a"]}), "a")
+        self.assertIsNone(labels.worker_of({"labels": ["worker:", "account:", "agent:"]}))
+        self.assertIsNone(labels.account_label({"labels": ["account:"]}))
+        self.assertIsNone(labels.agent_label({"labels": ["agent:"]}))
+        self.assertEqual(labels.holder_labels({"labels": ["worker:", "worker:a", "agent:", "claimed"]}), ["worker:a"])
+        self.assertFalse(labels.is_holder_label("worker:"))
+        self.assertTrue(labels.is_holder_label("agent:w1"))
+        self.assertFalse(labels.is_holder_label("todo"))
+
     def test_the_labels_a_release_takes_off_are_every_spelling(self):
         issue = {"labels": ["claimed", "todo", "worker:a", "account:b", "agent:c", "blocker"]}
         self.assertEqual(labels.holder_labels(issue), ["account:b", "agent:c", "worker:a"])

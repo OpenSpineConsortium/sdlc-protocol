@@ -121,12 +121,13 @@ def workers_named(names):
 
 
 def announce(seen, claim):
-    """The Announce steps not yet done, one at a time."""
+    """The Announce steps not yet done, one at a time: another worker's
+    label comes off, and a bare worker:, which names nobody, stays."""
     for label in ("claimed", WORKER_LABEL + seen.worker):
         if label not in claim.labels:
             return Verb("label-on", seen.worker, (claim.number, label))
     for label in sorted(claim.labels):
-        if label.startswith(WORKER_LABEL) and label != WORKER_LABEL + seen.worker:
+        if label.startswith(WORKER_LABEL) and workers_named((label,)) and label != WORKER_LABEL + seen.worker:
             return Verb("label-off", seen.worker, (claim.number, label))
     if not claim.planned:
         return Verb("plan", seen.worker, (claim.number,))
