@@ -25,7 +25,9 @@ line level and the model at file level. A conflict a verb meets in git
 (a merge or a rebase that brings main in, a cherry-pick that carries work
 on, the owner's merge) is resolved the way the memory verb builds its
 tree, so the trees agree wherever git and the model agree a conflict
-stands; a difference is what the conformance lane reports (deep.py).
+stands, and the memory rebase drops what git's drops, a merge commit and
+a commit whose patch main holds already (verbs.rebase_main); a
+difference is what the conformance lane reports (deep.py).
 
 Every git command runs with its own identity, no global or system
 configuration, no hooks and no automatic maintenance, in the environment
@@ -356,8 +358,7 @@ class GitStore:
         self.sync(model)
         sha = model.refs[ref]
         if created:
-            model.creators[ref] = worker
-            model.created[ref] = model.now
+            model.made_by(ref, worker)
         model.tracking.setdefault(worker, {})[ref] = sha
         events = ((cycle.PUSH, ref),) + (((cycle.CREATE, ref),) if created else ())
         return Outcome(True, "taken", command, allowed_shape=allowed, guarded=guarded, events=events)

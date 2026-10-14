@@ -72,6 +72,21 @@ class Violation(NamedTuple):
     detail: str
 
 
+# A sha inside a violation's detail: a released branch's name, and main's
+# commit in the "main moved" marker.
+SHA_IN_DETAIL = re.compile(r"(released/\d+-)[0-9a-f]{7,40}|(main-moved )[0-9a-f]{7,40}")
+
+
+def identity(detail):
+    """The detail with each sha in it read as any sha, what the deep lane
+    keys a violation by: a released branch's name and main's commit move
+    with the clock and the tree, so one fault met from several prefixes
+    showed as a violation per sha, each shortened and written on its own,
+    and a shrink could take out no wait before the branch's head, since
+    the sha then differed. The trace file keeps the detail as met."""
+    return SHA_IN_DETAIL.sub(lambda m: (m.group(1) or m.group(2)) + "*", detail)
+
+
 # --- what a run wrote ---------------------------------------------------------
 
 def effects_of(calls):
@@ -139,10 +154,13 @@ def one_name_one_holder(model):
     the worker from (spec, Claim: "the `- Worker:` line ... whose name is
     the worker's label without the `worker:` prefix"); once the finishing
     push has deleted the file (spec, Finish: "The pull request deletes its
-    claim file"), the spec leaves the board the issue's worker label,
-    which the Announce step put there, so the cell names that label's
-    worker, by the oracle's own reading of the labels, else says there is
-    no claim file. The cell is held to that one value, so a board that
+    claim file"), the spec says nothing of the cell, and the cell is held
+    to the library's documented reading (board.claim_row): the issue's
+    worker label, which the Announce step put there and which the spec's
+    Labels line gives the holder, as the spec has the board read a file
+    over 1 MB, so the cell names that label's worker, by the oracle's own
+    reading of the labels, else says there is no claim file. The cell is
+    held to that one value, so a board that
     drops the label, or says there is no claim file while one is there, is
     seen. The soak found the harness holding the cell to the holder after
     the file was gone, on a closed issue's leftover branch whose stale

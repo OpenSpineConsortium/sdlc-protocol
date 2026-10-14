@@ -15,7 +15,11 @@ answer only for one standing in conflict (5); a main moved answer moves
 nothing, and a refusal moves nothing (6); over git, main only moves
 forward, its new commit a descendant of the old (7), which MemoryWorld,
 whose commits have no ancestry, cannot show; a refusal carries the exit
-code of its kind (8); and no branch merges twice. The prototype of it is
+code of the kind the state owes, another's work or a plain refusal (8);
+and no branch merges twice. The lane offers no push of a branch its
+agent did not claim and no landing where the gate merges on mark_ready:
+those are the lane's own exclusions (offered), not refusals of the gate's,
+so they are neither judged by part 8 nor counted. The prototype of it is
 validation/prototype/gate_explore.py.
 
 Over BareGitWorld, where every merge is git's own, the same acts run as
@@ -50,9 +54,6 @@ POLICIES = {
     "arm": gate.Policy(bring_main_in=gate.MERGE, who_merges=gate.GATE, required_check="", remote="team"),
     "gated-check": gate.Policy(who_merges=gate.GATE),
 }
-EXIT_CODES = {gate.SomeoneElses: gate.EXIT_SOMEONE_ELSES, gate.MainMoved: gate.EXIT_MAIN_MOVED,
-              gate.GateFailed: gate.EXIT_GATE_FAILED, gate.Refused: gate.EXIT_REFUSED,
-              gate.MergeRefused: gate.EXIT_REFUSED}
 BASE_TEXT = "def greet():\n    return 'hello'\n\n\ndef part():\n    return 'base'\n"
 
 
@@ -91,8 +92,51 @@ class Step(NamedTuple):
     main_after: str
 
 
+class NotOffered(Exception):
+    """An act the lane does not make from this state: the lane's own
+    exclusion, not a refusal of the gate's, so it is neither judged by
+    part 8 nor counted among the gate's refusals."""
+
+
+def offered(policy, queue, act):
+    """Whether the lane makes the act from this state: an agent pushes
+    only the branch it claimed, since a push is git's and not the gate's
+    to refuse, and nobody lands where the gate merges on mark_ready, since
+    the owner's and auto-merge's act does not come under that policy."""
+    if act.kind == "push":
+        return queue.issues[act.issue].claimant == act.agent
+    if act.kind == "land":
+        return policy.who_merges != gate.GATE
+    return True
+
+
+def anothers(queue, act):
+    """Whether the act asks for work another agent holds, read from the
+    state before the act, which the gate refuses with the code of its
+    own (EXIT_SOMEONE_ELSES), in the order the gate reads the state: a
+    claim on an issue given to another when the queue is closed, or
+    claimed by another while open; a pull request opened on another's
+    claim; a mark by anyone but the pull request's author. Every other
+    refusal is the plain one."""
+    if act.kind == "claim":
+        issue = queue.issues[act.issue]
+        if not queue.open_queue and issue.given_to != act.agent:
+            return True
+        return not issue.closed and bool(issue.claimant) and issue.claimant != act.agent
+    if act.kind == "open":
+        claimant = queue.issues[act.issue].claimant
+        return bool(claimant) and claimant != act.agent
+    if act.kind == "ready":
+        pull = queue.pulls.get(act.issue)
+        return pull is not None and pull.author != act.agent
+    return False
+
+
 def apply(policy, world, queue, act, pusher):
-    """One act over a world, with pusher making the push: the step."""
+    """One act over a world, with pusher making the push: the step. An
+    act the lane does not offer from this state raises NotOffered."""
+    if not offered(policy, queue, act):
+        raise NotOffered(str(act))
     main_before = world.main_sha()
     outcome, error = None, None
     try:
@@ -101,16 +145,12 @@ def apply(policy, world, queue, act, pusher):
         elif act.kind == "claim":
             gate.claim(policy, queue, act.issue, act.agent)
         elif act.kind == "push":
-            if queue.issues[act.issue].claimant != act.agent:
-                raise gate.Refused("not your claim")  # an agent pushes only the branch it claimed
             pusher.push(world, policy.branch_of(act.issue), act.agent, act.word)
         elif act.kind == "open":
             gate.open_pull(policy, world, queue, act.issue, act.agent)
         elif act.kind == "ready":
             outcome = gate.mark_ready(policy, world, queue, act.issue, act.agent)
         elif act.kind == "land":
-            if policy.who_merges == gate.GATE:
-                raise gate.NotAllowed("the gate lands on mark_ready")
             outcome = gate.land(policy, world, queue, act.issue)
         elif act.kind == "check":
             pusher.set_check(world, policy.branch_of(act.issue), act.word)
@@ -121,14 +161,18 @@ def apply(policy, world, queue, act, pusher):
 
 def problems(policy, queue, step, merged_before):
     """G13 after one act; merged_before counts each branch's landings so
-    far, before this act."""
+    far, before this act. Part 8's expected code comes from the state the
+    act found (step.anothers), not from the error raised, whose class and
+    code always agree: a gate that refused another's claim with the plain
+    code would otherwise pass."""
     act, outcome, error = step.act, step.outcome, step.error
     moved = step.main_after != step.main_before
     found = []
     if error is not None:
-        expected = next(code for cls, code in EXIT_CODES.items() if isinstance(error, cls))
+        expected = gate.EXIT_SOMEONE_ELSES if step.anothers else gate.EXIT_REFUSED
         if error.exit_code != expected:
-            found.append(f"exit code {error.exit_code} for {type(error).__name__}")
+            owed = "another holds the work" if step.anothers else "the act is refused"
+            found.append(f"exit code {error.exit_code} for {type(error).__name__} where {owed}, which owes {expected}")
         if act.kind not in ("move_main", "push") and moved:
             found.append("a refusal moved main")
     if outcome is not None:
@@ -184,19 +228,22 @@ class MemoryPusher:
         world.set_check(branch, state)
 
 
-def check_before(world, policy, act):
+def check_before(world, policy, queue, act):
     """The required check's state and the branch's standing as the act
     found them, for the landing rules, read before the act moves
-    anything; none for an act that lands nothing."""
+    anything, none for an act that lands nothing; and whether the act
+    asks for another's work, for part 8."""
+    found = (None, None)
     if act.kind in ("ready", "land"):
         branch = policy.branch_of(act.issue)
-        return world.check(branch), world.standing(branch)
-    return None, None
+        found = (world.check(branch), world.standing(branch))
+    return found + (anothers(queue, act),)
 
 
 class StepWithCheck(NamedTuple):
     """A step with the required check's state and the branch's standing
-    as the landing found them, which the landing rules read (problems)."""
+    as the landing found them, which the landing rules read (problems),
+    and whether the act asked for another's work, which part 8 reads."""
 
     act: Act
     outcome: object
@@ -205,6 +252,7 @@ class StepWithCheck(NamedTuple):
     main_after: str
     check_at_landing: object
     standing_at_landing: object = None
+    anothers: bool = False
 
 
 def forward(repository, step):
@@ -254,8 +302,10 @@ def explore(name, depth, agents=("a", "b"), issues=(1, 2), budget=None):
         if len(trace) >= depth:
             continue
         for act in acts:
+            if not offered(policy, queue, act):
+                continue
             next_world, next_queue = copy.deepcopy(world), copy.deepcopy(queue)
-            check = check_before(next_world, policy, act)
+            check = check_before(next_world, policy, next_queue, act)
             step = StepWithCheck(*apply(policy, next_world, next_queue, act, pusher), *check)
             transitions += 1
             found = problems(policy, next_queue, step, merged)
@@ -330,11 +380,19 @@ class SharedRemote:
 class GitPusher:
     """The acts made with git: a push that stands clean adds a line to the
     agent's own file; one that conflicts rewrites app.py's first line, as
-    the owner's move of main does, so the two meet in git."""
+    the owner's move of main does, so the two meet in git. Each push goes
+    round the world's hold, which fetches once a hold, so the pusher
+    tells the world its next read fetches, as the world does after its
+    own merge: else the step would record main after the owner's move as
+    it was before it, and forward() would never examine the move."""
 
     def __init__(self, remote):
         self.remote = remote
         self.pushes = 0
+
+    def pushed(self, world):
+        if world is not None:
+            world.fresh = False
 
     def move_main(self, world):
         self.remote.moves += 1
@@ -345,6 +403,7 @@ class GitPusher:
         git(clone, "add", "app.py", actor="owner")
         git(clone, "commit", "--quiet", "-m", f"elsewhere {self.remote.moves}", actor="owner")
         git(clone, "push", "--quiet", "team", "HEAD:main", actor="owner")
+        self.pushed(world)
 
     def push(self, world, branch, agent, word):
         self.pushes += 1
@@ -364,6 +423,7 @@ class GitPusher:
             git(clone, "add", own.name, actor=agent)
         git(clone, "commit", "--quiet", "-m", f"push {self.pushes}", actor=agent)
         git(clone, "push", "--quiet", "team", branch, actor=agent)
+        self.pushed(world)
 
     def set_check(self, world, branch, state):
         pass  # a bare repository runs no checks: the world answers NO_CHECK
@@ -388,13 +448,14 @@ def random_sequence(rng, acts, length, policy, issues=(1, 2)):
     acts the gate would take from here, tried over MemoryWorld, are drawn
     from with the later steps of a claim weighted higher, so claims,
     pushes, pull requests and landings follow each other often enough for
-    the sequence to reach a merge; one step in five is any act at all, so
-    refusals are tried over git too."""
+    the sequence to reach a merge; one step in five is any act the lane
+    offers, so refusals are tried over git too."""
     world, queue, taken = World(), gate.Queue({n: "a" for n in issues}, open_queue=True), []
     for _ in range(length):
-        possible = [a for a in acts if goes_through(policy, world, queue, a)]
+        on_offer = [a for a in acts if offered(policy, queue, a)]
+        possible = [a for a in on_offer if goes_through(policy, world, queue, a)]
         if rng.random() < STRAY or not possible:
-            act = rng.choice(acts)
+            act = rng.choice(on_offer)
         else:
             act = rng.choices(possible, [WEIGHTS[a.kind] for a in possible])[0]
         apply(policy, world, queue, act, MemoryPusher())
@@ -413,7 +474,7 @@ def play_over_git(policy, acts_taken, issues=(1, 2)):
             pusher, merged, steps, found = GitPusher(remote), {}, [], []
             for act in acts_taken:
                 with world:
-                    check = check_before(world, policy, act)
+                    check = check_before(world, policy, queue, act)
                     step = StepWithCheck(*apply(policy, world, queue, act, pusher), *check)
                 steps.append(step)
                 found += [(str(act), p) for p in problems(policy, queue, step, merged) + forward(remote.bare, step)]
@@ -469,7 +530,7 @@ def s05g():
 
             def act(one):
                 with world:
-                    check = check_before(world, policy, one)
+                    check = check_before(world, policy, queue, one)
                     step = StepWithCheck(*apply(policy, world, queue, one, pusher), *check)
                 found.extend((str(one), p) for p in problems(policy, queue, step, merged) + forward(remote.bare, step))
                 if step.outcome is not None and step.outcome.merged:

@@ -72,6 +72,53 @@ class OverMemory(unittest.TestCase):
                 self.assertTrue(any(words in problem for _, problems in found.violations for problem in problems),
                                 found.violations[:2])
 
+    def test_a_refusal_of_the_wrong_kind_is_a_violation(self):
+        """Part 8's expected code was read off the error's own class, whose
+        code it always carries, so a gate that refused another's claim
+        with the plain code passed; the code is read from the state the
+        act found now."""
+        claimable = gate.claimable
+
+        def plain_refusal(policy, queue, number, who):
+            issue = queue.issue(number)
+            if issue.claimant and issue.claimant != who and not issue.closed:
+                raise gate.Refused(f"#{number} is claimed by {issue.claimant}")
+            return claimable(policy, queue, number, who)
+
+        with mock.patch.object(gate, "claimable", plain_refusal):
+            found = gate_search.explore("account", 3)
+        self.assertTrue(any("exit code 1 for Refused where another holds the work, which owes 2" in problem
+                            for _, problems in found.violations for problem in problems), found.violations[:2])
+        queue = gate.Queue({1: "a", 2: "a"}, open_queue=True)
+        gate.claim(gate_search.POLICIES["account"], queue, 1, "a")
+        self.assertTrue(gate_search.anothers(queue, gate_search.Act("claim", "b", 1)))
+        self.assertFalse(gate_search.anothers(queue, gate_search.Act("claim", "a", 1)))
+        self.assertFalse(gate_search.anothers(queue, gate_search.Act("claim", "b", 2)))
+        self.assertTrue(gate_search.anothers(queue, gate_search.Act("open", "b", 1)))
+        self.assertFalse(gate_search.anothers(queue, gate_search.Act("ready", "b", 1)))
+
+    def test_the_lane_s_own_exclusions_are_no_refusals_of_the_gate(self):
+        """A push of a branch its agent did not claim and a landing where
+        the gate merges on mark_ready were refused by the lane itself with
+        a gate error, then judged by part 8 and counted as the gate's
+        refusals; they are not offered now."""
+        policy = gate_search.POLICIES["arm"]
+        queue = gate.Queue({1: "a"}, open_queue=True)
+        gate.claim(policy, queue, 1, "a")
+        self.assertTrue(gate_search.offered(policy, queue, gate_search.Act("push", "a", 1, gate.CLEAN)))
+        self.assertFalse(gate_search.offered(policy, queue, gate_search.Act("push", "b", 1, gate.CLEAN)))
+        self.assertFalse(gate_search.offered(policy, queue, gate_search.Act("land", issue=1)))
+        self.assertTrue(gate_search.offered(gate_search.GIT_POLICIES["owner"], queue, gate_search.Act("land", issue=1)))
+        with self.assertRaises(gate_search.NotOffered):
+            gate_search.apply(policy, gate_search.World(), queue, gate_search.Act("push", "b", 1, gate.CLEAN),
+                              gate_search.MemoryPusher())
+        acts = gate_search.actions(("a", "b"), (1,), checks=False)
+        taken = gate_search.random_sequence(random.Random(3), acts, 30, policy, (1,))
+        self.assertNotIn("land", {a.kind for a in taken})
+        steps, found = gate_search.play_over_git(policy, taken, (1,))
+        self.assertEqual(found, [])
+        self.assertTrue(all(isinstance(s.error, gate.GateError) for s in steps if s.error is not None))
+
     def test_a_merge_of_a_branch_in_conflict_is_a_violation(self):
         policy = gate_search.POLICIES["arm"]
         queue = gate.Queue({1: "a"}, open_queue=True)
@@ -104,6 +151,17 @@ class OverGit(unittest.TestCase):
         self.assertEqual(results["sequences"], 3)
         self.assertEqual(results["violations"], [])
         self.assertGreater(results["merges"], 0)
+
+    def test_the_owner_s_move_of_main_is_recorded_as_a_move_over_git(self):
+        """The world fetches once a hold and the owner's push goes round
+        it, so the step recorded main after the move as it was before it,
+        and forward() never examined a move; the pusher tells the world
+        its next read fetches."""
+        acts = [gate_search.Act("move_main"), gate_search.Act("claim", "a", 1), gate_search.Act("move_main")]
+        steps, found = gate_search.play_over_git(gate_search.GIT_POLICIES["arm"], acts)
+        self.assertEqual(found, [])
+        self.assertEqual([s.main_after != s.main_before for s in steps], [True, False, True])
+        self.assertEqual([s.main_before for s in steps[1:]], [s.main_after for s in steps[:2]])
 
     def test_main_moving_anywhere_but_forward_is_a_violation_over_git(self):
         remote = gate_search.SharedRemote()

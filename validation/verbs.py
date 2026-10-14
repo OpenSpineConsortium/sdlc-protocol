@@ -274,21 +274,36 @@ def merge_main(model, worker, number):
     return touch_pull(model, ref, pushed(model, worker, ref, sha, f"git push origin {ref}"))
 
 
+def patch_of(model, sha):
+    """A commit's change as git's patch-id reads it, near enough: each
+    path it changes, with the text before and after."""
+    record = model.commits[sha]
+    parent = record.parents[0] if record.parents else ""
+    before, after = model.tree(parent), dict(record.tree)
+    return tuple((path, before.get(path), after.get(path)) for path in model.changed(parent, sha))
+
+
 def rebase_main(model, worker, number):
     """Fetch, replay the branch's own commits onto main, and push with a
     lease, the one forced push the protocol allows. A merge commit the
     branch holds, one that brought main in, is dropped, as git's rebase
     drops it (the git world runs `git rebase origin/main`): replayed, its
     change against its first parent would write main's old text over main
-    as it is now, where git keeps main's."""
+    as it is now, where git keeps main's. A commit whose patch main holds
+    already (patch_of: a copy carried on from a released branch, or the
+    same change made on another claim at the same hour) is dropped too,
+    as git's rebase drops a commit whose patch-id is upstream: replayed,
+    it would write the commit's text over main's newer text."""
     model.fetch(worker)
     ref = claim_ref(number)
     head, main = model.refs[ref], model.refs[MAIN]
     own = model.in_order(model.ancestors(head) - model.ancestors(main))
+    upstream = {patch_of(model, sha) for sha in model.ancestors(main) - model.ancestors(head)
+                if len(model.commits[sha].parents) <= 1}
     tip = main
     for sha in own:
         record = model.commits[sha]
-        if len(record.parents) > 1:
+        if len(record.parents) > 1 or patch_of(model, sha) in upstream:
             continue
         parent = record.parents[0] if record.parents else ""
         tree = model.tree(tip)

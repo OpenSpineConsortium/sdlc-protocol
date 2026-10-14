@@ -21,8 +21,8 @@ it. A copy of the library at that version or an earlier one still has
 the finding. Only the live canary reads it (scripts/canary.py, DESIGN.md
 section 11), since it runs the release the canary repository vendors and
 not main, and an expectation that fails there for such a finding is
-known, not new; the oracle and the lanes run main and read "as_built"
-alone. A fix adds its finding to "fixed_after", and takes it out of
+known, not new; the oracle and the lanes run main and read nothing of
+"fixed_after". A fix adds its finding to "fixed_after", and takes it out of
 "as_built" when it was there: F12's fix did both, and F4's and F7's,
 whose entries were red as built with no switch, only the first, all
 after 0.4.1. The entry stays, since it is true of every copy at that

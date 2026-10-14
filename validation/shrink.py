@@ -10,9 +10,9 @@ each success resetting the split one coarser, down to single steps, so a
 walk of two hundred steps loses its idle stretches in a few replays
 instead of one step per replay; the last pass tries every single step,
 so the result is 1-minimal, as before, when the budget lets the passes
-finish, and minimal for the detail as matched, word for word, so a step
-that only moves a number in the detail stays. A candidate is replayed from the
-search's own start, each verb taken only where the scope enables it, so
+finish, and minimal for the detail as matched, a sha in it read as any
+sha (invariants.identity), so a step that only moves a number but a sha
+in the detail stays. A candidate is replayed from the search's own start, each verb taken only where the scope enables it, so
 the shortened trace is one the search could have met, and the violation
 it shows is the same guarantee with the same detail. The replay is the
 search's own step: a copy per verb, the verb applied, every check run.
@@ -36,7 +36,9 @@ def reproduces(start, scope, trace, target, known=oracle.AS_BUILT):
     where it comes ends the replay as not reproduced. A verb that names a
     released branch symbolically (run.symbolic) is resolved where it
     comes, since the sha in such a name is the clock's and the clock
-    moves when a wait is taken out."""
+    moves when a wait is taken out, and the target's detail is matched
+    with its sha read as any sha for the same reason."""
+    wanted = (target[0], invariants.identity(target[1]))
     model = start()
     for verb in trace:
         try:
@@ -47,7 +49,8 @@ def reproduces(start, scope, trace, target, known=oracle.AS_BUILT):
             return False
         after = model.clone()
         outcome = verbs.apply(after, verb, scope)
-        if any((p.guarantee, p.detail) == target for p in invariants.step_checks(model, after, verb, outcome, known)):
+        if any((p.guarantee, invariants.identity(p.detail)) == wanted
+               for p in invariants.step_checks(model, after, verb, outcome, known)):
             return True
         model = after
     return False

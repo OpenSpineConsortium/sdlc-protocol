@@ -108,6 +108,25 @@ class TheStore(unittest.TestCase):
                 Verb("move-main", M.OWNER), Verb("rebase-main", "a", (1,)))
         self.assertEqual(deep.compare(deep.SPACES["E-deep"], path), [])
 
+    def test_a_rebase_drops_a_commit_whose_patch_main_holds_already_in_both_worlds(self):
+        """git's rebase drops a commit whose patch-id is upstream; the
+        memory rebase replayed it and wrote the commit's text over main's
+        newer one (the review found the trees differing at the rebase).
+        One change made on two claims at one hour is such a patch: a's
+        first commit on each claim writes the same line to the shared
+        file, #2 lands with one more line on it, and a's rebase of #1 must
+        leave the branch at main's text in both worlds."""
+        path = (Verb("claim", "a", (1,)), Verb("claim", "a", (2,)), Verb("commit", "a", (1,)), Verb("commit", "a", (2,)),
+                Verb("wait", verbs.CLOCK, (24,)), Verb("commit", "a", (2,)), Verb("drop-claim-file", "a", (2,)),
+                Verb("open-draft", "a", (2,)), Verb("mark-ready", "a", (100,)), Verb("merge", M.OWNER, (100,)),
+                Verb("rebase-main", "a", (1,)))
+        self.assertEqual(deep.compare(deep.SPACES["E-two"], path), [])
+        model = deep.SPACES["E-two"].start()
+        for verb in path:
+            verbs.apply(model, verb, deep.SPACES["E-two"].scope)
+        self.assertEqual(model.tree(model.refs["claude/1"])["src/shared.py"], model.tree(model.refs[M.MAIN])["src/shared.py"])
+        self.assertIn("a 1440", model.tree(model.refs["claude/1"])["src/shared.py"])
+
     def test_standing_and_files_changed_come_from_git(self):
         with attached() as (store, model):
             verbs.apply(model, Verb("claim", "a", (1,)), Scope())

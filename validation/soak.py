@@ -133,7 +133,8 @@ def walk(seed, steps=200, space=SPACE, known=oracle.AS_BUILT):
             for effect in invariants.effects_of(outcome.run.calls):
                 counts[f"{effect.kind}:{effect.detail}" if effect.kind == "comment" else effect.kind] += 1
         for problem in invariants.step_checks(before, model, verb, outcome, known):
-            if (problem.guarantee, problem.detail) not in {(g, d) for g, d, _ in violations}:
+            key = (problem.guarantee, invariants.identity(problem.detail))
+            if key not in {(g, invariants.identity(d)) for g, d, _ in violations}:
                 violations.append((problem.guarantee, problem.detail, at))
     return Walk(seed, len(taken), time.perf_counter() - began, tuple(taken), tuple(violations), dict(counts))
 

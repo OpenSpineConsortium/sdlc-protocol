@@ -24,7 +24,9 @@ shallower, since a plain seen-set is incomplete for a depth-bounded
 search: a state first reached deep would never be expanded when reached
 again shallower (DESIGN.md, 6.1). It goes on past a violation, as the
 breadth-first search does, and keeps each distinct violation once with
-the first trace it met it on. The reductions of DESIGN.md 6.4 are not
+the first trace it met it on, a violation's identity being its
+guarantee and its detail with any sha in it read as any sha
+(invariants.identity). The reductions of DESIGN.md 6.4 are not
 applied: the time cap gave 5 percent at depth 5 (step 4) and a reduced
 key is a soundness risk the owner's rule, correctness over cost, does
 not take; the lane runs for as long as it takes.
@@ -240,7 +242,7 @@ def search(start, scope, depth, known=oracle.AS_BUILT, budget=None, say=None, ev
             transitions += 1
             path = trace + (verb,)
             for problem in invariants.step_checks(model, after, verb, outcome, known):
-                key = (problem.guarantee, problem.detail)
+                key = (problem.guarantee, invariants.identity(problem.detail))
                 first = found.get(key)
                 found[key] = Found(problem.guarantee, problem.detail, first.trace if first else path,
                                    (first.count if first else 0) + 1)
@@ -441,12 +443,13 @@ def scenario_of_path(space, trace):
     return replay.scenario_of(data)
 
 
-def compare(space, trace, known_reading=oracle.AS_BUILT):
-    """The path played in both worlds; the steps and fields where they
-    differ, empty when they agree."""
-    scenario = scenario_of_path(space, trace)
-    memory = run.play(scenario, scenario.steps, known_reading, run.MEMORY, observe)[1]
-    git = run.play(scenario, scenario.steps, known_reading, run.GIT, observe)[1]
+def differences_between(memory, git):
+    """Where two plays of one path, in memory and over git, differ: each
+    step and field of what observe read, and, as step -1 under the field
+    "red", the violations met, as (step, guarantee), when the worlds met
+    different ones. The checks read what observe does not (committer
+    dates, the run's calls, reachability), so a path red in one world
+    alone is a disagreement as much as a tree that differs."""
     differences = []
     for at, (one, two) in enumerate(zip(memory.observations, git.observations)):
         for field in one:
@@ -456,6 +459,15 @@ def compare(space, trace, known_reading=oracle.AS_BUILT):
     if red_memory != red_git:
         differences.append({"step": -1, "field": "red", "memory": repr(red_memory), "git": repr(red_git)})
     return differences
+
+
+def compare(space, trace, known_reading=oracle.AS_BUILT):
+    """The path played in both worlds; the steps and fields where they
+    differ, empty when they agree."""
+    scenario = scenario_of_path(space, trace)
+    memory = run.play(scenario, scenario.steps, known_reading, run.MEMORY, observe)[1]
+    git = run.play(scenario, scenario.steps, known_reading, run.GIT, observe)[1]
+    return differences_between(memory, git)
 
 
 def sample_paths(space, count, length, seed=0):
@@ -488,11 +500,8 @@ def conformance(spaces, counterexamples=(), count=200, length=8, seed=0):
         memory = run.play(trace.scenario, trace.scenario.steps, oracle.AS_BUILT, run.MEMORY, observe)[1]
         git = run.play(trace.scenario, trace.scenario.steps, oracle.AS_BUILT, run.GIT, observe)[1]
         results["counterexamples"] += 1
-        for at, (one, two) in enumerate(zip(memory.observations, git.observations)):
-            for field in one:
-                if one[field] != two[field]:
-                    results["disagreements"].append({"file": str(file), "step": at, "field": field,
-                                                     "memory": repr(one[field]), "git": repr(two[field])})
+        for difference in differences_between(memory, git):
+            results["disagreements"].append({"file": str(file), **difference})
     spaces = list(spaces)
     share, left = divmod(count, len(spaces)) if spaces else (0, 0)
     for n, space in enumerate(spaces):

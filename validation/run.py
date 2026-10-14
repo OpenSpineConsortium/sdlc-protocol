@@ -85,14 +85,26 @@ def seeded(scenario):
     return model
 
 
+def released_order(model, number):
+    """The released/<number>-* branches from the oldest claim's, two made
+    in one minute in the order their claims were pushed (model.made): a
+    tie broken by the name would be broken by the sha in it, which
+    differs between the worlds, so a trace that names the branch by its
+    place would act on one worker's branch in memory and the other's over
+    git. Two skewed claims in one minute by two workers, or by one with
+    main moving between them, are each released and renamed; the order
+    they were made in is the same in both worlds and total."""
+    named = [r for r in model.refs if r.startswith(f"{RELEASED_PREFIX}{number}-")]
+    return sorted(named, key=lambda r: (model.created.get(r, 0), model.made.get(r, 0), r))
+
+
 def released_ref(model, number, index=None):
     """The newest released/<number>-* branch, by when its claim was made,
     or, given an index, the one at that place in that order from the
     oldest, so a trace names one when several stand."""
-    named = [r for r in model.refs if r.startswith(f"{RELEASED_PREFIX}{number}-")]
-    if not named:
+    ordered = released_order(model, number)
+    if not ordered:
         raise ValueError(f"no released branch of #{number}")
-    ordered = sorted(named, key=lambda r: (model.created.get(r, 0), r))
     return ordered[-1] if index is None else ordered[index]
 
 
@@ -117,9 +129,7 @@ def symbolic(model, args):
     for arg in args:
         if isinstance(arg, str) and arg.startswith(RELEASED_PREFIX):
             number = int(arg[len(RELEASED_PREFIX):].split("-")[0])
-            named = sorted((r for r in model.refs if r.startswith(f"{RELEASED_PREFIX}{number}-")),
-                           key=lambda r: (model.created.get(r, 0), r))
-            found.append(("released", number, named.index(arg)))
+            found.append(("released", number, released_order(model, number).index(arg)))
         else:
             found.append(arg)
     return tuple(found)

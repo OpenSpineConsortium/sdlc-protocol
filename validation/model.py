@@ -137,6 +137,13 @@ class RepoModel:
     # and the minute the push made it: when that piece of work began.
     creators: dict = field(default_factory=dict)
     created: dict = field(default_factory=dict)
+    # The order the branches that stand were made in, a count per branch,
+    # which no guarantee reads and the key leaves out: a trace names a
+    # released branch by its place among its issue's (run.released_order),
+    # and two made in one minute, by one worker even, are told apart by
+    # this in both worlds, where the sha in the name differs.
+    made: dict = field(default_factory=dict)
+    made_count: int = 0
     # Each worker's remote-tracking refs, as its last fetch or push left them.
     tracking: dict = field(default_factory=dict)
     # The board branch's STATE.md: written only by a board run that exits 0.
@@ -225,11 +232,19 @@ class RepoModel:
         if not (fast_forward or force or lease):
             return Push(False, "fetch first")
         if current is None:
-            self.creators[ref] = worker
-            self.created[ref] = self.now
+            self.made_by(ref, worker)
         self.set_ref(ref, sha)
         mine[ref] = sha
         return Push(True)
+
+    def made_by(self, ref, worker):
+        """A branch the worker's push makes now: who made it, the minute,
+        and its place in the order the branches were made in; the git
+        world's push (git_store.pushed) records the same."""
+        self.creators[ref] = worker
+        self.created[ref] = self.now
+        self.made_count += 1
+        self.made[ref] = self.made_count
 
     def set_ref(self, ref, sha):
         self.refs[ref] = sha
@@ -248,6 +263,7 @@ class RepoModel:
         self.refs.pop(ref, None)
         self.creators.pop(ref, None)
         self.created.pop(ref, None)
+        self.made.pop(ref, None)
         for pull in self.pulls.values():
             if pull.head == ref and pull.state == "open":
                 pull.state = "closed"
@@ -263,6 +279,7 @@ class RepoModel:
         if old in self.creators:
             self.creators[new] = self.creators.pop(old)
             self.created[new] = self.created.pop(old)
+            self.made[new] = self.made.pop(old)
         for pull in self.pulls.values():
             if pull.head == old and pull.state == "open":
                 pull.state = "closed"
@@ -440,6 +457,7 @@ class RepoModel:
             pulls={n: copy.copy(p) for n, p in self.pulls.items()},
             next_pull=self.next_pull, writers=self.writers, ever_heads=self.ever_heads,
             label_events=self.label_events, creators=dict(self.creators), created=dict(self.created),
+            made=dict(self.made), made_count=self.made_count,
             tracking={w: dict(refs) for w, refs in self.tracking.items()}, board_text=self.board_text,
             queued=self.queued, pending=self.pending, running=None,
         )

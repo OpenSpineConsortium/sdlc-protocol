@@ -27,7 +27,8 @@ made and its answer lost, as a 502 after GitHub wrote the comment.
 What the fake assumes of GitHub, each settled by the documentation or by a
 canary check (DESIGN.md, 3.2 and 11): the issues list holds the pull
 requests; a draft's mergeable_state is "draft" (F9, canary C0); a rename
-closes the pull request whose head the branch is; a rename onto a name
+closes the pull request whose head the branch is, and so does a delete
+(the web UI's page says so; canary C6 settles the REST delete); a rename onto a name
 that stands answers 422; the board posts as github-actions[bot] with the
 author_association NONE; a pull request's updated_at moves with pushes and
 comments.

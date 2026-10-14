@@ -22,7 +22,10 @@ the checkpoints, running only the parts the file does not hold, a
 search a budget stopped, a gate exploration a budget stopped and a part
 that raised among the parts it lacks, and continuing each search from
 where its checkpoint left it, so a restart of the machine costs a
-quarter of an hour and not the hours. The file records the settings and
+quarter of an hour and not the hours; a search's budget counts from its
+first start, the checkpoint's seconds included, so a stopped search goes
+on under a larger `--budget` or none, and resumed under the budget that
+stopped it expands nothing and is red again. The file records the settings and
 the code the run was made under (the "run" entry; the code is
 deep.code_digest, the harness's and the library's source and the
 harness's data files), and a resume under others is refused, since a
@@ -32,11 +35,14 @@ trace files an earlier run left under <out> removed first. A run writes
 the file <out>/running, its process id, while it runs, and a second run
 into the same folder is refused while that process lives, resume or
 not, since the two would write one results file and the fresh one would
-remove the checkpoints the other is writing. Each part runs in a
-process pool of its own, one worker each, so a worker process that dies
-(killed for its memory, say) takes its own part alone, recorded as
-raised, where one shared pool would lose every part in flight and
-refuse the second wave. The counterexamples the searches and the soak
+remove the checkpoints the other is writing; a SIGTERM to that process,
+what `kill <pid>` sends, ends the workers and removes the file, as
+Ctrl-C does. Each part runs in a
+process of its own, forked, with a pipe for its result, so a process
+that dies (killed for its memory, say) takes its own part alone,
+recorded as raised, where one shared pool would lose every part in
+flight and refuse the second wave, and the parent forks with no helper
+thread alive. The counterexamples the searches and the soak
 wrote go through conformance as a part of their own, done only while
 the files it played are the files the results name, so a resumed search
 that writes more is followed by their conformance. The run is red, exit
@@ -47,14 +53,16 @@ is that a missed violation costs more than the hours.
 """
 
 import json
+import multiprocessing
 import os
 import shutil
+import signal
 import sys
 import tempfile
+import threading
 import time
 import traceback
-from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
-from concurrent.futures.process import BrokenProcessPool
+from multiprocessing.connection import wait
 from pathlib import Path
 
 from sdlc_protocol import __version__
@@ -100,6 +108,10 @@ class Settings:
         self.out = Path(out)
         self.only = tuple(only)
         self.jobs = jobs or os.cpu_count() or 2
+        if self.jobs < 1:
+            # run_jobs would submit nothing and spin for good: no part fits
+            # under a count below one, and waiting on no future returns at once.
+            raise ValueError("--jobs takes a count of processes of 1 or more")
         self.budget = budget
         self.quick = quick
         self.resume = resume
@@ -151,19 +163,22 @@ def run_search(name, out, depth, budget, checkpoint=None, checkpoint_every=deep.
 
 def run_soak(seeds, steps, out):
     """A chunk of the soak's seeds; each violation shortened from the walk
-    that met it and written as a trace file."""
+    that met it and written as a trace file, numbered within its walk,
+    since one step can show several details under one guarantee (a run
+    that releases a claim not due makes both the comment and the rename
+    G3's) and the files of two must not share a name."""
     walks, written = [], []
     ends = time.perf_counter() + SHRINK_TOTAL
     for seed in seeds:
         walk = soak.walk(seed, steps)
         walks.append(walk)
-        for guarantee, detail, at in walk.violations:
+        for n, (guarantee, detail, at) in enumerate(walk.violations, 1):
             target = (guarantee, detail)
             allowed = max(0.0, min(SHRINK_BUDGET, ends - time.perf_counter()))
             shorter = shrink.shrink(soak.SPACE.start, soak.SCOPE, deep.symbolic_trace(soak.SPACE, walk.verbs[:at + 1]),
                                     target, oracle.AS_BUILT, allowed)
             data = deep.trace_json(soak.SPACE, shorter.trace, f"{guarantee} {detail}")
-            path = deep.write_trace(out, f"{guarantee}-soak-{seed}-{at}", data)
+            path = deep.write_trace(out, f"{guarantee}-soak-{seed}-{at}-{n}", data)
             written.append({"seed": seed, "step": at, "guarantee": guarantee, "detail": detail,
                             "shortened_to": len(shorter.trace), "file": str(path)})
     return {"seeds": [seeds[0], seeds[-1]], **soak.summary(walks), "violations": written}
@@ -403,12 +418,18 @@ def summary_lines(results):
 def running_process(settings):
     """The process id the folder's running file names, when that process
     lives; None otherwise, a file left by a run the machine's restart
-    killed among the cases."""
+    killed among the cases. The probe is POSIX's signal 0, which asks
+    after a process and sends it nothing; on Windows os.kill with any
+    signal but Ctrl-C's ends the process named, so there the file is
+    taken at its word and a stale one is deleted by hand, as the
+    refusal says."""
     file = settings.out / RUNNING
     try:
         pid = int(file.read_text(encoding="ascii").strip()[:9])
     except (OSError, ValueError):
         return None
+    if os.name == "nt":
+        return pid
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -418,16 +439,33 @@ def running_process(settings):
     return pid
 
 
+def take_marker(settings):
+    """The running file made for this run, before anything is read or
+    removed: made exclusively, so that of two runs started at the same
+    moment the second finds the first's file and is refused, where a file
+    written after the liveness check let both pass it, both remove the
+    checkpoints and both write one results file. A file a dead process
+    left, as the machine's restart leaves one, is replaced."""
+    file = settings.out / RUNNING
+    settings.out.mkdir(parents=True, exist_ok=True)
+    mine = f"{os.getpid()}\n"
+    try:
+        with file.open("x", encoding="ascii") as marker:
+            marker.write(mine)
+    except FileExistsError:
+        pid = running_process(settings)
+        if pid is not None:
+            raise SystemExit(f"{file} names process {pid}, a run in progress there, so this one does not start; wait "
+                             f"for it, run into another --out, or delete the file if no run is in progress") from None
+        file.write_text(mine, encoding="ascii")
+
+
 def kept_results(settings):
     """A resumed run's results so far, from the file the last run left,
     counting its seconds on, when the file was made under this run's
     settings and code; a fresh run's otherwise, with what an earlier run
-    left under <out> removed. Refused, before anything is removed, while
-    another run is in progress in the folder."""
-    pid = running_process(settings)
-    if pid is not None:
-        raise SystemExit(f"{settings.out / RUNNING} names process {pid}, a run in progress there, so this one does not "
-                         f"start; wait for it, run into another --out, or delete the file if no run is in progress")
+    left under <out> removed. The marker is this run's by then (run); a
+    refusal here removes it, as the end of a run does."""
     file = settings.out / "deep.json"
     record = settings.record()
     if settings.resume and file.exists():
@@ -435,6 +473,7 @@ def kept_results(settings):
         kept = results.get("run", {})
         differing = [name for name in record if kept.get(name) != record[name]]
         if differing:
+            (settings.out / RUNNING).unlink(missing_ok=True)
             raise SystemExit(f"{file} was made under other settings or other code ({', '.join(differing)} differ), "
                              f"so it is not resumed; run without --resume, or into another --out")
         results.setdefault("errors", [])
@@ -444,38 +483,81 @@ def kept_results(settings):
     return fresh_results(settings), time.perf_counter()
 
 
+def fork_context():
+    """The parts are forked where the platform forks: a mutant a test
+    patches into the harness reaches a part by fork alone, whatever a
+    later Python makes the default (3.14 starts a process by forkserver on
+    Linux), and the parent forks with no helper thread alive, since the
+    parts are plain processes with a pipe each and not a pool, whose
+    manager and feeder threads made every fork after the first one of a
+    multi-threaded process, which Python 3.12 warns may deadlock the
+    child."""
+    methods = multiprocessing.get_all_start_methods()
+    return multiprocessing.get_context("fork" if "fork" in methods else methods[0])
+
+
+def run_part(connection, function, args):
+    """A part in its own process: the result, or why it raised, sent back
+    through the pipe; a process that dies sends nothing."""
+    try:
+        outcome = ("done", function(*args))
+    except Exception as error:
+        outcome = ("raised", repr(error), "".join(traceback.format_exception(error)))
+    connection.send(outcome)
+    connection.close()
+
+
+def receive(process, connection):
+    """What a part's process sent, once its pipe or its end is ready:
+    its outcome, or ("died", exit code) when it ended without sending."""
+    try:
+        outcome = connection.recv() if connection.poll() else None
+    except (EOFError, OSError):
+        outcome = None
+    process.join()
+    connection.close()
+    return outcome if outcome is not None else ("died", process.exitcode)
+
+
 def run_jobs(settings, jobs, results, began, out):
-    """The jobs, each in a process pool of its own with one worker, as
-    many at once as the settings allow, each result taken as it ends and
-    the results written; a job that raises, or whose worker process
-    dies, is recorded as raised, in place of the error it left before,
-    and the others go on. A job that lands clears the error it left."""
+    """The jobs, each in a process of its own with a pipe for its result,
+    as many at once as the settings allow, each result taken as it ends
+    and the results written; a job that raises, or whose process dies, is
+    recorded as raised, in place of the error it left before, and the
+    others go on. A job that lands clears the error it left. The parent
+    waits on each process's end and its pipe alike, since a result larger
+    than the pipe holds is sent only as it is read."""
     pending = list(jobs)
     running = {}
+    context = fork_context()
     while pending or running:
         while pending and len(running) < settings.jobs:
             part, function, args = pending.pop(0)
-            pool = ProcessPoolExecutor(max_workers=1)
-            running[pool.submit(function, *args)] = (part, pool)
-        finished, _ = wait(list(running), return_when=FIRST_COMPLETED)
-        for future in finished:
-            part, pool = running.pop(future)
-            pool.shutdown(wait=False)
+            ours, theirs = context.Pipe(duplex=False)
+            process = context.Process(target=run_part, args=(theirs, function, args), name=part)
+            process.start()
+            theirs.close()
+            running[part] = (process, ours)
+        ready = {}
+        for part, (process, connection) in running.items():
+            ready[process.sentinel] = part
+            ready[connection] = part
+        for part in dict.fromkeys(ready[one] for one in wait(list(ready))):
+            process, connection = running.pop(part)
+            outcome = receive(process, connection)
             results["errors"] = [e for e in results["errors"] if e["part"] != part]
-            try:
-                result = future.result()
-            except BrokenProcessPool as error:
-                results["errors"].append({"part": part, "error": f"its worker process died: {error!r}",
-                                          "traceback": "".join(traceback.format_exception(error))})
+            if outcome[0] == "died":
+                results["errors"].append({"part": part, "error": f"its worker process died: exit code {outcome[1]}",
+                                          "traceback": ""})
                 write_results(settings, results, began)
                 print(f"    {part}: its worker process died at {results['seconds']} s", file=out, flush=True)
                 continue
-            except Exception as error:
-                results["errors"].append({"part": part, "error": repr(error),
-                                          "traceback": "".join(traceback.format_exception(error))})
+            if outcome[0] == "raised":
+                results["errors"].append({"part": part, "error": outcome[1], "traceback": outcome[2]})
                 write_results(settings, results, began)
-                print(f"    {part} raised at {results['seconds']} s: {error!r}", file=out, flush=True)
+                print(f"    {part} raised at {results['seconds']} s: {outcome[1]}", file=out, flush=True)
                 continue
+            result = outcome[1]
             take(results, part, result)
             write_results(settings, results, began)
             if part.startswith("search ") and not result["stopped"]:
@@ -483,18 +565,42 @@ def run_jobs(settings, jobs, results, began, out):
             print(f"    {part} done at {results['seconds']} s", file=out, flush=True)
 
 
+def stop_on_term(signum, frame):
+    """What a SIGTERM to the runner does, the signal `kill <pid>` sends:
+    the run ends as it does on Ctrl-C, by an exception that reaches run's
+    finally. Without a handler the parent would die at once with the
+    marker left naming a dead process and each part's process, which
+    watches no parent, running its search on for hours, orphaned."""
+    raise SystemExit(128 + signum)
+
+
+def end_workers():
+    """The parts' live processes ended; each is a child of this process,
+    so a run that ends, however it ends, leaves none behind."""
+    for child in multiprocessing.active_children():
+        child.terminate()
+
+
 def run(settings, out=sys.stdout):
     """The whole lane; the results, written to <out>/deep.json as they
     come, and exit code 1 when any part is red. A part that raises is
-    recorded, red, and the others go on."""
+    recorded, red, and the others go on. A SIGTERM to the runner ends the
+    workers and removes the marker, as Ctrl-C and a signal to the whole
+    process group do; the handler can be set from the main thread alone,
+    where the script and the tests call this."""
+    take_marker(settings)
     results, began = kept_results(settings)
     write_results(settings, results, began)
     marker = settings.out / RUNNING
-    marker.write_text(f"{os.getpid()}\n", encoding="ascii")
+    in_main_thread = threading.current_thread() is threading.main_thread()
+    previous = signal.signal(signal.SIGTERM, stop_on_term) if in_main_thread else None
     try:
         for wave in (first_wave, second_wave):
             run_jobs(settings, wave(settings, results), results, began, out)
     finally:
+        end_workers()
+        if in_main_thread:
+            signal.signal(signal.SIGTERM, previous)
         marker.unlink(missing_ok=True)
     for line in summary_lines(results):
         print(line, file=out)

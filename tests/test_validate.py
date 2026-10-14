@@ -57,6 +57,13 @@ class TheScript(unittest.TestCase):
             validate.main(["deep", "--quick", "--only", "search", "--out", folder, "--jobs"], io.StringIO())
         self.assertIn("--jobs takes a value", str(refused.exception))
 
+    def test_a_count_of_processes_below_one_is_refused_with_the_usage(self):
+        """Under it the runner would spin at full CPU for good, running nothing."""
+        with tempfile.TemporaryDirectory() as folder, self.assertRaises(SystemExit) as refused:
+            validate.main(["deep", "--quick", "--only", "guard", "--jobs", "-1", "--out", folder], io.StringIO())
+        self.assertIn("--jobs takes a count of processes of 1 or more", str(refused.exception))
+        self.assertIn("python3 scripts/validate.py deep", str(refused.exception))
+
     def test_deep_refuses_an_option_it_does_not_know_and_keeps_the_checkpoints(self):
         """A misspelt --resume, read as absent, would start a fresh run,
         which removes the checkpoints the resume was for."""

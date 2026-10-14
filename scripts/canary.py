@@ -858,8 +858,10 @@ def check_c5(site, seen):
 
 def check_c6(site, seen):
     """A release end to end on a throwaway claim: the comment, the labels,
-    the rename, the closed draft, the issue back in the Queue, and the
-    second push of the freed name deleted."""
+    the rename, the closed draft, the issue back in the Queue, the second
+    push of the freed name deleted, and the draft opened from that push
+    closed by the delete, which the harness's model assumes of a delete as
+    the documentation says of a rename (DESIGN.md, 3.2)."""
     number = site.throwaway("C6")
     branch = claims.branch_of(number)
     clone = site.clone()
@@ -928,10 +930,14 @@ def check_c6(site, seen):
     seen.values["second push at the released head"] = again.as_dict()
     if not seen.expect("the freed name takes a push at the released head", again.ok):
         return
+    second = site.open_pull(branch, f"canary C6: a draft from the second push of {branch}", f"Closes #{number}", True)
     site.poke(number)
     _, deleted = site.wait(lambda: (site.branch_sha(branch), site.branch_sha(renamed)),
                            lambda pair: pair[0] is None and pair[1] == head)
-    seen.expect("the next run deletes the second push, since the released branch keeps its head", deleted)
+    if not seen.expect("the next run deletes the second push, since the released branch keeps its head", deleted):
+        return
+    _, closed = site.wait(lambda: site.pull(second).get("state"), lambda found: found == "closed")
+    seen.expect("the delete closed the draft opened from the second push", closed)
 
 
 def moved_from(before):

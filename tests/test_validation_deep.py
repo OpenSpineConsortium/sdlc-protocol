@@ -18,10 +18,15 @@ import io
 import itertools
 import json
 import os
+import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import time
+import types
 import unittest
+import warnings
 from pathlib import Path
 from unittest import mock
 
@@ -29,7 +34,8 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from sdlc_protocol import claims  # noqa: E402
-from validation import deep, explore, guard_grammar, known, lanes, oracle, replay, run, shrink  # noqa: E402
+from validation import cycle, deep, explore, guard_grammar, invariants, known, lanes, model as M, oracle, replay, run  # noqa: E402
+from validation import shrink, soak, verbs  # noqa: E402
 from validation.verbs import Scope, Verb  # noqa: E402
 
 SMALL = deep.Space("small", Scope(), (), 3)
@@ -56,6 +62,29 @@ def dying_soak(seeds, steps, out):
 
 def results_in(folder):
     return json.loads((Path(folder) / "deep.json").read_text(encoding="ascii"))
+
+
+def wait_for(condition, seconds, every=0.1):
+    """The condition's first true value within the seconds, else its last."""
+    deadline = time.monotonic() + seconds
+    while True:
+        value = condition()
+        if value or time.monotonic() >= deadline:
+            return value
+        time.sleep(every)
+
+
+def children_of(pid):
+    done = subprocess.run(["pgrep", "-P", str(pid)], capture_output=True, text=True)
+    return [int(line) for line in done.stdout.split()]
+
+
+def alive(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
 
 
 class TheCodeDigest(unittest.TestCase):
@@ -93,10 +122,15 @@ class TheSearch(unittest.TestCase):
         self.assertTrue(first.complete)
 
     def test_a_mutant_s_violations_are_found_in_both_orders(self):
+        """The breadth-first search keys a violation by its detail word for
+        word, the deep one by its identity, with a sha read as any sha;
+        the two agree under the identity, and count the same problems."""
         with mock.patch.object(claims, "is_idle", at_exactly_24_hours):
             wide = explore.explore(ONE.start(), ONE.scope, ONE.depth)
             first = deep.search_space(ONE)
-        self.assertEqual({(f.guarantee, f.detail) for f in first.found}, {(f.guarantee, f.detail) for f in wide.found})
+        self.assertEqual({(f.guarantee, invariants.identity(f.detail)) for f in first.found},
+                         {(f.guarantee, invariants.identity(f.detail)) for f in wide.found})
+        self.assertLess(len(first.found), len(wide.found))
         self.assertEqual(sum(f.count for f in first.found), sum(f.count for f in wide.found))
 
     def test_a_state_reached_shallower_is_expanded_again(self):
@@ -163,6 +197,40 @@ class TheSearch(unittest.TestCase):
         self.assertEqual(deep.stamp_differences({}, other), sorted(other, key=list(other).index))
 
 
+class TheIdentityOfAViolation(unittest.TestCase):
+    def test_a_sha_in_the_detail_is_read_as_any_sha(self):
+        rename = "made and not owed: ('rename', 'claude/1', 'released/1-6d6ae03')"
+        self.assertEqual(invariants.identity(rename), "made and not owed: ('rename', 'claude/1', 'released/1-*')")
+        self.assertEqual(invariants.identity("#100 heard <!-- sdlc-board: main-moved 0a3acec -->  2 times"),
+                         "#100 heard <!-- sdlc-board: main-moved * -->  2 times")
+        self.assertEqual(invariants.identity("the guard refused git push origin released/12-abcdef0:claude/12: x"),
+                         "the guard refused git push origin released/12-*:claude/12: x")
+        self.assertEqual(invariants.identity("released #1, which was not due"), "released #1, which was not due")
+
+    def test_one_fault_met_from_several_prefixes_is_one_violation_the_shrink_can_shorten(self):
+        """Under the mutant that releases at exactly 24 hours the rename
+        of claude/1 was six violations, one per sha of the head the
+        prefix left (a commit, a wait, the claim file dropped), each
+        written on its own, and the one met after a wait could lose no
+        wait, since the sha then differed; it is one now, and shortens to
+        the claim, the wait and the run."""
+        with mock.patch.object(claims, "is_idle", at_exactly_24_hours):
+            found = deep.search_space(ONE)
+            renames = [f for f in found.found if "'rename'" in f.detail]
+            self.assertEqual(len(renames), 1)
+            self.assertGreater(renames[0].count, 10)
+            keys = {(f.guarantee, invariants.identity(f.detail)) for f in found.found}
+            self.assertEqual(len(keys), len(found.found))
+            target = (renames[0].guarantee, renames[0].detail)
+            shorter = shrink.shrink(ONE.start, ONE.scope, deep.symbolic_trace(ONE, renames[0].trace), target)
+            self.assertEqual([v.name for v in shorter.trace], ["claim", "wait", "board"])
+            with mock.patch.object(invariants, "step_checks", side_effect=lambda *a: [
+                    invariants.Violation("G3", "made and not owed: ('rename', 'claude/1', 'released/1-0000000')"),
+                    invariants.Violation("G3", "made and not owed: ('rename', 'claude/1', 'released/1-1111111')")]):
+                walk = soak.walk(0, 3)
+        self.assertEqual(len(walk.violations), 1)
+
+
 class Shortening(unittest.TestCase):
     def test_a_violation_is_shortened_to_a_trace_that_still_shows_it(self):
         with mock.patch.object(claims, "is_idle", at_exactly_24_hours):
@@ -221,6 +289,61 @@ class Conformance(unittest.TestCase):
             differences = deep.compare(SMALL, path)
         self.assertTrue(differences)
         self.assertEqual({d["field"] for d in differences}, {"n"})
+
+    def test_a_counterexample_red_in_one_world_alone_is_a_disagreement(self):
+        """What observe reads says nothing of the checks, which read what
+        it does not; a file red in memory and green over git, or red at
+        another step, is a disagreement named by the file, as a sampled
+        path's is by the space."""
+        with tempfile.TemporaryDirectory() as folder:
+            with mock.patch.object(claims, "is_idle", at_exactly_24_hours):
+                found = deep.search_space(ONE)
+                file = deep.write_counterexamples(folder, ONE, found.found[:1])[0]["file"]
+            self.assertEqual(deep.conformance((), [file], 0)["disagreements"], [])
+            worlds = iter([[(3, "G3")], []])
+            with mock.patch.object(deep.replay, "results", side_effect=lambda record: next(worlds)):
+                played = deep.conformance((), [file], 0)
+        self.assertEqual(played["counterexamples"], 1)
+        self.assertEqual(played["disagreements"],
+                         [{"file": file, "step": -1, "field": "red", "memory": repr([(3, "G3")]), "git": repr([])}])
+
+    def test_two_released_branches_of_one_minute_are_ordered_as_they_were_made(self):
+        """A trace names a released branch by its place among the issue's,
+        oldest first; two made in one minute, which the clock skews of
+        E-faults allow, were ordered by name, that is by the sha in it,
+        which differs between the worlds, so the file would act on one
+        worker's branch in memory and the other's over git. The order the
+        branches were made in is the same in both worlds, and total where
+        the worker is not (one worker, main moving between its claims)."""
+        model = types.SimpleNamespace(refs={"released/2-aaaaaaa": "x", "released/2-bbbbbbb": "y", "main": "z"},
+                                      created={"released/2-aaaaaaa": 0, "released/2-bbbbbbb": 0},
+                                      made={"released/2-aaaaaaa": 2, "released/2-bbbbbbb": 1})
+        self.assertEqual(run.released_order(model, 2), ["released/2-bbbbbbb", "released/2-aaaaaaa"])
+        self.assertEqual(run.released_ref(model, 2, 0), "released/2-bbbbbbb")
+        self.assertEqual(run.released_ref(model, 2), "released/2-aaaaaaa")
+        self.assertEqual(run.symbolic(model, ("released/2-aaaaaaa", 2)), (("released", 2, 1), 2))
+        self.assertEqual(run.resolve(model, (("released", 2, 0),)), ("released/2-bbbbbbb",))
+        model.created["released/2-aaaaaaa"] = -1
+        self.assertEqual(run.released_order(model, 2), ["released/2-aaaaaaa", "released/2-bbbbbbb"])
+
+    def test_a_trace_naming_one_of_two_released_branches_of_one_minute_plays_alike_in_both_worlds(self):
+        """Two skewed claims of one issue in one minute, by a and b, and
+        by a alone with main moving between them: each is released by the
+        next run, the rename-back of the first names it by its place, and
+        both worlds act on the same branch."""
+        space = deep.Space("tie", Scope(workers=("a", "b"), issues=(2,), skews=(-48,)), (), 6)
+        board = Verb("board", "board", (cycle.SCHEDULE, ""))
+        back = Verb("rename-back", M.OWNER, (2, ("released", 2, 0)))
+        two_workers = (Verb("claim", "a", (2, -2880)), board, Verb("claim", "b", (2, -2880)), board, back)
+        one_worker = (Verb("claim", "a", (2, -2880)), board, Verb("move-main", M.OWNER), board,
+                      Verb("claim", "a", (2, -2880)), board, back)
+        for path in (two_workers, one_worker):
+            model = space.start()
+            for verb in path:
+                verbs.apply(model, run.concrete(model, verb), space.scope)
+            self.assertEqual(model.creators["claude/2"], "a")
+            self.assertEqual(sorted(model.made[r] for r in model.refs if r.startswith("released/2-")), [2])
+            self.assertEqual(deep.compare(space, path), [])
 
 
 class TheGuardRecordedAgain(unittest.TestCase):
@@ -363,8 +486,8 @@ class TheLaneAsOneRun(unittest.TestCase):
 
     def test_a_part_whose_worker_process_dies_is_red_alone_and_the_run_finishes(self):
         """One shared pool would mark every part in flight as raised when
-        one worker died and refuse the second wave; a pool per part loses
-        the part alone, and conformance still runs."""
+        one worker died and refuse the second wave; a process per part
+        loses the part alone, and conformance still runs."""
         with tempfile.TemporaryDirectory() as folder, mock.patch.object(lanes, "run_soak", dying_soak):
             out = io.StringIO()
             settings = lanes.Settings(folder, only=("search", "soak", "conformance"), jobs=2, quick=True)
@@ -385,8 +508,11 @@ class TheLaneAsOneRun(unittest.TestCase):
         searches, under the mutant that releases a claim at exactly 24
         hours, write counterexamples, which the run then plays in both
         worlds as a part of its own, owed again whenever a file is
-        added."""
-        with tempfile.TemporaryDirectory() as folder:
+        added. The quick depths are lowered further, since the files the
+        mutant makes at them, 36, cost twenty seconds of replay over git
+        where a few show the same."""
+        with tempfile.TemporaryDirectory() as folder, \
+                mock.patch.dict(lanes.QUICK["depths"], {"E-two": 1, "E-deep": 1, "E-faults": 2}):
             out = io.StringIO()
             settings = lanes.Settings(folder, only=("search", "conformance"), jobs=2, quick=True, budget=0.0)
             self.assertEqual(lanes.run(settings, out), 1, out.getvalue())
@@ -405,7 +531,7 @@ class TheLaneAsOneRun(unittest.TestCase):
         self.assertEqual(played["files"], files)
         self.assertEqual((played["counterexamples"], played["paths"], played["disagreements"]), (len(files), 0, []))
         self.assertIn("    conformance counterexamples done at", again.getvalue())
-        self.assertTrue(all("counterexamples" not in line for line in resumed["red"]), resumed["red"])
+        self.assertFalse([line for line in resumed["red"] if line.startswith("conformance,")], resumed["red"])
         self.assertIn("conformance counterexamples", lanes.done_parts(resumed))
         resumed["searches"][0]["violations"].append({"file": "one more"})
         self.assertNotIn("conformance counterexamples", lanes.done_parts(resumed))
@@ -474,6 +600,122 @@ class TheLaneAsOneRun(unittest.TestCase):
                                     "stopped": True, "violations": [], "differences": []})
         self.assertEqual(len(lanes.red_lines(results)), 1)
         self.assertIn("stopped by the budget", lanes.red_lines(results)[0])
+
+    def test_a_count_of_processes_below_one_is_refused(self):
+        """run_jobs would submit nothing and spin for good under a count
+        below one: no part fits, and waiting on no future returns at
+        once. Zero and None are the processor count, as before."""
+        with tempfile.TemporaryDirectory() as folder:
+            for jobs in (-1, -4):
+                with self.assertRaises(ValueError) as refused:
+                    lanes.Settings(folder, jobs=jobs)
+                self.assertIn("--jobs takes a count of processes of 1 or more", str(refused.exception))
+            self.assertEqual(lanes.Settings(folder, jobs=0).jobs, os.cpu_count() or 2)
+            self.assertEqual(lanes.Settings(folder, jobs=3).jobs, 3)
+
+    def test_the_marker_is_taken_first_and_exclusively(self):
+        """Two runs started at the same moment both passed a liveness check
+        made before the marker was written, and both removed the
+        checkpoints and wrote one results file; the marker is made first
+        now, exclusively, so the second finds the first's and is refused,
+        and a refusal after it is taken removes it."""
+        with tempfile.TemporaryDirectory() as folder:
+            marker = Path(folder) / lanes.RUNNING
+            settings = lanes.Settings(folder, only=("search",), jobs=2, quick=True)
+            seen = []
+
+            def removing(path, ignore_errors=False):
+                seen.append(marker.read_text(encoding="ascii").strip())
+
+            with mock.patch.object(lanes.shutil, "rmtree", removing):
+                self.assertEqual(lanes.run(settings, io.StringIO()), 0)
+            self.assertEqual(seen, [str(os.getpid())] * 2)
+            self.assertFalse(marker.exists())
+            other = {**lanes.fresh_results(settings), "run": {"quick": False}}
+            (Path(folder) / "deep.json").write_text(json.dumps(other), encoding="ascii")
+            with self.assertRaises(SystemExit) as refused:
+                lanes.run(lanes.Settings(folder, only=("search",), jobs=2, quick=True, resume=True), io.StringIO())
+            self.assertIn("other settings or other code", str(refused.exception))
+            self.assertFalse(marker.exists())
+            lanes.take_marker(settings)
+            with self.assertRaises(SystemExit) as refused:
+                lanes.take_marker(settings)
+            self.assertIn(f"names process {os.getpid()}, a run in progress", str(refused.exception))
+            self.assertEqual(marker.read_text(encoding="ascii").strip(), str(os.getpid()))
+
+    def test_the_parts_are_forked_and_the_parent_forks_with_no_helper_thread(self):
+        """A mutant a test patches into the harness reaches a part by fork
+        alone, whatever Python's default start method; and forking a
+        multi-threaded process, which a pool per part made of every fork
+        after the first, is what Python 3.12 warns may deadlock the
+        child."""
+        self.assertEqual(lanes.fork_context().get_start_method(), "fork")
+        with tempfile.TemporaryDirectory() as folder, warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            settings = lanes.Settings(folder, only=("search", "soak"), jobs=2, quick=True)
+            self.assertEqual(lanes.run(settings, io.StringIO()), 0)
+        self.assertEqual([str(w.message) for w in caught if "fork" in str(w.message)], [])
+
+    def test_on_windows_the_marker_is_taken_at_its_word(self):
+        """os.kill(pid, 0) there is TerminateProcess: the probe would end
+        the run it asks after, or whatever process holds a stale marker's
+        id, so no probe is made."""
+        with tempfile.TemporaryDirectory() as folder:
+            settings = lanes.Settings(folder, only=("search",), jobs=2, quick=True)
+            (Path(folder) / lanes.RUNNING).write_text("4242\n", encoding="ascii")
+
+            def never(pid, signum):
+                raise AssertionError("os.kill was called")
+
+            with mock.patch.object(lanes.os, "name", "nt"), mock.patch.object(lanes.os, "kill", never):
+                self.assertEqual(lanes.running_process(settings), 4242)
+            with mock.patch.object(lanes.os, "kill", never):
+                self.assertRaises(AssertionError, lanes.running_process, settings)
+
+    def test_two_violations_of_one_walk_at_one_step_get_a_file_each(self):
+        """A board run that releases a claim not due shows G3 twice at one
+        step, the comment and the rename; one name per step would keep
+        the second's file alone and name it twice."""
+        walk = soak.walk(0, 6)
+        two = walk._replace(violations=(("G3", "made and not owed: ('comment', 1, 'claim-released')", 5),
+                                        ("G3", "made and not owed: ('rename', 'claude/1', 'released/1-abcdef0')", 5)))
+
+        def unshortened(start, scope, trace, target, known_reading, budget):
+            return shrink.Shrunk(tuple(trace), 0, 0.0)
+
+        with tempfile.TemporaryDirectory() as folder, mock.patch.object(lanes.soak, "walk", lambda seed, steps: two), \
+                mock.patch.object(lanes.shrink, "shrink", unshortened):
+            result = lanes.run_soak([0], 6, folder)
+            files = sorted(p.name for p in (Path(folder) / deep.TRACES).glob("*.json"))
+        self.assertEqual(files, ["G3-soak-0-5-1.json", "G3-soak-0-5-2.json"])
+        self.assertEqual([Path(v["file"]).name for v in result["violations"]], files)
+        self.assertEqual([v["detail"] for v in result["violations"]], [d for _, d, _ in two.violations])
+        self.assertEqual(result["violations"][0]["shortened_to"], 6)
+
+    def test_a_sigterm_to_the_runner_ends_its_workers_and_removes_the_marker(self):
+        """`kill <pid>` sends SIGTERM to the runner alone; with no handler
+        the parent died at once, its finally never run, the marker left
+        naming a dead process and each pool's worker, which watches no
+        parent, running its search on for hours, orphaned. The handler
+        ends the run as Ctrl-C does."""
+        if shutil.which("pgrep") is None:
+            self.skipTest("pgrep is not installed")
+        with tempfile.TemporaryDirectory() as folder:
+            script = ("import os, sys\n"
+                      f"sys.path.insert(0, {str(ROOT)!r})\n"
+                      "from validation import lanes\n"
+                      f"lanes.run(lanes.Settings({folder!r}, only=('search',), jobs=1), open(os.devnull, 'w'))\n")
+            runner = subprocess.Popen([sys.executable, "-c", script], stderr=subprocess.DEVNULL)
+            try:
+                marker = Path(folder) / lanes.RUNNING
+                workers = wait_for(lambda: children_of(runner.pid) if marker.exists() else [], 60)
+                self.assertTrue(workers, "no worker started within a minute")
+                runner.send_signal(signal.SIGTERM)
+                self.assertEqual(runner.wait(timeout=60), 128 + signal.SIGTERM)
+            finally:
+                runner.kill()
+            self.assertFalse(marker.exists())
+            self.assertTrue(wait_for(lambda: not any(alive(pid) for pid in workers), 30), "a worker outlived the runner")
 
 
 if __name__ == "__main__":

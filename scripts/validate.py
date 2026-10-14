@@ -16,9 +16,10 @@
                                               the git world, the guard recorded again, conformance
         --out DIR                             where the results and the counterexamples go (validation-out)
         --only search,soak,gate,git,guard,conformance   some parts only
-        --jobs N                              processes at once (the processors)
-        --budget SECONDS                      stop each search there; a stopped search is red
-        --resume                              go on from DIR's deep.json and the searches' checkpoints
+        --jobs N                              processes at once (the processors); 1 or more
+        --budget SECONDS                      stop each search there, counted from its first start; a stopped search is red
+        --resume                              go on from DIR's deep.json and the searches' checkpoints; a stopped
+                                              search goes on under a larger --budget or none
         --quick                               a few steps of every part, for a look
 
 The tests under tests/ run the same lanes with their budgets; this script
