@@ -269,10 +269,15 @@ class GitHub:
     def pull_detail(self, branch):
         """The open pull request from a branch of this repository, in the
         detail that holds mergeable_state and the head's sha, as GitHub
-        gives it, or None."""
+        gives it, or None. The list's head filter names the branch by its
+        owner, which a fork in the same organization shares (github/docs,
+        content/pull-requests/reference/forks.md:113), so a pull request
+        from such a fork is left out by the head and base the list gives
+        (board.from_fork; F17's review)."""
         owner = self.repo.split("/")[0]
         found = self.get(f"/repos/{self.repo}/pulls", {"state": "open", "head": f"{owner}:{branch}"}) or []
-        return self.get(f"/repos/{self.repo}/pulls/{found[0]['number']}") if found else None
+        own = [pull for pull in found if not board.from_fork(pull)]
+        return self.get(f"/repos/{self.repo}/pulls/{own[0]['number']}") if own else None
 
     def check_runs(self, sha):
         """Every check run on one commit, page by page: the endpoint wraps

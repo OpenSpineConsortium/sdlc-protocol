@@ -124,6 +124,7 @@ TRACES = {
     "a fork's pull request left off with a released claim": "the regression traces",
     "a fork's pull request named on a claim's row": (HELD + [FORK_DRAFT, BOARD], FORKS),
     "a fork's pull request taken for a claim's work": (HELD + [FORK_DRAFT, BOARD], FORKS),
+    "a fork's pull request never told main moved": "the regression traces",
 }
 LANES = {lane.name: lane for lane in mutants.LANES}
 
@@ -145,10 +146,11 @@ class TheLane(unittest.TestCase):
         lanes judge, step 5 four that undo fixes of 0.4.1, and each fix
         since at least one that undoes it (F7's first), and the reviews of
         F13's and F15's fixes more, and F17's fix one for each place that
-        read a claim's pull request by its branch's name, so the bound is
-        widened to 80 and the count noted."""
+        read a claim's pull request by its branch's name it has a check for
+        and its review one more, so the bound is widened to 80 and the count
+        noted."""
         self.assertTrue(10 <= len(mutants.MUTANTS) <= 80)
-        self.assertEqual(len(mutants.MUTANTS), 67)
+        self.assertEqual(len(mutants.MUTANTS), 68)
         self.assertEqual(sorted(TRACES), sorted(mutants.MUTANTS))
 
     def test_every_mutant_names_a_rule_the_library_still_has(self):
@@ -245,13 +247,15 @@ class TheSearchesCatchWhatTheyWereAddedFor(unittest.TestCase):
         self.assertTrue(any("main-moved" in detail and "not owed" in detail for _, detail in found), found)
 
     def test_a_stranger_s_pull_request_from_a_fork_catches_every_mutant_of_f17_s_fix(self):
-        """The lane credits five of F17's eight mutants to the regression
+        """The lane credits six of F17's nine mutants to the regression
         traces, so the search added with F17's fix is held here to all
-        eight: it finds nothing on the library, and the violation each
+        nine: it finds nothing on the library, and the violation each
         mutant names, which it can only while a stranger may open a pull
-        request from a fork whose branch bears the claim's name."""
+        request from a fork whose branch bears the claim's name, and, for
+        "main moved", while the owner may move main (F17's review)."""
         search = next(s for s in mutants.SEARCHES if s.name == "a stranger's pull request from a fork on a due claim")
         self.assertTrue(search.scope.forks)
+        self.assertIn(M.OWNER, search.scope.people)
         self.assertEqual(mutants.violations(search), {})
         for name, mutant in mutants.MUTANTS.items():
             if "(F17)" not in mutant.why:

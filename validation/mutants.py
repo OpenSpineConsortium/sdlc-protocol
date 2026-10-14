@@ -108,6 +108,7 @@ ORIGINAL_PUT_BACK = github.put_back
 ORIGINAL_AFTER_RELEASE = coordinator.after_release
 ORIGINAL_IS_CANDIDATE = coordinator.is_candidate
 ORIGINAL_PULL_ROWS = board.pull_rows
+ORIGINAL_PULLS_BEHIND_MAIN = board.pulls_behind_main
 
 
 def comment_then_labels(api, snap, key, now):
@@ -542,6 +543,14 @@ def releases_reading_a_fork_s_draft(api, heads, found_issues, pulls, now=None):
     return found
 
 
+def behind_main_but_forks(pulls):
+    """board.pulls_behind_main leaving out every pull request from a fork, as
+    a reading that took a fork's pull request, no claim's, for nobody's
+    would: such a pull request behind main never hears so, though the spec
+    has the board tell it what it tells any other (F17's review)."""
+    return [p for p in ORIGINAL_PULLS_BEHIND_MAIN(pulls) if not board.as_pull(p).fork]
+
+
 MUTANTS = {
     "idle at exactly 24 hours": Mutant(
         claims, "is_idle", lambda last, now, idle_after=claims.IDLE_AFTER: now - claims.parse_time(last) >= idle_after,
@@ -766,6 +775,9 @@ MUTANTS = {
         board, "open_work", open_work_by_name,
         "G7", "a pull request from a fork is a piece of open work of its own, which meets the claim named like "
               "its branch (F17)"),
+    "a fork's pull request never told main moved": Mutant(
+        board, "pulls_behind_main", behind_main_but_forks,
+        "G10", "a pull request from a fork hears \"main moved\" as any other does (F17)"),
 }
 
 
@@ -875,7 +887,7 @@ SEARCHES = (
     Search("a draft GitHub calls clean while it is behind", (CLAIM, Verb("open-draft", "a", (1,))),
            Scope(workers=("a",), people=(M.OWNER,), waits=(25,)), 3, lenient_rules=True),
     Search("a stranger's pull request from a fork on a due claim", DUE,
-           Scope(workers=("a",), people=(), waits=(25,), forks=True), 3),
+           Scope(workers=("a",), people=(M.OWNER,), waits=(25,), forks=True), 3),
     Search("the holder back between the halves of a run", (CLAIM, CLAIMED, WORKER, Verb("wait", "clock", (25,))),
            Scope(workers=("a",), people=(), waits=(25,), split_board=True), 3),
     Search("a stranger's marker on overlapping claims", (CLAIM, Verb("claim", "b", (2,))),

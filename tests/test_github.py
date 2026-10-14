@@ -1006,6 +1006,23 @@ class Releases(unittest.TestCase):
                 self.assertNotIn("/repos/o/r/issues/50/comments?per_page=100",
                                  [c.full_url.replace(github.API, "") for c in opener.calls])
                 self.assertIn("| #50 | Fix the board | claude/12 |", board.render(snap))
+        # While the claim is still held, the claim's own draft, which nobody
+        # said is finished, decides, so the claim is read for its release;
+        # until the fix the fork's draft, listed after it, took its place
+        # and sam's "finished; ready to mark" held the claim (F17's review).
+        _, answers = released_answers()
+        answers["/repos/o/r/issues?state=open&per_page=100"] = FakeAnswer([
+            {"number": 12, "title": "Describe the board", "state": "open",
+             "labels": [{"name": "claimed"}, {"name": "todo"}, {"name": "worker:alice"}]}])
+        answers["/repos/o/r/pulls?state=open&per_page=100"] = FakeAnswer([{"number": n} for n in (40, 41, 50)])
+        answers["/repos/o/r/pulls/50"] = FakeAnswer(dict(fork, draft=True))
+        answers["/repos/o/r/pulls/50/files?per_page=100"] = FakeAnswer([{"filename": "docs/agents/README.md"}])
+        answers["/repos/o/r/issues/50/comments?per_page=100"] = FakeAnswer([dict(FINISHED, user={"login": "sam"})])
+        api, opener = client(answers)
+        self.assertIn("12", github.collect(api, "abc", "main")["releases"])
+        asked = [c.full_url.replace(github.API, "") for c in opener.calls]
+        self.assertIn(DRAFT_COMMENTS_40, asked)
+        self.assertNotIn("/repos/o/r/issues/50/comments?per_page=100", asked)
 
     def test_a_finished_claim_costs_no_call(self):
         ready, answers = released_answers()
@@ -1686,6 +1703,24 @@ class TeamClient(unittest.TestCase):
         api, _ = client(pull_answers(state="behind"))
         self.assertEqual(api.open_pull("claude/7")["mergeable_state"], "behind")
         api, _ = client({PULL_LIST: FakeAnswer([])})
+        self.assertIsNone(api.open_pull("claude/7"))
+
+    def test_open_pull_leaves_out_a_pull_request_from_a_fork_the_owner_s_filter_matches(self):
+        """A fork in the same organization shares the owner the list's head
+        filter names, so the list may give its pull request from a branch
+        named like the claim's; the detail asked for is the repository's own
+        (F17's review)."""
+        fork = {"number": 506, "head": {"ref": "claude/7", "repo": {"full_name": "o/r-fork"}},
+                "base": {"ref": "main", "repo": {"full_name": "o/r"}}}
+        own = {"number": 507, "head": {"ref": "claude/7", "repo": {"full_name": "o/r"}},
+               "base": {"ref": "main", "repo": {"full_name": "o/r"}}}
+        answers = pull_answers(state="behind")
+        answers[PULL_LIST] = FakeAnswer([fork, own])
+        api, opener = client(answers)
+        self.assertEqual(api.open_pull("claude/7")["number"], 507)
+        self.assertNotIn("/repos/o/r/pulls/506", [c.full_url.replace(github.API, "") for c in opener.calls])
+        answers[PULL_LIST] = FakeAnswer([fork])
+        api, _ = client(answers)
         self.assertIsNone(api.open_pull("claude/7"))
 
     def test_check_runs_reads_every_page(self):

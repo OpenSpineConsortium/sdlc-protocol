@@ -52,7 +52,9 @@ BUDGET_SECONDS = 10
 # read as the claim's, by the coordinator, by the adapter's ready
 # branches or by the board's reading of a release, and sam's pull request
 # hears nothing, or is left off the page, once the release's rename is
-# read as closing it.
+# read as closing it; and at its last run, step 9, after main has moved
+# past sam's branch, which hears no "main moved" once a pull request from
+# a fork is left out of the word (F17's review).
 UNDONE = {
     "F1": [("the comment before the labels", 5, "G3L")],
     "F3": [("the guard passes --force", 1, "G11a")],
@@ -75,7 +77,8 @@ UNDONE = {
             ("a fork's ready pull request skipped as a claim's", 7, "G3"),
             ("a fork's ready pull request keeps a release from counting", 7, "G3"),
             ("a fork's pull request silenced with a released claim", 7, "G10"),
-            ("a fork's pull request left off with a released claim", 7, "G9")],
+            ("a fork's pull request left off with a released claim", 7, "G9"),
+            ("a fork's pull request never told main moved", 9, "G10")],
 }
 # The fifteen settled findings: F1, F3, F5, F6, F10 and F11 fixed in
 # 0.4.1; F4, F7, F9, F12, F13, F14, F15 and F17 fixed on main after it

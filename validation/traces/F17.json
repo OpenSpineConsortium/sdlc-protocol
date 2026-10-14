@@ -20,6 +20,9 @@
     {"at": 25, "verb": "board",
      "expect": {"labels": {"1": ["todo"]}, "comments": {"1": {"claim-released": 1, "released": 1}, "101": {"overlap": 1, "idle": 1}},
                 "refs": {"claude/1": false}, "released": {"1": 1}, "pulls": [101], "queue": [1], "claims": {}},
-     "note": "a's claim has had no commit for 25 hours and its own pull request is a draft, so the coordinator releases it and the board renames the branch, which closes #100 and leaves sam's open, as the fork's branch is another; sam's pull request hears it is idle, as any other would. Until the fix sam's ready pull request, read as the claim's, kept the claim from ever being released (G3), and each part of the fix has a mutant that breaks it here or in the search \"a stranger's pull request from a fork on a due claim\""}
+     "note": "a's claim has had no commit for 25 hours and its own pull request is a draft, so the coordinator releases it and the board renames the branch, which closes #100 and leaves sam's open, as the fork's branch is another; sam's pull request hears it is idle, as any other would. Until the fix sam's ready pull request, read as the claim's, kept the claim from ever being released (G3), and each part of the fix has a mutant that breaks it here or in the search \"a stranger's pull request from a fork on a due claim\""},
+    {"verb": "move-main", "actor": "owner"},
+    {"verb": "board", "event": "push", "ref": "main", "expect": {"comments": {"101": {"overlap": 1, "idle": 1, "main-moved": 1}}, "pulls": [101]},
+     "note": "main moves past sam's branch, and the run tells sam's pull request so, as it tells any other (F17's review: nothing had held a fork's pull request to the word)"}
   ]
 }
