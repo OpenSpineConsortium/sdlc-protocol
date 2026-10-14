@@ -1904,11 +1904,11 @@ class Standing(unittest.TestCase):
         """behind and dirty already say how the branch stands and unknown is
         GitHub still computing, so a standing beside them would be a second
         word for the same thing on a dict no fixture ever held. clean,
-        unstable and has_hooks say the repository's rules let the pull
-        request merge as it stands, which they do for a branch behind main
-        only under a rule that does not require an up-to-date branch, and
-        the spec owes such a pull request nothing however far main has moved
-        (F16), so a comparison there could change no answer."""
+        unstable and has_hooks say the repository's rules do not hold the
+        pull request for being behind, which they say of a branch behind
+        main only under a rule that does not require an up-to-date branch,
+        and the spec owes such a pull request nothing however far main has
+        moved (F16), so a comparison there could change no answer."""
         for state, mergeable in (("clean", True), ("unstable", True), ("has_hooks", True), ("behind", True),
                                  ("dirty", False), ("unknown", None)):
             waits = []

@@ -1,7 +1,7 @@
 {
   "finding": "F16",
   "title": "a branch GitHub calls clean while it is behind main hears main moved by the spec's words",
-  "status": "fixed in the spec after 0.4.1: its Work in the open says a pull request GitHub calls clean, unstable or has_hooks may merge as it stands under the repository's rules and hears nothing, which the library as built already keeps (DESIGN.md, 13)",
+  "status": "fixed in the spec after 0.4.1: its Work in the open says a pull request GitHub calls clean, unstable or has_hooks, a draft among them, is not held for being behind under the repository's rules and hears nothing, which the library as built already keeps (DESIGN.md, 13)",
   "breaks": ["G10"],
   "world": "memory",
   "lenient_rules": true,
@@ -14,6 +14,6 @@
      "note": "the repository's rules do not require an up-to-date branch, or there are none, and no rule holds the draft, so GitHub's word for it is clean whether or not its branch is behind, as GitHub gives a draft its branch's word (C0); the draft is level with main, and nothing is owed"},
     {"at": 1, "verb": "move-main", "actor": "owner"},
     {"verb": "board", "event": "push", "ref": "main", "expect": {"comments": {"100": {}}, "standing": {"100": "behind"}},
-     "note": "the branch is now behind main and GitHub's word is still clean: the repository's rules let the draft merge as it stands, so the spec owes it nothing; under the mutant that compares such a word the board tells it main moved, made and not owed, and G10 is red"}
+     "note": "the branch is now behind main and GitHub's word is still clean: the repository's rules do not hold the draft for being behind, so the spec owes it nothing; under the mutant that compares such a word the board tells it main moved, made and not owed, and G10 is red"}
   ]
 }

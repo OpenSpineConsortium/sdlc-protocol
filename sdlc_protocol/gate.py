@@ -673,7 +673,7 @@ def standing_sentence(policy, standing, main, number):
     branch, at = policy.branch_of(number), f"{name} at {short(main)}"
     conflicts = ", ".join(standing.conflicts) or "some files"
     sentences = {
-        CLEAN: f"Against {at}: clean, up to date with {name} and merging cleanly.",
+        CLEAN: f"Against {at}: clean; it merges cleanly with {name} as it stands.",
         BEHIND: f"Against {at}: behind; {name} moved since {branch} branched, but it still merges "
                 f"cleanly, so the gate can merge it as it is.",
         CONFLICTING: f"Against {at}: conflicting; main moved and {branch} no longer merges cleanly with it "

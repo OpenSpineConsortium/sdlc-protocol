@@ -345,10 +345,11 @@ def standing_of(api, detail, default_branch=None):
     moved"). None where GitHub's word is one the board reads as it is:
     behind and dirty say how the branch stands, unknown is GitHub still
     computing, and clean, unstable and has_hooks say the repository's
-    rules let the pull request merge as it stands, which they do for a
-    branch that is behind only under a rule that does not require an
-    up-to-date branch, or under none, so the spec owes it nothing however
-    far the default branch has moved (F16). None too for a pull request
+    rules do not hold the pull request for being behind, a draft's as any
+    other's, since GitHub gives a draft the word its branch has (C0), which
+    they say of a branch that is behind only under a rule that does not
+    require an up-to-date branch, or under none, so the spec owes it
+    nothing however far the default branch has moved (F16). None too for a pull request
     stacked on a branch other than the default branch the caller names,
     since "main moved" speaks of the default branch. A
     comparison GitHub refuses, a 5xx, a 422 or a rate limit's 403, reads

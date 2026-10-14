@@ -353,7 +353,7 @@ class GateOverBareGitTest(RemoteTest):
         git(self.two, "add", "app.py")
         git(self.two, "commit", "--quiet", "--no-edit")
         git(self.two, "push", "--quiet", "team", "claude/2")
-        self.assertIn("clean, up to date", self.status(2))
+        self.assertIn("clean; it merges cleanly with main as it stands", self.status(2))
         self.assertTrue(self.ready(2).text.startswith("merged: claude/2 is in main"))
         main = self.remote.main()
         # Main only moved forward: the first merge is still in its history.
@@ -413,7 +413,7 @@ class GateOverBareGitTest(RemoteTest):
     def test_status_says_behind_when_main_moved_without_a_conflict(self):
         self.claim_branch_and_open(self.one, 1, {"one.py": "ONE = 1\n"})
         self.claim_branch_and_open(self.two, 2, {"two.py": "TWO = 2\n"})
-        self.assertIn("clean, up to date", self.status(2))
+        self.assertIn("clean; it merges cleanly with main as it stands", self.status(2))
         self.ready(1)
         self.assertIn("behind", self.status(2))
 

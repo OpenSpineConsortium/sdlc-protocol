@@ -37,7 +37,9 @@ conflict, with mergeable true, as a rule that holds the pull request
 gives, a required check pending or red or a review not yet given, and the
 comparison carries behind_by (F9); with the model's lenient_rules on,
 the word for a branch that is behind is "clean", as GitHub gives under a
-rule that does not require an up-to-date branch or under none (F16); a
+rule that does not require an up-to-date branch or under none (F16), and
+with both on the word is "blocked", since a rule that holds the pull
+request holds it whatever its branch; a
 rename closes the pull request whose head the branch is; a rename onto a
 name that stands answers 422; the board posts as github-actions[bot] with
 the author_association NONE; a pull request's updated_at moves with

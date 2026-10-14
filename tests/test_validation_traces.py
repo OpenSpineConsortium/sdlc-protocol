@@ -45,8 +45,8 @@ BUDGET_SECONDS = 10
 # rule is gone, or the page that run writes leaves #1 out of the Queue once
 # the snapshot forgets the todo. F16's at its second board run, step 4,
 # where the draft GitHub calls clean while it is behind main hears "main
-# moved", which the spec says it may merge without, once such a word is
-# compared.
+# moved", which the spec says the rules do not hold it for, once such a
+# word is compared.
 UNDONE = {
     "F1": [("the comment before the labels", 5, "G3L")],
     "F3": [("the guard passes --force", 1, "G11a")],

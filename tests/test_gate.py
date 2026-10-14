@@ -513,7 +513,7 @@ class StatusTest(Flow):
         self.claim_push_and_open(1)
         main = self.world.main_sha()[:7]
         sentences = {
-            gate.CLEAN: f"Against main at {main}: clean, up to date with main and merging cleanly.",
+            gate.CLEAN: f"Against main at {main}: clean; it merges cleanly with main as it stands.",
             gate.BEHIND: f"Against main at {main}: behind; main moved since claude/1 branched, but it still "
                          f"merges cleanly, so the gate can merge it as it is.",
             gate.NOTHING_NEW: f"Against main at {main}: nothing new; every commit on claude/1 is already in main.",

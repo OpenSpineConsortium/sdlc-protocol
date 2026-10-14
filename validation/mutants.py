@@ -445,8 +445,8 @@ MUTANTS = {
         "how far a held branch is behind is the comparison's behind_by, the commits of main it lacks, never its own commits (F9)"),
     "a clean word compared": Mutant(
         github, "standing_of", standing_of_every_word, "G10",
-        "a pull request GitHub calls clean, unstable or has_hooks may merge as it stands under the repository's "
-        "rules and hears nothing, however far main has moved (F16)"),
+        "a pull request GitHub calls clean, unstable or has_hooks is not held for being behind under the "
+        "repository's rules and hears nothing, however far main has moved (F16)"),
     "main moved told only in the push's run": Mutant(
         board, "comments_due", main_moved_only_in_the_push_s_run,
         "G10", "main moved is told by whichever run finds the branch behind, once per commit of main (F12)"),

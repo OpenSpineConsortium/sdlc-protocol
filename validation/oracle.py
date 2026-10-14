@@ -94,12 +94,13 @@ SPEC = {
     "rename refused": "When GitHub refuses the rename for good, for a ruleset whose target takes in the claim "
                       "branches or a token without the right, the board says so once on the issue",
     "behind": "The board reads a branch as behind where GitHub calls its pull request behind, as it does under a "
-              "rule that requires an up-to-date branch, or, where GitHub's word says only that something else "
-              "stops the merge, a rule still holding the pull request or the draft itself, where the comparison "
-              "of the branch with the default branch says so",
-    "as it stands": "a pull request GitHub calls clean, unstable or has_hooks may merge as it stands under the "
-                    "repository's rules, so it hears nothing however far the default branch has moved, and one in "
-                    "conflict always hears it.",
+              "rule that requires an up-to-date branch, or, where GitHub's word is blocked or draft, which says "
+              "only that something else stops the merge, a rule still holding the pull request or the draft "
+              "itself, where the comparison of the branch with the default branch says so.",
+    "as it stands": "A pull request GitHub calls clean, unstable or has_hooks, a draft among them, since GitHub gives "
+                    "a draft the word its branch has, is not held for being behind under the repository's rules, so "
+                    "it hears nothing however far the default branch has moved; one GitHub calls dirty, in conflict "
+                    "with the default branch, hears it.",
 }
 
 CLAIM_PREFIX = "claude/"
@@ -475,12 +476,13 @@ def main_moved_effects(model, event, ref_name, known=AS_BUILT):
 
 def owes_main_moved(model, pull):
     """Whether the pull request's branch stands so the board tells it "main
-    moved": in conflict with main, or behind it where GitHub says behind or
-    a rule still holds the pull request, so the comparison says it
-    (SPEC["behind"]); a branch behind main under a rule that does not
-    require an up-to-date branch, the model's lenient_rules, with no rule
-    holding it, which GitHub calls clean, may merge as it stands and is
-    owed nothing (SPEC["as it stands"], F16)."""
+    moved": in conflict with main, or behind it where GitHub says behind,
+    or says blocked, a rule still holding the pull request, so the
+    comparison says it (SPEC["behind"]); GitHub gives a draft the word its
+    branch has, never draft (C0). A branch behind main under a rule that
+    does not require an up-to-date branch, the model's lenient_rules, with
+    no rule holding it, which GitHub calls clean, draft or not, is not held
+    for being behind and is owed nothing (SPEC["as it stands"], F16)."""
     standing = model.standing(pull.head)
     if standing == "dirty":
         return True
