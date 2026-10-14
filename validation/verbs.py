@@ -70,6 +70,10 @@ FAULTS = {
     "ref-delete-422": Fault("DELETE", "/git/refs/heads/*", 422),
     "compare-404": Fault("GET", "/compare/*", 404),
     "comments-read-500": Fault("GET", "/issues/*/comments", 500),
+    "activity-500": Fault("GET", "/activity", 500),
+    # Every read of the activity in the run, the newest creations and each
+    # branch's own alike, as for a token that may not read it.
+    "activity-500-all": Fault("GET", "/activity", 500, times=100),
 }
 
 

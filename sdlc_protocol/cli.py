@@ -110,7 +110,7 @@ def plan_board(api, sha, default_branch, now, render_only=False, say=print):
     made."""
     github = github_adapter()
     snap = github.snapshot(api, sha, default_branch, now)
-    for line in github.unread_claim_lines(snap):
+    for line in github.unread_claim_lines(snap) + github.began_refused_lines(snap):
         say(line)
     if not render_only:
         for line in github.coordinate(api, snap, now):

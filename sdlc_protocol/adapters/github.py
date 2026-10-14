@@ -45,6 +45,13 @@ API_VERSION = "2022-11-28"
 USER_AGENT = "sdlc-board"
 TIMEOUT = 60
 PER_PAGE = 100
+# The branch creations one read of the repository's activity lists, the
+# most GitHub gives on a page (began_times).
+ACTIVITY_PAGE = 100
+# What the Overlaps do with the work of a branch GitHub refused to date
+# (began_refused_lines).
+UNDATED_PULL = "date its pull request by when it was opened"
+UNDATED_CLAIM = "put its claim last, as work nothing dates"
 # GitHub computes mergeability after the first ask; one more ask after a
 # pause is enough, and "unknown" is the honest word when it still has not.
 MERGEABLE_RETRY_SECONDS = 3
@@ -566,7 +573,7 @@ def collect(api, sha, default_branch, now=None):
     listed = api.get_all(f"/repos/{repo}/branches")
     branches = board.claim_branches(listed)
     found_issues = claim_issues(api, branches, issues)
-    return {
+    found = {
         "sha": sha,
         "default_branch": default_branch,
         "issues": issues,
@@ -577,6 +584,106 @@ def collect(api, sha, default_branch, now=None):
         "merged": recent_merged(api),
         "releases": releases(api, claim_heads(listed), found_issues, pulls, now),
     }
+    found["began"], refused = began_times(api, found)
+    if refused:
+        found["began_refused"] = refused
+    return found
+
+
+def began_times(api, found):
+    """When each piece of open work that meets other work in a file began,
+    by its branch: the time GitHub writes for the newest push that made a
+    branch of that name, read from the repository's activity, which GitHub
+    records as the pushes reach it, so no clock of a worker's own comes in
+    (F13); and GitHub's answer for each branch it refused to date. Only the
+    work in the Overlaps is asked about, since the landing order is all the
+    time is for, and a pull request from a fork never, since its branch is
+    none of this repository's (board.open_work). One call reads the newest
+    branch creations of the whole repository (newest_creations), and each
+    branch it does not name is asked about on its own (branch_made_at), so
+    a run pays one call where the work is new, as it is while it overlaps,
+    and a refused first call costs only the reads it would have saved.
+    When GitHub has no such push to give, or no activity at all (a 404),
+    or refuses a branch's own read, whatever it answers, that branch is
+    left out and the board orders its work as work whose beginning nothing
+    says (board.landing_key), a pull request by when it was opened: the
+    order is the one thing the time is for, and one branch GitHub will not
+    answer for must not fail the board's whole run, as a comparison GitHub
+    refuses does not (standing_of)."""
+    wanted = list(dict.fromkeys(work.branch for works in board.overlaps(found).values()
+                                for work in works if work.branch))
+    if not wanted:
+        return {}, {}
+    try:
+        times = newest_creations(api, wanted)
+    except GitHubError:
+        times = {}
+    refused = {}
+    for branch in wanted:
+        if branch in times:
+            continue
+        try:
+            began = branch_made_at(api, branch)
+        except GitHubError as problem:
+            refused[branch] = f"{problem}{github_words(problem)}"
+            continue
+        if began:
+            times[branch] = began
+    return times, refused
+
+
+def newest_creations(api, branches):
+    """When the newest push that made each of these branches came, for those
+    the repository's newest ACTIVITY_PAGE branch creations name: one call,
+    the activity filtered to branch creations and listed newest first, so
+    the first entry for a branch is its newest creation. A refusal other
+    than a 404 raises."""
+    wanted = {f"refs/heads/{branch}": branch for branch in branches}
+    listed = api.get(f"/repos/{api.repo}/activity", {"activity_type": "branch_creation", "direction": "desc",
+                                                     "per_page": ACTIVITY_PAGE}, missing_ok=True) or []
+    times = {}
+    for activity in listed if isinstance(listed, list) else []:
+        made = made_at(activity)
+        branch = wanted.get(activity.get("ref")) if made and isinstance(activity.get("ref"), str) else None
+        if branch and branch not in times:
+            times[branch] = made
+    return times
+
+
+def branch_made_at(api, branch):
+    """When the newest push that made the branch came, as GitHub writes the
+    time, or "" when GitHub records none: the activity list, filtered to the
+    branch and to branch creations and listed newest first. A refusal other
+    than a 404 raises."""
+    listed = api.get(f"/repos/{api.repo}/activity", {"ref": f"refs/heads/{branch}", "activity_type": "branch_creation",
+                                                     "direction": "desc", "per_page": 1}, missing_ok=True) or []
+    for activity in listed if isinstance(listed, list) else []:
+        if made_at(activity) and activity.get("ref") == f"refs/heads/{branch}":
+            return made_at(activity)
+    return ""
+
+
+def made_at(activity):
+    """The time of an entry of the activity that records a push making a
+    branch, "" for any other entry."""
+    if not isinstance(activity, dict) or activity.get("activity_type") != "branch_creation":
+        return ""
+    return activity.get("timestamp") or ""
+
+
+def began_refused_lines(snapshot):
+    """A line for each branch of overlapping work GitHub refused to date in
+    this run, for the workflow's log, since the page says nothing of why
+    that work stands where it does: a token that may not read the
+    repository's activity would otherwise leave every claim undated on
+    every run unseen. A pull request from such a branch is then dated by
+    its opening, and a claim with none yet is work nothing dates, which
+    lands last (board.pull_began, board.UNDATED)."""
+    snap = board.as_snapshot(snapshot)
+    opened = {pull.branch for pull in snap.pulls if not pull.fork}
+    return [f"{branch}: GitHub refused to say when the branch was made ({answer}), so the Overlaps "
+            f"{UNDATED_PULL if branch in opened else UNDATED_CLAIM}"
+            for branch, answer in sorted(snap.began_refused.items())]
 
 
 def snapshot(api, sha, default_branch, now=None):

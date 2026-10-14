@@ -199,6 +199,15 @@ class Overlaps(unittest.TestCase):
         self.assertTrue(due[17].text.startswith("overlap: other open work changes the same files as this claim:\n"
                                                 "- #42, a draft pull request: `b.md`\n"))
 
+    def test_the_order_told_is_by_when_the_work_began(self):
+        """F13: #42's branch was made before the claim on #17, so #42 lands
+        first, though its number is the higher."""
+        snap = meeting_work()
+        snap.began = {"claude/16": "2026-09-20T08:00:00Z", "claude/17": "2026-09-20T09:00:00Z"}
+        due = {c.number: c for c in coordinator.overlap_comments_due(snap, {})}
+        self.assertIn("Land them in this order: #40, #42, #17:", due[42].text)
+        self.assertEqual([other.number for other, _ in coordinator.meeting(snap)[42]], [40, 17])
+
     def test_a_blocker_is_said_and_lands_first(self):
         snap = meeting_work()
         snap.claim_issues["17"] = board.ClaimIssue("open", ["blocker", "claimed"])
