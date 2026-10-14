@@ -1109,6 +1109,13 @@ class GitHubWorld:
         found = standing_of(self.api, pull)
         return found if found is not None else standing_word(pull)
 
+    def standing_detail(self, branch):
+        """The branch's gate.Standing, which never says a clean branch is
+        level with the default branch: GitHub's word clean says only that
+        it merges as it stands, behind or not under a rule that does not
+        ask for an up-to-date branch (F16)."""
+        return gate.Standing(self.standing(branch), level=False)
+
     def check(self, branch):
         sha = self.branch_sha(branch)
         return check_word(self.api.check_runs(sha), self.policy.required_check) if sha else gate.NO_CHECK

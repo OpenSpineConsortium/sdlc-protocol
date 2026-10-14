@@ -513,7 +513,7 @@ class StatusTest(Flow):
         self.claim_push_and_open(1)
         main = self.world.main_sha()[:7]
         sentences = {
-            gate.CLEAN: f"Against main at {main}: clean; it merges cleanly with main as it stands.",
+            gate.CLEAN: f"Against main at {main}: clean, up to date with main and merging cleanly.",
             gate.BEHIND: f"Against main at {main}: behind; main moved since claude/1 branched, but it still "
                          f"merges cleanly, so the gate can merge it as it is.",
             gate.NOTHING_NEW: f"Against main at {main}: nothing new; every commit on claude/1 is already in main.",
@@ -525,6 +525,17 @@ class StatusTest(Flow):
                 self.assertTrue(self.status(1).endswith(sentence), self.status(1))
         del self.world.branches["claude/1"]
         self.assertTrue(self.status(1).endswith(f"Against main at {main}: claude/1 is not on team; push it."))
+
+    def test_a_clean_branch_not_known_to_be_level_merges_as_it_stands(self):
+        """GitHub's word clean says only that the branch merges as it stands,
+        behind or not under a rule that does not ask for an up-to-date
+        branch (F16), so the sentence for a standing no world vouches is
+        level says no more; git's clean, level with main, keeps its own."""
+        main = "1234567" + "0" * 33
+        self.assertEqual(gate.standing_sentence(ARM, gate.Standing(gate.CLEAN, main, level=False), main, 1),
+                         "Against main at 1234567: clean; it merges cleanly with main as it stands.")
+        self.assertEqual(gate.standing_sentence(ARM, gate.Standing(gate.CLEAN, main), main, 1),
+                         "Against main at 1234567: clean, up to date with main and merging cleanly.")
 
     def test_a_world_that_cannot_be_read_is_unknown(self):
         self.claim_push_and_open(1)

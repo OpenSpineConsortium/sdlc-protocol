@@ -1740,6 +1740,15 @@ class World(unittest.TestCase):
             place, _ = world(pull_answers(state=state))
             self.assertEqual(place.standing("claude/7"), word, state)
 
+    def test_its_standing_never_vouches_a_clean_branch_is_level(self):
+        """GitHub calls a branch clean that a rule not asking for an
+        up-to-date branch lets merge while behind (F16), so the standing the
+        gate reads, which it prefers to the word, keeps GitHub's word and
+        says the branch may not be level."""
+        for state, word in (("clean", "clean"), ("behind", "behind"), ("dirty", "conflicting")):
+            place, _ = world(pull_answers(state=state))
+            self.assertEqual(gate.standing_of(place, "claude/7"), gate.Standing(word, level=False), state)
+
     def test_a_blocked_or_draft_pull_is_read_from_the_comparison(self):
         for state in ("blocked", "draft"):
             for behind_by, word in ((0, "clean"), (2, "behind")):
