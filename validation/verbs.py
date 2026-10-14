@@ -104,8 +104,10 @@ class Scope(NamedTuple):
     only when listed here), whether a board run is made in two halves with
     other verbs between them, whether workers may be careless (a lease
     onto another's claim, a misnamed claim, and the owner's push of one by
-    hand, which meets no guard), and the files each issue's claim lists,
-    by issue."""
+    hand, which meets no guard), the files each issue's claim lists, by
+    issue, and the clock skews, in hours, a worker's commits may carry
+    (F8: a pusher whose clock is ahead or behind stamps its commits so,
+    and the committer date is what idleness is read from)."""
 
     workers: tuple = ("a", "b")
     issues: tuple = (1,)
@@ -116,6 +118,7 @@ class Scope(NamedTuple):
     careless: bool = False
     files: tuple = ()
     split_board: bool = False
+    skews: tuple = ()
 
     def files_of(self, number):
         return dict(self.files).get(number, (f"src/{number}.py",))
@@ -427,6 +430,8 @@ def apply(model, verb, scope=Scope()):
 
 def act(model, verb, scope):
     name, actor, args = verb
+    if model.store is not None and model.store.handles(name):
+        return model.store.act(model, verb, scope)
     if name == "wait":
         model.now += args[0] * HOUR
         return Outcome(True, "waited")
@@ -558,6 +563,7 @@ def worker_verbs(model, scope, number, worker, pull):
     found = []
     if issue.state == "open" and ref not in model.refs:
         found.append(Verb("claim", worker, (number,)))
+        found += [Verb("claim", worker, (number, skew * HOUR)) for skew in scope.skews]
         for old in released_refs(model, number):
             if model.creators.get(old) == worker:
                 found.append(Verb("push-old-head", worker, (number, old)))
@@ -569,6 +575,7 @@ def worker_verbs(model, scope, number, worker, pull):
     if holder(model, number) != worker:
         return found
     found.append(Verb("commit", worker, (number,)))
+    found += [Verb("commit", worker, (number, skew * HOUR)) for skew in scope.skews]
     if f"{CLAIM_DIR}/{number}.md" in model.tree(model.refs[ref]):
         found.append(Verb("drop-claim-file", worker, (number,)))
     if not model.is_ancestor(model.refs[MAIN], model.refs[ref]):

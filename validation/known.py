@@ -1,6 +1,6 @@
 """validation/known.json: the results that are red on purpose (DESIGN.md, 5.1).
 
-The file has two parts. "as_built" names the open findings the oracle
+The file has three parts. "as_built" names the open findings the oracle
 reads as the library is built (oracle.AS_BUILT took them from here from
 build step 5 on): with such a finding's switch on, the oracle reads its
 rule as built and nothing is red; with the switch off, the oracle reads
@@ -19,9 +19,20 @@ The suite passes when every result is what the file records
 a red result the file does not list fails, and so does a listed result
 that is green, so a fix removes its entries in the same pull request, and
 a finding's switch leaves "as_built" with them. Nothing is skipped.
+
+"searches" lists what the deep lane's searches (deep.py) meet on
+purpose: the space, the guarantee, the detail as a pattern in
+fnmatch's spelling, since a detail names the workers and issues of the
+state it was met in, and the finding. The searches run as built, so an
+entry there names a finding no switch covers (F7's careless lease, which
+E-faults meets at depth one). The deep lane counts a violation an entry
+matches as known, red on purpose and not a reason to fail, and fails
+when an entry matches nothing, since the finding is then fixed or the
+search no longer reaches it, and the entry goes with the fix.
 """
 
 import json
+from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import NamedTuple
 
@@ -37,16 +48,41 @@ class Entry(NamedTuple):
     finding: str
 
 
+class SearchEntry(NamedTuple):
+    space: str
+    guarantee: str
+    detail: str  # a pattern in fnmatch's spelling
+    finding: str
+
+    def matches(self, space, guarantee, detail):
+        return self.space == space and self.guarantee == guarantee and fnmatchcase(detail, self.detail)
+
+
 def read(path=KNOWN):
     data = json.loads(path.read_text(encoding="ascii"))
     entries = []
     for raw in data["red"]:
         kind = next(k for k in KINDS if k in raw)
         entries.append(Entry(kind, raw[kind], raw["step"], raw["guarantee"], raw["finding"]))
-    return frozenset(data["as_built"]), tuple(entries)
+    searches = tuple(SearchEntry(raw["space"], raw["guarantee"], raw["detail"], raw["finding"])
+                     for raw in data.get("searches", ()))
+    return frozenset(data["as_built"]), tuple(entries), searches
 
 
-AS_BUILT, ENTRIES = read()
+AS_BUILT, ENTRIES, SEARCH_ENTRIES = read()
+
+
+def search_finding(space, guarantee, detail):
+    """The finding the file records a search's violation as, or None for
+    one it does not know."""
+    return next((e.finding for e in SEARCH_ENTRIES if e.matches(space, guarantee, detail)), None)
+
+
+def search_differences(space, found):
+    """The entries of the space that none of the violations found, as
+    (guarantee, detail), matches, one line each."""
+    return [f"search {space}: recorded red and green: {e.guarantee} {e.detail} ({e.finding})"
+            for e in SEARCH_ENTRIES if e.space == space and not any(e.matches(space, g, d) for g, d in found)]
 
 
 def entries_of(kind, name):

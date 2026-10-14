@@ -28,11 +28,15 @@ import copy
 from collections import Counter
 from typing import NamedTuple
 
-from . import dealing, guard_grammar, invariants, model as M, oracle, page, policies, verbs
+from . import dealing, git_store, guard_grammar, invariants, model as M, oracle, page, policies, verbs
 from .model import HOUR, RELEASED_PREFIX
 from .verbs import CAROL, DANA, Scope, Verb
 
 MOST_ACTS = 8
+# The worlds a scenario plays in: the memory world, or the git world,
+# where every ref and commit is git's (git_store.py).
+MEMORY, GIT = "memory", "git"
+WORLDS = (MEMORY, GIT)
 
 
 class StepRecord(NamedTuple):
@@ -49,6 +53,9 @@ class RunRecord(NamedTuple):
     pages: tuple
     checks: int
     timeline: tuple
+    # What an observer given to play saw after each step (deep.py's
+    # conformance lane compares two worlds by it); empty without one.
+    observations: tuple = ()
 
     @property
     def violations(self):
@@ -77,16 +84,36 @@ def seeded(scenario):
     return model
 
 
-def released_ref(model, number):
-    """The newest released/<number>-* branch, by when its claim was made."""
+def released_ref(model, number, index=None):
+    """The newest released/<number>-* branch, by when its claim was made,
+    or, given an index, the one at that place in that order from the
+    oldest, so a trace names one when several stand."""
     named = [r for r in model.refs if r.startswith(f"{RELEASED_PREFIX}{number}-")]
     if not named:
         raise ValueError(f"no released branch of #{number}")
-    return max(named, key=lambda r: model.created.get(r, 0))
+    ordered = sorted(named, key=lambda r: (model.created.get(r, 0), r))
+    return ordered[-1] if index is None else ordered[index]
 
 
 def resolve(model, args):
-    return tuple(released_ref(model, a[1]) if isinstance(a, tuple) and a[:1] == ("released",) else a for a in args)
+    return tuple(released_ref(model, *a[1:]) if isinstance(a, tuple) and a[:1] == ("released",) else a
+                 for a in args)
+
+
+def symbolic(model, args):
+    """The arguments with each released branch's name written as
+    ("released", issue, index), the form resolve reads, so a trace names
+    the branch in any world, where the sha in the name differs."""
+    found = []
+    for arg in args:
+        if isinstance(arg, str) and arg.startswith(RELEASED_PREFIX):
+            number = int(arg[len(RELEASED_PREFIX):].split("-")[0])
+            named = sorted((r for r in model.refs if r.startswith(f"{RELEASED_PREFIX}{number}-")),
+                           key=lambda r: (model.created.get(r, 0), r))
+            found.append(("released", number, named.index(arg)))
+        else:
+            found.append(arg)
+    return tuple(found)
 
 
 def current_branch(model, actor):
@@ -174,8 +201,8 @@ def mismatches(model, expect, outcomes, scenario, step):
 
 # --- running --------------------------------------------------------------------
 
-def run_scenario(scenario, known=oracle.AS_BUILT):
-    return play(scenario, scenario.steps, known)[1]
+def run_scenario(scenario, known=oracle.AS_BUILT, world=MEMORY, observe=None):
+    return play(scenario, scenario.steps, known, world, observe)[1]
 
 
 def prefix(scenario, upto, known=oracle.AS_BUILT):
@@ -184,12 +211,28 @@ def prefix(scenario, upto, known=oracle.AS_BUILT):
     return play(scenario, scenario.steps[:upto], known)[0]
 
 
-def play(scenario, steps, known):
+def play(scenario, steps, known, world=MEMORY, observe=None):
     """A scripted worker keeps state (a return made once), so each play
-    gets its own copy of every policy and a scenario plays the same twice."""
-    model, scope = seeded(scenario), scope_of(scenario)
+    gets its own copy of every policy and a scenario plays the same twice.
+    In the git world the model is attached to a store, whose repository
+    is removed when the play ends; the model returned keeps the refs and
+    commits it read, and no longer answers from git."""
+    model = seeded(scenario)
+    if world == GIT:
+        store = git_store.GitStore()
+        try:
+            store.attach(model, tuple(scenario.workers) + tuple(scenario.people))
+            return play_steps(model, scenario, steps, known, observe)
+        finally:
+            model.store = None
+            store.close()
+    return play_steps(model, scenario, steps, known, observe)
+
+
+def play_steps(model, scenario, steps, known, observe=None):
+    scope = scope_of(scenario)
     workers = {name: copy.deepcopy(policy) for name, policy in scenario.workers.items()}
-    records, pages, timeline, checks = [], [], [], 0
+    records, pages, timeline, checks, seen = [], [], [], 0, []
     for step in steps:
         model.now = step.at * HOUR
         ran, outcomes, violations = [], [], []
@@ -240,8 +283,10 @@ def play(scenario, steps, known):
         wrong = mismatches(model, step.expect, outcomes, scenario, step)
         timeline += [f"        mismatch, {m}" for m in wrong]
         records.append(StepRecord(step, tuple(ran), tuple(outcomes), tuple(violations), wrong))
-    return model, RunRecord(scenario.name, tuple(records), tuple(pages), checks, tuple(timeline))
+        if observe is not None:
+            seen.append(observe(model, outcomes))
+    return model, RunRecord(scenario.name, tuple(records), tuple(pages), checks, tuple(timeline), tuple(seen))
 
 
-def run_all(scenarios, known=oracle.AS_BUILT):
-    return {name: run_scenario(scenario, known) for name, scenario in scenarios.items()}
+def run_all(scenarios, known=oracle.AS_BUILT, world=MEMORY):
+    return {name: run_scenario(scenario, known, world) for name, scenario in scenarios.items()}

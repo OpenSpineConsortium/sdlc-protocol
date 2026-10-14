@@ -17,5 +17,8 @@
     {"scenario": "S05q", "step": 12, "guarantee": "G7", "finding": "F2"},
     {"scenario": "S05q", "step": 23, "guarantee": "G10", "finding": "F12"},
     {"scenario": "S05q", "step": 24, "guarantee": "G10", "finding": "F12"}
+  ],
+  "searches": [
+    {"space": "E-faults", "guarantee": "G1", "detail": "the board names * for claude/*, whose holder is *", "finding": "F7"}
   ]
 }

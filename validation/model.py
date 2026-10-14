@@ -150,6 +150,10 @@ class RepoModel:
     queued: tuple = ()
     pending: tuple = ()
     running: object = None
+    # The git world's store (git_store.GitStore), when the model's refs,
+    # commits and standings are git's; None in the memory world. It is no
+    # part of the key: the key is read from the model, which mirrors it.
+    store: object = None
 
     # --- commits ------------------------------------------------------------
 
@@ -233,6 +237,8 @@ class RepoModel:
             self.ever_heads = self.ever_heads | {sha}
 
     def delete_ref(self, ref):
+        if self.store is not None:
+            self.store.delete(ref)
         self.refs.pop(ref, None)
         self.creators.pop(ref, None)
         self.created.pop(ref, None)
@@ -241,6 +247,8 @@ class RepoModel:
         """GitHub's rename: the ref moves, and the open pull request whose
         head it was is closed (renaming-a-branch.md:19). Who made the old
         name made the new one."""
+        if self.store is not None:
+            self.store.rename(old, new)
         self.set_ref(new, self.refs.pop(old))
         if old in self.creators:
             self.creators[new] = self.creators.pop(old)
@@ -251,6 +259,8 @@ class RepoModel:
                 pull.updated_at = self.now
 
     def fetch(self, worker):
+        if self.store is not None:
+            self.store.fetch(worker)
         self.tracking[worker] = dict(self.refs)
 
     # --- how a branch stands ------------------------------------------------
@@ -258,7 +268,10 @@ class RepoModel:
     def standing(self, ref):
         """clean, behind or dirty against main: behind when main is not in
         the branch, dirty when a path both sides changed since the merge
-        base differs between them."""
+        base differs between them; in the git world, git's own answer, at
+        line level."""
+        if self.store is not None:
+            return self.store.standing(ref, MAIN)
         head, main = self.refs.get(ref, ""), self.refs[MAIN]
         if not head or self.is_ancestor(main, head):
             return CLEAN
@@ -272,6 +285,8 @@ class RepoModel:
     def files_changed(self, ref):
         """The paths a branch changes beside its merge base with main, as a
         pull request's files are."""
+        if self.store is not None:
+            return self.store.files_changed(ref, MAIN)
         head = self.refs.get(ref, "")
         if not head:
             return []
@@ -400,9 +415,15 @@ class RepoModel:
         shared; the issues, the pull requests and the maps are copied one
         level deep, which is every level a verb writes. A run between its
         halves holds a client over this model, so a model with one is
-        copied whole."""
+        copied whole. A copy of a model in the git world is detached from
+        the store: it keeps the refs, commits and trees the model read
+        from git, and answers from them, so a verb or a run on a copy
+        (the dealing lane's looks, the quiet second run of G9) never
+        changes the one repository the model is attached to."""
         if self.running is not None:
-            return copy.deepcopy(self)
+            copied = copy.deepcopy(self)
+            copied.store = None
+            return copied
         return RepoModel(
             now=self.now, commits=dict(self.commits), refs=dict(self.refs),
             issues={n: copy.copy(i) for n, i in self.issues.items()},
