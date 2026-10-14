@@ -129,13 +129,25 @@ class TheGuardRecordedAgain(unittest.TestCase):
 
 
 class KnownSearches(unittest.TestCase):
-    def test_e_faults_meets_f7_as_known_json_records_and_nothing_else_at_depth_two(self):
+    def test_e_faults_meets_nothing_at_depth_two_since_f7s_fix(self):
+        # Until F7's fix the careless lease showed G1 here at depth one,
+        # and known.json's searches named it; the guard's fence refuses
+        # the lease now, in both worlds, and the file names nothing.
         found = deep.search_space(deep.SPACES["E-faults"], depth=2)
-        findings = {known.search_finding("E-faults", f.guarantee, f.detail) for f in found.found}
-        self.assertEqual(findings, {"F7"})
-        self.assertEqual(known.search_differences("E-faults", [(f.guarantee, f.detail) for f in found.found]), [])
-        self.assertIsNone(known.search_finding("E-deep", "G1", "anything"))
-        self.assertTrue(known.search_differences("E-faults", []))
+        self.assertEqual([(f.guarantee, f.detail) for f in found.found], [])
+        self.assertEqual(known.SEARCH_ENTRIES, ())
+        self.assertEqual(known.search_differences("E-faults", []), [])
+
+    def test_an_entry_names_the_violation_it_matches_and_is_owed_when_none_does(self):
+        entry = known.SearchEntry("E-faults", "G1", "the board names * for claude/*, whose holder is *", "F7")
+        shown = "the board names b for claude/1, whose holder is a"
+        with mock.patch.object(known, "SEARCH_ENTRIES", (entry,)):
+            self.assertEqual(known.search_finding("E-faults", "G1", shown), "F7")
+            self.assertIsNone(known.search_finding("E-deep", "G1", shown))
+            self.assertIsNone(known.search_finding("E-faults", "G9", shown))
+            self.assertEqual(known.search_differences("E-faults", [("G1", shown)]), [])
+            self.assertEqual(len(known.search_differences("E-faults", [])), 1)
+            self.assertEqual(known.search_differences("E-deep", []), [])
 
 
 class TheLaneAsOneRun(unittest.TestCase):
@@ -147,7 +159,8 @@ class TheLaneAsOneRun(unittest.TestCase):
             data = json.loads((Path(folder) / "deep.json").read_text(encoding="ascii"))
         self.assertEqual(sorted(s["space"] for s in data["searches"]), ["E-deep", "E-faults", "E-two"])
         self.assertEqual(data["red"], [])
-        self.assertIn("F7 met as known.json records", out.getvalue())
+        self.assertIn("search E-faults: depth 2", out.getvalue())
+        self.assertIn("0 violations", out.getvalue())
         self.assertIn("deep lane: ok", out.getvalue())
 
     def test_a_stopped_search_is_red(self):

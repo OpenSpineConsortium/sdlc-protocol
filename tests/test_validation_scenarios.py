@@ -1,9 +1,9 @@
 """The five scenarios of DESIGN.md section 5.2 (validation/scenarios.py),
 played by validation/run.py: every expectation holds, and every result is
 what validation/known.json records (since build step 5): green on every
-step as built but the two that show F7, red for G1, and each finding a
-step names red at that step, and nowhere else, once the oracle stops
-reading the finding as built. The scenarios are the fast lane's first
+step as built, the careless lease of S01c refused by the guard since F7's
+fix, and each finding a step names red at that step, and nowhere else,
+once the oracle stops reading the finding as built. The scenarios are the fast lane's first
 part and run in a second."""
 
 import sys
@@ -44,10 +44,12 @@ class EveryScenario(unittest.TestCase):
                 self.assertTrue(record.pages)
         self.assertLess(time.perf_counter() - began, BUDGET_SECONDS)
 
-    def test_f7_is_red_for_g1_where_the_careless_worker_shows_it(self):
+    def test_the_careless_lease_of_s01c_is_refused_and_the_claim_stays_a_s(self):
+        """F7, fixed: the guard reads the claim file on origin."""
         record = run.run_scenario(scenarios.SCENARIOS["S01c"])
-        self.assertEqual({v.guarantee for _, v in record.violations}, {"G1"})
-        self.assertIn("the board names b for claude/1, whose holder is a", {v.detail for _, v in record.violations})
+        self.assertEqual(record.violations, [])
+        self.assertEqual(record.mismatches, [])
+        self.assertIn("   0 h  lease-onto b 1: refused by the guard", record.timeline)
 
     def test_each_finding_a_step_names_turns_red_there_when_not_read_as_built(self):
         """Each switch known.json names on a scenario, off in turn: the
@@ -56,7 +58,7 @@ class EveryScenario(unittest.TestCase):
         (tests/test_validation_traces.py), not on every scenario."""
         named = {(name, f) for name in scenarios.SCENARIOS for f in known.findings_named("scenario", name)
                  if f in known.AS_BUILT}
-        self.assertEqual({f for _, f in named}, {"F2", "F12"})
+        self.assertEqual({f for _, f in named}, {"F2"})
         for name, finding in sorted(named):
             with self.subTest(scenario=name, finding=finding):
                 scenario = scenarios.SCENARIOS[name]

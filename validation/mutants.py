@@ -129,10 +129,15 @@ def released_with_claimed_on(snap, key, idle_after=claims.IDLE_AFTER):
         issue.labels = kept
 
 
-def main_moved_on_any_event(snapshot, event_name, ref_name, now, idle_after=claims.IDLE_AFTER):
-    """board.comments_due as if every run had been started by a push to main."""
+def main_moved_only_in_the_push_s_run(snapshot, event_name, ref_name, now, idle_after=claims.IDLE_AFTER):
+    """board.comments_due as 0.4.1 had it: "main moved" owed only by the run
+    a push to the default branch started, which the concurrency group
+    loses (F12)."""
     snap = board.as_snapshot(snapshot)
-    return ORIGINAL_COMMENTS_DUE(snap, "push", snap.default_branch, now, idle_after)
+    due = ORIGINAL_COMMENTS_DUE(snap, event_name, ref_name, now, idle_after)
+    if event_name == "push" and ref_name == snap.default_branch:
+        return due
+    return [c for c in due if c.marker == board.IDLE_MARKER]
 
 
 def any_line_is_a_marker(comment):
@@ -162,16 +167,22 @@ def renamed_unread(api, old, new, sha):
     return f"claim released; {new} already keeps {sha[:7]}, so {old} was deleted"
 
 
-def force_let_through(args, current_branch, default_branch):
+def force_let_through(args, current_branch, default_branch, claim_file_at=None):
     """guard.refusal passing --force, as a change that dropped one rule."""
-    reason = ORIGINAL_REFUSAL(args, current_branch, default_branch)
+    reason = ORIGINAL_REFUSAL(args, current_branch, default_branch, claim_file_at)
     return None if reason and reason.startswith("--force overwrites") else reason
 
 
-def lease_let_through_anywhere(args, current_branch, default_branch):
+def lease_let_through_anywhere(args, current_branch, default_branch, claim_file_at=None):
     """guard.refusal passing --force-with-lease outside claude/."""
-    reason = ORIGINAL_REFUSAL(args, current_branch, default_branch)
+    reason = ORIGINAL_REFUSAL(args, current_branch, default_branch, claim_file_at)
     return None if reason and reason.startswith("--force-with-lease to") else reason
+
+
+def lease_onto_any_claim(name, source, expected, claim_file_at, remote="origin"):
+    """guard.other_holder judging nothing: the guard as it was before F7's
+    fix, passing a lease onto any claude/ branch, whoever claimed it."""
+    return None
 
 
 def deal_without_the_taken_set(members, pool, areas=None):
@@ -284,9 +295,9 @@ MUTANTS = {
     "a board comment posted again": Mutant(
         github, "has_marker", lambda api, number, marker: False,
         "G10", "each board comment is posted once, as its marker says"),
-    "main moved told after any event": Mutant(
-        board, "comments_due", main_moved_on_any_event,
-        "G10", "main moved is told after a push to the default branch"),
+    "main moved told only in the push's run": Mutant(
+        board, "comments_due", main_moved_only_in_the_push_s_run,
+        "G10", "main moved is told by whichever run finds the branch behind, once per commit of main (F12)"),
     "the rename skipped": Mutant(
         github, "release_claims", lambda api, snapshot: [],
         "G3", "a released claim's branch is renamed, so the name is free"),
@@ -317,6 +328,9 @@ MUTANTS = {
     "the guard passes a lease outside claude/": Mutant(
         guard, "refusal", lease_let_through_anywhere,
         "G11a", "the one forced push allowed is a lease on one's own claude/ branch (board rules)"),
+    "the guard passes a lease onto another's claim": Mutant(
+        guard, "other_holder", lease_onto_any_claim,
+        "G11a", "a lease onto a claim whose file on origin names another worker is refused (F7)"),
     "dealing without its taken set": Mutant(
         team, "deal", deal_without_the_taken_set,
         "G14", "the workers of one run are dealt distinct issues"),
@@ -349,13 +363,12 @@ WORKER = Verb("label-on", "a", (1, "worker:a"))
 SHARED = ("src/shared.py",)
 
 # Cheapest first, since a mutant is judged by the first search that
-# catches it. The careless search meets F7 on the library itself: a lease
-# after a fetch takes another's claim, which no board rule answers; the
-# traces meet F7 and F4, dealing from differing looks, which no rule
-# answers either. The last search runs each board run in its two halves
+# catches it. The traces meet F4, dealing from differing looks, on the
+# library itself, which no rule answers yet; the careless search met F7,
+# a lease after a fetch taking another's claim, until the guard's fence
+# refused it. The last search runs each board run in its two halves
 # (DESIGN.md, 3.3), so a rule that reads the repository again in the
 # second half is met.
-F7 = ("G1", "the board names b for claude/1, whose holder is a")
 F4 = ("G14", "#6 dealt twice from differing looks: {'a': 'take 5', 'b': 'take 6', 'c': 'take 6'}")
 PLAIN_COMMANDS = [c for c in guard_grammar.commands() if c.prefix == "" and c.wrapper == "{}"]
 
@@ -385,14 +398,14 @@ def dealing_lane():
             for deal in lane.doubled_from_one_look for n in deal.doubled}
 
 
-LANES = (Lane("the regression traces", traces_lane, known=(F7, F4)),
+LANES = (Lane("the regression traces", traces_lane, known=(F4,)),
          Lane("the guard grammar against git's answers", guard_lane),
          Lane("dealing from one look", dealing_lane))
 SEARCHES = (
     Search("a released claim under every fault", (CLAIM, CLAIMED, WORKER, Verb("wait", "clock", (25,))),
            Scope(workers=("a",), people=(), waits=(25,), faults=tuple(verbs.FAULTS)), 2),
     Search("careless workers on a held claim", (CLAIM, CLAIMED),
-           Scope(workers=("a", "b"), people=(M.OWNER,), waits=(25,), careless=True), 3, known=(F7,)),
+           Scope(workers=("a", "b"), people=(M.OWNER,), waits=(25,), careless=True), 3),
     Search("two claims on one file", (CLAIM, Verb("claim", "b", (2,))),
            Scope(workers=("a", "b"), issues=(1, 2), people=(), waits=(25,),
                  files=((1, SHARED), (2, SHARED))), 3, issues=(1, 2)),
@@ -470,7 +483,7 @@ def judge(name, baselines, searches=CATCHERS):
 def baselines(searches=CATCHERS):
     """What each search meets on the library as it stands: nothing, since
     the open findings are read as built, but what a search or lane knows
-    (F7 under careless workers, F4 from differing looks)."""
+    (F4 from differing looks)."""
     return {search.name: violations(search) for search in searches}
 
 

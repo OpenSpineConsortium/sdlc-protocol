@@ -40,8 +40,11 @@ that is no claim; the rules forbid other shapes whatever their effect
 ("your own claim branch takes --force-with-lease, and nothing else ever
 does", symphony-template's .claude/rules/board.md). A forbidden push let
 through fails the lane unless the guard cannot read the command (inside
-a string another program runs: G11b) or cannot know the fact (whose a
-claim branch is: G11b, F7).
+a string another program runs: G11b) or the lane withholds the fact
+(whose a claim branch is: the lane runs the guard with no claim-file
+reader, so a lease onto another worker's claim passes here as it does
+in a clone that cannot show the claim files; the fence that reads them
+is tests/test_guard.py's, over a real clone, since F7's fix).
 """
 
 import itertools
@@ -194,7 +197,7 @@ def judge(answers=None, commands=None):
             others = command.spec in TO_OTHER
             fails = command.readable and not others
             why = forbidden + ("" if command.readable else " (unreadable: G11b)") + \
-                (" (another worker's claim: G11b, F7)" if others else "")
+                (" (another worker's claim: no claim-file reader here; G11b)" if others else "")
             key = Disagreement("let through", why, fails, "")
         else:
             key = Disagreement("refused but allowed", "git offers " + describe(answer), command.allowed_shape, "")

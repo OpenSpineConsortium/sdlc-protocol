@@ -3,14 +3,16 @@ traces play over a real bare repository with the results known.json
 records for the memory world, and git itself takes or refuses each push
 in its own words: a second claim is "fetch first", a lease with no
 remote-tracking ref "stale info", and the lease after a fetch is taken,
-which is F7. The required check plays a few; the deep lane plays them
-all (scripts/validate.py deep)."""
+which is F7, so the guard's fence, reading the claim files in the clone,
+stands before git and refuses it. The required check plays a few; the
+deep lane plays them all (scripts/validate.py deep)."""
 
 import sys
 import time
 import unittest
 from contextlib import contextmanager
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -68,14 +70,23 @@ class TheStore(unittest.TestCase):
             self.assertIn("docs/agents/claims/1.md", model.tree(model.refs["claude/1"]))
             self.assertEqual(model.commits[model.refs["claude/1"]].parents, (model.refs["main"],))
 
-    def test_a_lease_with_no_remote_tracking_ref_is_stale_info_and_after_a_fetch_it_is_taken(self):
+    def test_the_guard_refuses_a_lease_onto_anothers_claim_that_git_would_take_after_a_fetch(self):
+        # F7: git takes a lease after a fetch, so the guard's fence stands
+        # before git, reading the claim files in the worker's clone with
+        # the library's own reader, as the template's hook hands it.
         with attached() as (store, model):
             verbs.apply(model, Verb("claim", "a", (1,)), Scope())
             second = verbs.apply(model, Verb("claim", "b", (1,)), Scope())
             self.assertFalse(second.taken)
             self.assertIn("fetch first", second.note)
             lease = verbs.apply(model, Verb("lease-onto", "b", (1,)), Scope(careless=True))
-            self.assertTrue(lease.taken, lease.note)
+            self.assertFalse(lease.taken, lease.note)
+            self.assertIn("a", lease.refused_by_guard)
+            self.assertFalse(lease.allowed_shape)
+            self.assertIn("- Worker: a", model.tree(model.refs["claude/1"])["docs/agents/claims/1.md"])
+            with mock.patch.object(git_store, "guard_says", lambda *args: None):
+                taken = verbs.apply(model, Verb("lease-onto", "b", (1,)), Scope(careless=True))
+            self.assertTrue(taken.taken, taken.note)
             self.assertEqual(model.creators["claude/1"], "a")
             self.assertIn("- Worker: b", model.tree(model.refs["claude/1"])["docs/agents/claims/1.md"])
 

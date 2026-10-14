@@ -2,7 +2,10 @@
 everything else through, including what it cannot parse: the hook is the
 first fence, branch protection the second, so it fails open."""
 
+import os
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -21,8 +24,19 @@ MAIN = "a push to main is refused: the default branch takes only pull requests (
 BOARD = "a push to board is refused: only the board workflow writes that branch (.claude/rules/board.md)"
 
 
-def refusal(args, current="claude/7", default="main"):
-    return guard.refusal(args, current, default)
+def refusal(args, current="claude/7", default="main", claim_file_at=None):
+    return guard.refusal(args, current, default, claim_file_at)
+
+
+def files_at(table):
+    """A claim-file reader over a table of (ref, number) to text, as
+    guard.claim_file_reader answers from a clone."""
+    return lambda ref, number: table.get((ref, number))
+
+
+CLAIM_A = "# Claim: #7\n\n- Worker: a\n- Branch: claude/7\n"
+CLAIM_B = "# Claim: #7\n\n- Worker: b (a second session)\n"
+ORIGIN_7 = "refs/remotes/origin/claude/7"
 
 
 class RefusalTest(unittest.TestCase):
@@ -163,6 +177,88 @@ class RefusalTest(unittest.TestCase):
     def test_lease_allowed_on_claim_branch(self):
         self.assertIsNone(refusal(["--force-with-lease", "origin", "claude/7"]))
         self.assertIsNone(refusal(["-u", "--force-with-lease=claude/7", "origin", "claude/7"]))
+
+    def test_the_worker_line_is_read_as_claims_reads_it(self):
+        # The guard keeps its own copies, as it does of the claim number.
+        self.assertEqual(guard.WORKER_LINE.pattern, claims.WORKER_LINE.pattern)
+        self.assertEqual(guard.TRAILING_NOTE.pattern, claims.TRAILING_NOTE.pattern)
+        self.assertEqual(guard.worker_named(CLAIM_A), "a")
+        self.assertEqual(guard.worker_named(CLAIM_B), "b")
+        self.assertEqual(guard.worker_named("- Account: **old** (note)\n"), "old")
+        self.assertIsNone(guard.worker_named("# Claim: #7\n\n## Plan\n"))
+        self.assertIsNone(guard.worker_named(None))
+
+    def test_a_lease_s_values_are_kept_as_git_reads_them(self):
+        options, _ = guard.push_words(["--force-with-lease", "origin", "claude/7"])
+        self.assertEqual(options["force-with-lease"], [""])
+        options, _ = guard.push_words(["--force-with-lease=claude/7:abc", "--force-with-lease=claude/8", "origin"])
+        self.assertEqual(options["force-with-lease"], ["claude/7:abc", "claude/8"])
+        options, _ = guard.push_words(["--force-with-lease=claude/7", "--no-force-with-lease", "origin"])
+        self.assertNotIn("force-with-lease", options)
+        self.assertIsNone(guard.lease_holds([], "claude/7"))
+        self.assertEqual(guard.lease_holds([""], "claude/7"), "")
+        self.assertEqual(guard.lease_holds(["claude/7:abc"], "claude/7"), "abc")
+        self.assertEqual(guard.lease_holds(["refs/heads/claude/7"], "claude/7"), "")
+        self.assertIsNone(guard.lease_holds(["claude/8:abc"], "claude/7"), "a lease on another ref holds nothing here")
+        self.assertEqual(guard.lease_holds(["claude/7:abc", ""], "claude/7"), "abc", "a ref named is held as named")
+        self.assertEqual(guard.lease_holds(["", "claude/7:abc"], "claude/7"), "abc")
+        self.assertEqual(guard.lease_holds(["claude/7:abc", "claude/7:def"], "claude/7"), "abc", "the first naming")
+
+    def test_a_lease_onto_another_worker_s_claim_is_refused_by_the_claim_file_on_origin(self):
+        reader = files_at({(ORIGIN_7, "7"): CLAIM_A, ("claude/7", "7"): CLAIM_B, ("HEAD", "7"): CLAIM_B})
+        reason = refusal(["--force-with-lease", "origin", "claude/7"], claim_file_at=reader)
+        self.assertEqual(reason, "a push with --force-with-lease to claude/7 is refused: claude/7 on origin is a's "
+                                 "claim (its claim file docs/agents/claims/7.md says so) and the branch you push "
+                                 "claims #7 for b; never push to another worker's branch (.claude/rules/board.md)")
+        self.assertEqual(refusal(["--force-with-lease", "origin"], claim_file_at=reader), reason, "HEAD is claude/7")
+        self.assertEqual(refusal(["--force-with-lease=claude/7", "origin", "claude/7"], claim_file_at=reader), reason)
+        self.assertEqual(refusal(["--force-with-lease", "origin", "HEAD:claude/7"], claim_file_at=reader), reason)
+        self.assertIsNone(refusal(["origin", "claude/7"], claim_file_at=reader), "a plain push is git's to refuse")
+        self.assertIsNone(refusal(["--force-with-lease", "origin", "claude/7"]), "no clone to read, no fence")
+        self.assertIsNone(refusal(["--force-with-lease", "origin", ":claude/7"], claim_file_at=reader),
+                          "a deletion carries no claim file")
+
+    def test_a_lease_by_the_claim_s_own_worker_passes_and_an_unreadable_claim_is_not_judged(self):
+        self.assertIsNone(refusal(["--force-with-lease", "origin", "claude/7"],
+                                  claim_file_at=files_at({(ORIGIN_7, "7"): CLAIM_A, ("claude/7", "7"): CLAIM_A})))
+        self.assertIsNone(refusal(["--force-with-lease", "origin", "claude/7"],
+                                  claim_file_at=files_at({("claude/7", "7"): CLAIM_B})),
+                          "origin shows no claim file: a claim the fence cannot judge")
+        self.assertIsNone(refusal(["--force-with-lease", "origin", "claude/7"],
+                                  claim_file_at=files_at({(ORIGIN_7, "7"): "# no worker line\n",
+                                                          ("claude/7", "7"): CLAIM_B})))
+        reader = files_at({(ORIGIN_7, "7"): CLAIM_A})
+        self.assertEqual(refusal(["--force-with-lease", "origin", "claude/7"], claim_file_at=reader),
+                         "a push with --force-with-lease to claude/7 is refused: claude/7 on origin is a's claim "
+                         "(its claim file docs/agents/claims/7.md says so) and the branch you push carries no claim "
+                         "file for #7; never push to another worker's branch (.claude/rules/board.md)")
+
+    def test_a_lease_that_names_a_commit_is_judged_at_that_commit(self):
+        reader = files_at({("abc", "7"): CLAIM_A, (ORIGIN_7, "7"): CLAIM_B, ("claude/7", "7"): CLAIM_B})
+        self.assertIsNotNone(refusal(["--force-with-lease=claude/7:abc", "origin", "claude/7"], claim_file_at=reader))
+        self.assertIsNone(refusal(["--force-with-lease=claude/8:abc", "origin", "claude/7"], claim_file_at=reader),
+                          "a lease that holds only claude/8 holds nothing on claude/7")
+
+    def test_a_commit_git_cannot_show_is_judged_at_the_remote_tracking_ref(self):
+        """The claim skill's lease names the tip last pushed, which a session
+        writes as a shell variable the guard sees unexpanded: the push lands
+        only when origin stands at that commit, so origin's ref as fetched
+        judges it."""
+        reader = files_at({(ORIGIN_7, "7"): CLAIM_A, ("claude/7", "7"): CLAIM_B})
+        self.assertIsNotNone(refusal(["--force-with-lease=claude/7:$TIP", "origin", "claude/7"], claim_file_at=reader))
+        self.assertIsNotNone(refusal(["--force-with-lease=claude/7:abc", "origin", "claude/7"], claim_file_at=reader))
+        reader = files_at({(ORIGIN_7, "7"): CLAIM_B, ("claude/7", "7"): CLAIM_B})
+        self.assertIsNone(refusal(["--force-with-lease=claude/7:$TIP", "origin", "claude/7"], claim_file_at=reader))
+
+    def test_the_remote_pushed_to_names_the_remote_tracking_ref(self):
+        reader = files_at({("refs/remotes/upstream/claude/7", "7"): CLAIM_A, ("claude/7", "7"): CLAIM_B})
+        self.assertIsNotNone(refusal(["--force-with-lease", "upstream", "claude/7"], claim_file_at=reader))
+        self.assertIsNone(refusal(["--force-with-lease", "origin", "claude/7"], claim_file_at=reader),
+                          "origin's ref is not there to read")
+        self.assertEqual(guard.remote_ref("upstream", "claude/7"), "refs/remotes/upstream/claude/7")
+        self.assertEqual(guard.remote_ref("git@github.com:o/r.git", "claude/7"), ORIGIN_7, "a URL has no tracking ref")
+        self.assertEqual(guard.remote_ref("../other", "claude/7"), ORIGIN_7)
+        self.assertEqual(guard.remote_ref("", "claude/7"), ORIGIN_7)
 
     def test_lease_refused_elsewhere(self):
         self.assertIsNotNone(refusal(["--force-with-lease", "origin", "feature"], current="feature"))
@@ -393,6 +489,94 @@ class RunTest(unittest.TestCase):
             for where in (7, "", None, ["/x"]):
                 guard.run({"tool_input": {"command": "git push"}, "cwd": where}, "/hook")
         self.assertEqual(asked, ["/hook"] * 4)
+
+
+GIT_ENV = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1", "LC_ALL": "C",
+           "GIT_TERMINAL_PROMPT": "0", "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.invalid",
+           "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.invalid",
+           "GIT_CONFIG_COUNT": "5", "GIT_CONFIG_KEY_0": "gc.auto", "GIT_CONFIG_VALUE_0": "0",
+           "GIT_CONFIG_KEY_1": "gc.autoDetach", "GIT_CONFIG_VALUE_1": "false",
+           "GIT_CONFIG_KEY_2": "maintenance.auto", "GIT_CONFIG_VALUE_2": "false",
+           "GIT_CONFIG_KEY_3": "maintenance.autoDetach", "GIT_CONFIG_VALUE_3": "false",
+           "GIT_CONFIG_KEY_4": "receive.autogc", "GIT_CONFIG_VALUE_4": "false"}
+
+
+def git(cwd, *args):
+    done = subprocess.run(["git", *args], cwd=cwd, env=GIT_ENV, capture_output=True, text=True, check=True)
+    return done.stdout.strip()
+
+
+def scratch_clone(where):
+    """A clone as b's session holds one: on origin claude/7 is a's claim,
+    finished (the remote-tracking ref's tip dropped the claim file a's
+    first commit added); the local claude/7 is b's own claim of #7 from
+    main, finished the same way."""
+    git(where, "init", "-q", "-b", "main")
+    for key in ("gc.auto", "gc.autoDetach", "maintenance.auto", "maintenance.autoDetach", "receive.autogc"):
+        git(where, "config", key, "0" if key == "gc.auto" else "false")
+    claim = Path(where, "docs", "agents", "claims")
+    Path(where, "README.md").write_text("base\n")
+    git(where, "add", "."); git(where, "commit", "-q", "-m", "base")
+    for worker, text, base in (("a", CLAIM_A, "main"), ("b", CLAIM_B, "main"), ("b", CLAIM_B, "a-done")):
+        git(where, "checkout", "-q", "-B", "claude/7", base)
+        claim.mkdir(parents=True, exist_ok=True)
+        (claim / "7.md").write_text(text)
+        git(where, "add", "."); git(where, "commit", "-q", "-m", f"{worker} claims 7")
+        git(where, "update-ref", f"refs/tags/{worker}-claim", git(where, "rev-parse", "HEAD"))
+        git(where, "rm", "-q", "docs/agents/claims/7.md"); git(where, "commit", "-q", "-m", f"{worker} finishes")
+        git(where, "update-ref", f"refs/tags/{worker}-done", git(where, "rev-parse", "HEAD"))
+        if worker == "a":
+            git(where, "update-ref", ORIGIN_7, git(where, "rev-parse", "HEAD"))
+    # The last pass left claude/7 as b's claim made again over a's merged
+    # history, so a's add of the file is in its history under b's.
+
+
+class ClaimFileReaderTest(unittest.TestCase):
+    """The reader over a real clone: a claim file at a ref's tip, else where
+    its history first added it, else None."""
+
+    def setUp(self):
+        self.where = tempfile.TemporaryDirectory()
+        scratch_clone(self.where.name)
+        self.read = guard.claim_file_reader(self.where.name)
+
+    def tearDown(self):
+        self.where.cleanup()
+
+    def test_the_file_at_the_tip_then_where_the_history_first_added_it(self):
+        self.assertEqual(self.read("a-claim", "7"), CLAIM_A.strip(), "at the tip")
+        self.assertEqual(self.read(ORIGIN_7, "7"), CLAIM_A.strip(), "the tip dropped it; where it was first added")
+        self.assertEqual(self.read("b-done", "7"), CLAIM_B.strip())
+        self.assertEqual(self.read("claude/7", "7"), CLAIM_B.strip(),
+                         "the issue claimed again after a's claim merged: the last add, b's, not the first, a's")
+        self.assertEqual(self.read("HEAD", "7"), CLAIM_B.strip())
+        self.assertEqual(self.read(git(self.where.name, "rev-parse", "b-claim"), "7"), CLAIM_B.strip())
+
+    def test_a_ref_that_starts_with_a_dash_is_a_ref_to_git_and_not_an_option(self):
+        self.assertIsNone(self.read("--output=/tmp/guard-test-never-written", "7"))
+        self.assertIsNone(self.read("-q", "7"))
+        self.assertFalse(Path("/tmp/guard-test-never-written").exists())
+
+    def test_none_for_a_ref_the_clone_lacks_or_a_file_no_commit_added(self):
+        self.assertIsNone(self.read("refs/remotes/origin/claude/8", "8"))
+        self.assertIsNone(self.read("claude/7", "8"))
+        self.assertIsNone(self.read("main", "7"))
+
+    def test_the_hook_refuses_the_lease_and_passes_the_holder_s_own(self):
+        payload = {"tool_input": {"command": "git push --force-with-lease origin claude/7"}, "cwd": self.where.name}
+        with mock.patch.object(guard, "branches", return_value=("claude/7", "main")):
+            code, reason = guard.run(payload)
+            self.assertEqual(code, guard.REFUSE)
+            self.assertIn("claude/7 on origin is a's claim", reason)
+            self.assertIn("the branch you push claims #7 for b", reason)
+            variable = {"tool_input": {"command": "git push --force-with-lease=claude/7:$TIP origin claude/7"},
+                        "cwd": self.where.name}
+            self.assertEqual(guard.run(variable)[0], guard.REFUSE, "a lease on a commit the shell expands")
+            git(self.where.name, "update-ref", ORIGIN_7, "b-claim")
+            self.assertEqual(guard.run(payload), (guard.PASS, ""), "origin's claim file names b too")
+            self.assertEqual(guard.run(variable), (guard.PASS, ""))
+            plain = {"tool_input": {"command": "git push origin claude/7"}, "cwd": self.where.name}
+            self.assertEqual(guard.run(plain), (guard.PASS, ""), "a plain push reads no claim file")
 
 
 if __name__ == "__main__":

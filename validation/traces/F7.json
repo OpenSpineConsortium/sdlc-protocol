@@ -1,16 +1,16 @@
 {
   "finding": "F7",
   "title": "a worker that has fetched can take someone else's claim",
-  "status": "open; decision for the owner (DESIGN.md, 14)",
-  "breaks": ["G1"],
+  "status": "fixed after 0.4.1: the guard reads the claim file before a lease (DESIGN.md, 13)",
+  "breaks": ["G1", "G11a"],
   "world": "memory; the git world runs it over real git (build step 6)",
   "issues": {"1": ["todo"]},
   "workers": ["a", "b"],
   "careless": true,
   "steps": [
     {"verb": "claim", "actor": "a", "args": [1], "expect": {"holders": {"1": "a"}}},
-    {"verb": "lease-onto", "actor": "b", "args": [1], "expect": {"taken": true, "holders": {"1": "a"}}, "shows": "F7",
-     "note": "b fetches, then pushes --force-with-lease onto claude/1 with a claim file naming itself: the guard passes a lease on any claude/ branch and git takes it, so every reader now names b"},
-    {"verb": "board", "expect": {"claims": {"claude/1": "b"}}, "shows": "F7"}
+    {"verb": "lease-onto", "actor": "b", "args": [1], "expect": {"taken": false, "holders": {"1": "a"}},
+     "note": "b fetches, then pushes --force-with-lease onto claude/1 with a claim file naming itself: git would take it, and the guard refuses it, since the claim file on origin/claude/1 names a and the branch pushed names b (guard.other_holder); under the mutant that passes the lease, G11a and G1 are red here and G1 at the board"},
+    {"verb": "board", "expect": {"claims": {"claude/1": "a"}}}
   ]
 }

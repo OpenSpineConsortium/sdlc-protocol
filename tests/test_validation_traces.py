@@ -31,11 +31,13 @@ UNDONE = {
     "F3": [("the guard passes --force", 1, "G11a")],
     "F5": [("a claim number with leading zeros", 2, "G1")],
     "F6": [("a sort key that calls int after isdigit", 1, "G15"), ("a branch name sent unquoted", 3, "G15")],
+    "F7": [("the guard passes a lease onto another's claim", 1, "G11a")],
     "F10": [("a finished draft's release by hand not seen", 9, "G5")],
     "F11": [("a refused comment stops the run", 6, "G15")],
+    "F12": [("main moved told only in the push's run", 8, "G10")],
 }
-FIXED = ("F1", "F3", "F5", "F6", "F10", "F11")
-RED_AS_BUILT = ("F4", "F7")
+FIXED = ("F1", "F3", "F5", "F6", "F7", "F10", "F11", "F12")
+RED_AS_BUILT = ("F4",)
 
 
 class TheTraces(unittest.TestCase):
@@ -100,14 +102,23 @@ class TheTraces(unittest.TestCase):
                     self.assertIn((step, guarantee), replay.results(record), "\n".join(record.timeline))
                     self.assertIn(guarantee, trace.breaks)
 
-    def test_f7_s_red_is_the_careless_search_s_and_f4_s_the_dealing_lane_s(self):
-        """The two findings red as built name the same violations the
+    def test_f4_s_red_is_the_dealing_lane_s(self):
+        """The one finding red as built names the same violation the
         mutation lane knows on the library itself."""
-        record = replay.replay(self.traces["F7"])
-        self.assertEqual({(v.guarantee, v.detail) for _, v in record.violations}, {mutants.F7})
         record = replay.replay(self.traces["F4"])
         self.assertEqual({(v.guarantee, v.detail) for _, v in record.violations}, {mutants.F4})
         self.assertEqual(mutants.F4[1], "#6 dealt twice from differing looks: {'a': 'take 5', 'b': 'take 6', 'c': 'take 6'}")
+
+    def test_f7_s_trace_is_green_and_red_for_g1_too_under_its_mutant(self):
+        """The fence refuses the careless lease (G11a at the lease); with
+        it gone git takes the lease and the board names b (G1 too)."""
+        trace = self.traces["F7"]
+        self.assertEqual(replay.results(replay.replay(trace)), set())
+        with mutants.switched_on(mutants.MUTANTS["the guard passes a lease onto another's claim"]):
+            record = replay.replay(trace)
+        self.assertEqual(replay.results(record), {(1, "G11a"), (1, "G1"), (2, "G1")})
+        self.assertIn(("G1", "the board names b for claude/1, whose holder is a"),
+                      {(v.guarantee, v.detail) for _, v in record.violations})
 
     def test_f3_s_commands_are_judged_by_git_s_recorded_answers(self):
         record = replay.replay(self.traces["F3"])
@@ -125,7 +136,7 @@ class TheTraces(unittest.TestCase):
 class KnownJson(unittest.TestCase):
     def test_the_oracle_s_switches_are_the_file_s(self):
         self.assertEqual(oracle.AS_BUILT, known.AS_BUILT)
-        self.assertEqual(known.AS_BUILT, frozenset({"F2", "F9", "F12", "F13", "F14"}))
+        self.assertEqual(known.AS_BUILT, frozenset({"F2", "F9", "F13", "F14"}))
 
     def test_every_entry_names_a_step_of_a_trace_or_scenario_a_guarantee_and_a_finding(self):
         traces = replay.traces()
@@ -150,12 +161,14 @@ class KnownJson(unittest.TestCase):
                 self.assertTrue([e for e in known.ENTRIES if e.finding == finding])
 
     def test_expected_reads_the_file_as_its_docstring_says(self):
-        self.assertEqual(known.expected("trace", "F7"), {(1, "G1"), (2, "G1")})
+        self.assertEqual(known.expected("trace", "F4"), {(9, "G14")})
+        self.assertEqual(known.expected("trace", "F7"), set())
         self.assertEqual(known.expected("trace", "F2"), set())
         self.assertEqual(known.expected("trace", "F2", "F2"), {(4, "G7")})
-        self.assertEqual(known.expected("scenario", "S05q", "F12"), {(23, "G10"), (24, "G10")})
-        self.assertEqual(known.differences("trace", "F7", {(1, "G1")}),
-                         ["trace F7 as built: recorded red and green: step 2, G1"])
+        self.assertEqual(known.expected("scenario", "S05q", "F2"), {(12, "G7")})
+        self.assertEqual(known.expected("scenario", "S05q", "F12"), set())
+        self.assertEqual(known.differences("trace", "F4", set()),
+                         ["trace F4 as built: recorded red and green: step 9, G14"])
         self.assertEqual(known.differences("trace", "F1", {(0, "G3")}),
                          ["trace F1 as built: red and not recorded: step 0, G3"])
 

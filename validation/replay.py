@@ -12,14 +12,14 @@ every step as a scenario's are, and the record holds the violations, the
 mismatches and a timeline a person reads; scripts/validate.py replay
 <file> prints it.
 
-A trace of a finding fixed in 0.4.1 (F1, F3, F5, F6, F10, F11) is green,
-and the mutant that undoes its fix turns it red at the step where the
-finding showed, for the guarantee the table names, which
-tests/test_validation_traces.py holds it to. A trace of an
-open finding is red where known.json records it: as built for F4 and F7,
-which no rule of the board answers, and with the finding's switch off in
-the oracle for the ones the oracle reads as built (F2, F9, F12, F13 and
-F14). F8's trace breaks nothing and records the assumption under which
+A trace of a fixed finding (F1, F3, F5, F6, F10 and F11 in 0.4.1; F7
+after it) is green, and the mutant that undoes its fix turns it red at
+the step where the finding showed, for the guarantee the table names,
+which tests/test_validation_traces.py holds it to. A trace of an open
+finding is red where known.json records it: as built for F4, which no
+rule of the library answers, and with the finding's switch off in the
+oracle for the ones the oracle reads as built (F2, F9, F13 and F14).
+F8's trace breaks nothing and records the assumption under which
 G2 and G3 hold, that idleness is the committer date the pusher sets.
 
 The file's steps are objects: "verb" (a verb of verbs.py, or "announce",

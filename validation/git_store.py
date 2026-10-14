@@ -41,6 +41,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from sdlc_protocol import guard
+
 from . import cycle, oracle, verbs
 from .model import BEHIND, CLAIM_PREFIX, CLEAN, DIRTY, MAIN, OWNER, T0, Commit, claim_text, iso
 from .verbs import CLAIM_DIR, Outcome, guard_says
@@ -338,10 +340,13 @@ class GitStore:
         """One push through the guard, then git. A push taken fires push,
         and create when it made the branch; the model then reads the
         repository back."""
-        refused = guard_says(command, ref) if guarded else None
+        clone = self.clone_of(worker)
+        # The guard reads the claim files a lease is judged by with the
+        # library's own reader over the worker's clone, as the template's
+        # hook hands it (F7's fence).
+        refused = guard_says(command, ref, guard.claim_file_reader(str(clone))) if guarded else None
         if refused:
             return Outcome(False, "refused by the guard", command, refused, allowed_shape=allowed)
-        clone = self.clone_of(worker)
         created = ref not in model.refs
         spec = f"{source or ref}:refs/heads/{ref}"
         done = git(clone, "push", "-q", *(["--force-with-lease"] if lease else []), "origin", spec, actor=worker,
@@ -448,7 +453,7 @@ class GitStore:
         self.write(clone, f"{CLAIM_DIR}/{number}.md", claim_text(number, worker, files))
         git(clone, "add", "-A", CLAIM_DIR, actor=worker)
         git(clone, "commit", "-q", "-m", f"Claim #{number}", actor=worker, when=when)
-        return self.pushed(model, worker, ref, f"git push --force-with-lease origin {ref}", lease=True)
+        return self.pushed(model, worker, ref, f"git push --force-with-lease origin {ref}", lease=True, allowed=False)
 
     def push_old_head(self, model, worker, number, released_ref):
         ref = verbs.claim_ref(number)

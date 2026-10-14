@@ -543,11 +543,10 @@ def post_comments(api, due):
     tried. The board is written before the comments, and the workflow
     writes it to its branch only after a run that succeeded, so a refusal
     that escaped here would keep the board off its branch, and one GitHub
-    gives for good would keep it off on every run. A refused idle comment
-    is due again, and a later run, which finds no marker yet, posts it; a
-    "main moved" comment is due only in the run of the push that moved the
-    default branch, so a refused one is never posted, and the pull request
-    hears that main moved only when the default branch moves again."""
+    gives for good would keep it off on every run. A refused comment is
+    due again, idle or "main moved" alike, since both depend on the state
+    and not on the run's event (board.comments_due), and a later run,
+    which finds no marker yet, posts it."""
     lines = []
     for number, marker, text in due:
         kind = "idle" if marker == board.IDLE_MARKER else "main-moved"

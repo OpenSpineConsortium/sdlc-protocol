@@ -11,8 +11,9 @@ by its place among the steps as played, an "announce" of a trace counting
 as its three verbs, with the guarantee it breaks and the finding that
 breaks it. An entry for a finding in
 "as_built" is red when that finding's switch is off and green as built;
-an entry for any other finding (F4, dealing from differing looks; F7, a
-careless lease) is red as built, since no rule of the board answers it.
+an entry for any other finding (F4, dealing from differing looks) is red
+as built, since no rule of the library answers it; a fix removes its
+entries, as F7's did.
 
 The suite passes when every result is what the file records
 (tests/test_validation_traces.py, tests/test_validation_scenarios.py):
@@ -25,10 +26,11 @@ purpose: the space, the guarantee, the detail as a pattern in
 fnmatch's spelling, since a detail names the workers and issues of the
 state it was met in, and the finding. The searches run as built, so an
 entry there names a finding no switch covers (F7's careless lease, which
-E-faults meets at depth one). The deep lane counts a violation an entry
-matches as known, red on purpose and not a reason to fail, and fails
-when an entry matches nothing, since the finding is then fixed or the
-search no longer reaches it, and the entry goes with the fix.
+E-faults met at depth one until the guard's fence refused it, was the
+one entry; the part is empty since). The deep lane counts a violation an
+entry matches as known, red on purpose and not a reason to fail, and
+fails when an entry matches nothing, since the finding is then fixed or
+the search no longer reaches it, and the entry goes with the fix.
 """
 
 import json

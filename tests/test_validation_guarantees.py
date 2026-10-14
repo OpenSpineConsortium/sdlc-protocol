@@ -89,7 +89,7 @@ class GuaranteesMd(unittest.TestCase):
     def test_each_known_finding_is_one_the_oracle_reads_as_built_or_a_scope_shows(self):
         named = {f for row in rows().values() if row.group(4).startswith("known (")
                  for f in re.findall(r"F\d+", row.group(4).split(":")[0])}
-        self.assertEqual(named - oracle.AS_BUILT, {"F4", "F7"}, "F7 under careless workers, F4 under differing looks")
+        self.assertEqual(named - oracle.AS_BUILT, {"F4"}, "F4 under differing looks")
 
 
 if __name__ == "__main__":
