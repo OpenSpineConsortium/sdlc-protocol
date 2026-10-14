@@ -55,8 +55,10 @@ def label_names(issue):
 
 
 def names_with_prefix(labels, prefix):
-    """What follows the prefix in every label that carries it, in order."""
-    return [name[len(prefix):] for name in labels if name.startswith(prefix)]
+    """What follows the prefix in every label that carries it with a name
+    after it, in order: a bare prefix, worker: with nothing after the
+    colon, names nobody."""
+    return [name[len(prefix):] for name in labels if name.startswith(prefix) and name[len(prefix):]]
 
 
 def worker_label(name):
@@ -75,10 +77,18 @@ def holder_names(names):
     return found
 
 
+def is_holder_label(name):
+    """Whether a label names a worker: a prefix of any spelling with a name
+    after it. A bare prefix names nobody, as holder_names reads it, so a
+    release leaves it on (F15's fourth review: until then a release took
+    worker: off as a worker's label, which the board read as no worker's)."""
+    return any(name.startswith(prefix) and name[len(prefix):] for prefix in HOLDER_PREFIXES)
+
+
 def holder_labels(issue):
     """The labels on an issue that name a worker, under any spelling: what
     a release takes off with the label claimed."""
-    return [name for name in label_names(issue) if name.startswith(HOLDER_PREFIXES)]
+    return [name for name in label_names(issue) if is_holder_label(name)]
 
 
 def worker_of(issue):

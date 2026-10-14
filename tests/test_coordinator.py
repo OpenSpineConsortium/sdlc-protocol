@@ -143,6 +143,13 @@ class ReleaseText(unittest.TestCase):
         snap.claim_issues["12"].labels = ["account:main", "blocker", "claimed", "todo", "worker:nightly"]
         self.assertEqual(coordinator.labels_released(snap, "12"), ["account:main", "claimed", "worker:nightly"])
 
+    def test_a_bare_worker_prefix_stays_on(self):
+        """F15's fourth review: a bare worker: names no worker, so a release
+        leaves it on, as the board and the spec read it."""
+        snap = idle_claim()
+        snap.claim_issues["12"].labels = ["claimed", "todo", "worker:", "worker:nightly"]
+        self.assertEqual(coordinator.labels_released(snap, "12"), ["claimed", "worker:nightly"])
+
     def test_after_the_release_the_board_counts_it_and_the_queue_has_the_issue(self):
         snap = idle_claim()
         coordinator.after_release(snap, "12", "2026-09-20T12:00:05Z", ["claimed", "worker:nightly"])

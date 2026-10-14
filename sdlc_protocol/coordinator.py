@@ -178,11 +178,12 @@ def plan_line(text, key, new):
 
 def labels_released(snapshot, key):
     """The labels a release takes off the issue: claimed and every label
-    that names a worker, so the issue is nobody's; labels_put_on says what
+    that names a worker, so the issue is nobody's, but a bare worker:,
+    which names nobody (labels.is_holder_label); labels_put_on says what
     goes on, so it is back in the open queue."""
     issue = board.as_snapshot(snapshot).claim_issues.get(key)
     names = issue.labels if issue else []
-    return [name for name in names if name == labels.CLAIMED or name.startswith(labels.HOLDER_PREFIXES)]
+    return [name for name in names if name == labels.CLAIMED or labels.is_holder_label(name)]
 
 
 def labels_put_on(snapshot, key):

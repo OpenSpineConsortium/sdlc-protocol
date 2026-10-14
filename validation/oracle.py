@@ -54,8 +54,8 @@ SPEC = {
     "older spellings": "The older spellings account:<name> and agent:<name> are read as the same label.",
     "given": "An issue a worker's label names is that worker's alone: it is left out of the board's Queue and "
              "shown under Given to workers until the worker claims it.",
-    "todo": "An issue labelled todo and shown unclaimed on the board is free to take, unless it is also labelled "
-            "blocked (Pick).",
+    "todo": "An issue labelled todo and shown unclaimed on the board is free to take as Pick says.",
+    "epic": "The board's Queue leaves an epic out, since nobody takes one whole.",
     "blockers": "The board lists every open issue labelled blocker under Blockers, claimed or not",
     "idle": "A claim whose branch has had no commit for more than 24 hours, by the committer date of its head, is "
             "released by the coordinator, unless it is finished",
@@ -260,11 +260,15 @@ def held_numbers(model):
 
 
 def queue(model):
-    """The Queue: open issues labelled todo, unclaimed, and given to no
-    worker (SPEC["todo"], SPEC["given"])."""
+    """The Queue: open issues labelled todo, unclaimed, given to no worker
+    and no epic (SPEC["todo"], SPEC["given"], SPEC["epic"]). Until F15's
+    fourth review the oracle listed an epic labelled todo, which no search
+    seeded, and the library has always left out; the labels lane met it
+    (mutants.labels_lane), and the spec's epic line now says so."""
     held = held_numbers(model)
     return sorted(n for n, i in model.issues.items() if i.state == "open" and TODO in i.labels
-                  and CLAIMED not in i.labels and n not in held and not workers_named(i.labels))
+                  and EPIC not in i.labels and CLAIMED not in i.labels and n not in held
+                  and not workers_named(i.labels))
 
 
 def blockers(model):

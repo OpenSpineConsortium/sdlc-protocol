@@ -31,6 +31,10 @@ TODO_OFF = Verb("label-off", M.OWNER, (1, "todo"))
 BLOCKER = Verb("label-on", M.OWNER, (1, "blocker"))
 
 
+def labelled(name):
+    return Verb("label-on", M.OWNER, (1, name))
+
+
 def board_with(fault):
     return Verb("board", "board", (cycle.SCHEDULE, "", (fault,)))
 
@@ -84,6 +88,15 @@ TRACES = {
     "the Blockers section left empty": ([BLOCKER, BOARD], Scope()),
     "the Blockers section without the held blockers": ([BLOCKER] + HELD + [BOARD], Scope()),
     "a held blocker's row without claimed": ([BLOCKER] + HELD + [BOARD], Scope()),
+    "a row without blocked": ([labelled("blocked"), BOARD], Scope()),
+    "a row without epic": ([BLOCKER, labelled("epic"), BOARD], Scope()),
+    "the Blockers section without epic blockers": ([BLOCKER, labelled("epic"), BOARD], Scope()),
+    "the Blockers section without blocked blockers": ([BLOCKER, labelled("blocked"), BOARD], Scope()),
+    "the Blockers section without the given blockers": ([BLOCKER, labelled("worker:b"), BOARD], Scope()),
+    "the Queue without the blockers labelled todo": ([BLOCKER, BOARD], Scope()),
+    "a release relabels the board before its comment": ([BLOCKER] + HELD + [WAIT, board_with("comment-500")],
+                                                         Scope()),
+    "a bare worker: taken off at release": ([labelled("worker:")] + HELD + [WAIT, BOARD], Scope()),
     "the landing order by number": "the regression traces",
     "a pull request dated by its opening": "the regression traces",
     "a refused activity read stops the run": "the regression traces",
@@ -121,7 +134,7 @@ class TheLane(unittest.TestCase):
         F13's and F15's fixes more, so the bound is widened to 60 and the
         count noted."""
         self.assertTrue(10 <= len(mutants.MUTANTS) <= 60)
-        self.assertEqual(len(mutants.MUTANTS), 50)
+        self.assertEqual(len(mutants.MUTANTS), 58)
         self.assertEqual(sorted(TRACES), sorted(mutants.MUTANTS))
 
     def test_every_mutant_names_a_rule_the_library_still_has(self):
@@ -159,10 +172,12 @@ class TheLane(unittest.TestCase):
                 required = [p for p in positional if p.default is p.empty]
                 replacement.bind(*range(len(required)), **{p.name: None for p in keywords if p.default is p.empty})
 
-    def test_the_lanes_come_first_then_the_searches_cheapest_first(self):
+    def test_the_lanes_come_first_then_the_searches_cheapest_first_then_every_label_mix(self):
         self.assertEqual([c.name for c in mutants.CATCHERS[:len(LANES)]], list(LANES))
         self.assertEqual(mutants.SEARCHES[-2].name, "the holder back between the halves of a run")
         self.assertEqual(mutants.SEARCHES[-1].name, "a stranger's marker on overlapping claims")
+        self.assertEqual(mutants.CATCHERS[len(LANES):-1], mutants.SEARCHES)
+        self.assertIs(mutants.CATCHERS[-1], mutants.LABEL_MIXES)
         self.assertEqual([s.known for s in mutants.CATCHERS if s.known], [], "nothing is known on the library now")
 
 
@@ -215,7 +230,9 @@ class TheSearchesCatchWhatTheyWereAddedFor(unittest.TestCase):
                                                         "the Blockers section left empty": "G9"}),
                   "a released blocked task": (("blocked",), {"a blocked task gets no todo": "G3"}),
                   "a held blocker": (("blocker",), {"the Blockers section without the held blockers": "G9",
-                                                    "a held blocker's row without claimed": "G9"})}
+                                                    "a held blocker's row without claimed": "G9"}),
+                  "a released blocker under every fault": (("blocker",), {
+                      "a release relabels the board before its comment": "G9"})}
         for name, (seeded, guarantees) in caught.items():
             search = next(s for s in mutants.SEARCHES if s.name == name)
             self.assertEqual(search.labels, seeded)
