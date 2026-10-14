@@ -107,7 +107,7 @@ def scenario_of(data):
                     {w: None for w in data["workers"]}, steps_of(data["steps"]), tuple(data.get("people", (OWNER,))),
                     tuple((int(n), tuple(paths)) for n, paths in data.get("files", {}).items()),
                     data.get("careless", False), tuple(data.get("events", (cycle.SCHEDULE,))),
-                    data.get("split_board", False))
+                    data.get("split_board", False), data.get("opaque_pulls", False))
 
 
 def load(path):

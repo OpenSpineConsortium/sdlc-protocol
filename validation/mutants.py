@@ -319,6 +319,9 @@ MUTANTS = {
     "a board comment posted again": Mutant(
         github, "has_marker", lambda api, number, marker: False,
         "G10", "each board comment is posted once, as its marker says"),
+    "an opaque state read as unknown": Mutant(
+        github, "standing_of", lambda api, detail, default_branch=None: None, "G10",
+        "a pull request GitHub only calls blocked, or a draft, is read through mergeable and the comparison, as the gate reads it, so it hears main moved (F9)"),
     "main moved told only in the push's run": Mutant(
         board, "comments_due", main_moved_only_in_the_push_s_run,
         "G10", "main moved is told by whichever run finds the branch behind, once per commit of main (F12)"),

@@ -46,6 +46,7 @@ TRACES = {
     "any comment counts as a release": (HELD + [WAIT, Verb("plan", "a", (1,)), BOARD], Scope()),
     "a board comment posted again": (HELD + [WAIT, BOARD, Verb("push-old-head", "a", (1, "released/1-6d6ae03")),
                                              BOARD], Scope()),
+    "an opaque state read as unknown": "the regression traces",
     "main moved told only in the push's run": "the regression traces",
     "the rename skipped": (HELD + [WAIT, BOARD], Scope()),
     "overlaps told on every run": ([CLAIM, Verb("claim", "b", (2,)), BOARD], SHARED),
@@ -96,7 +97,7 @@ class TheLane(unittest.TestCase):
         since one that undoes it (F7's first), so the bound is widened to
         40 and the count noted."""
         self.assertTrue(10 <= len(mutants.MUTANTS) <= 40)
-        self.assertEqual(len(mutants.MUTANTS), 32)
+        self.assertEqual(len(mutants.MUTANTS), 33)
         self.assertEqual(sorted(TRACES), sorted(mutants.MUTANTS))
 
     def test_every_mutant_names_a_rule_the_library_still_has(self):

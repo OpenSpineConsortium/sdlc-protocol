@@ -298,12 +298,42 @@ def settled(api, detail):
     return detail
 
 
-def pull_with_detail(api, number):
-    """One pull request with its mergeable_state settled and its file paths."""
+def pull_with_detail(api, number, default_branch=None):
+    """One pull request with its mergeable_state settled, its standing read
+    where that word is opaque, and its file paths."""
     path = f"/repos/{api.repo}/pulls/{number}"
     detail = settled(api, api.get(path))
+    standing = standing_of(api, detail, default_branch)
+    if standing is not None:
+        detail["standing"] = standing
     detail["files"] = [f["filename"] for f in api.get_all(path + "/files")]
     return detail
+
+
+def standing_of(api, detail, default_branch=None):
+    """How the pull request's branch stands to its base, in the board's
+    words, where GitHub's mergeable_state says only that something else
+    stops the merge (a rule, a review, the draft itself): mergeable tells
+    a conflict apart, and the comparison tells behind from clean, as the
+    gate's world reads such a pull request (F9: until this the board read
+    blocked as blocked and draft as unknown, and neither heard "main
+    moved"). None where GitHub's word is one the board reads as it is."""
+    if detail.get("mergeable_state") not in OPAQUE_STATES:
+        return None
+    if detail.get("mergeable"):
+        return standing_word(detail, behind_by(api, detail, default_branch))
+    return standing_word(detail)
+
+
+def behind_by(api, pull, default_branch=None):
+    """How many commits of the pull request's base its head lacks, from
+    GitHub's comparison of the two; None when GitHub cannot say."""
+    base = (pull.get("base") or {}).get("ref") or default_branch
+    head = (pull.get("head") or {}).get("sha")
+    if not head or not base:
+        return None
+    found = api.get(f"/repos/{api.repo}/compare/{quoted(base)}...{head}", missing_ok=True)
+    return (found or {}).get("behind_by")
 
 
 def claim_text(api, branch):
@@ -499,7 +529,8 @@ def collect(api, sha, default_branch, now=None):
     given."""
     repo = api.repo
     issues = [i for i in api.get_all(f"/repos/{repo}/issues", {"state": "open"}) if "pull_request" not in i]
-    pulls = [pull_with_detail(api, p["number"]) for p in api.get_all(f"/repos/{repo}/pulls", {"state": "open"})]
+    pulls = [pull_with_detail(api, p["number"], default_branch)
+             for p in api.get_all(f"/repos/{repo}/pulls", {"state": "open"})]
     listed = api.get_all(f"/repos/{repo}/branches")
     branches = board.claim_branches(listed)
     found_issues = claim_issues(api, branches, issues)
@@ -880,12 +911,7 @@ class GitHubWorld:
     def behind_by(self, pull):
         """How many commits of the pull request's base its head lacks, from
         GitHub's comparison of the two; None when GitHub cannot say."""
-        base = (pull.get("base") or {}).get("ref") or self.default_branch
-        head = (pull.get("head") or {}).get("sha")
-        if not head:
-            return None
-        found = self.api.get(f"/repos/{self.api.repo}/compare/{quoted(base)}...{head}", missing_ok=True)
-        return (found or {}).get("behind_by")
+        return behind_by(self.api, pull, self.default_branch)
 
     def standing(self, branch):
         """Unknown for a branch with no open pull request: GitHub computes

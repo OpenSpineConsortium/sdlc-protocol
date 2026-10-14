@@ -26,7 +26,13 @@ made and its answer lost, as a 502 after GitHub wrote the comment.
 
 What the fake assumes of GitHub, each settled by the documentation or by a
 canary check (DESIGN.md, 3.2 and 11): the issues list holds the pull
-requests; a draft's mergeable_state is "draft" (F9, canary C0); a rename
+requests; a draft's mergeable_state is the word its branch's standing
+gives, as any pull request's (C0, read on 2026-10-14 on live drafts:
+"clean" for a clean one, "dirty" for a conflicting one, never "draft"),
+and with the model's opaque_pulls on, as in a repository whose default
+branch requires a check, which every copy of the template does, the word
+is "blocked" wherever the branch is not in conflict, with mergeable true,
+and the comparison carries behind_by (F9); a rename
 closes the pull request whose head the branch is; a rename onto a name
 that stands answers 422; the board posts as github-actions[bot] with the
 author_association NONE; a pull request's updated_at moves with pushes and
@@ -294,7 +300,8 @@ class FakeGitHub:
         standing = model.standing(pull.head) if sha else "clean"
         seen = (pull.number, sha, model.refs[MAIN])
         if seen in self.computed:
-            mergeable, state = standing != "dirty", "draft" if pull.draft else standing
+            mergeable = standing != "dirty"
+            state = "blocked" if model.opaque_pulls and mergeable else standing
         else:
             self.computed.add(seen)
             mergeable, state = None, "unknown"
@@ -351,9 +358,10 @@ class FakeGitHub:
         if base_sha is None or sha not in model.commits:
             raise Refused(404)
         ahead = model.ancestors(sha) - model.ancestors(base_sha)
+        behind = model.ancestors(base_sha) - model.ancestors(sha)
         order = model.in_order(ahead)
-        return {"ahead_by": len(ahead), "commits": [{"sha": c, "commit": {"message": model.commits[c].message}}
-                                                   for c in order],
+        return {"ahead_by": len(ahead), "behind_by": len(behind),
+                "commits": [{"sha": c, "commit": {"message": model.commits[c].message}} for c in order],
                 "files": [{"filename": f} for f in model.changed(model.merge_base(sha, base_sha), sha)]}
 
 

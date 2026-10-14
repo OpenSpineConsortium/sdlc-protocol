@@ -1,17 +1,16 @@
 {
   "finding": "F9",
   "title": "a draft may never be told main moved",
-  "status": "open; one GET settles what GitHub answers (DESIGN.md, 14, step 7)",
+  "status": "fixed after 0.4.1: a pull request GitHub only calls blocked, or a draft, is read through mergeable and the comparison, as the gate reads it (DESIGN.md, 13)",
   "breaks": ["G10"],
   "world": "memory",
+  "opaque_pulls": true,
   "issues": {"1": ["todo"]},
   "workers": ["a"],
   "steps": [
     {"verb": "claim", "actor": "a", "args": [1]},
     {"verb": "open-draft", "actor": "a", "args": [1], "expect": {"pulls": [100]}},
     {"at": 1, "verb": "move-main", "actor": "owner"},
-    {"verb": "board", "event": "push", "ref": "main", "shows": "F9",
-     "expect": {"comments": {"100": {}}, "standing": {"100": "behind"}},
-     "note": "the draft is behind main and hears nothing as built, since its mergeable_state reads draft; reading the spec, the run of the push owes it the word"}
+    {"verb": "board", "event": "push", "ref": "main", "expect": {"comments": {"100": {"main-moved": 1}}, "standing": {"100": "behind"}}, "note": "GitHub's word for the draft is blocked here, as in a repository whose default branch requires a check (C0 read live drafts answering clean and dirty, never draft, on 2026-10-14); the draft is behind main, and since the fix the adapter reads mergeable and the comparison and the run owes it the word; under the mutant that reads the opaque word as unknown nothing is told and G10 is red"}
   ]
 }

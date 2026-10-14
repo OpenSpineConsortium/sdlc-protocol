@@ -119,7 +119,9 @@ class Pull:
     waits for review however long it takes, so its claim is never released,
     and a pull request whose draft state is not given counts as ready. The
     dict shape is the API's, head and all, so a pull request detail from
-    GitHub is a fixture as it is."""
+    GitHub is a fixture as it is; standing is the adapter's own key, how
+    the branch stands where GitHub's word says only that something else
+    stops the merge (adapters.github.standing_of)."""
 
     number: int
     title: str = ""
@@ -129,11 +131,24 @@ class Pull:
     updated_at: str = ""
     files: list = field(default_factory=list)
     draft: bool = False
+    standing: str | None = None
 
     @property
     def state(self):
-        """The board's word for the pull request's standing."""
-        return state_word(self.mergeable_state)
+        """The board's word for the pull request: GitHub's mergeable_state
+        as state_word reads it, except where that word says only that
+        something else stops the merge (blocked, or the draft itself) and
+        the adapter read how the branch stands through mergeable and a
+        comparison (F9): behind and conflicting win, since the main-moved
+        rule speaks to them, and a draft whose branch is clean reads clean
+        rather than unknown; a blocked branch that is clean stays blocked,
+        which says what still stops it."""
+        word = state_word(self.mergeable_state)
+        if self.standing in ("behind", "conflicting"):
+            return self.standing
+        if word == "unknown" and self.standing == "clean":
+            return "clean"
+        return word
 
     @classmethod
     def from_dict(cls, data):
@@ -147,10 +162,11 @@ class Pull:
             updated_at=data.get("updated_at") or "",
             files=[file_name(f) for f in data.get("files") or []],
             draft=bool(data.get("draft")),
+            standing=data.get("standing"),
         )
 
     def to_dict(self):
-        return {
+        data = {
             "number": self.number,
             "title": self.title,
             "head": {"ref": self.branch, "sha": self.head_sha},
@@ -159,6 +175,9 @@ class Pull:
             "files": list(self.files),
             "draft": self.draft,
         }
+        if self.standing is not None:
+            data["standing"] = self.standing
+        return data
 
 
 @dataclass
@@ -321,8 +340,10 @@ def state_word(mergeable_state):
 
 def pr_state(pull):
     """The board's word for a pull request, given as a Pull or as the dict
-    the API returns."""
-    return state_word(pull.mergeable_state if isinstance(pull, Pull) else pull.get("mergeable_state"))
+    the API returns, with the adapter's standing where it read one."""
+    if isinstance(pull, Pull):
+        return pull.state
+    return Pull(0, mergeable_state=pull.get("mergeable_state"), standing=pull.get("standing")).state
 
 
 def short_sha(sha):
@@ -454,7 +475,8 @@ def rename_refused_text(old, new, rulesets, words):
 
 def pulls_behind_main(pulls):
     """The pull requests the main-moved rule speaks to: behind or
-    conflicting, and only those."""
+    conflicting, and only those, a draft or a blocked one included once
+    the adapter has read how its branch stands (F9)."""
     return [p for p in pulls if pr_state(p) in ("behind", "conflicting")]
 
 

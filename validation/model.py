@@ -139,6 +139,10 @@ class RepoModel:
     created: dict = field(default_factory=dict)
     # Each worker's remote-tracking refs, as its last fetch or push left them.
     tracking: dict = field(default_factory=dict)
+    # Whether GitHub's word for an open pull request that is not in conflict
+    # is "blocked", as in a repository whose default branch requires a
+    # check (every copy of the template), rather than clean or behind (F9).
+    opaque_pulls: bool = False
     # The board branch's STATE.md: written only by a board run that exits 0.
     board_text: str = ""
     # The board workflow's concurrency group (DESIGN.md, 3.3), each run as
@@ -410,7 +414,7 @@ class RepoModel:
             next_pull=self.next_pull, writers=self.writers, ever_heads=self.ever_heads,
             label_events=self.label_events, creators=dict(self.creators), created=dict(self.created),
             tracking={w: dict(refs) for w, refs in self.tracking.items()}, board_text=self.board_text,
-            queued=self.queued, pending=self.pending, running=None,
+            queued=self.queued, pending=self.pending, running=None, opaque_pulls=self.opaque_pulls,
         )
 
 
