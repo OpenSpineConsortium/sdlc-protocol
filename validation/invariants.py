@@ -41,6 +41,7 @@ from typing import NamedTuple
 from sdlc_protocol import board, claims, protocol_check, team
 
 from . import cycle, oracle, page
+from .fake_github import head_repo
 from .model import BOT, REPO
 
 GUARANTEES = {
@@ -180,18 +181,21 @@ def markers_once(model):
 
 
 def protocol_check_agrees(model):
-    """G12: the check's verdict on each open claim pull request is the spec's."""
+    """G12: the check's verdict on each open claim pull request is the
+    spec's, its claim file read at the head the pull request carries; one
+    from a fork fails it whatever else holds, since the branch lives in the
+    repository itself, never in a fork (spec, Rules)."""
     problems = []
     for pull in sorted(model.pulls.values(), key=lambda p: p.number):
-        number = oracle.claim_number(pull.head)
-        if pull.state != "open" or number is None or pull.head not in model.refs:
+        number, head = oracle.claim_number(pull.head), model.pull_head(pull)
+        if pull.state != "open" or number is None or not head:
             continue
-        has_file = oracle.claim_file_text(model, pull.head, number) is not None
-        side = {"repo": {"full_name": REPO}}
-        found = protocol_check.problems_for({"head": {"ref": pull.head, **side}, "base": side, "draft": pull.draft,
+        has_file = model.tree(head).get(f"{oracle.CLAIM_DIR}{number}.md") is not None
+        found = protocol_check.problems_for({"head": {"ref": pull.head, "repo": head_repo(pull)},
+                                             "base": {"repo": {"full_name": REPO}}, "draft": pull.draft,
                                              "body": pull.body}, has_file)
         closes = re.search(CLOSES % number, pull.body) is not None
-        owed = (pull.draft and not has_file) or (not pull.draft and has_file) or not closes
+        owed = pull.fork or (pull.draft and not has_file) or (not pull.draft and has_file) or not closes
         if bool(found) != owed:
             problems.append(Violation("G12", f"the protocol check says {found or 'no problem'} on #{pull.number}"))
     return problems
@@ -475,9 +479,10 @@ def labels_name_the_holder(after, actual):
 
 def board_renders_the_state(after, record, known):
     """G9 (and G5 and G7 through it): the page lists what the oracle says,
-    its Claims, Queue, Given to workers, Blockers and Overlaps, each row of
-    the Queue and the Blockers with its issue's labels, is ASCII, and
-    renders again to the same bytes."""
+    its Claims, each with its own pull request, Queue, Given to workers,
+    Blockers, Open pull requests and Overlaps, each row of the Queue and
+    the Blockers with its issue's labels, is ASCII, and renders again to
+    the same bytes."""
     shown = record.page
     calls = record.fake.calls if hasattr(record, "fake") else record.calls
     problems = []
@@ -497,6 +502,11 @@ def board_renders_the_state(after, record, known):
         problems.append(Violation("G9", f"the board's Blockers are {sorted(page.blockers(shown))}, the oracle's "
                                         f"{oracle.blockers(after)}"))
     problems += rows_show_labels(after, shown, calls)
+    spoken = [p.number for p in oracle.pulls_spoken_to(after)]
+    if page.pulls(shown) != spoken:
+        problems.append(Violation("G9", f"the board's Open pull requests are {page.pulls(shown)}, the oracle's "
+                                        f"{spoken}"))
+    problems += claim_rows_name_their_own(after, shown)
     expected = oracle.overlaps(after, known, unsaid_branches(calls))
     if page.overlaps(shown) != expected:
         problems.append(Violation("G7", f"the board's Overlaps are {page.overlaps(shown)}, the oracle's {expected}"))
@@ -522,6 +532,21 @@ def rows_show_labels(after, shown, calls=()):
             if sorted(names) != sorted(issue.labels):
                 problems.append(Violation("G9", f"the {name} row of #{number} shows {sorted(names)}, its issue "
                                                 f"carries {sorted(issue.labels)}"))
+    return problems
+
+
+def claim_rows_name_their_own(after, shown):
+    """G9: each claim's row names the claim's own pull request, the open one
+    from its branch here, or none; never one from a fork whose branch bears
+    the same name, which is no claim's (SPEC["fork"])."""
+    problems = []
+    for _, branch, _, cell in page.claims(shown):
+        if oracle.claim_number(branch) is None or branch not in after.refs:
+            continue
+        own = after.open_pull_from(branch)
+        if page.number(cell) != (own.number if own else None):
+            problems.append(Violation("G9", f"the row of {branch} names {cell}, its own pull request is "
+                                            f"{f'#{own.number}' if own else 'none'}"))
     return problems
 
 

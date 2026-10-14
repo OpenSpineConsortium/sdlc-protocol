@@ -269,10 +269,15 @@ class GitHub:
     def pull_detail(self, branch):
         """The open pull request from a branch of this repository, in the
         detail that holds mergeable_state and the head's sha, as GitHub
-        gives it, or None."""
+        gives it, or None. The list's head filter names the branch by its
+        owner, which a fork in the same organization shares (github/docs,
+        content/pull-requests/reference/forks.md:113), so a pull request
+        from such a fork is left out by the head and base the list gives
+        (board.from_fork; F17's review)."""
         owner = self.repo.split("/")[0]
         found = self.get(f"/repos/{self.repo}/pulls", {"state": "open", "head": f"{owner}:{branch}"}) or []
-        return self.get(f"/repos/{self.repo}/pulls/{found[0]['number']}") if found else None
+        own = [pull for pull in found if not board.from_fork(pull)]
+        return self.get(f"/repos/{self.repo}/pulls/{own[0]['number']}") if own else None
 
     def check_runs(self, sha):
         """Every check run on one commit, page by page: the endpoint wraps
@@ -483,8 +488,9 @@ def may_be_due(issue):
 def ready_branches(pulls):
     """The head branches of the open pull requests marked ready, as the API
     details them; a pull request whose draft state is not given counts as
-    ready, as the board counts it."""
-    return {(p.get("head") or {}).get("ref") for p in pulls if not p.get("draft")}
+    ready, as the board counts it. One from a fork is left out, whatever
+    its branch is called, since it is no claim's (board.claim_of)."""
+    return {(p.get("head") or {}).get("ref") for p in pulls if not p.get("draft") and not board.from_fork(p)}
 
 
 def may_write(api):
@@ -549,7 +555,7 @@ def releases(api, heads, found_issues, pulls, now=None):
     a release can be due or can have happened."""
     now = now or datetime.now(timezone.utc)
     ready, trusted = ready_branches(pulls), may_write(api)
-    drafts = {(p.get("head") or {}).get("ref"): p for p in pulls if p.get("draft")}
+    drafts = {(p.get("head") or {}).get("ref"): p for p in pulls if p.get("draft") and not board.from_fork(p)}
     found = {}
     for branch, sha in sorted(heads.items()):
         key = claims.key_of(branch)
