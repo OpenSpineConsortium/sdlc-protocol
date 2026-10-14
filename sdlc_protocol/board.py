@@ -126,7 +126,8 @@ class Pull:
     pull request was opened, is when its work began where GitHub says
     nothing of its branch (open_work); fork, whether its branch stands in
     another repository, or in none, a fork since deleted, whose branch a
-    branch of the same name here is not (from_fork)."""
+    branch of the same name here is not (from_fork), so it is never a
+    claim's (claim_of)."""
 
     number: int
     title: str = ""
@@ -459,9 +460,36 @@ def is_released(snap, key, idle_after=IDLE_AFTER):
         return False
     if issue.state != "open" or labels.CLAIMED in issue.labels or labels.IN_REVIEW in issue.labels:
         return False
-    if any(p.branch == branch_of(key) and not p.draft for p in snap.pulls):
+    if any(of_claim(p, key) and not p.draft for p in snap.pulls):
         return False
     return was_released(release.released_at, release.committed_at, idle_after)
+
+
+def claim_of(pull):
+    """The key of the claim whose pull request this is: the key its branch
+    names (key_of), or None for a branch that is no claim and for a pull
+    request from a fork, whatever its branch is called. A claim branch
+    lives in this repository, and a fork's branch of the same name is
+    another branch, so such a pull request, marked ready or said finished,
+    finishes no claim, the board lists it and tells it what it tells any
+    other, and a release's rename, which closes the claim's own pull
+    request, leaves it open (F17: until its fix a ready pull request from a
+    fork's claude/<issue> kept that claim from ever being released, and
+    the board took it for the claim's own on the page and in the
+    Overlaps)."""
+    return None if pull.fork else key_of(pull.branch)
+
+
+def of_claim(pull, key):
+    """Whether the pull request is the claim's with this key (claim_of)."""
+    return claim_of(pull) == key
+
+
+def closed_by_release(pull, released):
+    """Whether the rename of a released claim's branch closes the pull
+    request: the claim's own, from a branch released_branches names
+    (claim_of)."""
+    return claim_of(pull) is not None and pull.branch in released
 
 
 def released_branches(snap):
@@ -576,10 +604,11 @@ def comments_due(snapshot, event_name, ref_name, now, idle_after=IDLE_AFTER):
     it is parked. Main-moved comments come first, then idle ones, each in
     the order the snapshot lists the pull requests, as the template's
     board posted them. A released claim's pull request hears nothing:
-    renaming its branch closes it."""
+    renaming its branch closes it; a pull request from a fork, whatever
+    its branch is called, hears what any other does (closed_by_release)."""
     snap = as_snapshot(snapshot)
     released = released_branches(snap)
-    pulls = [p for p in snap.pulls if p.branch not in released]
+    pulls = [p for p in snap.pulls if not closed_by_release(p, released)]
     due = []
     if snap.sha:
         sha7 = short_sha(snap.sha)
@@ -643,8 +672,10 @@ def claim_row(key, branch, text, pull, issue):
 
 
 def claim_rows(snap):
-    """A row per claim branch, in issue order, but a released claim's."""
-    pulls_by_branch = {p.branch: p for p in snap.pulls}
+    """A row per claim branch, in issue order, but a released claim's; the
+    pull request a row names is the claim's own, never one from a fork
+    (claim_of)."""
+    pulls_by_branch = {p.branch: p for p in snap.pulls if claim_of(p) is not None}
     released = released_keys(snap)
     rows = []
     for branch in sorted(claim_branches(snap.branches), key=lambda b: by_number(key_of(b))):
@@ -657,11 +688,12 @@ def claim_rows(snap):
 
 def pull_rows(snap):
     """A row per open pull request, in number order, but one from a
-    released claim's branch, which the rename of that branch closes."""
+    released claim's branch, which the rename of that branch closes; one
+    from a fork stays, whatever its branch is called (closed_by_release)."""
     released = released_branches(snap)
     return [
         [f"#{p.number}", p.title, p.branch, p.state, p.updated_at]
-        for p in sorted(snap.pulls, key=lambda p: p.number) if p.branch not in released
+        for p in sorted(snap.pulls, key=lambda p: p.number) if not closed_by_release(p, released)
     ]
 
 
@@ -772,13 +804,14 @@ def open_work(snapshot):
     when the push that made its branch came, as the snapshot holds it by
     branch, and a pull request where pull_began says; a pull request from a
     fork carries no branch, since its branch is none of this
-    repository's."""
+    repository's, and is a piece of its own, whatever its branch is called,
+    since it is no claim's (claim_of)."""
     snap = as_snapshot(snapshot)
     released = released_keys(snap)
-    pulls = {p.branch: p for p in snap.pulls}
+    pulls = {p.branch: p for p in snap.pulls if claim_of(p) is not None}
     work = []
     for pull in snap.pulls:
-        key = key_of(pull.branch) if is_claim_branch(pull.branch) else None
+        key = claim_of(pull)
         if key in released:
             continue
         files = own_files(pull.files) or (own_files(claim_files(snap.claims.get(key) or "")) if key else ())

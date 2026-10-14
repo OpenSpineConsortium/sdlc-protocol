@@ -936,6 +936,73 @@ class Releases(unittest.TestCase):
         self.assertIn("contents: write", none)
 
 
+def fork_pull(number=50, ready=True, updated_at="2026-09-19T12:00:00Z"):
+    """A pull request sam opened from a fork, from a branch named claude/12
+    there, as the API details it: its head and base name their repositories
+    (F17)."""
+    return {"number": number, "title": "Fix the board", "draft": not ready, "mergeable_state": "clean",
+            "head": {"ref": "claude/12", "sha": "ddddddd4444444", "repo": {"full_name": "sam/widgets"}},
+            "base": {"ref": "main", "repo": {"full_name": "octo/widgets"}},
+            "updated_at": updated_at, "files": ["docs/agents/README.md"]}
+
+
+class ForkPulls(unittest.TestCase):
+    """A claim and its pull request live in the repository itself, so a pull
+    request from a fork is no claim's, whatever its branch is called (spec,
+    Rules that hold everywhere; F17): until the fix, sam's ready one from a
+    fork's claude/12 kept claim 12 from ever being released, and the board
+    took it for the claim's own on the page and in the Overlaps."""
+
+    def test_a_pull_request_from_a_fork_is_no_claim_s_whatever_its_branch_is_called(self):
+        own, fork = Pull(40, branch="claude/12"), Pull(50, branch="claude/12", fork=True)
+        self.assertEqual((board.claim_of(own), board.claim_of(fork)), ("12", None))
+        self.assertIsNone(board.claim_of(Pull(51, branch="feature/board")))
+        self.assertEqual((board.of_claim(own, "12"), board.of_claim(fork, "12")), (True, False))
+        self.assertFalse(board.of_claim(own, "13"))
+        released = {"claude/12"}
+        self.assertEqual((board.closed_by_release(own, released), board.closed_by_release(fork, released)),
+                         (True, False))
+        self.assertFalse(board.closed_by_release(own, set()))
+
+    def test_a_ready_one_named_like_a_released_claim_keeps_no_release_from_counting_and_stays_listed(self):
+        snap = released_snapshot()
+        snap["pulls"].append(fork_pull())
+        self.assertEqual(board.released_keys(snap), {"12"})
+        text = board.render(snap)
+        self.assertNotIn("claude/12 |", section(text, board.CLAIM_HEADING, board.PULL_HEADING))
+        pulls = section(text, board.PULL_HEADING, board.QUEUE_HEADING)
+        self.assertIn("| #50 | Fix the board | claude/12 |", pulls)
+        self.assertNotIn("| #40 |", pulls)
+        self.assertIn("| #12 | Describe the board | todo |", section(text, board.QUEUE_HEADING, board.BLOCKER_HEADING))
+
+    def test_one_named_like_a_released_claim_hears_what_any_other_does(self):
+        snap = released_snapshot()
+        snap["pulls"].append(fork_pull(ready=False))
+        now = datetime(2026, 9, 23, 12, 0, tzinfo=timezone.utc)
+        due = board.comments_due(snap, "push", "main", now)
+        self.assertEqual([(c.number, c.kind) for c in due], [(41, "idle"), (50, "idle")])
+
+    def test_a_claim_s_row_names_its_own_pull_request_never_a_fork_s(self):
+        mine = snapshot()
+        mine["pulls"].append(fork_pull())
+        self.assertIn("| #12 | claude/12 | main | #40 |", board.render(mine))
+        theirs_alone = snapshot()
+        theirs_alone["pulls"] = [fork_pull()] + theirs_alone["pulls"][1:]
+        text = board.render(theirs_alone)
+        self.assertIn("| #12 | claude/12 | main | (no pull request yet) |", text)
+        self.assertIn("| #50 | Fix the board | claude/12 |", section(text, board.PULL_HEADING, board.QUEUE_HEADING))
+
+    def test_one_is_open_work_of_its_own_that_meets_the_claim_named_like_its_branch(self):
+        snap = snapshot()
+        snap["pulls"] = [fork_pull()] + snap["pulls"][1:]
+        work = {w.number: w for w in board.open_work(snap)}
+        self.assertEqual(sorted(work), [12, 41, 50])
+        self.assertEqual((work[12].branch, work[50].branch), ("claude/12", ""))
+        self.assertFalse(work[12].is_pull)
+        self.assertTrue(work[50].ready)
+        self.assertEqual([w.number for w in board.overlaps(snap)["docs/agents/README.md"]], [50, 12])
+
+
 ACCOUNT_ENV = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "LC_ALL": "C"}
 ISSUE = 5
 

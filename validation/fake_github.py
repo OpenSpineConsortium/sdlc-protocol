@@ -39,14 +39,18 @@ comparison carries behind_by (F9); with the model's lenient_rules on,
 the word for a branch that is behind is "clean", as GitHub gives under a
 rule that does not require an up-to-date branch or under none (F16), and
 with both on the word is "blocked", since a rule that holds the pull
-request holds it whatever its branch; a
-rename closes the pull request whose head the branch is; a rename onto a
-name that stands answers 422; the board posts as github-actions[bot] with
-the author_association NONE; a pull request's updated_at moves with
-pushes and comments; and the repository's activity lists the push that
-made each branch at GitHub's own time, newest first (F13), a renamed
-branch keeping the time it was made, which the model's rename does and
-no canary check reads yet.
+request holds it whatever its branch; a rename closes the pull request
+whose head the branch is, never one from a fork, whose branch of the same
+name stands in the fork; a pull request from a fork names its author's
+fork in its head and this repository in its base, in its detail and in the
+list's entries, and the list's head filter, owner:branch, matches the
+repository the branch stands in (F17); a rename onto a name that stands
+answers 422; the board posts as github-actions[bot] with the
+author_association NONE; a pull request's updated_at moves with pushes and
+comments; and the repository's activity lists the push that made each
+branch at GitHub's own time, newest first (F13), a renamed branch keeping
+the time it was made, which the model's rename does and no canary check
+reads yet.
 """
 
 import base64
@@ -283,12 +287,13 @@ class FakeGitHub:
             state = query.get("state", "open")
             chosen = [p for p in pulls.values() if (p.state == "open") == (state == "open")]
             if "head" in query:
-                chosen = [p for p in chosen if f"{REPO.split('/')[0]}:{p.head}" == query["head"]]
+                chosen = [p for p in chosen if f"{head_owner(p)}:{p.head}" == query["head"]]
             if state == "closed":
                 chosen.sort(key=lambda p: (-p.updated_at, -p.number))
                 return self.page([self.closed_json(p) for p in chosen], query, url)
             chosen.sort(key=lambda p: -p.number)
-            return self.page([{"number": p.number, "head": {"ref": p.head}} for p in chosen], query, url)
+            return self.page([{"number": p.number, "head": {"ref": p.head, "repo": head_repo(p)},
+                               "base": {"ref": MAIN, "repo": {"full_name": REPO}}} for p in chosen], query, url)
         number = int(s[1]) if s[1].isdigit() and s[1].isascii() else None
         pull = pulls.get(number)
         if pull is None:
@@ -296,7 +301,7 @@ class FakeGitHub:
         if len(s) == 2:
             return self.pull_json(pull), {}
         if s[2:] == ["files"]:
-            return self.page([{"filename": f} for f in self.model.files_changed(pull.head)], query, url)
+            return self.page([{"filename": f} for f in self.model.pull_files(pull)], query, url)
         raise Unserved(f"{method} /{'/'.join(s)}")
 
     def closed_json(self, pull):
@@ -308,8 +313,8 @@ class FakeGitHub:
         """The detail of one pull request; mergeable is null on its first
         read in a run for each head and main it stands on."""
         model = self.model
-        sha = model.refs.get(pull.head, "") if pull.state == "open" else ""
-        standing = model.standing(pull.head) if sha else "clean"
+        sha = model.pull_head(pull) if pull.state == "open" else ""
+        standing = model.standing_at(sha) if sha else "clean"
         seen = (pull.number, sha, model.refs[MAIN])
         if seen in self.computed:
             mergeable = standing != "dirty"
@@ -319,10 +324,10 @@ class FakeGitHub:
         else:
             self.computed.add(seen)
             mergeable, state = None, "unknown"
-        repo = {"full_name": REPO}
         return {"number": pull.number, "title": pull.title, "body": pull.body, "draft": pull.draft,
                 "state": "open" if pull.state == "open" else "closed", "user": {"login": pull.author},
-                "head": {"ref": pull.head, "sha": sha, "repo": repo}, "base": {"ref": MAIN, "repo": repo},
+                "head": {"ref": pull.head, "sha": sha, "repo": head_repo(pull)},
+                "base": {"ref": MAIN, "repo": {"full_name": REPO}},
                 "mergeable": mergeable, "mergeable_state": state, "created_at": iso(pull.opened_at),
                 "updated_at": iso(pull.updated_at),
                 "merged_at": iso(pull.merged_at) if pull.merged_at is not None else None}
@@ -396,6 +401,18 @@ class FakeGitHub:
         return {"ahead_by": len(ahead), "behind_by": len(behind),
                 "commits": [{"sha": c, "commit": {"message": model.commits[c].message}} for c in order],
                 "files": [{"filename": f} for f in model.changed(model.merge_base(sha, base_sha), sha)]}
+
+
+def head_owner(pull):
+    """The owner of the repository a pull request's branch stands in: the
+    author's fork for one from a fork, this repository otherwise (F17)."""
+    return pull.author if pull.fork else REPO.split("/")[0]
+
+
+def head_repo(pull):
+    """The repository a pull request's branch stands in, as GitHub names it
+    in the head of the pull request's detail and of the list's entries."""
+    return {"full_name": f"{head_owner(pull)}/{REPO.split('/')[1]}"}
 
 
 def pull_detail(model, pull):

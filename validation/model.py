@@ -56,10 +56,17 @@ def moment(minute):
     return T0 + timedelta(minutes=minute)
 
 
+# The ref name the model gives the run a pull request from a fork queues,
+# whose job board.yml skips, since that run's token is read-only; GitHub's
+# own ref for it is the pull request's merge ref, which no run here reads.
+FORK_RUN = "fork"
+
+
 def skipped(run):
     """Whether the run, as (event, ref name), is one board.yml's job skips:
-    a push to any branch but the default."""
-    return run[0] == "push" and run[1] != MAIN
+    a push to any branch but the default, or a pull request's from a fork
+    (FORK_RUN)."""
+    return (run[0] == "push" and run[1] != MAIN) or run == ("pull_request", FORK_RUN)
 
 
 @dataclass(frozen=True)
@@ -102,6 +109,10 @@ class Issue:
 
 @dataclass
 class PullRequest:
+    """One pull request. fork says its branch stands in its author's fork,
+    where no ref of the model's names it, so sha is its head there: a
+    branch of the same name here is another branch (F17)."""
+
     number: int
     head: str
     author: str
@@ -113,6 +124,8 @@ class PullRequest:
     updated_at: int = 0
     merged_at: int | None = None
     comments: tuple = ()
+    fork: bool = False
+    sha: str = ""
 
 
 class Push(NamedTuple):
@@ -253,14 +266,15 @@ class RepoModel:
 
     def rename_ref(self, old, new):
         """GitHub's rename: the ref moves, and the open pull request whose
-        head it was is closed (renaming-a-branch.md:19). Who made the old
-        name made the new one."""
+        head it was is closed (renaming-a-branch.md:19), never one from a
+        fork whose branch bears the same name, which is another branch. Who
+        made the old name made the new one."""
         self.set_ref(new, self.refs.pop(old))
         if old in self.creators:
             self.creators[new] = self.creators.pop(old)
             self.created[new] = self.created.pop(old)
         for pull in self.pulls.values():
-            if pull.head == old and pull.state == "open":
+            if pull.head == old and pull.state == "open" and not pull.fork:
                 pull.state = "closed"
                 pull.updated_at = self.now
 
@@ -270,10 +284,14 @@ class RepoModel:
     # --- how a branch stands ------------------------------------------------
 
     def standing(self, ref):
+        """How the branch of this name here stands to main (standing_at)."""
+        return self.standing_at(self.refs.get(ref, ""))
+
+    def standing_at(self, head):
         """clean, behind or dirty against main: behind when main is not in
-        the branch, dirty when a path both sides changed since the merge
+        the commit, dirty when a path both sides changed since the merge
         base differs between them."""
-        head, main = self.refs.get(ref, ""), self.refs[MAIN]
+        main = self.refs[MAIN]
         if not head or self.is_ancestor(main, head):
             return CLEAN
         base = self.merge_base(head, main)
@@ -284,15 +302,31 @@ class RepoModel:
         return BEHIND
 
     def files_changed(self, ref):
-        """The paths a branch changes beside its merge base with main, as a
+        """The paths the branch of this name here changes (files_changed_at)."""
+        return self.files_changed_at(self.refs.get(ref, ""))
+
+    def files_changed_at(self, head):
+        """The paths a commit changes beside its merge base with main, as a
         pull request's files are."""
-        head = self.refs.get(ref, "")
         if not head:
             return []
         return self.changed(self.merge_base(head, self.refs[MAIN]), head)
 
+    def pull_head(self, pull):
+        """The commit a pull request's branch points at: the ref of that
+        name here, or a fork's head, which no ref here names."""
+        return pull.sha if pull.fork else self.refs.get(pull.head, "")
+
+    def pull_standing(self, pull):
+        return self.standing_at(self.pull_head(pull))
+
+    def pull_files(self, pull):
+        return self.files_changed_at(self.pull_head(pull))
+
     def open_pull_from(self, ref):
-        return next((p for p in self.pulls.values() if p.head == ref and p.state == "open"), None)
+        """The open pull request from the branch of this name here; never
+        one from a fork, whose branch is another (F17)."""
+        return next((p for p in self.pulls.values() if p.head == ref and p.state == "open" and not p.fork), None)
 
     # --- issues, labels and comments ----------------------------------------
 
@@ -393,7 +427,7 @@ class RepoModel:
             tuple(sorted(self.refs.items())),
             tuple(sorted((n, i.state, tuple(sorted(i.labels)), i.comments, i.body) for n, i in self.issues.items())),
             tuple(sorted((n, p.head, p.author, p.body, p.draft, p.state, p.opened_at, p.updated_at, p.merged_at,
-                          p.comments) for n, p in self.pulls.items())),
+                          p.comments, p.fork, p.sha) for n, p in self.pulls.items())),
             self.next_pull,
             self.writers,
             tuple(sorted(self.ever_heads)),

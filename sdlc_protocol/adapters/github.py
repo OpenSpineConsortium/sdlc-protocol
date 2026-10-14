@@ -483,8 +483,9 @@ def may_be_due(issue):
 def ready_branches(pulls):
     """The head branches of the open pull requests marked ready, as the API
     details them; a pull request whose draft state is not given counts as
-    ready, as the board counts it."""
-    return {(p.get("head") or {}).get("ref") for p in pulls if not p.get("draft")}
+    ready, as the board counts it. One from a fork is left out, whatever
+    its branch is called, since it is no claim's (board.claim_of)."""
+    return {(p.get("head") or {}).get("ref") for p in pulls if not p.get("draft") and not board.from_fork(p)}
 
 
 def may_write(api):
@@ -549,7 +550,7 @@ def releases(api, heads, found_issues, pulls, now=None):
     a release can be due or can have happened."""
     now = now or datetime.now(timezone.utc)
     ready, trusted = ready_branches(pulls), may_write(api)
-    drafts = {(p.get("head") or {}).get("ref"): p for p in pulls if p.get("draft")}
+    drafts = {(p.get("head") or {}).get("ref"): p for p in pulls if p.get("draft") and not board.from_fork(p)}
     found = {}
     for branch, sha in sorted(heads.items()):
         key = claims.key_of(branch)

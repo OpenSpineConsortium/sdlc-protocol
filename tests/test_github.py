@@ -983,6 +983,30 @@ class Releases(unittest.TestCase):
         self.assertIn("| #12 | Describe the board | todo |", board.render(snap).split(board.QUEUE_HEADING)[1])
         self.assertEqual(coordinator.releases_due(snap, NOW), [])
 
+    def test_a_pull_request_from_a_fork_named_like_the_claim_neither_finishes_nor_holds_it(self):
+        """F17: sam's pull request from a fork's claude/12 is no claim's.
+        Marked ready, it leaves the claim to be read for its release; as a
+        draft its author said is finished, it holds nothing, and its comments
+        cost no call; and the board lists it beside the released claim."""
+        fork = {"number": 50, "title": "Fix the board", "mergeable_state": "clean", "updated_at": "2026-09-19T12:00:00Z",
+                "user": {"login": "sam"}, "head": {"ref": "claude/12", "sha": "ddd", "repo": {"full_name": "sam/r"}},
+                "base": {"ref": "main", "repo": {"full_name": "o/r"}}}
+        self.assertEqual(github.ready_branches([dict(fork, draft=False), {"head": {"ref": "claude/13"}}]), {"claude/13"})
+        for ready in (True, False):
+            _, answers = released_answers()
+            answers["/repos/o/r/pulls?state=open&per_page=100"] = FakeAnswer([{"number": n} for n in (40, 41, 50)])
+            answers["/repos/o/r/pulls/50"] = FakeAnswer(dict(fork, draft=not ready))
+            answers["/repos/o/r/pulls/50/files?per_page=100"] = FakeAnswer([{"filename": "docs/agents/README.md"}])
+            answers["/repos/o/r/issues/50/comments?per_page=100"] = FakeAnswer([dict(FINISHED, user={"login": "sam"})])
+            api, opener = client(answers)
+            snap = github.snapshot(api, "abc", "main")
+            with self.subTest(ready=ready):
+                self.assertEqual(snap.releases["12"].released_at, RELEASE_COMMENT["created_at"])
+                self.assertEqual(board.released_keys(snap), {"12"})
+                self.assertNotIn("/repos/o/r/issues/50/comments?per_page=100",
+                                 [c.full_url.replace(github.API, "") for c in opener.calls])
+                self.assertIn("| #50 | Fix the board | claude/12 |", board.render(snap))
+
     def test_a_finished_claim_costs_no_call(self):
         ready, answers = released_answers()
         answers["/repos/o/r/pulls/40"] = FakeAnswer({k: v for k, v in ready["pulls"][0].items() if k != "files"})

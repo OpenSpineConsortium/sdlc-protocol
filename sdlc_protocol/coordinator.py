@@ -58,14 +58,15 @@ NAME_QUOTED = 200
 def is_candidate(snap, key):
     """Whether a release can be due on the claim with this key: its branch
     exists, its issue is open and not labelled in-review, no pull request
-    from its branch is marked ready, and its head commit and when it was
-    committed are known."""
+    from its branch is marked ready, one from a fork whose branch bears the
+    same name being no claim's (board.of_claim), and its head commit and
+    when it was committed are known."""
     issue, release = snap.claim_issues.get(key), snap.releases.get(key)
     if issue is None or release is None or not release.sha or not release.committed_at:
         return False
     if claims.branch_of(key) not in snap.branches or issue.state != "open" or labels.IN_REVIEW in issue.labels:
         return False
-    return not any(p.branch == claims.branch_of(key) and not p.draft for p in snap.pulls)
+    return not any(board.of_claim(p, key) and not p.draft for p in snap.pulls)
 
 
 def releases_due(snapshot, now, idle_after=claims.IDLE_AFTER):
@@ -143,7 +144,7 @@ def release_text(snapshot, key, holding, idle_after=claims.IDLE_AFTER):
     release = snap.releases[key]
     old, new = claims.branch_of(key), claims.released_branch(key, release.sha)
     hours = int(idle_after.total_seconds() // 3600)
-    pull = next((p for p in snap.pulls if p.branch == old), None)
+    pull = next((p for p in snap.pulls if board.of_claim(p, key)), None)
     pull_clause = f"its pull request #{pull.number} is still a draft" if pull else "it has no pull request"
     return "\n".join([
         claims.RELEASE_MARKER,

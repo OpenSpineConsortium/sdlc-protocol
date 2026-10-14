@@ -156,7 +156,7 @@ def observed(model, expect, outcomes, scenario, step):
     if expect.released is not None:
         yield "released", expect.released, {n: len(verbs.released_refs(model, n)) for n in expect.released}
     if expect.standing is not None:
-        yield "standing", expect.standing, {n: model.standing(model.pulls[n].head) for n in expect.standing}
+        yield "standing", expect.standing, {n: model.pull_standing(model.pulls[n]) for n in expect.standing}
     if expect.no_writes is not None:
         writes = [f"{c.method} {c.path}" for c in (run.calls if run else ()) if c.method != "GET"]
         yield "no_writes", expect.no_writes, not writes

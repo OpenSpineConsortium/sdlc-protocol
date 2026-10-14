@@ -97,6 +97,10 @@ SPEC = {
               "rule that requires an up-to-date branch, or, where GitHub's word is blocked or draft, which says "
               "only that something else stops the merge, a rule still holding the pull request or the draft "
               "itself, where the comparison of the branch with the default branch says so.",
+    "fork": "A claim and its pull request live in the repository itself, so a pull request from a fork is no "
+            "claim's, whatever its branch is called: the board lists it as a pull request of its own and tells it "
+            "what it tells any other, it finishes no claim, marked ready or said finished, and a release's rename, "
+            "which closes the claim's own pull request, leaves it open.",
     "as it stands": "A pull request GitHub calls clean, unstable or has_hooks, a draft among them, since GitHub gives "
                     "a draft the word its branch has, is not held for being behind under the repository's rules, so "
                     "it hears nothing however far the default branch has moved; one GitHub calls dirty, in conflict "
@@ -362,11 +366,20 @@ def claim_file_text(model, ref, number):
     return model.tree(model.refs.get(ref, "")).get(f"{CLAIM_DIR}{number}.md")
 
 
+def claim_of(pull):
+    """The issue whose claim the pull request is: its branch's number here,
+    and never one from a fork, whose branch is another whatever it is
+    called (SPEC["fork"])."""
+    return None if pull.fork else claim_number(pull.head)
+
+
 def open_work(model, known=AS_BUILT, unsaid=frozenset()):
     """Every piece of open work (SPEC["open work"]) but a released claim's.
     A claim and the pull request from its branch are one piece, which
     keeps the issue's number as its identity; with F2 known, the identity
-    is the number it is shown by, as the library reads it. unsaid names
+    is the number it is shown by, as the library reads it. A pull request
+    from a fork is a piece of its own, whatever its branch is called, and
+    began when it was opened (SPEC["fork"], SPEC["oldest"]). unsaid names
     the branches GitHub refused to date in the run, whose work then began
     when nothing else says (SPEC["oldest"]): a pull request's at its
     opening, and a claim's never."""
@@ -375,14 +388,15 @@ def open_work(model, known=AS_BUILT, unsaid=frozenset()):
     for pull in sorted(model.pulls.values(), key=lambda p: p.number):
         if pull.state != "open":
             continue
-        number = claim_number(pull.head)
+        number = claim_of(pull)
         if number is not None and released(model, number):
             continue
-        pulled.add(pull.head)
+        if not pull.fork:
+            pulled.add(pull.head)
         listed = listed_files(claim_file_text(model, pull.head, number)) if number is not None else []
-        files = own(model.files_changed(pull.head)) or own(listed)
+        files = own(model.pull_files(pull)) or own(listed)
         identity = number if number is not None and "F2" not in known else pull.number
-        began = None if pull.head in unsaid else model.created.get(pull.head)
+        began = None if pull.fork or pull.head in unsaid else model.created.get(pull.head)
         began = pull.opened_at if began is None else began
         pieces.append(Piece(identity, pull.number, files, not pull.draft, is_blocker(model, number), began))
     for ref in sorted(model.refs):
@@ -427,7 +441,7 @@ def told_of(model, piece, by_number, known=AS_BUILT):
     known, on its current number alone, numbers as written."""
     places = {piece.number}
     if "F2" not in known:
-        places |= {piece.identity} | {p.number for p in model.pulls.values() if claim_number(p.head) == piece.identity}
+        places |= {piece.identity} | {p.number for p in model.pulls.values() if claim_of(p) == piece.identity}
     told = set()
     for place in places:
         for comment in model.comments_on(place):
@@ -442,8 +456,8 @@ def overlap_effects(model, known=AS_BUILT):
     by_number = {p.number: p.identity for p in pieces}
     if "F2" not in known:
         for pull in model.pulls.values():
-            if claim_number(pull.head) is not None:
-                by_number.setdefault(pull.number, claim_number(pull.head))
+            if claim_of(pull) is not None:
+                by_number.setdefault(pull.number, claim_of(pull))
     effects = []
     for piece in sorted(pieces, key=lambda p: p.number):
         meets = {other.identity for other in pieces if other.identity != piece.identity
@@ -486,8 +500,9 @@ def owes_main_moved(model, pull):
     branch has, never draft (C0). A branch behind main under a rule that
     does not require an up-to-date branch, the model's lenient_rules, with
     no rule holding it, which GitHub calls clean, draft or not, is not held
-    for being behind and is owed nothing (SPEC["as it stands"], F16)."""
-    standing = model.standing(pull.head)
+    for being behind and is owed nothing (SPEC["as it stands"], F16). A
+    pull request from a fork stands as its own head does (SPEC["fork"])."""
+    standing = model.pull_standing(pull)
     if standing == "dirty":
         return True
     return standing == "behind" and (model.opaque_pulls or not model.lenient_rules)
@@ -501,9 +516,10 @@ def idle_effects(model):
 
 def pulls_spoken_to(model):
     """The open pull requests the board speaks to: all but a released
-    claim's, which the rename closes."""
+    claim's, which the rename closes, one from a fork being no claim's
+    (SPEC["fork"])."""
     return [p for p in sorted(model.pulls.values(), key=lambda p: p.number) if p.state == "open"
-            and not ((n := claim_number(p.head)) is not None and released(model, n))]
+            and not ((n := claim_of(p)) is not None and released(model, n))]
 
 
 # --- what a board run must do -------------------------------------------------
