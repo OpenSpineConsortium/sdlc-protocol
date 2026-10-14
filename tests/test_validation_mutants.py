@@ -9,6 +9,7 @@ catching a mutant fails here too, naming the rule. A mutant of a rule no
 search runs names the cheap lane that catches it instead (step 4), and
 the test runs that lane."""
 
+import inspect
 import sys
 import unittest
 from pathlib import Path
@@ -24,6 +25,14 @@ CLAIM, CLAIMED, WORKER = mutants.CLAIM, mutants.CLAIMED, mutants.WORKER
 HELD = [CLAIM, CLAIMED, WORKER]
 WAIT = Verb("wait", "clock", (25,))
 SHARED = Scope(issues=(1, 2), files=((1, mutants.SHARED), (2, mutants.SHARED)))
+# The seeded issue carries todo; the searches F15's review added seed it
+# with other labels, which a trace here puts on by hand first.
+TODO_OFF = Verb("label-off", M.OWNER, (1, "todo"))
+BLOCKER = Verb("label-on", M.OWNER, (1, "blocker"))
+
+
+def labelled(name):
+    return Verb("label-on", M.OWNER, (1, name))
 
 
 def board_with(fault):
@@ -67,6 +76,27 @@ TRACES = {
     "dealing without its taken set": "dealing at every look",
     "each leg dealt from its own look": "the regression traces",
     "given to workers needing the label todo": "the regression traces",
+    "a release that leaves todo off": "the regression traces",
+    "a failed release leaves its todo on": "the regression traces",
+    "the release's own page without its todo": "the regression traces",
+    "a refused todo puts no label back": ([TODO_OFF] + HELD + [WAIT, board_with("label-post-500")], Scope()),
+    "a todo written and lost stays on": ([TODO_OFF] + HELD + [WAIT, board_with("label-post-lost")], Scope()),
+    "an epic gets todo": ([TODO_OFF, Verb("label-on", M.OWNER, (1, "epic"))] + HELD + [WAIT, BOARD], Scope()),
+    "a blocker gets todo": ([TODO_OFF, Verb("label-on", M.OWNER, (1, "blocker"))] + HELD + [WAIT, BOARD], Scope()),
+    "a blocked task gets no todo": ([TODO_OFF, Verb("label-on", M.OWNER, (1, "blocked"))] + HELD + [WAIT, BOARD],
+                                    Scope()),
+    "the Blockers section left empty": ([BLOCKER, BOARD], Scope()),
+    "the Blockers section without the held blockers": ([BLOCKER] + HELD + [BOARD], Scope()),
+    "a held blocker's row without claimed": ([BLOCKER] + HELD + [BOARD], Scope()),
+    "a row without blocked": ([labelled("blocked"), BOARD], Scope()),
+    "a row without epic": ([BLOCKER, labelled("epic"), BOARD], Scope()),
+    "the Blockers section without epic blockers": ([BLOCKER, labelled("epic"), BOARD], Scope()),
+    "the Blockers section without blocked blockers": ([BLOCKER, labelled("blocked"), BOARD], Scope()),
+    "the Blockers section without the given blockers": ([BLOCKER, labelled("worker:b"), BOARD], Scope()),
+    "the Queue without the blockers labelled todo": ([BLOCKER, BOARD], Scope()),
+    "a release relabels the board before its comment": ([BLOCKER] + HELD + [WAIT, board_with("comment-500")],
+                                                         Scope()),
+    "a bare worker: taken off at release": ([labelled("worker:")] + HELD + [WAIT, BOARD], Scope()),
     "the landing order by number": "the regression traces",
     "a pull request dated by its opening": "the regression traces",
     "a refused activity read stops the run": "the regression traces",
@@ -100,10 +130,11 @@ class TheLane(unittest.TestCase):
     def test_it_holds_10_to_30_mutants_each_with_a_trace(self):
         """Section 7 asks for 10 to 20; step 4 added five for the rules its
         lanes judge, step 5 four that undo fixes of 0.4.1, and each fix
-        since one that undoes it (F7's first), so the bound is widened to
-        40 and the count noted."""
-        self.assertTrue(10 <= len(mutants.MUTANTS) <= 40)
-        self.assertEqual(len(mutants.MUTANTS), 39)
+        since at least one that undoes it (F7's first), and the reviews of
+        F13's and F15's fixes more, so the bound is widened to 60 and the
+        count noted."""
+        self.assertTrue(10 <= len(mutants.MUTANTS) <= 60)
+        self.assertEqual(len(mutants.MUTANTS), 58)
         self.assertEqual(sorted(TRACES), sorted(mutants.MUTANTS))
 
     def test_every_mutant_names_a_rule_the_library_still_has(self):
@@ -119,10 +150,34 @@ class TheLane(unittest.TestCase):
                     self.assertIs(type(target), type(mutant.replacement))
                 self.assertIn(mutant.guarantee, invariants.GUARANTEES)
 
-    def test_the_lanes_come_first_then_the_searches_cheapest_first(self):
+    def test_every_replacement_takes_what_its_target_is_called_with(self):
+        """A replacement that no longer takes its target's arguments is
+        caught only by the TypeError it raises, which proves nothing of the
+        rule it stands for: the second review of F15's fix found "the labels
+        not put back" caught so once put_back took the todo too. Each
+        replacement of a function takes every argument the function
+        declares, and, as the third review asked, the function's required
+        arguments alone, as a caller that leaves the optional ones out
+        calls it."""
+        for name, mutant in mutants.MUTANTS.items():
+            target = getattr(mutant.module, mutant.name)
+            if not inspect.isfunction(target):
+                continue
+            with self.subTest(mutant=name):
+                declared = inspect.signature(target).parameters.values()
+                positional = [p for p in declared if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)]
+                keywords = [p for p in declared if p.kind == p.KEYWORD_ONLY]
+                replacement = inspect.signature(mutant.replacement)
+                replacement.bind(*range(len(positional)), **{p.name: None for p in keywords})
+                required = [p for p in positional if p.default is p.empty]
+                replacement.bind(*range(len(required)), **{p.name: None for p in keywords if p.default is p.empty})
+
+    def test_the_lanes_come_first_then_the_searches_cheapest_first_then_every_label_mix(self):
         self.assertEqual([c.name for c in mutants.CATCHERS[:len(LANES)]], list(LANES))
         self.assertEqual(mutants.SEARCHES[-2].name, "the holder back between the halves of a run")
         self.assertEqual(mutants.SEARCHES[-1].name, "a stranger's marker on overlapping claims")
+        self.assertEqual(mutants.CATCHERS[len(LANES):-1], mutants.SEARCHES)
+        self.assertIs(mutants.CATCHERS[-1], mutants.LABEL_MIXES)
         self.assertEqual([s.known for s in mutants.CATCHERS if s.known], [], "nothing is known on the library now")
 
 
@@ -158,6 +213,34 @@ class TheSearchesCatchWhatTheyWereAddedFor(unittest.TestCase):
         for name in ("an opaque state read by GitHub's word alone", "the comparison read by ahead_by"):
             with self.subTest(mutant=name), mutants.switched_on(mutants.MUTANTS[name]):
                 self.assertIn("G10", {guarantee for guarantee, _ in mutants.violations(search)})
+
+
+    def test_the_searches_from_f15_s_review_catch_its_mutants(self):
+        """The lane credits these mutants to the searches F15's three
+        reviews added (DESIGN.md, section 13), which seed the issue with
+        labels other than todo: each search finds nothing on the library and
+        the violation named under each of its mutants, which it can only
+        while its issue is seeded so, since a release puts no todo on an
+        issue that has it, and only a blocker is listed under Blockers."""
+        caught = {"a released task given by a label alone, under every fault": (
+                      ("worker:a",), {"a refused todo puts no label back": "G3L",
+                                      "a todo written and lost stays on": "G3L"}),
+                  "a released epic": (("epic",), {"an epic gets todo": "G3"}),
+                  "a released blocker": (("blocker",), {"a blocker gets todo": "G3",
+                                                        "the Blockers section left empty": "G9"}),
+                  "a released blocked task": (("blocked",), {"a blocked task gets no todo": "G3",
+                                                             "a row without blocked": "G9"}),
+                  "a held blocker": (("blocker",), {"the Blockers section without the held blockers": "G9",
+                                                    "a held blocker's row without claimed": "G9"}),
+                  "a released blocker under every fault": (("blocker",), {
+                      "a release relabels the board before its comment": "G9"})}
+        for name, (seeded, guarantees) in caught.items():
+            search = next(s for s in mutants.SEARCHES if s.name == name)
+            self.assertEqual(search.labels, seeded)
+            self.assertEqual(mutants.violations(search), {})
+            for mutant, guarantee in guarantees.items():
+                with self.subTest(search=name, mutant=mutant), mutants.switched_on(mutants.MUTANTS[mutant]):
+                    self.assertIn(guarantee, {g for g, _ in mutants.violations(search)})
 
 
 class TheHarnessFixesTheLaneAskedFor(unittest.TestCase):

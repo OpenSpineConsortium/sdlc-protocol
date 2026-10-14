@@ -19,7 +19,11 @@ short prefix: a few verbs that put the repository where a family of rules
 applies (a held claim, a draft, two claims on one file), then every
 interleaving of the scope's verbs to a small depth. A prefix holds no
 board run of its own, so it reaches the same state with or without a
-mutant, and every step after it is searched, not chosen. The hand-written
+mutant, and every step after it is searched, not chosen. One lane comes
+after the searches, every label mix on one issue (labels_lane): a board
+run and a due claim's release on an issue carrying each mix of labels
+the domain gives, the widest and the slowest catcher, which a mutant
+reaches only past every search. The hand-written
 traces in tests/test_validation_mutants.py are each mutant's shortest
 example, kept so a failure names the rule that broke; the lane is what
 shows the searches bite.
@@ -43,7 +47,7 @@ from sdlc_protocol import board, claims, coordinator, guard, labels, team
 from sdlc_protocol.adapters import github
 from sdlc_protocol.workers import fits
 
-from . import clerk, cycle, dealing, explore, guard_grammar, invariants, model as M, oracle, replay, verbs
+from . import clerk, cycle, dealing, domains, explore, guard_grammar, invariants, model as M, oracle, replay, verbs
 from .verbs import CAROL, DANA, SAM, Scope, Verb
 
 
@@ -74,7 +78,8 @@ class Search(NamedTuple):
     to its start, the scope searched from there and how deep, and the
     violations, as (guarantee, detail), the library as it stands is known
     to meet in it; opaque_pulls has GitHub call every pull request not in
-    conflict blocked, as a rule that holds it does (model.RepoModel)."""
+    conflict blocked, as a rule that holds it does (model.RepoModel), and
+    labels are what the seeded issues carry."""
 
     name: str
     prefix: tuple
@@ -83,6 +88,7 @@ class Search(NamedTuple):
     issues: tuple = (1,)
     known: tuple = ()
     opaque_pulls: bool = False
+    labels: tuple = ("todo",)
 
 
 # --- the replacements ---------------------------------------------------------
@@ -90,17 +96,22 @@ class Search(NamedTuple):
 ORIGINAL_IS_IDLE = claims.is_idle
 ORIGINAL_LABELS_RELEASED = coordinator.labels_released
 ORIGINAL_IS_RELEASED = board.is_released
+ORIGINAL_ISSUE_ROWS = board.issue_rows
 ORIGINAL_COMMENTS_DUE = board.comments_due
 ORIGINAL_OVERLAPS_DUE = coordinator.overlap_comments_due
 ORIGINAL_REFUSAL = guard.refusal
 ORIGINAL_TOLD = coordinator.told_numbers
+ORIGINAL_PUT_BACK = github.put_back
+ORIGINAL_AFTER_RELEASE = coordinator.after_release
 
 
 def comment_then_labels(api, snap, key, now):
     """release_one with the spec's two steps swapped, the comment first, as
-    before 0.4.1 (F1), and every refusal still handled as release_one
+    before 0.4.1 (F1): the labels then come off and todo goes on where
+    labels_put_on says, and every refusal is still handled as release_one
     handles it, so the order is the one rule changed."""
     release, names, taken_off = snap.releases[key], coordinator.labels_released(snap, key), []
+    put_on = coordinator.labels_put_on(snap, key)
     text = coordinator.release_text(snap, key, github.holding(api, snap.default_branch, release.sha))
     try:
         released_at = (api.post(f"/repos/{api.repo}/issues/{key}/comments", {"body": text}) or {}).get("created_at")
@@ -114,7 +125,80 @@ def comment_then_labels(api, snap, key, now):
                 taken_off.append(name)
     except github.GitHubError as problem:
         return f"#{key}: taking the labels off failed: {problem}" + github.put_back(api, key, taken_off)
-    coordinator.after_release(snap, key, released_at or now.isoformat(), names)
+    refused = github.put_labels_on(api, key, put_on, taken_off)
+    if refused:
+        return refused
+    coordinator.after_release(snap, key, released_at or now.isoformat(), names, put_on)
+    return f"#{key}: claim released"
+
+
+def issue_rows_but_blockers(snap, label, unclaimed_only):
+    """board.issue_rows with the Blockers section left empty, as a page
+    that left a blocker to the Queue would have it."""
+    return [] if label == labels.BLOCKER else ORIGINAL_ISSUE_ROWS(snap, label, unclaimed_only)
+
+
+def issue_rows_unclaimed_blockers(snap, label, unclaimed_only):
+    """board.issue_rows with the Blockers section listing only the blockers
+    nobody has claimed, as the Queue lists its issues."""
+    return ORIGINAL_ISSUE_ROWS(snap, label, unclaimed_only or label == labels.BLOCKER)
+
+
+def issue_rows_hiding(hidden):
+    """board.issue_rows with the label hidden left out of each row's
+    labels, so an issue it keeps a worker off reads as free to take."""
+    def rows(snap, label, unclaimed_only):
+        return [[number, title, ", ".join(n for n in names.split(", ") if n != hidden)]
+                for number, title, names in ORIGINAL_ISSUE_ROWS(snap, label, unclaimed_only)]
+    return rows
+
+
+def issue_rows_dropping(section, label_carried):
+    """board.issue_rows with the issues carrying label_carried left out of
+    the section that lists the issues labelled section, as a page that
+    took them for another section's would have it."""
+    def rows(snap, label, unclaimed_only):
+        found = ORIGINAL_ISSUE_ROWS(snap, label, unclaimed_only)
+        return [r for r in found if label != section or label_carried not in r[2].split(", ")]
+    return rows
+
+
+def issue_rows_without_given_blockers(snap, label, unclaimed_only):
+    """board.issue_rows with the Blockers section leaving out a blocker
+    shown under Given to workers, as if a section listed each issue once."""
+    found = ORIGINAL_ISSUE_ROWS(snap, label, unclaimed_only)
+    given = {row[0] for row in board.given_rows(snap)}
+    return [r for r in found if label != labels.BLOCKER or r[0] not in given]
+
+
+def relabelled_before_the_comment(api, snap, key, now):
+    """github.release_one with one change: the board's copy of the issue is
+    relabelled as soon as the labels are off and todo is on, before the
+    comment, and left so when the comment fails and the labels go back on,
+    so the page of a run whose release GitHub refused shows the issue as
+    released while GitHub holds its labels again."""
+    release = snap.releases[key]
+    names, put_on = coordinator.labels_released(snap, key), coordinator.labels_put_on(snap, key)
+    taken_off = []
+    try:
+        for name in names:
+            if github.take_label_off(api, key, name):
+                taken_off.append(name)
+    except github.GitHubError as problem:
+        return f"#{key}: not released, taking the labels off failed: {problem}" + github.put_back(api, key, taken_off)
+    refused = github.put_labels_on(api, key, put_on, taken_off)
+    if refused:
+        return refused
+    text = coordinator.release_text(snap, key, github.holding(api, snap.default_branch, release.sha))
+    for issue in [snap.claim_issues[key]] + [i for i in snap.issues if str(i.number) == key]:
+        issue.labels = coordinator.relabelled(issue.labels, names, put_on)
+    try:
+        released_at = (api.post(f"/repos/{api.repo}/issues/{key}/comments", {"body": text}) or {}).get("created_at")
+    except github.GitHubError as problem:
+        released_at = github.landed_release(api, key, release)
+        if not released_at:
+            return f"#{key}: not released, the comment failed: {problem}" + github.put_back(api, key, taken_off, put_on)
+    coordinator.after_release(snap, key, released_at or now.isoformat(), names, put_on)
     return f"#{key}: claim released"
 
 
@@ -205,6 +289,23 @@ def each_leg_from_its_own_look(clients, workers, looks, areas=None):
     itself at its own moment, so two looks that differ on whether the
     holder's pull request is behind deal its issue twice."""
     return {w: team.next_for(clients[look], w, list(workers), areas) for w, look in zip(workers, looks)}
+
+
+def put_labels_on_then(put_back_of):
+    """github.put_labels_on with one change: once GitHub refuses the todo,
+    put_back_of(taken_off, put_on) says which labels go back on and which
+    come off again, where the library puts back every label it took off and
+    takes the todo off again."""
+    def put_labels_on(api, key, put_on, taken_off):
+        if not put_on:
+            return ""
+        try:
+            api.post(f"/repos/{api.repo}/issues/{key}/labels", {"labels": put_on})
+        except github.GitHubError as problem:
+            return (f"#{key}: not released, putting todo on failed: {problem}"
+                    + github.put_back(api, key, *put_back_of(taken_off, put_on)))
+        return ""
+    return put_labels_on
 
 
 def given_rows_needing_todo(snap):
@@ -380,7 +481,7 @@ MUTANTS = {
         coordinator, "overlap_comments_due", lambda snapshot, told: ORIGINAL_OVERLAPS_DUE(snapshot, {}),
         "G7", "overlapping work is told once"),
     "the labels not put back": Mutant(
-        github, "put_back", lambda api, key, names: "",
+        github, "put_back", lambda api, key, names, put_on=(): "",
         "G3L", "a run that fails between the two puts back the labels it took off"),
     "a lost comment's release not seen": Mutant(
         github, "landed_release", lambda api, key, release: "",
@@ -415,6 +516,77 @@ MUTANTS = {
     "given to workers needing the label todo": Mutant(
         board, "given_rows", given_rows_needing_todo,
         "G9", "every open, unclaimed issue a worker's label names is shown under Given to workers, todo or not (F14)"),
+    "a release that leaves todo off": Mutant(
+        coordinator, "labels_put_on", lambda snapshot, key: [],
+        "G3", "a release puts todo on an issue that carries none of todo, epic and blocker, so the Queue lists it "
+              "again (F15)"),
+    "a failed release leaves its todo on": Mutant(
+        github, "put_back", lambda api, key, names, put_on=(): ORIGINAL_PUT_BACK(api, key, names),
+        "G3L", "a release that fails after putting todo on takes it off again, so the issue is as the run found it (F15)"),
+    "a refused todo puts no label back": Mutant(
+        github, "put_labels_on", put_labels_on_then(lambda taken_off, put_on: ([], put_on)),
+        "G3L", "a release whose todo GitHub refuses puts back the labels it took off (F15's review)"),
+    "a todo written and lost stays on": Mutant(
+        github, "put_labels_on", put_labels_on_then(lambda taken_off, put_on: (taken_off, ())),
+        "G3L", "a todo GitHub wrote and lost its answer to is taken off again with the labels put back (F15's review)"),
+    "an epic gets todo": Mutant(
+        coordinator, "NEEDS_NO_TODO", frozenset({labels.TODO, labels.BLOCKER}),
+        "G3", "a release puts no todo on an epic, which the Queue never lists (F15's review)"),
+    "a blocker gets todo": Mutant(
+        coordinator, "NEEDS_NO_TODO", frozenset({labels.TODO, labels.EPIC}),
+        "G3", "a release puts no todo on a blocker, which the board lists under Blockers (F15's review)"),
+    "a blocked task gets no todo": Mutant(
+        coordinator, "NEEDS_NO_TODO", frozenset({labels.TODO, labels.EPIC, labels.BLOCKER, labels.BLOCKED}),
+        "G3", "a release puts todo on a task labelled blocked too, which the Queue then lists with blocked beside "
+              "it (F15's second review)"),
+    "the Blockers section left empty": Mutant(
+        board, "issue_rows", issue_rows_but_blockers,
+        "G9", "the board lists every open issue labelled blocker under Blockers, claimed or not, where a "
+              "released blocker is listed (F15's second review)"),
+    "the Blockers section without the held blockers": Mutant(
+        board, "issue_rows", issue_rows_unclaimed_blockers,
+        "G9", "the board lists every open issue labelled blocker under Blockers, claimed or not, so a worker sees "
+              "a held blocker is held (F15's third review)"),
+    "a held blocker's row without claimed": Mutant(
+        board, "issue_rows", issue_rows_hiding(labels.CLAIMED),
+        "G9", "a row of the Blockers shows its issue's labels, which a worker reads to leave a held blocker to its "
+              "holder (F15's third review)"),
+    "a row without blocked": Mutant(
+        board, "issue_rows", issue_rows_hiding(labels.BLOCKED),
+        "G9", "a row of the Queue or the Blockers shows blocked, which keeps every worker off the issue (F15's "
+              "fourth review)"),
+    "a row without epic": Mutant(
+        board, "issue_rows", issue_rows_hiding(labels.EPIC),
+        "G9", "a row of the Blockers shows epic, which keeps every worker off the issue (F15's fourth review)"),
+    "the Blockers section without epic blockers": Mutant(
+        board, "issue_rows", issue_rows_dropping(labels.BLOCKER, labels.EPIC),
+        "G9", "the board lists every open issue labelled blocker under Blockers, an epic among them (F15's fourth "
+              "review)"),
+    "the Blockers section without blocked blockers": Mutant(
+        board, "issue_rows", issue_rows_dropping(labels.BLOCKER, labels.BLOCKED),
+        "G9", "the board lists every open issue labelled blocker under Blockers, one labelled blocked among them "
+              "(F15's fourth review)"),
+    "the Blockers section without the given blockers": Mutant(
+        board, "issue_rows", issue_rows_without_given_blockers,
+        "G9", "the board lists every open issue labelled blocker under Blockers, one a worker's label gives among "
+              "them (F15's fourth review)"),
+    "the Queue without the blockers labelled todo": Mutant(
+        board, "issue_rows", issue_rows_dropping(labels.TODO, labels.BLOCKER),
+        "G5", "the Queue lists every open, unclaimed issue labelled todo that no worker's label gives and that is "
+              "no epic, a blocker among them (F15's fourth review)"),
+    "a release relabels the board before its comment": Mutant(
+        github, "release_one", relabelled_before_the_comment,
+        "G9", "the page of a run whose release failed shows the issue's labels as GitHub holds them (F15's fourth "
+              "review)"),
+    "a bare worker: taken off at release": Mutant(
+        labels, "is_holder_label", lambda name: name.startswith(labels.HOLDER_PREFIXES),
+        "G3", "a release takes off claimed and the labels that name a worker, and a bare worker: names none (F15's "
+              "fourth review)"),
+    "the release's own page without its todo": Mutant(
+        coordinator, "after_release",
+        lambda snapshot, key, released_at, taken_off, put_on=(): ORIGINAL_AFTER_RELEASE(snapshot, key, released_at,
+                                                                                        taken_off),
+        "G5", "the run that releases a claim lists its issue in the Queue on the page it writes (F15)"),
     "an overlap marker read on any line": Mutant(
         coordinator, "told_numbers", told_on_any_line,
         "G7", "a comment that quotes the marker further down told nothing"),
@@ -441,6 +613,9 @@ MUTANTS = {
 CLAIM = Verb("claim", "a", (1,))
 CLAIMED = Verb("label-on", "a", (1, "claimed"))
 WORKER = Verb("label-on", "a", (1, "worker:a"))
+# A claim held and idle past the release: a claims #1, announces it and the
+# clock runs 25 hours.
+DUE = (CLAIM, CLAIMED, WORKER, Verb("wait", "clock", (25,)))
 SHARED = ("src/shared.py",)
 
 # Cheapest first, since a mutant is judged by the first search that
@@ -452,7 +627,11 @@ SHARED = ("src/shared.py",)
 # does (F9), so the adapter's reading of how a held branch stands is
 # searched and not only traced. The holder's search runs each board run in
 # its two halves (DESIGN.md, 3.3), so a rule that reads the repository
-# again in the second half is met.
+# again in the second half is met. The released blocker's search under
+# every fault comes after the blocker's two without faults, which are
+# cheaper and so are credited with the mutants they were added for; it
+# keeps the one only a refused comment shows, a release that relabels the
+# board before its comment.
 PLAIN_COMMANDS = [c for c in guard_grammar.commands() if c.prefix == "" and c.wrapper == "{}"]
 
 
@@ -481,12 +660,45 @@ def dealing_lane():
             for deal in dealing.doubled(lane) for n in deal.doubled}
 
 
+def labels_lane():
+    """One issue carrying each mix of labels the domain gives
+    (domains.label_sets), a board run on it and a due claim's release on
+    it, each step checked as a search checks one: every list the page
+    shows and each row's labels, and every label a release takes off or
+    puts on, held to the oracle for every mix a person can label an issue
+    with, where each search seeds one (F15's fourth review)."""
+    found = {}
+    now = Verb("board", verbs.BOARD, (cycle.SCHEDULE, ""))
+    for names in domains.label_sets():
+        for steps in ((now,), DUE + (now,)):
+            model = M.seeded((1,), writers=("a", "b"), labels=tuple(names))
+            cycle.board_run(model)
+            for step in steps:
+                before = model.clone()
+                outcome = verbs.apply(model, step)
+                for v in invariants.step_checks(before, model, step, outcome):
+                    found.setdefault((v.guarantee, v.detail), (f"#1 labelled {', '.join(names) or 'nothing'}",) + steps)
+    return found
+
+
 LANES = (Lane("the regression traces", traces_lane),
          Lane("the guard grammar against git's answers", guard_lane),
          Lane("dealing at every look", dealing_lane))
+# Every label mix comes after the searches: it is the widest and the
+# slowest, and a mutant reaches it only past every search.
+LABEL_MIXES = Lane("every label mix on one issue", labels_lane)
 SEARCHES = (
-    Search("a released claim under every fault", (CLAIM, CLAIMED, WORKER, Verb("wait", "clock", (25,))),
-           Scope(workers=("a",), people=(), waits=(25,), faults=tuple(verbs.FAULTS)), 2),
+    Search("a released claim under every fault", DUE, Scope(workers=("a",), people=(), waits=(25,),
+                                                             faults=tuple(verbs.FAULTS)), 2),
+    Search("a released task given by a label alone, under every fault", DUE,
+           Scope(workers=("a",), people=(), waits=(25,), faults=tuple(verbs.FAULTS)), 2, labels=("worker:a",)),
+    Search("a released epic", DUE, Scope(workers=("a",), people=(), waits=(25,)), 1, labels=("epic",)),
+    Search("a released blocker", DUE, Scope(workers=("a",), people=(), waits=(25,)), 1, labels=("blocker",)),
+    Search("a released blocked task", DUE, Scope(workers=("a",), people=(), waits=(25,)), 1, labels=("blocked",)),
+    Search("a held blocker", (CLAIM, CLAIMED, WORKER), Scope(workers=("a",), people=(), waits=(25,)), 2,
+           labels=("blocker",)),
+    Search("a released blocker under every fault", DUE,
+           Scope(workers=("a",), people=(), waits=(25,), faults=tuple(verbs.FAULTS)), 2, labels=("blocker",)),
     Search("careless workers on a held claim", (CLAIM, CLAIMED),
            Scope(workers=("a", "b"), people=(M.OWNER,), waits=(25,), careless=True), 3),
     Search("two claims on one file", (CLAIM, Verb("claim", "b", (2,))),
@@ -502,14 +714,14 @@ SEARCHES = (
            Scope(workers=("a", "b"), issues=(1, 2), people=(SAM,), waits=(25,),
                  files=((1, SHARED), (2, SHARED))), 2, issues=(1, 2)),
 )
-CATCHERS = LANES + SEARCHES
+CATCHERS = LANES + SEARCHES + (LABEL_MIXES,)
 
 
 # --- running ------------------------------------------------------------------
 
 def start(search):
     """The search's starting state, with the violations met on its prefix."""
-    model = M.seeded(search.issues, writers=("a", "b", "c", CAROL, DANA))
+    model = M.seeded(search.issues, writers=("a", "b", "c", CAROL, DANA), labels=search.labels)
     model.opaque_pulls = search.opaque_pulls
     cycle.board_run(model)
     found = []

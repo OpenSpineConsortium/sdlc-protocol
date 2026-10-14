@@ -143,6 +143,13 @@ class ReleaseText(unittest.TestCase):
         snap.claim_issues["12"].labels = ["account:main", "blocker", "claimed", "todo", "worker:nightly"]
         self.assertEqual(coordinator.labels_released(snap, "12"), ["account:main", "claimed", "worker:nightly"])
 
+    def test_a_bare_worker_prefix_stays_on(self):
+        """F15's fourth review: a bare worker: names no worker, so a release
+        leaves it on, as the board and the spec read it."""
+        snap = idle_claim()
+        snap.claim_issues["12"].labels = ["claimed", "todo", "worker:", "worker:nightly"]
+        self.assertEqual(coordinator.labels_released(snap, "12"), ["claimed", "worker:nightly"])
+
     def test_after_the_release_the_board_counts_it_and_the_queue_has_the_issue(self):
         snap = idle_claim()
         coordinator.after_release(snap, "12", "2026-09-20T12:00:05Z", ["claimed", "worker:nightly"])
@@ -150,6 +157,35 @@ class ReleaseText(unittest.TestCase):
         self.assertEqual(snap.issues[0].labels, ["todo"])
         self.assertEqual(board.released_keys(snap), {"12"})
         self.assertIn("| #12 | Describe the board | todo |", board.render(snap).split(board.QUEUE_HEADING)[1])
+
+    def test_a_release_puts_todo_on_an_issue_that_carries_none_of_todo_epic_and_blocker(self):
+        """F15: the Queue lists only an issue labelled todo, and a task a
+        worker's label alone gave carries none, so until the fix its
+        released issue was shown nowhere; an epic gets none, since the
+        Queue never lists one, and a blocker none, since the board lists it
+        under Blockers and the clerk deals it first without todo. A task
+        its worker labelled blocked gets todo too: the Queue lists it with
+        blocked beside it, and nobody takes it, neither a worker reading
+        the board (Pick) nor the clerk, until blocked comes off."""
+        snap = idle_claim()
+        for names, put_on in ((["claimed", "worker:nightly"], ["todo"]), (["claimed", "todo", "worker:nightly"], []),
+                              (["claimed", "epic", "worker:nightly"], []), (["blocker", "claimed"], []),
+                              (["blocked", "claimed", "worker:nightly"], ["todo"]), ([], ["todo"])):
+            with self.subTest(labels=names):
+                snap.claim_issues["12"].labels = names
+                self.assertEqual(coordinator.labels_put_on(snap, "12"), put_on)
+        self.assertEqual(coordinator.labels_put_on(snap, "99"), [])
+
+    def test_after_a_release_that_put_todo_on_the_queue_has_the_issue_given_by_a_label_alone(self):
+        snap = idle_claim()
+        snap.claim_issues["12"].labels = ["claimed", "worker:nightly"]
+        snap.issues[0].labels = ["claimed", "worker:nightly"]
+        self.assertNotIn("#12", board.render(snap).split(board.QUEUE_HEADING)[1])
+        coordinator.after_release(snap, "12", "2026-09-20T12:00:05Z", ["claimed", "worker:nightly"], ["todo"])
+        self.assertEqual(snap.claim_issues["12"].labels, ["todo"])
+        self.assertEqual(snap.issues[0].labels, ["todo"])
+        self.assertIn("| #12 | Describe the board | todo |", board.render(snap).split(board.QUEUE_HEADING)[1])
+        self.assertEqual(coordinator.relabelled(["todo", "blocker"], ["blocker"], ["todo"]), ["todo"])
 
 
 def meeting_work():

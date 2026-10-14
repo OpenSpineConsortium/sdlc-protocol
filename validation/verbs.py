@@ -65,6 +65,9 @@ FAULTS = {
                                   retry_after="60"),
     "label-delete-500": Fault("DELETE", "/issues/*/labels/*", 500),
     "label-post-500": Fault("POST", "/issues/*/labels", 500),
+    # A label GitHub writes and loses its answer to, as a release's todo
+    # can be (F15's review).
+    "label-post-lost": Fault("POST", "/issues/*/labels", 502, applied=True),
     "rename-403": Fault("POST", "/branches/*/rename", 403),
     "rename-422": Fault("POST", "/branches/*/rename", 422),
     "ref-delete-422": Fault("DELETE", "/git/refs/heads/*", 422),

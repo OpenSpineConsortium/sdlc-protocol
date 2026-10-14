@@ -144,8 +144,9 @@ def the_worker_line_round_trips(worker: str, spelling: str) -> None:
 
 def holder_names_each_once_in_order(names: list) -> None:
     """Each worker once, in the order its first label comes; any holder
-    label reserves the issue, and so does epic."""
-    assert len(names) <= 10
+    label reserves the issue, and so does epic; a bare prefix names nobody,
+    so a release leaves it on and no reader takes it for a worker."""
+    assert len(names) <= 11
     found = labels.holder_names(names)
     assert len(found) == len(set(found))
     firsts = []
@@ -158,6 +159,9 @@ def holder_names_each_once_in_order(names: list) -> None:
     issue = {"labels": names}
     assert labels.worker_of(issue) in (set(found) | {None})
     assert (labels.worker_of(issue) is None) == (not found)
+    named = [n for n in sorted(names) if any(n.startswith(p) and n[len(p):] for p in labels.HOLDER_PREFIXES)]
+    assert labels.holder_labels(issue) == named
+    assert all(labels.is_holder_label(n) == (n in named) for n in names)
 
 
 # --- the page ---------------------------------------------------------------------
@@ -250,7 +254,9 @@ def a_release_takes_both_acts(issue_labels: list, draft: object, commit_h: int, 
     request, and a release comment after the claim went idle; a released
     claim's pull request is owed no comment; and the release text starts
     with the marker while the labels taken off are claimed and the
-    holders' alone."""
+    holders' alone, a bare prefix naming nobody, read here from the
+    prefixes and not through labels.is_holder_label, so a change to that
+    rule shows."""
     assert commit_h in HOURS and (released_h is None or released_h in HOURS)
     snapshot = release_snapshot(issue_labels, draft, commit_h, released_h)
     released = board.released_keys(snapshot)
@@ -264,7 +270,8 @@ def a_release_takes_both_acts(issue_labels: list, draft: object, commit_h: int, 
     assert claims.starts_with_release_marker({"body": text})
     assert claims.is_release_comment({"body": text, **RELEASER})
     off = coordinator.labels_released(snapshot, "5")
-    assert set(off) == {n for n in issue_labels if n == "claimed" or n.startswith(labels.HOLDER_PREFIXES)}
+    named = {n for n in issue_labels for p in labels.HOLDER_PREFIXES if n.startswith(p) and n[len(p):]}
+    assert set(off) == {n for n in issue_labels if n == "claimed"} | named
 
 
 # --- the guard ---------------------------------------------------------------------
@@ -387,7 +394,8 @@ def cases():
             for began in BEGAN],
         told_numbers_reads_the_first_line_of_a_trusted_comment: [(b, t) for b in MARKER_BODIES for t in bools],
         a_release_takes_both_acts: [
-            (ls, d, c, r) for ls in ([], ["claimed"], ["in-review"], ["claimed", "worker:a"], ["todo", "account:a"])
+            (ls, d, c, r) for ls in ([], ["claimed"], ["in-review"], ["claimed", "worker:a"], ["todo", "account:a"],
+                                     ["claimed", "worker:"], ["claimed", "worker:", "agent:a"])
             for d in (None, True, False) for c in (0, 24) for r in (None, 1, 24, 25, 49)],
         the_guard_refuses_the_forbidden_shapes: sorted({(c.option, c.spec) for c in guard_grammar.commands()}),
         the_protocol_check_has_four_rules: [(n, c, d, f, k) for n in (1, 9999) for c in bools for d in bools

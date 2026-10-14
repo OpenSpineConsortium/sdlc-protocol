@@ -52,6 +52,22 @@ def given(page):
     return {number(r[0]): [w.strip() for w in r[2].split(",")] for r in rows(page, board.GIVEN_HEADING)}
 
 
+def labelled(page, heading):
+    """A section of issues (the Queue, Blockers) as a map from issue number
+    to the labels its row shows."""
+    return {number(r[0]): [n.strip() for n in r[2].split(",") if n.strip()] for r in rows(page, heading)}
+
+
+def blockers(page):
+    """The Blockers section as a map from issue number to its labels."""
+    return labelled(page, board.BLOCKER_HEADING)
+
+
+def queue_labelled(page):
+    """The Queue as a map from issue number to its labels."""
+    return labelled(page, board.QUEUE_HEADING)
+
+
 def claims(page):
     """The Claims section's rows as (issue cell, branch, worker, pull cell)."""
     return [(r[0], r[1], r[2], r[3]) for r in rows(page, board.CLAIM_HEADING)]

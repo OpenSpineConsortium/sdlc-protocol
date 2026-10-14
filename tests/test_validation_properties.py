@@ -36,10 +36,11 @@ class TheDomain(unittest.TestCase):
         self.assertEqual(len(names), len(set(names)))
         self.assertTrue(set(domains.short_names()) <= set(names))
 
-    def test_the_label_sets_carry_the_three_spellings(self):
+    def test_the_label_sets_carry_the_three_spellings_and_a_bare_prefix(self):
         sets = list(domains.label_sets())
-        self.assertEqual(len(sets), 1024)
+        self.assertEqual(len(sets), 2048)
         self.assertIn(["todo", "worker:a", "account:a", "agent:a"], sets)
+        self.assertIn(["todo", "worker:a", "worker:"], sets)
 
 
 class TheLane(unittest.TestCase):

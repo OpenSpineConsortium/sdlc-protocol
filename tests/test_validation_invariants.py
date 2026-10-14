@@ -327,6 +327,43 @@ class TheOpenFindingsShow(unittest.TestCase):
                          [("G9", "Given to workers is {}, the oracle's {1: ['a']}")])
 
 
+class AReleaseThatPutsTodoOn(unittest.TestCase):
+    """F15's review: a release puts todo on a task a worker's label alone
+    gave, and a failure there leaves the issue as the run found it."""
+
+    DUE = [Verb("claim", "a", (1,)), Verb("label-on", "a", (1, "claimed")), Verb("label-on", "a", (1, "worker:a")),
+           Verb("wait", "clock", (25,))]
+
+    def test_a_todo_github_refused_and_never_wrote_still_holds_the_run_to_putting_the_labels_back(self):
+        """Taking off a todo GitHub never wrote answers 404, which is no
+        refused putting back, so a run that puts no label back is caught
+        (G3L), where until the review the check was skipped."""
+        steps = self.DUE + [board_with("label-post-500"), BOARD]
+        self.assertEqual(violations(steps, labels=("worker:a",)), [])
+        with mutants.switched_on(mutants.MUTANTS["a refused todo puts no label back"]):
+            self.assertIn("G3L", guarantees(violations(steps, labels=("worker:a",))))
+
+    def test_a_todo_github_wrote_and_lost_its_answer_to_is_taken_off_again(self):
+        steps = self.DUE + [board_with("label-post-lost"), BOARD]
+        self.assertEqual(violations(steps, labels=("worker:a",)), [])
+        with mutants.switched_on(mutants.MUTANTS["a todo written and lost stays on"]):
+            self.assertIn("G3L", guarantees(violations(steps, labels=("worker:a",))))
+
+    def test_a_blocker_and_an_epic_get_no_todo(self):
+        for label, mutant in (("blocker", "a blocker gets todo"), ("epic", "an epic gets todo")):
+            with self.subTest(label=label):
+                steps = self.DUE + [BOARD]
+                self.assertEqual(violations(steps, labels=(label,)), [])
+                with mutants.switched_on(mutants.MUTANTS[mutant]):
+                    self.assertIn("G3", guarantees(violations(steps, labels=(label,))))
+
+    def test_only_a_refusal_to_take_the_todo_off_is_a_refused_putting_back(self):
+        refused = Call("DELETE", "/issues/1/labels/todo", (), None, 500, False, True)
+        not_there = Call("DELETE", "/issues/1/labels/todo", (), None, 404, False)
+        self.assertTrue(invariants.put_back_refused([refused], 1))
+        self.assertFalse(invariants.put_back_refused([not_there], 1))
+
+
 class TheChecksHoldUnderAFaultThatNeverFires(unittest.TestCase):
     """The review of this step found the whole effects comparison skipped
     for any board verb that named a fault, fired or not."""

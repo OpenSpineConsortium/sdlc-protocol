@@ -8,7 +8,8 @@ isdigit() holds and isdecimal() does not, and the non-ASCII ones for
 which isdecimal() holds, each alone and followed by 0 or 1, since int()
 takes the second class and the branch rules must not. Whole hours around
 the thresholds. Label sets from the label names the spec gives, in the
-three spellings of a worker's label. The worker names of a three-worker
+three spellings of a worker's label, with a bare worker: that names
+nobody. The worker names of a three-worker
 scope. Everything here is deterministic, so a failure replays.
 """
 
@@ -70,8 +71,10 @@ def iso(hours):
 
 def label_sets():
     """Every subset of the spec's labels with at most one holder label in
-    each spelling for worker a, and b's worker label."""
-    holders = tuple(p + "a" for p in HOLDER_SPELLINGS) + ("worker:b",)
+    each spelling for worker a, b's worker label, and a bare worker:,
+    which names nobody (F15's fourth review: a release took it off as a
+    worker's label)."""
+    holders = tuple(p + "a" for p in HOLDER_SPELLINGS) + ("worker:b", HOLDER_SPELLINGS[0])
     names = SPEC_LABELS + holders
     for bits in itertools.product((False, True), repeat=len(names)):
         yield [name for name, on in zip(names, bits) if on]

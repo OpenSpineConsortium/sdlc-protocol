@@ -54,15 +54,19 @@ SPEC = {
     "older spellings": "The older spellings account:<name> and agent:<name> are read as the same label.",
     "given": "An issue a worker's label names is that worker's alone: it is left out of the board's Queue and "
              "shown under Given to workers until the worker claims it.",
-    "todo": "An issue labelled todo and shown unclaimed on the board is free to take.",
+    "todo": "An issue labelled todo and shown unclaimed on the board is free to take as Pick says.",
+    "epic": "The board's Queue leaves an epic out, since nobody takes one whole.",
+    "blockers": "The board lists every open issue labelled blocker under Blockers, claimed or not",
     "idle": "A claim whose branch has had no commit for more than 24 hours, by the committer date of its head, is "
             "released by the coordinator, unless it is finished",
     "finished": "an issue labelled in-review, a pull request marked ready, or a draft whose author's latest comment "
                 "on it starts with \"finished; ready to mark\" waits for review however long it takes.",
     "order": "The coordinator first takes the label claimed and every worker's label off the issue, a label "
-             "already gone counting as taken off; then it posts a comment on the issue whose first line is "
-             "`<!-- sdlc-coordinator: claim-released -->`",
-    "put back": "A run that fails between the two puts back the labels it took off",
+             "already gone counting as taken off, and puts the label todo on it when it carries none of todo, "
+             "epic and blocker, so the Queue lists it again even when a worker's label alone gave it to the "
+             "worker, while a blocker is listed under Blockers without it; then it posts a comment on the issue "
+             "whose first line is `<!-- sdlc-coordinator: claim-released -->`",
+    "put back": "A run that fails between the two puts back the labels it took off and takes off the todo it put on",
     "candidates": "It takes its candidates from the open issues that have a branch `claude/<issue>`, whatever "
                   "their labels, and skips a claim whose latest release comment came more than 24 hours after "
                   "the branch's last commit, which is a claim already released",
@@ -256,11 +260,21 @@ def held_numbers(model):
 
 
 def queue(model):
-    """The Queue: open issues labelled todo, unclaimed, and given to no
-    worker (SPEC["todo"], SPEC["given"])."""
+    """The Queue: open issues labelled todo, unclaimed, given to no worker
+    and no epic (SPEC["todo"], SPEC["given"], SPEC["epic"]). Until F15's
+    fourth review the oracle listed an epic labelled todo, which no search
+    seeded, and the library has always left out; the labels lane met it
+    (mutants.labels_lane), and the spec's epic line now says so."""
     held = held_numbers(model)
     return sorted(n for n, i in model.issues.items() if i.state == "open" and TODO in i.labels
-                  and CLAIMED not in i.labels and n not in held and not workers_named(i.labels))
+                  and EPIC not in i.labels and CLAIMED not in i.labels and n not in held
+                  and not workers_named(i.labels))
+
+
+def blockers(model):
+    """Blockers: every open issue labelled blocker, claimed or not, in
+    number order (SPEC["blockers"])."""
+    return sorted(n for n, i in model.issues.items() if i.state == "open" and BLOCKER in i.labels)
 
 
 def given(model, known=AS_BUILT):
@@ -291,6 +305,13 @@ def labels_released(model, number):
     """The labels a release takes off: claimed and every worker's label in
     the three spellings, the ones still on."""
     return sorted(n for n in model.issues[number].labels if n == CLAIMED or is_worker_label(n))
+
+
+def labels_put_on(model, number):
+    """The label a release puts on (SPEC["order"]): todo, when the issue
+    carries none of todo, epic and blocker."""
+    names = model.issues[number].labels
+    return () if names & {TODO, EPIC, BLOCKER} else (TODO,)
 
 
 # --- overlaps -----------------------------------------------------------------
@@ -472,9 +493,13 @@ def expected_effects(before, event="schedule", ref_name="", known=AS_BUILT):
     model = before.clone()
     effects = []
     for number in sorted(n for n in model.issues if due(model, n)):
+        put_on = labels_put_on(model, number)
         for name in labels_released(model, number):
             effects.append(Effect("label-off", number, name))
             model.issues[number].labels = model.issues[number].labels - {name}
+        if put_on:
+            effects.append(Effect("label-on", number, put_on))
+            model.issues[number].labels = model.issues[number].labels | set(put_on)
         effects.append(Effect("comment", number, "claim-released"))
         model.issues[number].comments += (Comment(BOT, "NONE", model.now, RELEASE_MARKER),)
     effects += overlap_effects(model, known)
