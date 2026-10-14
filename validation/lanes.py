@@ -99,8 +99,9 @@ COUNTEREXAMPLES = "counterexamples"
 PARTS = ("search", "soak", "gate", "git", "guard", "conformance")
 
 # What --quick runs: a few steps of everything, for a look and for the tests.
-QUICK = {"depths": {"E-two": 3, "E-deep": 4, "E-faults": 2}, "soak_seeds": 4, "soak_steps": 40, "soak_chunk": 2,
-         "conformance_paths": 6, "conformance_length": 4, "gate_depth": 4, "gate_sequences": 3, "gate_length": 8}
+QUICK = {"depths": {"E-two": 3, "E-deep": 4, "E-faults": 2, "E-activity": 2}, "soak_seeds": 4, "soak_steps": 40,
+         "soak_chunk": 2, "conformance_paths": 6, "conformance_length": 4, "gate_depth": 4, "gate_sequences": 3,
+         "gate_length": 8}
 
 
 class Settings:
@@ -758,11 +759,21 @@ def stop_on_term(runner):
     part with 1. The two are told apart by the process's id, since the
     runner can itself be a process multiprocessing started, as under a
     test runner that forks, and there it took the part's way and went
-    on after the signal."""
+    on after the signal. Once run's cleanup has begun, which run marks
+    as its finally's first step, a store before which no handler runs,
+    the handler records the signal in stop.signalled and returns, and
+    run ends by it once the cleanup is done: a SIGTERM that came with a
+    SIGINT as the cleanup began had its handler run after SIGINT's, at
+    the cleanup loop's own back edge, which no try holds, and its
+    Terminated left run past all of it."""
     def stop(signum, frame):
         if os.getpid() != runner:
             raise SystemExit(128 + signum)
+        if stop.cleaning:
+            stop.signalled = True
+            return
         raise Terminated()
+    stop.cleaning = stop.signalled = False
     return stop
 
 
@@ -803,16 +814,23 @@ def run(settings, out=sys.stdout):
     forked, have their handlers run one after the other, and the second
     ran as the cleanup began and raised past all of it, so the parts ran
     on, the runner waited for them at its exit and the marker stayed; the
-    cleanup is begun again until it is done, and a run a SIGTERM reached
-    ends by it whatever else ended it. The results file says whether the
-    run finished, every part any invocation of it asked for landed or
-    shown red, and one that did not is red. From the marker's taking on,
-    whatever ends the run, a refusal to resume included, the finally
-    removes the marker."""
+    cleanup is begun again until it is done, whatever a handler raised in
+    it, a caller's own SIGINT handler's SystemExit as well as a
+    KeyboardInterrupt, and from its start a SIGTERM is recorded and not
+    raised (stop_on_term), so a run a SIGTERM reached ends by it whatever
+    else ended it. The results file says whether the run finished, every
+    part any invocation of it asked for landed or shown red, and one that
+    did not is red. Whatever ends the run once it is under way, a refusal
+    to resume included, the finally removes the marker; what can still
+    leave it is a signal in the instant between the marker's taking and
+    the try, or two SIGINTs within an instant of each other as the
+    cleanup begins, the second's handler run at the cleanup loop's back
+    edge, which no try holds."""
     take_marker(settings)
     marker = settings.out / RUNNING
     in_main_thread = threading.current_thread() is threading.main_thread()
-    previous = signal.signal(signal.SIGTERM, stop_on_term(os.getpid())) if in_main_thread else None
+    stop = stop_on_term(os.getpid())
+    previous = signal.signal(signal.SIGTERM, stop) if in_main_thread else None
     terminated, interrupted = False, None
     try:
         results, began = kept_results(settings)
@@ -827,6 +845,7 @@ def run(settings, out=sys.stdout):
     except Terminated:
         terminated = True
     finally:
+        stop.cleaning = True
         cleaned = False
         while not cleaned:
             try:
@@ -836,11 +855,12 @@ def run(settings, out=sys.stdout):
                         signal.signal(signal.SIGTERM, previous)
                     marker.unlink(missing_ok=True)
                     cleaned = True
-            except Terminated:
-                terminated = True
-            except KeyboardInterrupt as error:
-                interrupted = error
-        if terminated:
+            except Exception:
+                raise
+            except BaseException as error:
+                if interrupted is None:
+                    interrupted = error
+        if terminated or stop.signalled:
             os.kill(os.getpid(), signal.SIGTERM)
             raise SystemExit(128 + signal.SIGTERM)
         if interrupted is not None:

@@ -38,7 +38,7 @@ sys.path.insert(0, str(ROOT))
 
 from sdlc_protocol import claims  # noqa: E402
 from validation import cycle, deep, explore, guard_grammar, invariants, known, lanes, model as M, oracle, replay, run  # noqa: E402
-from validation import shrink, soak, verbs  # noqa: E402
+from validation import fake_github, shrink, soak, verbs  # noqa: E402
 from validation.verbs import Scope, Verb  # noqa: E402
 
 SMALL = deep.Space("small", Scope(), (), 3)
@@ -128,7 +128,10 @@ def runs_the_lane_and_goes_on(folder):
 
 
 # A runner with one part that takes three seconds to end once told to, and
-# says when it is told, in a process of its own.
+# says when it is told, in a process of its own. Given "its own SIGINT
+# handler", it runs under a caller whose SIGINT handler is its own and ends
+# the program, as many command-line programs set one; either way the caller
+# goes on after a SystemExit, as a test runner does, and says so.
 SLOW_TO_END = """\
 import os, signal, sys, time
 from pathlib import Path
@@ -151,7 +154,12 @@ def slow_to_end():
 
 lanes.first_wave = lambda settings, results: [("a slow part", slow_to_end, ())]
 lanes.second_wave = lambda settings, results: []
-lanes.run(lanes.Settings(out, only=("search",), jobs=1), open(os.devnull, "w"))
+if sys.argv[1:] == ["its own SIGINT handler"]:
+    signal.signal(signal.SIGINT, lambda signum, frame: sys.exit(130))
+try:
+    lanes.run(lanes.Settings(out, only=("search",), jobs=1), open(os.devnull, "w"))
+except SystemExit as ended:
+    (out.parent / "went-on").write_text(f"{{ended!r}}\\n", encoding="ascii")
 """
 
 
@@ -614,6 +622,26 @@ class KnownSearches(unittest.TestCase):
         self.assertEqual(known.SEARCH_ENTRIES, ())
         self.assertEqual(known.search_differences("E-faults", []), [])
 
+    def test_the_activity_faults_are_met_where_they_can_fire(self):
+        """The board reads the repository's activity only for the work in
+        the Overlaps (F13), which E-faults' one issue never has, so
+        E-faults took the two faults on that read and never met them;
+        E-activity, from two claims on one file, meets both."""
+        met = {name: 0 for name in deep.ACTIVITY_FAULTS}
+        fault_for = fake_github.FakeGitHub.fault_for
+
+        def counting(fake, call):
+            fault = fault_for(fake, call)
+            for name in met:
+                met[name] += fault == verbs.FAULTS[name]
+            return fault
+
+        with mock.patch.object(fake_github.FakeGitHub, "fault_for", counting):
+            found = deep.search_space(deep.SPACES["E-activity"], depth=2)
+        self.assertEqual(sorted(met), ["activity-500", "activity-500-all"])
+        self.assertTrue(all(met.values()), met)
+        self.assertEqual([(f.guarantee, f.detail) for f in found.found], [])
+
     def test_an_entry_names_the_violation_it_matches_and_is_owed_when_none_does(self):
         entry = known.SearchEntry("E-faults", "G1", "the board names * for claude/*, whose holder is *", "F7")
         shown = "the board names b for claude/1, whose holder is a"
@@ -633,7 +661,7 @@ class TheLaneAsOneRun(unittest.TestCase):
             settings = lanes.Settings(folder, only=("search", "soak", "conformance"), jobs=2, quick=True)
             self.assertEqual(lanes.run(settings, out), 0, out.getvalue())
             data = json.loads((Path(folder) / "deep.json").read_text(encoding="ascii"))
-        self.assertEqual(sorted(s["space"] for s in data["searches"]), ["E-deep", "E-faults", "E-two"])
+        self.assertEqual(sorted(s["space"] for s in data["searches"]), ["E-activity", "E-deep", "E-faults", "E-two"])
         self.assertEqual(data["red"], [])
         self.assertIn("search E-faults: depth 2", out.getvalue())
         self.assertIn("0 violations", out.getvalue())
@@ -646,7 +674,7 @@ class TheLaneAsOneRun(unittest.TestCase):
             out = io.StringIO()
             settings = lanes.Settings(folder, only=("search",), jobs=2, quick=True, checkpoint_every=0.05)
             self.assertEqual(lanes.run(settings, out), 0, out.getvalue())
-            self.assertEqual(out.getvalue().count(" done at "), 3)
+            self.assertEqual(out.getvalue().count(" done at "), len(deep.SPACES))
             first = json.loads((Path(folder) / "deep.json").read_text(encoding="ascii"))
             self.assertFalse(list((Path(folder) / lanes.CHECKPOINTS).glob("*")))
             again = io.StringIO()
@@ -660,7 +688,8 @@ class TheLaneAsOneRun(unittest.TestCase):
         self.assertEqual(second["run"], first["run"])
         self.assertEqual(len(second["soak"]["chunks"]), 2)
         self.assertGreaterEqual(second["seconds"], first["seconds"])
-        self.assertEqual(lanes.done_parts(second), {"search E-two", "search E-deep", "search E-faults", "soak 0", "soak 2"})
+        self.assertEqual(lanes.done_parts(second), {"search E-two", "search E-deep", "search E-faults", "search E-activity", "soak 0",
+                                                        "soak 2"})
 
     def test_a_search_the_budget_stopped_is_run_again_from_its_checkpoint_on_resume(self):
         """A stopped search keeps its checkpoint and is not done; the
@@ -689,9 +718,9 @@ class TheLaneAsOneRun(unittest.TestCase):
             self.assertEqual(lanes.run(settings, again), 0, again.getvalue())
             resumed = json.loads((Path(folder) / "deep.json").read_text(encoding="ascii"))
             self.assertFalse(list((Path(folder) / lanes.CHECKPOINTS).glob("*.pickle")))
-        self.assertEqual(len(stopped["red"]), 3)
+        self.assertEqual(len(stopped["red"]), len(deep.SPACES))
         self.assertTrue(all(line.endswith("not done") for line in stopped["red"]), stopped["red"])
-        self.assertEqual(len(resumed["searches"]), 3)
+        self.assertEqual(len(resumed["searches"]), len(deep.SPACES))
         self.assertEqual({s["space"]: s["states"] for s in resumed["searches"]}, whole)
         self.assertFalse(any(s["stopped"] for s in resumed["searches"]))
         self.assertTrue(all(s["seconds"] >= 1000.0 for s in resumed["searches"]), resumed["searches"])
@@ -740,8 +769,8 @@ class TheLaneAsOneRun(unittest.TestCase):
             self.assertEqual(lanes.run(settings, out), 1, out.getvalue())
             self.assertFalse((Path(folder) / lanes.RUNNING).exists())
             results = results_in(folder)
-        self.assertEqual(sorted(s["space"] for s in results["searches"]), ["E-deep", "E-faults", "E-two"])
-        self.assertEqual(sorted(c["space"] for c in results["conformance"]), ["E-deep", "E-faults", "E-two"])
+        self.assertEqual(sorted(s["space"] for s in results["searches"]), ["E-activity", "E-deep", "E-faults", "E-two"])
+        self.assertEqual(sorted(c["space"] for c in results["conformance"]), ["E-activity", "E-deep", "E-faults", "E-two"])
         self.assertEqual(sorted(e["part"] for e in results["errors"]), ["soak 0", "soak 2"])
         self.assertTrue(all(e["error"].startswith("its worker process died") for e in results["errors"]), results["errors"])
         self.assertEqual(len(results["red"]), 2)
@@ -758,12 +787,12 @@ class TheLaneAsOneRun(unittest.TestCase):
         mutant makes at them, 36, cost twenty seconds of replay over git
         where a few show the same."""
         with tempfile.TemporaryDirectory() as folder, \
-                mock.patch.dict(lanes.QUICK["depths"], {"E-two": 1, "E-deep": 1, "E-faults": 2}):
+                mock.patch.dict(lanes.QUICK["depths"], {"E-two": 1, "E-deep": 1, "E-faults": 2, "E-activity": 1}):
             out = io.StringIO()
             settings = lanes.Settings(folder, only=("search", "conformance"), jobs=2, quick=True, budget=0.0)
             self.assertEqual(lanes.run(settings, out), 1, out.getvalue())
             stopped = results_in(folder)
-            self.assertEqual(sorted(c["space"] for c in stopped["conformance"]), ["E-deep", "E-faults", "E-two"])
+            self.assertEqual(sorted(c["space"] for c in stopped["conformance"]), ["E-activity", "E-deep", "E-faults", "E-two"])
             self.assertEqual(lanes.counterexample_files(stopped), [])
             with mock.patch.object(claims, "is_idle", at_exactly_24_hours):
                 again = io.StringIO()
@@ -772,7 +801,8 @@ class TheLaneAsOneRun(unittest.TestCase):
             resumed = results_in(folder)
         files = lanes.counterexample_files(resumed)
         self.assertTrue(files)
-        self.assertEqual(sorted(c["space"] for c in resumed["conformance"]), ["E-deep", "E-faults", "E-two", "counterexamples"])
+        self.assertEqual(sorted(c["space"] for c in resumed["conformance"]),
+                         ["E-activity", "E-deep", "E-faults", "E-two", "counterexamples"])
         played = next(c for c in resumed["conformance"] if c["space"] == lanes.COUNTEREXAMPLES)
         self.assertEqual(played["files"], files)
         self.assertEqual((played["counterexamples"], played["paths"], played["disagreements"]), (len(files), 0, []))
@@ -889,7 +919,7 @@ class TheLaneAsOneRun(unittest.TestCase):
             settings = lanes.Settings(folder, only=("search", "soak"), jobs=2, quick=True)
             self.assertEqual(lanes.run(settings, out), 1, out.getvalue())
             results = json.loads((Path(folder) / "deep.json").read_text(encoding="ascii"))
-        self.assertEqual(sorted(s["space"] for s in results["searches"]), ["E-deep", "E-faults", "E-two"])
+        self.assertEqual(sorted(s["space"] for s in results["searches"]), ["E-activity", "E-deep", "E-faults", "E-two"])
         self.assertEqual(sorted(e["part"] for e in results["errors"]), ["soak 0", "soak 2"])
         self.assertIn("a walk that raised", results["errors"][0]["traceback"])
         self.assertEqual(len(results["red"]), 2)
@@ -1047,7 +1077,7 @@ class TheLaneAsOneRun(unittest.TestCase):
             self.assertEqual(lanes.run(lanes.Settings(folder, jobs=2, quick=True, resume=True, only=("conformance",)), out),
                              0, out.getvalue())
             done = results_in(folder)
-        self.assertEqual(len(stopped["searches"]), 3)
+        self.assertEqual(len(stopped["searches"]), len(deep.SPACES))
         self.assertIs(stopped["finished"], False)
         self.assertEqual(stopped["red"], ["the run did not finish: the parts it had not landed are not in this file"])
         self.assertIs(owing["finished"], False)
@@ -1196,6 +1226,115 @@ class TheLaneAsOneRun(unittest.TestCase):
             self.assertEqual(runner.wait(timeout=60), -signal.SIGTERM)
             self.assertFalse((out / lanes.RUNNING).exists())
 
+    def sigterm_then_sigint(self, *args):
+        """SLOW_TO_END's runner sent SIGTERM and then, while its cleanup
+        waits for the part slow to end, SIGINT, `kill <pid>` and then
+        Ctrl-C: its exit code, and whether its caller went on and the
+        marker stayed."""
+        with tempfile.TemporaryDirectory() as folder:
+            out = Path(folder) / "out"
+            runner = subprocess.Popen([sys.executable, "-c", SLOW_TO_END.format(root=str(ROOT), out=str(out)), *args],
+                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+            self.addCleanup(end_session, runner)
+            self.assertTrue(wait_for(lambda: (out / "ready").exists(), 60), "the part did not start within a minute")
+            runner.send_signal(signal.SIGTERM)
+            self.assertTrue(wait_for(lambda: (out / "ending").exists(), 60), "the part was not ended within a minute")
+            runner.send_signal(signal.SIGINT)
+            return runner.wait(timeout=60), (Path(folder) / "went-on").exists(), (out / lanes.RUNNING).exists()
+
+    def test_a_sigint_while_a_sigterm_ends_the_run_leaves_it_ended_by_the_sigterm(self):
+        """The cleanup holds the SIGINT until it is done, and its
+        KeyboardInterrupt, raised as the hold ends, is taken there, so the
+        run still ends by the SIGTERM; let out of the cleanup, it ended the
+        run by SIGINT, and a caller that catches a KeyboardInterrupt went on
+        after the SIGTERM."""
+        self.assertEqual(self.sigterm_then_sigint(), (-signal.SIGTERM, False, False))
+
+    def test_a_caller_s_own_sigint_handler_while_a_sigterm_ends_the_run_leaves_it_ended_by_the_sigterm(self):
+        """A caller's own SIGINT handler that ends the program raised
+        SystemExit as the hold ended, which the cleanup did not take, so
+        the run never ended by the SIGTERM and the caller, which catches a
+        SystemExit, went on after it. Whatever a handler raises there is
+        taken, and raised again only once the run has not ended by a
+        SIGTERM."""
+        self.assertEqual(self.sigterm_then_sigint("its own SIGINT handler"), (-signal.SIGTERM, False, False))
+
+    def test_a_sigint_held_until_the_cleanup_ends_is_raised_once_it_is_done(self):
+        """A Ctrl-C while the cleanup holds the signals reaches the runner
+        as the hold ends, once the marker is gone; its KeyboardInterrupt
+        is taken there and raised once the cleanup is done, where a run
+        that dropped it would return as if no Ctrl-C had come."""
+        def interrupted_as_the_parts_end(grace=10.0):
+            signal.raise_signal(signal.SIGINT)
+
+        self.addCleanup(signal.signal, signal.SIGINT, signal.signal(signal.SIGINT, signal.default_int_handler))
+        handler = signal.getsignal(signal.SIGTERM)
+        with tempfile.TemporaryDirectory() as folder:
+            settings = lanes.Settings(folder, only=("search",), jobs=1, quick=True)
+            with mock.patch.object(lanes, "first_wave", lambda settings, results: []), \
+                    mock.patch.object(lanes, "second_wave", lambda settings, results: []), \
+                    mock.patch.object(lanes, "end_workers", interrupted_as_the_parts_end), \
+                    self.assertRaises(KeyboardInterrupt):
+                lanes.run(settings, io.StringIO())
+            self.assertFalse((Path(folder) / lanes.RUNNING).exists())
+        self.assertIs(signal.getsignal(signal.SIGTERM), handler)
+
+    def run_tripped_as_the_cleanup_begins(self, parts, cleanup_call):
+        """A run whose first wave is the parts given and whose wait raises
+        KeyboardInterrupt, as Ctrl-C does there, with SIGINT and SIGTERM
+        both tripped in one C call as the cleanup begins, at the given
+        call of signals_held: what the run raised, and the SIGTERMs the
+        handler it put back saw."""
+        signalled, calls, held = [], [], lanes.signals_held
+
+        def recorded(signum, frame):
+            signalled.append(signum)
+
+        def interrupted(*args):
+            raise KeyboardInterrupt
+
+        def tripped_as_the_cleanup_begins():
+            calls.append(1)
+            if len(calls) == cleanup_call:
+                list(map(_thread.interrupt_main, [signal.SIGINT, signal.SIGTERM]))
+            return held()
+
+        self.addCleanup(lanes.end_workers, 0.5)
+        self.addCleanup(signal.signal, signal.SIGINT, signal.signal(signal.SIGINT, signal.default_int_handler))
+        self.addCleanup(signal.signal, signal.SIGTERM, signal.signal(signal.SIGTERM, recorded))
+        with tempfile.TemporaryDirectory() as folder:
+            settings = lanes.Settings(folder, only=("search",), jobs=1, quick=True)
+            with mock.patch.object(lanes, "first_wave", lambda settings, results: parts), \
+                    mock.patch.object(lanes, "second_wave", lambda settings, results: []), \
+                    mock.patch.object(lanes, "wait", interrupted), \
+                    mock.patch.object(lanes, "signals_held", tripped_as_the_cleanup_begins), \
+                    self.assertRaises(SystemExit) as ended:
+                try:
+                    lanes.run(settings, io.StringIO())
+                except KeyboardInterrupt:
+                    self.fail("the run ended by the SIGINT alone, though a SIGTERM reached it")
+            self.assertFalse((Path(folder) / lanes.RUNNING).exists())
+        self.assertIs(signal.getsignal(signal.SIGTERM), recorded)
+        self.assertFalse([child for child in multiprocessing.active_children() if child.name == "a part"])
+        return ended.exception.code, signalled
+
+    def test_two_signals_as_the_cleanup_begins_still_end_the_run_whole(self):
+        """A SIGINT and a SIGTERM that come together as the cleanup begins
+        have their handlers run one after the other: SIGINT's
+        KeyboardInterrupt was taken and the cleanup begun again, but
+        SIGTERM's handler ran at the cleanup loop's back edge, which no try
+        holds, and its Terminated left run past all of it, the part running
+        on, the marker left and the handler never put back. From the
+        cleanup's start the handler records the signal, and the run ends by
+        it once the cleanup is done. Here the two come after a body that
+        Ctrl-C ended, with a part running, where Python 3.12 met it, and
+        after one that ended as it should, where 3.13 met it too."""
+        with self.subTest(body="ended by Ctrl-C"):
+            self.assertEqual(self.run_tripped_as_the_cleanup_begins([("a part", sleeps, ())], 2),
+                             (128 + signal.SIGTERM, [signal.SIGTERM]))
+        with self.subTest(body="ended as it should"):
+            self.assertEqual(self.run_tripped_as_the_cleanup_begins([], 1), (128 + signal.SIGTERM, [signal.SIGTERM]))
+
     def test_a_signal_as_the_handler_is_put_back_waits_until_the_marker_is_removed(self):
         """Once the cleanup has put the default handler back, a SIGTERM
         ends the process at once, so one that came before the marker was
@@ -1217,7 +1356,8 @@ class TheLaneAsOneRun(unittest.TestCase):
         handler raised as run's finally began, past the whole cleanup: the
         part ran on, the runner waited for it at its exit, the handler was
         never put back and the marker stayed. The cleanup is begun again
-        until it is done, and the run ends by the SIGTERM."""
+        until it is done, from its start the SIGTERM is recorded and not
+        raised, and the run ends by it."""
         forked, fork, signalled = [], os.fork, []
 
         def both_signals_as_it_forks():

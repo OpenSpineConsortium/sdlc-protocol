@@ -4,18 +4,18 @@ The searches that take too long for the required check, and the checks
 that need git: a depth-first search with a depth-aware digest set, from
 a start the fast lane's searches share (a seeded repository after one
 board run, then a prefix of verbs), over the scopes of DESIGN.md 6.8
-(E-two, E-deep and E-faults); the scenarios and the regression traces
-played over the git world (git_store.py), held to known.json as the
-memory world's are; conformance, every counterexample the searches
-wrote and sampled paths of the search scopes, each played in both
-worlds and compared step by step; and git's answers for the guard
-grammar recorded again and compared with the file the fast lane judges
-the guard by. The soak and the gate's lanes are soak.py's and
+(E-two, E-deep, E-faults and E-activity); the scenarios and the
+regression traces played over the git world (git_store.py), held to
+known.json as the memory world's are; conformance, every counterexample
+the searches wrote and sampled paths of the search scopes, each played
+in both worlds and compared step by step; and git's answers for the
+guard grammar recorded again and compared with the file the fast lane
+judges the guard by. The soak and the gate's lanes are soak.py's and
 gate_search.py's; scripts/validate.py deep runs them all and writes what
 each found under an output folder, with every violation shortened
 (shrink.py) and written as a trace file replay.py plays
-(validation-out/traces/<guarantee>-<space>-<n>.json, DESIGN.md 6.6), so a
-finding is replayed with `python3 scripts/validate.py replay <file>`,
+(validation-out/traces/<guarantee>-<space>-<n>.json, DESIGN.md 6.6), so
+a finding is replayed with `python3 scripts/validate.py replay <file>`,
 in memory or over git.
 
 The search keeps, for each state's 16-byte digest, the shallowest depth
@@ -86,11 +86,19 @@ class Space(NamedTuple):
 
 CLAIM = Verb("claim", "a", (1,))
 HELD = (CLAIM, Verb("label-on", "a", (1, "claimed")), Verb("label-on", "a", (1, "worker:a")))
+# The board reads the repository's activity only for the work in the
+# Overlaps (F13), which E-faults' one issue never has, so the faults on
+# that read never fired there; E-activity meets them from two claims on
+# one file.
+ACTIVITY_FAULTS = tuple(name for name, fault in verbs.FAULTS.items() if fault.path == "/activity")
+BOTH_CLAIMED = (CLAIM, Verb("claim", "b", (2,)))
 SPACES = {
     "E-two": Space("E-two", Scope(issues=(1, 2), files=((1, SHARED), (2, SHARED))), (), 7),
     "E-deep": Space("E-deep", Scope(), (), 8),
     "E-faults": Space("E-faults", Scope(people=(OWNER, DANA, SAM), faults=tuple(verbs.FAULTS), careless=True,
                                         skews=(-48, 72)), HELD, 4),
+    "E-activity": Space("E-activity", Scope(issues=(1, 2), files=((1, SHARED), (2, SHARED)), faults=ACTIVITY_FAULTS),
+                        BOTH_CLAIMED, 5),
 }
 
 
