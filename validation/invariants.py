@@ -38,7 +38,7 @@ import re
 from collections import Counter
 from typing import NamedTuple
 
-from sdlc_protocol import board, claims, protocol_check, team
+from sdlc_protocol import board, claims, labels, protocol_check, team
 
 from . import cycle, oracle, page
 from .model import BOT, REPO
@@ -134,7 +134,17 @@ def readers_of(model):
 
 
 def one_name_one_holder(model):
-    """G1."""
+    """G1. The board's Worker cell names the branch's holder while the
+    claim file is on the branch, since the file is what the board reads
+    the worker from (spec, Claim: "the `- Worker:` line ... whose name is
+    the worker's label without the `worker:` prefix"); once the finishing
+    push has deleted the file (spec, Finish: "The pull request deletes its
+    claim file"), the spec leaves the board the issue's worker label,
+    which the Announce step put there, so the cell names that label's
+    worker, else says there is no claim file. The soak found the harness
+    holding the cell to the holder after the file was gone, on a closed
+    issue's leftover branch whose stale label named the worker that had
+    merged, which the spec's words do not ask of the board."""
     problems = []
     for ref, numbers in sorted(readers_of(model).items()):
         for number in numbers:
@@ -145,7 +155,10 @@ def one_name_one_holder(model):
         if number is None or number not in model.issues or oracle.released(model, number):
             continue
         shown = shown_worker(model, ref, number)
-        if shown not in (model.creators.get(ref), board.NO_CLAIM_FILE, board.CLAIM_FILE_NOT_READ):
+        allowed = {model.creators.get(ref), board.NO_CLAIM_FILE, board.CLAIM_FILE_NOT_READ}
+        if oracle.claim_file_text(model, ref, number) is None:
+            allowed.add(labels.worker_of({"labels": sorted(model.issues[number].labels)}))
+        if shown not in allowed:
             problems.append(Violation("G1", f"the board names {shown} for {ref}, whose holder is "
                                             f"{model.creators.get(ref)}"))
     return problems

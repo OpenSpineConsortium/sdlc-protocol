@@ -4,6 +4,7 @@ main, the rename GitHub makes, the board workflow's queue in its
 concurrency group, and a state key that keeps everything a guarantee
 reads."""
 
+import pickle
 import sys
 import unittest
 from pathlib import Path
@@ -125,6 +126,23 @@ class Rename(unittest.TestCase):
         self.assertEqual(model.creators["released/1-abcdef0"], "a")
 
 
+class Delete(unittest.TestCase):
+    def test_closes_the_open_pull_request_as_github_does(self):
+        # The soak's G9 lead (seed 427): the board deleted a branch pushed
+        # again at a released head, and the model kept its draft open, which
+        # the next run told "idle".
+        model = M.seeded()
+        model.push("a", "claude/1", claim_commit(model, "a"))
+        model.pulls[100] = M.PullRequest(100, "claude/1", "a", "Closes #1")
+        model.pulls[101] = M.PullRequest(101, "claude/1", "a", "Closes #1")
+        model.pulls[101].state = "merged"
+        model.delete_ref("claude/1")
+        self.assertEqual(model.pulls[100].state, "closed")
+        self.assertEqual(model.pulls[101].state, "merged")
+        self.assertNotIn("claude/1", model.refs)
+        self.assertNotIn("claude/1", model.creators)
+
+
 class TheKey(unittest.TestCase):
     """DESIGN.md, 6.3: the prototype's key left out what its guarantees read."""
 
@@ -156,6 +174,11 @@ class TheKey(unittest.TestCase):
         when the work began, so neither may be folded."""
         self.assertTrue(self.differs(lambda m: setattr(m, "board_text", "# Board\n")))
         self.assertTrue(self.differs(lambda m: m.created.__setitem__("claude/1", 5)))
+
+    def test_the_digest_survives_a_pickle_round_trip(self):
+        # A search's checkpoint (deep.py) pickles the models on its stack;
+        # a set's order is not kept, so every set in the key is sorted.
+        self.assertEqual(pickle.loads(pickle.dumps(self.model)).digest(), self.model.digest())
 
     def test_two_paths_to_one_state_meet(self):
         one, two = self.model.clone(), self.model.clone()

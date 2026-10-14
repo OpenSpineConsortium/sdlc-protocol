@@ -124,56 +124,19 @@
    "at": 0
   },
   {
-   "verb": "wait",
-   "args": [
-    24
-   ],
-   "at": 0
-  },
-  {
-   "verb": "close-issue",
-   "actor": "owner",
-   "args": [
-    2
-   ],
-   "at": 24
-  },
-  {
-   "verb": "board",
-   "event": "issues",
-   "ref": "",
-   "faults": [],
-   "at": 24
-  },
-  {
    "verb": "claim",
    "actor": "b",
    "args": [
     1
    ],
-   "at": 24
+   "at": 0
   },
   {
    "verb": "board",
    "event": "create",
    "ref": "claude/1",
    "faults": [],
-   "at": 24
-  },
-  {
-   "verb": "claim",
-   "actor": "e",
-   "args": [
-    3
-   ],
-   "at": 24
-  },
-  {
-   "verb": "board",
-   "event": "create",
-   "ref": "claude/3",
-   "faults": [],
-   "at": 24
+   "at": 0
   },
   {
    "verb": "claim",
@@ -181,28 +144,21 @@
    "args": [
     4
    ],
-   "at": 24
+   "at": 0
   },
   {
    "verb": "board",
    "event": "create",
    "ref": "claude/4",
    "faults": [],
-   "at": 24
-  },
-  {
-   "verb": "wait",
-   "args": [
-    23
-   ],
-   "at": 24
+   "at": 0
   },
   {
    "verb": "wait",
    "args": [
     25
    ],
-   "at": 47
+   "at": 0
   },
   {
    "verb": "label-on",
@@ -211,67 +167,14 @@
     1,
     "claimed"
    ],
-   "at": 72
+   "at": 25
   },
   {
    "verb": "board",
    "event": "issues",
    "ref": "",
    "faults": [],
-   "at": 72
-  },
-  {
-   "verb": "rename-back",
-   "actor": "owner",
-   "args": [
-    3,
-    [
-     "released",
-     3,
-     0
-    ]
-   ],
-   "at": 72
-  },
-  {
-   "verb": "board",
-   "event": "delete",
-   "ref": "main",
-   "faults": [],
-   "at": 72
-  },
-  {
-   "verb": "board",
-   "event": "create",
-   "ref": "claude/3",
-   "faults": [
-    "comments-read-500"
-   ],
-   "at": 72
-  },
-  {
-   "verb": "claim",
-   "actor": "a",
-   "args": [
-    1
-   ],
-   "at": 72
-  },
-  {
-   "verb": "board",
-   "event": "create",
-   "ref": "claude/1",
-   "faults": [
-    "label-post-500"
-   ],
-   "at": 72
-  },
-  {
-   "verb": "wait",
-   "args": [
-    3
-   ],
-   "at": 72
+   "at": 25
   },
   {
    "verb": "claim",
@@ -279,7 +182,7 @@
    "args": [
     4
    ],
-   "at": 75
+   "at": 25
   },
   {
    "verb": "board",
@@ -288,61 +191,7 @@
    "faults": [
     "rename-422"
    ],
-   "at": 75
-  },
-  {
-   "verb": "claim",
-   "actor": "c",
-   "args": [
-    3
-   ],
-   "at": 75
-  },
-  {
-   "verb": "board",
-   "event": "create",
-   "ref": "claude/3",
-   "faults": [],
-   "at": 75
-  },
-  {
-   "verb": "label-on",
-   "actor": "b",
-   "args": [
-    4,
-    "claimed"
-   ],
-   "at": 75
-  },
-  {
-   "verb": "board",
-   "event": "issues",
-   "ref": "",
-   "faults": [],
-   "at": 75
-  },
-  {
-   "verb": "label-on",
-   "actor": "a",
-   "args": [
-    1,
-    "claimed"
-   ],
-   "at": 75
-  },
-  {
-   "verb": "board",
-   "event": "issues",
-   "ref": "",
-   "faults": [],
-   "at": 75
-  },
-  {
-   "verb": "wait",
-   "args": [
-    3
-   ],
-   "at": 75
+   "at": 25
   },
   {
    "verb": "claim",
@@ -350,131 +199,28 @@
    "args": [
     5
    ],
-   "at": 78
+   "at": 25
   },
   {
    "verb": "board",
    "event": "create",
    "ref": "claude/5",
    "faults": [],
-   "at": 78
-  },
-  {
-   "verb": "wait",
-   "args": [
-    1
-   ],
-   "at": 78
-  },
-  {
-   "verb": "label-on",
-   "actor": "a",
-   "args": [
-    1,
-    "worker:a"
-   ],
-   "at": 79
-  },
-  {
-   "verb": "board",
-   "event": "issues",
-   "ref": "",
-   "faults": [],
-   "at": 79
-  },
-  {
-   "verb": "claim",
-   "actor": "e",
-   "args": [
-    6
-   ],
-   "at": 79
-  },
-  {
-   "verb": "board",
-   "event": "create",
-   "ref": "claude/6",
-   "faults": [
-    "ref-delete-422"
-   ],
-   "at": 79
-  },
-  {
-   "verb": "label-on",
-   "actor": "e",
-   "args": [
-    6,
-    "claimed"
-   ],
-   "at": 79
-  },
-  {
-   "verb": "board",
-   "event": "issues",
-   "ref": "",
-   "faults": [],
-   "at": 79
-  },
-  {
-   "verb": "label-on",
-   "actor": "d",
-   "args": [
-    5,
-    "claimed"
-   ],
-   "at": 79
-  },
-  {
-   "verb": "board",
-   "event": "issues",
-   "ref": "",
-   "faults": [],
-   "at": 79
-  },
-  {
-   "verb": "label-on",
-   "actor": "b",
-   "args": [
-    4,
-    "worker:b"
-   ],
-   "at": 79
-  },
-  {
-   "verb": "board",
-   "event": "issues",
-   "ref": "",
-   "faults": [],
-   "at": 79
-  },
-  {
-   "verb": "close-issue",
-   "actor": "owner",
-   "args": [
-    5
-   ],
-   "at": 79
-  },
-  {
-   "verb": "board",
-   "event": "issues",
-   "ref": "",
-   "faults": [],
-   "at": 79
+   "at": 25
   },
   {
    "verb": "wait",
    "args": [
     23
    ],
-   "at": 79
+   "at": 25
   },
   {
    "verb": "wait",
    "args": [
     12
    ],
-   "at": 102
+   "at": 48
   },
   {
    "verb": "label-on",
@@ -483,14 +229,14 @@
     5,
     "worker:d"
    ],
-   "at": 114
+   "at": 60
   },
   {
    "verb": "board",
    "event": "issues",
    "ref": "",
    "faults": [],
-   "at": 114
+   "at": 60
   },
   {
    "verb": "label-on",
@@ -499,14 +245,14 @@
     4,
     "claimed"
    ],
-   "at": 114
+   "at": 60
   },
   {
    "verb": "board",
    "event": "issues",
    "ref": "",
    "faults": [],
-   "at": 114
+   "at": 60
   },
   {
    "verb": "claim",
@@ -514,65 +260,14 @@
    "args": [
     1
    ],
-   "at": 114
+   "at": 60
   },
   {
    "verb": "board",
    "event": "create",
    "ref": "claude/1",
    "faults": [],
-   "at": 114
-  },
-  {
-   "verb": "wait",
-   "args": [
-    6
-   ],
-   "at": 114
-  },
-  {
-   "verb": "claim",
-   "actor": "e",
-   "args": [
-    3
-   ],
-   "at": 120
-  },
-  {
-   "verb": "board",
-   "event": "create",
-   "ref": "claude/3",
-   "faults": [],
-   "at": 120
-  },
-  {
-   "verb": "label-on",
-   "actor": "owner",
-   "args": [
-    1,
-    "claimed"
-   ],
-   "at": 120
-  },
-  {
-   "verb": "board",
-   "event": "issues",
-   "ref": "",
-   "faults": [],
-   "at": 120
-  },
-  {
-   "verb": "move-main",
-   "actor": "owner",
-   "args": [],
-   "at": 120
-  },
-  {
-   "verb": "board",
-   "event": "push",
-   "ref": "main",
-   "faults": [],
-   "at": 120
+   "at": 60
   },
   {
    "verb": "push-old-head",
@@ -585,36 +280,14 @@
      1
     ]
    ],
-   "at": 120
+   "at": 60
   },
   {
    "verb": "board",
    "event": "create",
    "ref": "claude/4",
    "faults": [],
-   "at": 120
-  },
-  {
-   "verb": "wait",
-   "args": [
-    2
-   ],
-   "at": 120
-  },
-  {
-   "verb": "claim",
-   "actor": "d",
-   "args": [
-    6
-   ],
-   "at": 122
-  },
-  {
-   "verb": "board",
-   "event": "create",
-   "ref": "claude/6",
-   "faults": [],
-   "at": 122
+   "at": 60
   },
   {
    "verb": "label-on",
@@ -623,14 +296,14 @@
     1,
     "worker:a"
    ],
-   "at": 122
+   "at": 60
   },
   {
    "verb": "board",
    "event": "issues",
    "ref": "",
    "faults": [],
-   "at": 122
+   "at": 60
   },
   {
    "verb": "open-draft",
@@ -638,55 +311,21 @@
    "args": [
     1
    ],
-   "at": 122
+   "at": 60
   },
   {
    "verb": "board",
    "event": "pull_request",
    "ref": "",
    "faults": [],
-   "at": 122
-  },
-  {
-   "verb": "label-on",
-   "actor": "d",
-   "args": [
-    6,
-    "claimed"
-   ],
-   "at": 122
-  },
-  {
-   "verb": "board",
-   "event": "issues",
-   "ref": "",
-   "faults": [],
-   "at": 122
-  },
-  {
-   "verb": "label-on",
-   "actor": "b",
-   "args": [
-    4,
-    "worker:b"
-   ],
-   "at": 122
-  },
-  {
-   "verb": "board",
-   "event": "issues",
-   "ref": "",
-   "faults": [
-    "compare-404"
-   ],
-   "at": 122
+   "at": 60
   },
   {
    "verb": "wait",
    "args": [
     25
    ],
-   "at": 122
+   "at": 60
   },
   {
    "verb": "label-off",
@@ -695,14 +334,14 @@
     1,
     "worker:a"
    ],
-   "at": 147
+   "at": 85
   },
   {
    "verb": "board",
    "event": "issues",
    "ref": "",
    "faults": [],
-   "at": 147
+   "at": 85
   },
   {
    "verb": "claim",
@@ -710,106 +349,14 @@
    "args": [
     1
    ],
-   "at": 147
+   "at": 85
   },
   {
    "verb": "board",
    "event": "create",
    "ref": "claude/1",
    "faults": [],
-   "at": 147
-  },
-  {
-   "verb": "rename-back",
-   "actor": "owner",
-   "args": [
-    6,
-    [
-     "released",
-     6,
-     1
-    ]
-   ],
-   "at": 147
-  },
-  {
-   "verb": "board",
-   "event": "delete",
-   "ref": "main",
-   "faults": [],
-   "at": 147
-  },
-  {
-   "verb": "board",
-   "event": "create",
-   "ref": "claude/6",
-   "faults": [],
-   "at": 147
-  },
-  {
-   "verb": "label-on",
-   "actor": "d",
-   "args": [
-    1,
-    "claimed"
-   ],
-   "at": 147
-  },
-  {
-   "verb": "board",
-   "event": "issues",
-   "ref": "",
-   "faults": [],
-   "at": 147
-  },
-  {
-   "verb": "label-on",
-   "actor": "owner",
-   "args": [
-    3,
-    "claimed"
-   ],
-   "at": 147
-  },
-  {
-   "verb": "board",
-   "event": "issues",
-   "ref": "",
-   "faults": [],
-   "at": 147
-  },
-  {
-   "verb": "claim",
-   "actor": "c",
-   "args": [
-    6
-   ],
-   "at": 147
-  },
-  {
-   "verb": "board",
-   "event": "create",
-   "ref": "claude/6",
-   "faults": [
-    "comment-500"
-   ],
-   "at": 147
-  },
-  {
-   "verb": "label-on",
-   "actor": "c",
-   "args": [
-    6,
-    "claimed"
-   ],
-   "at": 147
-  },
-  {
-   "verb": "board",
-   "event": "issues",
-   "ref": "",
-   "faults": [],
-   "at": 147
+   "at": 85
   },
   {
    "verb": "claim",
@@ -817,103 +364,14 @@
    "args": [
     3
    ],
-   "at": 147
+   "at": 85
   },
   {
    "verb": "board",
    "event": "create",
    "ref": "claude/3",
    "faults": [],
-   "at": 147
-  },
-  {
-   "verb": "label-on",
-   "actor": "c",
-   "args": [
-    6,
-    "worker:c"
-   ],
-   "at": 147
-  },
-  {
-   "verb": "board",
-   "event": "issues",
-   "ref": "",
-   "faults": [],
-   "at": 147
-  },
-  {
-   "verb": "label-on",
-   "actor": "a",
-   "args": [
-    3,
-    "worker:a"
-   ],
-   "at": 147
-  },
-  {
-   "verb": "board",
-   "event": "issues",
-   "ref": "",
-   "faults": [],
-   "at": 147
-  },
-  {
-   "verb": "wait",
-   "args": [
-    23
-   ],
-   "at": 147
-  },
-  {
-   "verb": "label-off",
-   "actor": "owner",
-   "args": [
-    6,
-    "claimed"
-   ],
-   "at": 170
-  },
-  {
-   "verb": "board",
-   "event": "issues",
-   "ref": "",
-   "faults": [
-    "compare-404"
-   ],
-   "at": 170
-  },
-  {
-   "verb": "label-on",
-   "actor": "c",
-   "args": [
-    6,
-    "claimed"
-   ],
-   "at": 170
-  },
-  {
-   "verb": "board",
-   "event": "issues",
-   "ref": "",
-   "faults": [],
-   "at": 170
-  },
-  {
-   "verb": "label-on",
-   "actor": "d",
-   "args": [
-    1,
-    "worker:d"
-   ],
-   "at": 170
-  },
-  {
-   "verb": "board",
-   "event": "issues",
-   "ref": "",
-   "faults": [],
-   "at": 170
+   "at": 85
   },
   {
    "verb": "open-draft",
@@ -921,7 +379,7 @@
    "args": [
     3
    ],
-   "at": 170
+   "at": 85
   },
   {
    "verb": "board",
@@ -930,22 +388,7 @@
    "faults": [
     "label-delete-500"
    ],
-   "at": 170
-  },
-  {
-   "verb": "commit",
-   "actor": "a",
-   "args": [
-    3
-   ],
-   "at": 170
-  },
-  {
-   "verb": "board",
-   "event": "pull_request",
-   "ref": "",
-   "faults": [],
-   "at": 170
+   "at": 85
   },
   {
    "verb": "open-draft",
@@ -953,14 +396,14 @@
    "args": [
     1
    ],
-   "at": 170
+   "at": 85
   },
   {
    "verb": "board",
    "event": "pull_request",
    "ref": "",
    "faults": [],
-   "at": 170
+   "at": 85
   },
   {
    "verb": "open-draft",
@@ -968,127 +411,28 @@
    "args": [
     4
    ],
-   "at": 170
+   "at": 85
   },
   {
    "verb": "board",
    "event": "pull_request",
    "ref": "",
    "faults": [],
-   "at": 170
+   "at": 85
   },
   {
    "verb": "wait",
    "args": [
     23
    ],
-   "at": 170
-  },
-  {
-   "verb": "open-draft",
-   "actor": "c",
-   "args": [
-    6
-   ],
-   "at": 193
-  },
-  {
-   "verb": "board",
-   "event": "pull_request",
-   "ref": "",
-   "faults": [
-    "comment-rate-limited"
-   ],
-   "at": 193
-  },
-  {
-   "verb": "commit",
-   "actor": "a",
-   "args": [
-    3
-   ],
-   "at": 193
-  },
-  {
-   "verb": "board",
-   "event": "pull_request",
-   "ref": "",
-   "faults": [
-    "comment-lost"
-   ],
-   "at": 193
-  },
-  {
-   "verb": "claim",
-   "actor": "b",
-   "args": [
-    1
-   ],
-   "at": 193
-  },
-  {
-   "verb": "board",
-   "event": "create",
-   "ref": "claude/1",
-   "faults": [
-    "comment-rate-limited"
-   ],
-   "at": 193
-  },
-  {
-   "verb": "drop-claim-file",
-   "actor": "a",
-   "args": [
-    3
-   ],
-   "at": 193
-  },
-  {
-   "verb": "board",
-   "event": "pull_request",
-   "ref": "",
-   "faults": [],
-   "at": 193
-  },
-  {
-   "verb": "label-on",
-   "actor": "b",
-   "args": [
-    1,
-    "claimed"
-   ],
-   "at": 193
-  },
-  {
-   "verb": "board",
-   "event": "issues",
-   "ref": "",
-   "faults": [],
-   "at": 193
-  },
-  {
-   "verb": "claim",
-   "actor": "c",
-   "args": [
-    6
-   ],
-   "at": 193
-  },
-  {
-   "verb": "board",
-   "event": "create",
-   "ref": "claude/6",
-   "faults": [
-    "comments-read-500"
-   ],
-   "at": 193
+   "at": 85
   },
   {
    "verb": "wait",
    "args": [
     12
    ],
-   "at": 193
+   "at": 108
   },
   {
    "verb": "label-off",
@@ -1097,14 +441,14 @@
     4,
     "claimed"
    ],
-   "at": 205
+   "at": 120
   },
   {
    "verb": "board",
    "event": "issues",
    "ref": "",
    "faults": [],
-   "at": 205
+   "at": 120
   }
  ]
 }

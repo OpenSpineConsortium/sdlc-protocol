@@ -77,6 +77,42 @@ class AnHonestRun(unittest.TestCase):
         self.assertEqual(violations(steps), [])
 
 
+class TheWorkerCell(unittest.TestCase):
+    """G1 holds the board's Worker cell to the branch's holder by the claim
+    file, and, once the finishing push has deleted the file, to the issue's
+    worker label, which the spec leaves the board; the soak's G1 leads
+    (seeds 585 and 959) were a closed issue's leftover branch whose stale
+    label named the worker that had merged."""
+
+    def claim(self, pusher, named, labels=("todo",)):
+        model = M.seeded((1,), writers=("a", "b", "e"), labels=labels)
+        tree = model.tree(model.refs[M.MAIN])
+        tree["docs/agents/claims/1.md"] = M.claim_text(1, named)
+        model.push(pusher, "claude/1", model.commit((model.refs[M.MAIN],), pusher, tree, "Claim #1"))
+        return model
+
+    def drop_file(self, model, pusher):
+        tree = model.tree(model.refs["claude/1"])
+        del tree["docs/agents/claims/1.md"]
+        model.push(pusher, "claude/1", model.commit((model.refs["claude/1"],), pusher, tree, "Finish #1"))
+
+    def test_the_cell_names_the_holder_by_the_claim_file(self):
+        self.assertEqual(invariants.one_name_one_holder(self.claim("b", "b")), [])
+        found = invariants.one_name_one_holder(self.claim("b", "e"))
+        self.assertEqual([v.guarantee for v in found], ["G1"])
+        self.assertIn("names e for claude/1, whose holder is b", found[0].detail)
+
+    def test_once_the_file_is_gone_the_cell_names_the_issue_s_label_or_says_there_is_none(self):
+        model = self.claim("b", "b", labels=("todo", "worker:e"))
+        self.drop_file(model, "b")
+        self.assertEqual(invariants.one_name_one_holder(model), [])
+        model.issues[1].state = "closed"
+        self.assertEqual(invariants.one_name_one_holder(model), [])
+        model = self.claim("b", "b")
+        self.drop_file(model, "b")
+        self.assertEqual(invariants.one_name_one_holder(model), [])
+
+
 class TheProtocolCheckIsReadAsGitHubReadsABody(unittest.TestCase):
     def test_a_body_closing_another_issue_or_in_another_keyword(self):
         """G12's "the body closes its issue" is GitHub's reading: any closing

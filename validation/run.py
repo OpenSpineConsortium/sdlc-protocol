@@ -100,6 +100,14 @@ def resolve(model, args):
                  for a in args)
 
 
+def concrete(model, verb):
+    """The verb with a released branch it names symbolically, as
+    ("released", issue, index), resolved to the branch's name in the
+    model, the form verbs.apply takes; a name the model has no branch
+    for raises, as resolve does."""
+    return verb._replace(args=resolve(model, verb.args))
+
+
 def symbolic(model, args):
     """The arguments with each released branch's name written as
     ("released", issue, index), the form resolve reads, so a trace names

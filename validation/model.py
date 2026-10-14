@@ -237,11 +237,21 @@ class RepoModel:
             self.ever_heads = self.ever_heads | {sha}
 
     def delete_ref(self, ref):
+        """GitHub's delete: the ref goes, and the open pull request whose
+        head it was is closed, as the rename closes one ("If the branch
+        is associated with at least one open pull request, deleting the
+        branch closes the pull requests", managing-branches-within-your-
+        repository.md). The soak found the model keeping such a pull
+        request open, which the board then told "idle" on every run."""
         if self.store is not None:
             self.store.delete(ref)
         self.refs.pop(ref, None)
         self.creators.pop(ref, None)
         self.created.pop(ref, None)
+        for pull in self.pulls.values():
+            if pull.head == ref and pull.state == "open":
+                pull.state = "closed"
+                pull.updated_at = self.now
 
     def rename_ref(self, old, new):
         """GitHub's rename: the ref moves, and the open pull request whose
@@ -396,7 +406,7 @@ class RepoModel:
             tuple(sorted((n, p.head, p.author, p.body, p.draft, p.state, p.opened_at, p.updated_at, p.merged_at,
                           p.comments) for n, p in self.pulls.items())),
             self.next_pull,
-            self.writers,
+            tuple(sorted(self.writers)),
             tuple(sorted(self.ever_heads)),
             self.label_events,
             tuple(sorted(self.creators.items())),

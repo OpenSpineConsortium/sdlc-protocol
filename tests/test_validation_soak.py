@@ -13,7 +13,9 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from sdlc_protocol import claims  # noqa: E402
-from validation import soak  # noqa: E402
+from validation import replay, soak  # noqa: E402
+
+LEADS = ROOT / "validation" / "runs" / "2026-10-14-partial" / "traces"
 
 
 def at_exactly_24_hours(last, now, idle_after=claims.IDLE_AFTER):
@@ -41,6 +43,22 @@ class TheSoak(unittest.TestCase):
         met = [v for w in walks for v in w.violations]
         self.assertTrue(met, "no walk of six met the mutant")
         self.assertTrue(all(0 <= at < 80 for _, _, at in met))
+
+
+class TheFirstRunsLeads(unittest.TestCase):
+    def test_the_three_leads_of_the_first_deep_run_replay_green(self):
+        """The soak's three violations of 2026-10-14, shortened, each a
+        fault of the harness's model that is fixed (the run's README):
+        the Worker cell once the claim file is gone (G1, seeds 585 and
+        959) and a deleted branch's open pull request (G9, seed 427)."""
+        files = sorted(LEADS.glob("*.json"))
+        self.assertEqual([f.stem for f in files], ["G1-soak-585-161", "G1-soak-959-184", "G9-soak-427-159"])
+        for file in files:
+            with self.subTest(lead=file.stem):
+                trace = replay.load(file)
+                record = replay.replay(trace)
+                self.assertEqual(record.violations, [], "\n".join(record.timeline))
+                self.assertEqual(record.mismatches, [])
 
 
 if __name__ == "__main__":
