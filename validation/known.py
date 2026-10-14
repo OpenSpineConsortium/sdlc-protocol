@@ -11,20 +11,21 @@ by its place among the steps as played, an "announce" of a trace counting
 as its three verbs, with the guarantee it breaks and the finding that
 breaks it. An entry for a finding in
 "as_built" is red when that finding's switch is off and green as built;
-an entry for any other finding (F4, dealing from differing looks) is red
-as built, since no rule of the library answers it; a fix removes its
-entries, as F7's did. "fixed_after" names each finding fixed on main
-with the last version that still has it: the version main stated just
-before the fixing pull request merged, since the fix ships only with the
-release that raises it. A copy of the library at that version or an
-earlier one still has the finding. Only the live canary reads it
-(scripts/canary.py, DESIGN.md section 11), since it runs the release the
-canary repository vendors and not main, and an expectation that fails
-there for such a finding is known, not new; the oracle and the lanes run
-main and read "as_built" alone. A fix adds its finding to "fixed_after",
-and takes it out of "as_built" when it was there: F12's fix did both, and
-F7's, whose entries were red as built with no switch, only the first,
-both after 0.4.1. The entry stays, since it is true of every copy at that
+an entry for any other finding is red as built, since no rule of the
+library answers it, as F4's (dealing from differing looks) and F7's (the
+careless lease) were until their fixes removed them; none is left.
+"fixed_after" names each finding fixed on main with the last version
+that still has it: the version main stated just before the fixing pull
+request merged, since the fix ships only with the release that raises
+it. A copy of the library at that version or an earlier one still has
+the finding. Only the live canary reads it (scripts/canary.py, DESIGN.md
+section 11), since it runs the release the canary repository vendors and
+not main, and an expectation that fails there for such a finding is
+known, not new; the oracle and the lanes run main and read "as_built"
+alone. A fix adds its finding to "fixed_after", and takes it out of
+"as_built" when it was there: F12's fix did both, and F4's and F7's,
+whose entries were red as built with no switch, only the first, all
+after 0.4.1. The entry stays, since it is true of every copy at that
 version for as long as one exists.
 
 The suite passes when every result is what the file records

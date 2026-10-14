@@ -12,9 +12,9 @@ sdlc_protocol board ...":
          comment on the pull requests that wait, or render a JSON
          snapshot with --dry-run FIXTURE and no network
   check  hold the pull request in GITHUB_EVENT_PATH to the claim protocol
-  team   [--repo OWNER/NAME] seed, route, next or schema, the clerk; seed,
-         next and schema read the workers from the registry with
-         --registry DIR
+  team   [--repo OWNER/NAME] seed, route, next, deal or schema, the clerk;
+         seed, next, deal and schema read the workers from the registry
+         with --registry DIR
   workers check, list, describe, get or from-form: the registry of
          workers, .github/symphony/workers/<name>.json, read offline
   guard  the PreToolUse hook: the tool call's JSON on stdin, and exit 2
@@ -233,6 +233,12 @@ def team_arguments(argv, environ=None):
                                             "Actions, each by its area")
     nexting.add_argument("--label", default=None,
                          help="the worker's label, made before a take so the session can add it")
+    dealing = sub.add_parser("deal", help="the next move of every worker in Actions of this registry, from one "
+                                          "look at the repository, as a JSON object by worker on one line")
+    dealing.add_argument("--registry", required=True, help="the registry whose workers in Actions are dealt to")
+    dealing.add_argument("--workers", default=None,
+                         help="a JSON list of the workers of this run (default: every worker in Actions): "
+                              "theirs are the moves printed and the labels made before a take")
     schema = sub.add_parser("schema", help="the JSON schema of the coordinator's plan, on one line")
     schema.add_argument("--registry", help="the registry whose workers a task may go to")
     return parser.parse_args(argv)
@@ -240,20 +246,46 @@ def team_arguments(argv, environ=None):
 
 def team_answer(client, args):
     """The one line the workflow reads, from the clerk's rules. With a
-    registry, seed gives tasks to every registered worker, and next deals
-    the shared work among the workers in Actions, which ask at the same
-    moment, each by its area."""
+    registry, seed gives tasks to every registered worker, next deals the
+    shared work among the workers in Actions, each by its area, from the
+    asking worker's own look, and deal deals it once for the whole run,
+    from one look, and answers for every worker of the run."""
     registered = workers.load(args.registry) if getattr(args, "registry", None) else None
     if args.command == "seed":
         names = [w.name for w in registered] if registered is not None else team.team_members(args.team)
         return team.seed(client, args.epic, load_json(args.plan), names)
     if args.command == "route":
         return team.route(client, args.event, args.issue, args.label)
+    if args.command == "deal":
+        return deal_answer(client, registered, args.workers)
     if registered is None:
         return team.next_move(client, args.agent, team.team_members(args.team), args.label)
     in_actions = workers.in_actions(registered)
     areas = {w.name: w.area for w in registered}
     return team.next_move(client, args.agent, [w.name for w in in_actions], args.label, areas)
+
+
+def deal_answer(client, registered, run_json):
+    """The deal's one line: a JSON object, worker to move, for the workers
+    of the run, the registry's workers in Actions unless --workers names
+    them; a name that is no worker here, or a value that is not JSON, is a
+    ValueError naming the flag and the shape it takes, since the workflow
+    took its list from the same registry; so is an empty --registry, which
+    argparse lets through and which names no folder."""
+    if registered is None:
+        raise ValueError("--registry must name the registry folder")
+    in_actions = workers.in_actions(registered)
+    names = [w.name for w in in_actions]
+    shape = f"--workers must be a JSON list of the registry's workers in Actions, {json.dumps(names)}"
+    try:
+        run = names if run_json is None else json.loads(run_json)
+    except ValueError as problem:
+        raise ValueError(f"{shape}; the value given is not JSON: {problem}") from None
+    if not isinstance(run, list) or any(name not in names for name in run):
+        raise ValueError(shape)
+    moves = team.deal_moves(client, names, {w.name: w.area for w in registered},
+                            {w.name: w.label for w in in_actions}, run)
+    return json.dumps(moves, sort_keys=True, separators=(",", ":"))
 
 
 def team_schema(args):

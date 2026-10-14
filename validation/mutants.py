@@ -43,7 +43,7 @@ from sdlc_protocol import board, claims, coordinator, guard, team
 from sdlc_protocol.adapters import github
 from sdlc_protocol.workers import fits
 
-from . import cycle, dealing, explore, guard_grammar, invariants, model as M, oracle, replay, verbs
+from . import clerk, cycle, dealing, explore, guard_grammar, invariants, model as M, oracle, replay, verbs
 from .verbs import CAROL, DANA, SAM, Scope, Verb
 
 
@@ -183,6 +183,13 @@ def lease_onto_any_claim(name, source, expected, claim_file_at, remote="origin")
     """guard.other_holder judging nothing: the guard as it was before F7's
     fix, passing a lease onto any claude/ branch, whoever claimed it."""
     return None
+
+
+def each_leg_from_its_own_look(clients, workers, looks, areas=None):
+    """The workers' workflow as built until F4's fix: each leg asks for
+    itself at its own moment, so two looks that differ on whether the
+    holder's pull request is behind deal its issue twice."""
+    return {w: team.next_for(clients[look], w, list(workers), areas) for w, look in zip(workers, looks)}
 
 
 def deal_without_the_taken_set(members, pool, areas=None):
@@ -334,6 +341,9 @@ MUTANTS = {
     "dealing without its taken set": Mutant(
         team, "deal", deal_without_the_taken_set,
         "G14", "the workers of one run are dealt distinct issues"),
+    "each leg dealt from its own look": Mutant(
+        clerk, "workflow_deals", each_leg_from_its_own_look,
+        "G14", "the workers' workflow deals once for the run, from one look, in its first job (F4)"),
     "an overlap marker read on any line": Mutant(
         coordinator, "told_numbers", told_on_any_line,
         "G7", "a comment that quotes the marker further down told nothing"),
@@ -363,13 +373,12 @@ WORKER = Verb("label-on", "a", (1, "worker:a"))
 SHARED = ("src/shared.py",)
 
 # Cheapest first, since a mutant is judged by the first search that
-# catches it. The traces meet F4, dealing from differing looks, on the
-# library itself, which no rule answers yet; the careless search met F7,
-# a lease after a fetch taking another's claim, until the guard's fence
-# refused it. The last search runs each board run in its two halves
-# (DESIGN.md, 3.3), so a rule that reads the repository again in the
-# second half is met.
-F4 = ("G14", "#6 dealt twice from differing looks: {'a': 'take 5', 'b': 'take 6', 'c': 'take 6'}")
+# catches it. The traces met F4, dealing from differing looks, on the
+# library itself until the workflow's one look answered it, and the
+# careless search met F7, a lease after a fetch taking another's claim,
+# until the guard's fence refused it; nothing is known on the library now.
+# The last search runs each board run in its two halves (DESIGN.md, 3.3),
+# so a rule that reads the repository again in the second half is met.
 PLAIN_COMMANDS = [c for c in guard_grammar.commands() if c.prefix == "" and c.wrapper == "{}"]
 
 
@@ -395,12 +404,12 @@ def guard_lane():
 def dealing_lane():
     lane = dealing.run_lane()
     return {("G14", f"#{n} dealt twice"): (" then ".join(deal.order), str(deal.looks))
-            for deal in lane.doubled_from_one_look for n in deal.doubled}
+            for deal in dealing.doubled(lane) for n in deal.doubled}
 
 
-LANES = (Lane("the regression traces", traces_lane, known=(F4,)),
+LANES = (Lane("the regression traces", traces_lane),
          Lane("the guard grammar against git's answers", guard_lane),
-         Lane("dealing from one look", dealing_lane))
+         Lane("dealing at every look", dealing_lane))
 SEARCHES = (
     Search("a released claim under every fault", (CLAIM, CLAIMED, WORKER, Verb("wait", "clock", (25,))),
            Scope(workers=("a",), people=(), waits=(25,), faults=tuple(verbs.FAULTS)), 2),
@@ -482,8 +491,9 @@ def judge(name, baselines, searches=CATCHERS):
 
 def baselines(searches=CATCHERS):
     """What each search meets on the library as it stands: nothing, since
-    the open findings are read as built, but what a search or lane knows
-    (F4 from differing looks)."""
+    the open findings are read as built and the rest are fixed, but what a
+    search or lane knows (none now; F4 from differing looks and F7 under
+    the careless scope until their fixes)."""
     return {search.name: violations(search) for search in searches}
 
 
