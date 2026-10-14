@@ -127,10 +127,12 @@ def shrink(start, scope, trace, target, known=oracle.AS_BUILT, budget=60.0):
     neighbouring steps taken out that can be, over again until nothing
     can, within the budget in seconds; start makes a fresh starting state
     each time it is called. The result carries the detail the shortened
-    trace shows, which one more replay reads."""
+    trace shows, which one more replay reads once anything came out of
+    the trace; a trace nothing came out of shows the detail it was met
+    with, so a violation past its part's budget costs no replay."""
     began, tried = time.perf_counter(), 0
     deadline = began + budget
-    trace = tuple(trace)
+    trace = given = tuple(trace)
 
     def fits(candidate):
         nonlocal tried
@@ -143,5 +145,5 @@ def shrink(start, scope, trace, target, known=oracle.AS_BUILT, budget=60.0):
         if len(narrower) == len(trace):
             break
         trace = narrower
-    detail = shown(start, scope, trace, target, known) or target[1]
+    detail = target[1] if trace == given else shown(start, scope, trace, target, known) or target[1]
     return Shrunk(trace, tried, time.perf_counter() - began, detail)

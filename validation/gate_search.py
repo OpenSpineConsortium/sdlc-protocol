@@ -5,9 +5,10 @@ every interleaving of two agents' claims, pushes, pull requests, marks and
 landings, with main moving and the check changing, over MemoryWorld,
 under the two presets, the coordbench arm's policy and a gated check, to
 a depth, and checks the gate's guarantee (G13's eight parts, DESIGN.md
-2.3) after every act: a pull request is its claimant's and an issue is
-closed exactly when its pull request merged (1); a mark that goes through
-is its author's and releases the claim (2); a merge comes from
+2.3) after every act: a pull request is its claimant's, no claim or pull
+request goes through on another's claim, and an issue is closed exactly
+when its pull request merged (1); a mark that goes through is its
+author's, never another's, and releases the claim (2); a merge comes from
 mark_ready where the gate merges and from a landing where the owner or
 auto-merge does (3); never without a green required check (4); only of a
 branch standing clean or behind as the act found it, and a main moved
@@ -15,7 +16,10 @@ answer only for one standing in conflict (5); a main moved answer moves
 nothing, and a refusal moves nothing (6); over git, main only moves
 forward, its new commit a descendant of the old (7), which MemoryWorld,
 whose commits have no ancestry, cannot show; a refusal carries the exit
-code of the kind the state owes, another's work or a plain refusal (8);
+code of the kind the state owes, another's work or a plain refusal, every
+answer the code of its kind (merged and ready 0, not merged 1, main moved
+3, gate failed 4), and an attempt on a branch standing in conflict the
+answer main moved (8);
 and no branch merges twice. The lane offers no push of a branch its
 agent did not claim and no landing where the gate merges on mark_ready:
 those are the lane's own exclusions (offered), not refusals of the gate's,

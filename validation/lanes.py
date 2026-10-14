@@ -52,6 +52,7 @@ done: a stopped search has not checked its space, and the owner's rule
 is that a missed violation costs more than the hours.
 """
 
+import copy
 import json
 import multiprocessing
 import os
@@ -325,24 +326,41 @@ def second_wave(settings, results):
     return jobs
 
 
+def owed(settings, results):
+    """The parts the run still owes once this invocation's waves are
+    done: those a resume asking for every part any invocation of the run
+    asked for would run, but a stopped search or gate and a part that
+    raised, which the file already shows red. A resume narrower than the
+    run it resumes, say `--only search` after a run cut short before
+    conformance, leaves the rest owed."""
+    asked = copy.copy(settings)
+    asked.only = tuple(results["asked"])
+    shown_red = {e["part"] for e in results["errors"]}
+    shown_red |= {f"search {s['space']}" for s in results["searches"] if s["stopped"]}
+    if results["gate"] is not None and any(m.get("stopped") for m in results["gate"]["memory"]):
+        shown_red.add("gate")
+    return [part for part, _, _ in first_wave(asked, results) + second_wave(asked, results) if part not in shown_red]
+
+
 def fresh_results(settings=None):
     return {"run": settings.record() if settings is not None else None, "searches": [], "soak": {"chunks": []}, "gate": None,
             "git": {"scenarios": [], "traces": []}, "guard": None, "conformance": [], "errors": [], "seconds": 0.0,
             "red": []}
 
 
-def take(results, part, result):
+def take(results, part, result, out):
     """The part's result into the results, in place of any the part left
     before, as a search run again from its checkpoint or a chunk run
     again after it raised; a search's earlier files that the new result
-    does not name are removed, since its files are numbered anew."""
+    does not name are removed from this run's traces folder, since its
+    files are numbered anew. They are compared by name, since a resume
+    may spell the folder another way, relative, absolute or through a
+    link, and the same file under two spellings is not to go."""
     if part.startswith("search "):
         before = [s for s in results["searches"] if s["space"] == result["space"]]
-        named = {v["file"] for v in result["violations"]}
-        for file in {v["file"] for s in before for v in s["violations"]} - named:
-            # A search the budget stopped wrote files the resumed one
-            # numbers anew: what it no longer names is no result's.
-            Path(file).unlink(missing_ok=True)
+        named = {Path(v["file"]).name for v in result["violations"]}
+        for name in {Path(v["file"]).name for s in before for v in s["violations"]} - named:
+            (Path(out) / deep.TRACES / name).unlink(missing_ok=True)
         results["searches"] = [s for s in results["searches"] if s["space"] != result["space"]] + [result]
     elif part.startswith("soak "):
         results["soak"]["chunks"] = [c for c in results["soak"]["chunks"] if c["seeds"] != result["seeds"]] + [result]
@@ -362,10 +380,13 @@ def red_lines(results):
     """Why the run is red, one line each; none when it is green. A file a
     run writes before its end says the run is not finished, so a run
     killed, or a job cancelled, before a red part landed does not read
-    green."""
+    green, and one a resume narrower than the run left names the parts
+    still owed."""
     lines = [f"{e['part']} raised: {e['error']}" for e in results.get("errors", [])]
     if results.get("finished") is False:
-        lines.append("the run did not finish: the parts it had not landed are not in this file")
+        owed = results.get("owed")
+        lines.append(f"the run did not finish: still owed: {', '.join(owed)}" if owed else
+                     "the run did not finish: the parts it had not landed are not in this file")
     for s in results["searches"]:
         if s["stopped"]:
             lines.append(f"search {s['space']}: stopped by the budget after {s['states']} states, not done")
@@ -497,14 +518,24 @@ def take_marker(settings):
     checkpoints and both write one results file. The file is written
     under a name of this process's own and linked into place, so it
     appears with the process's id in it: a file made empty and written
-    after read as no run to a second run in between. A file a dead
-    process left, as the machine's restart leaves one, is replaced."""
+    after read as no run to a second run in between. Where the folder
+    holds no hard links (vfat, exFAT, SMB without unix extensions) it is
+    made exclusively and written, empty for that moment. A file a dead
+    process left, as the machine's restart leaves one, is replaced; two
+    runs started at the same moment over such a file can both replace
+    it, a window of a few instructions."""
     file = settings.out / RUNNING
     settings.out.mkdir(parents=True, exist_ok=True)
     mine = file.with_name(f"{RUNNING}.{os.getpid()}")
     mine.write_text(f"{os.getpid()}\n", encoding="ascii")
     try:
-        os.link(mine, file)
+        try:
+            os.link(mine, file)
+        except FileExistsError:
+            raise
+        except OSError:
+            with file.open("x", encoding="ascii") as marker:
+                marker.write(f"{os.getpid()}\n")
     except FileExistsError:
         pid = running_process(settings)
         if pid is not None:
@@ -563,11 +594,6 @@ def run_part(connection, function, args):
         outcome = ("done", function(*args))
     except Exception as error:
         outcome = ("raised", repr(error), "".join(traceback.format_exception(error)))
-    except Terminated:
-        # The parent ended the part (end_workers), its handler inherited by
-        # the fork: the part's with blocks have run on the way out, and it
-        # ends quietly, as it did when the handler raised SystemExit.
-        raise SystemExit(128 + signal.SIGTERM) from None
     connection.send(outcome)
     connection.close()
 
@@ -623,7 +649,7 @@ def run_jobs(settings, jobs, results, began, out):
                 print(f"    {part} raised at {results['seconds']} s: {outcome[1]}", file=out, flush=True)
                 continue
             result = outcome[1]
-            take(results, part, result)
+            take(results, part, result, settings.out)
             write_results(settings, results, began)
             if part.startswith("search ") and not result["stopped"]:
                 settings.checkpoint(part[len("search "):]).unlink(missing_ok=True)
@@ -632,9 +658,8 @@ def run_jobs(settings, jobs, results, began, out):
 
 class Terminated(BaseException):
     """A SIGTERM to the runner, raised where the parent waits, so run's
-    finally ends the workers and removes the marker; no except of the
-    parts' or a caller's catches it on its way, as it would a
-    SystemExit."""
+    finally ends the workers and removes the marker; no except of a
+    caller's catches it on its way, as it would a SystemExit."""
 
 
 def stop_on_term(signum, frame):
@@ -645,15 +670,28 @@ def stop_on_term(signum, frame):
     runner, which catches a SystemExit and goes on, does not outlive it.
     Without a handler the parent would die at once with the marker left
     naming a dead process and each part's process, which watches no
-    parent, running its search on for hours, orphaned."""
+    parent, running its search on for hours, orphaned. A part's process
+    inherits the handler by the fork, and there, ended by end_workers, it
+    ends quietly by SystemExit wherever the signal finds it, where a
+    Terminated outside run_part's try reached multiprocessing's own
+    except, which printed it and ended the part with 1."""
+    if multiprocessing.parent_process() is not None:
+        raise SystemExit(128 + signum)
     raise Terminated()
 
 
 def end_workers():
-    """The parts' live processes ended; each is a child of this process,
-    so a run that ends, however it ends, leaves none behind."""
-    for child in multiprocessing.active_children():
+    """The parts' live processes ended and waited for, each a child of
+    this process, so a run that ends, however it ends, leaves none
+    behind, not even one unreaped: a run that ends by its own SIGTERM
+    runs no exit handler, which waited for them before, and where nothing
+    else reaps an orphan, a container's first process that is no init,
+    it stays. Ten seconds a part bounds the wait."""
+    children = multiprocessing.active_children()
+    for child in children:
         child.terminate()
+    for child in children:
+        child.join(10)
 
 
 def run(settings, out=sys.stdout):
@@ -664,7 +702,8 @@ def run(settings, out=sys.stdout):
     process group do, and then ends the process by the signal; the
     handler can be set from the main thread alone, where the script and
     the tests call this. The results file says whether the run finished,
-    and one that did not is red. From the marker's taking on, whatever
+    every part any invocation of it asked for landed or shown red, and
+    one that did not is red. From the marker's taking on, whatever
     ends the run, a refusal to resume included, the finally removes the
     marker."""
     take_marker(settings)
@@ -674,11 +713,13 @@ def run(settings, out=sys.stdout):
     terminated = False
     try:
         results, began = kept_results(settings)
-        results["finished"] = False
+        results["asked"] = sorted(set(results.get("asked", ())) | set(settings.only or PARTS))
+        results["finished"], results["owed"] = False, None
         write_results(settings, results, began)
         for wave in (first_wave, second_wave):
             run_jobs(settings, wave(settings, results), results, began, out)
-        results["finished"] = True
+        results["owed"] = owed(settings, results)
+        results["finished"] = not results["owed"]
         write_results(settings, results, began)
     except Terminated:
         terminated = True

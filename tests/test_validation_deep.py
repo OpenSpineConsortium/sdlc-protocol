@@ -66,6 +66,26 @@ def one_megabyte():
     return "x" * 1_000_000
 
 
+def ends_slowly(signum, frame):
+    time.sleep(0.5)
+    os._exit(3)
+
+
+def slow_to_end(ready):
+    """A part that takes half a second to end once told to, so a parent
+    that does not wait for it finds it still running."""
+    signal.signal(signal.SIGTERM, ends_slowly)
+    ready.set()
+    time.sleep(600)
+
+
+def waits_outside_its_work(ready):
+    """A part's process where run_part's try does not hold it, as one
+    sending its result is."""
+    ready.set()
+    time.sleep(600)
+
+
 def a_live_process(test):
     """A process that lives until the test ends, standing for a run in
     progress: a marker naming the test's own process reads as a dead
@@ -260,6 +280,20 @@ class TheIdentityOfAViolation(unittest.TestCase):
 
 
 class Shortening(unittest.TestCase):
+    def test_a_trace_nothing_came_out_of_needs_no_replay_for_its_detail(self):
+        """Past its part's half hour a violation is written as met, with no
+        budget left; reading its detail by one more replay cost a replay
+        of the whole walk, about half a second a violation, where the
+        trace it was met on shows the detail it was met with."""
+        with mock.patch.object(claims, "is_idle", at_exactly_24_hours):
+            violation = deep.search_space(ONE).found[0]
+            trace = deep.symbolic_trace(ONE, violation.trace)
+            with mock.patch.object(shrink, "shown", side_effect=AssertionError("replayed")):
+                spent = shrink.shrink(ONE.start, ONE.scope, trace, (violation.guarantee, violation.detail), budget=0.0)
+            self.assertEqual((spent.trace, spent.tried, spent.detail), (tuple(trace), 0, violation.detail))
+            self.assertEqual(shrink.shown(ONE.start, ONE.scope, trace, (violation.guarantee, violation.detail)),
+                             violation.detail)
+
     def test_a_violation_is_shortened_to_a_trace_that_still_shows_it(self):
         with mock.patch.object(claims, "is_idle", at_exactly_24_hours):
             found = deep.search_space(ONE)
@@ -796,25 +830,96 @@ class TheLaneAsOneRun(unittest.TestCase):
     def test_a_run_that_did_not_finish_says_so_in_its_file(self):
         """A file left by a run killed, or by a job cancelled, before a
         red part landed read green, with nothing it still owed named
-        anywhere; until both waves have landed the file says the run did
-        not finish, and that is red."""
+        anywhere; until every part the run asked for has landed or shows
+        red, the file says the run did not finish, and that is red. A
+        resume narrower than the run, `--only search` after a run cut
+        short before conformance, names the parts still owed, where it
+        read green and said ok."""
         def interrupted(settings, results):
             raise KeyboardInterrupt
 
         with tempfile.TemporaryDirectory() as folder:
             with mock.patch.object(lanes, "second_wave", interrupted), self.assertRaises(KeyboardInterrupt):
-                lanes.run(lanes.Settings(folder, only=("search",), jobs=2, quick=True), io.StringIO())
+                lanes.run(lanes.Settings(folder, only=("search", "conformance"), jobs=2, quick=True), io.StringIO())
             stopped = results_in(folder)
             self.assertFalse((Path(folder) / lanes.RUNNING).exists())
+            narrower = io.StringIO()
+            self.assertEqual(lanes.run(lanes.Settings(folder, only=("search",), jobs=2, quick=True, resume=True), narrower),
+                             1, narrower.getvalue())
+            owing = results_in(folder)
             out = io.StringIO()
-            self.assertEqual(lanes.run(lanes.Settings(folder, only=("search",), jobs=2, quick=True, resume=True), out), 0,
-                             out.getvalue())
+            self.assertEqual(lanes.run(lanes.Settings(folder, jobs=2, quick=True, resume=True, only=("conformance",)), out),
+                             0, out.getvalue())
             done = results_in(folder)
         self.assertEqual(len(stopped["searches"]), 3)
         self.assertIs(stopped["finished"], False)
         self.assertEqual(stopped["red"], ["the run did not finish: the parts it had not landed are not in this file"])
+        self.assertIs(owing["finished"], False)
+        self.assertEqual(owing["red"], ["the run did not finish: still owed: "
+                                        + ", ".join(f"conformance {name}" for name in deep.SPACES)])
+        self.assertIn("deep lane: found something", narrower.getvalue())
         self.assertIs(done["finished"], True)
         self.assertEqual(done["red"], [])
+        self.assertEqual(done["asked"], ["conformance", "search"])
+
+    def test_the_parts_are_ended_and_waited_for(self):
+        """A run that ends by its own SIGTERM runs no exit handler, which
+        waited for the parts before, so an ended part stayed unreaped
+        until something else reaped it, and where nothing does, as in a
+        container whose first process is no init, it stays; end_workers
+        waits for each part it ends."""
+        context = lanes.fork_context()
+        ready = [context.Event() for _ in range(2)]
+        parts = [context.Process(target=slow_to_end, args=(one,)) for one in ready]
+        for part in parts:
+            part.start()
+            self.addCleanup(part.join)
+            self.addCleanup(part.kill)
+        self.assertTrue(all(one.wait(30) for one in ready))
+        lanes.end_workers()
+        self.assertEqual([part.exitcode for part in parts], [3, 3])
+
+    def test_a_part_ended_outside_its_work_ends_quietly(self):
+        """A part's process inherits the runner's SIGTERM handler by the
+        fork; outside run_part's try, as while it sends its result, a
+        Terminated reached multiprocessing's own except, which printed it
+        and ended the part with 1. In a part the handler raises
+        SystemExit, which ends it with 143 and prints nothing."""
+        context = lanes.fork_context()
+        ready = context.Event()
+        previous = signal.signal(signal.SIGTERM, lanes.stop_on_term)
+        try:
+            part = context.Process(target=waits_outside_its_work, args=(ready,))
+            part.start()
+        finally:
+            signal.signal(signal.SIGTERM, previous)
+        self.addCleanup(part.join)
+        self.addCleanup(part.kill)
+        self.assertTrue(ready.wait(30))
+        part.terminate()
+        part.join(30)
+        self.assertEqual(part.exitcode, 128 + signal.SIGTERM)
+
+    def test_a_folder_with_no_hard_links_still_takes_the_marker(self):
+        """os.link fails with EPERM on vfat, exFAT and SMB without unix
+        extensions, where the run could not start and left running.<pid>
+        behind; there the marker is made exclusively and written."""
+        def no_links(source, target):
+            raise PermissionError(errno.EPERM, "Operation not permitted")
+
+        with tempfile.TemporaryDirectory() as folder:
+            settings = lanes.Settings(folder, only=("search",), jobs=2, quick=True)
+            marker = Path(folder) / lanes.RUNNING
+            with mock.patch.object(lanes.os, "link", no_links):
+                lanes.take_marker(settings)
+                self.assertEqual([p.name for p in Path(folder).iterdir()], [lanes.RUNNING])
+                self.assertEqual(marker.read_text(encoding="ascii"), f"{os.getpid()}\n")
+                other = a_live_process(self)
+                marker.write_text(f"{other}\n", encoding="ascii")
+                with self.assertRaises(SystemExit) as refused:
+                    lanes.take_marker(settings)
+            self.assertIn(f"names process {other}, a run in progress", str(refused.exception))
+            self.assertEqual([p.name for p in Path(folder).iterdir()], [lanes.RUNNING])
 
     def test_a_result_larger_than_the_pipe_holds_lands(self):
         """A part's result is sent only as the parent reads it once it is
@@ -833,7 +938,7 @@ class TheLaneAsOneRun(unittest.TestCase):
             self.addCleanup(lanes.end_workers)
             signal.alarm(60)
             try:
-                with mock.patch.object(lanes, "take", lambda results, part, result: taken.append((part, len(result)))):
+                with mock.patch.object(lanes, "take", lambda results, part, result, out: taken.append((part, len(result)))):
                     lanes.run_jobs(settings, [("a large part", one_megabyte, ())], results, time.perf_counter(), io.StringIO())
             finally:
                 signal.alarm(0)
@@ -844,15 +949,20 @@ class TheLaneAsOneRun(unittest.TestCase):
         """A search the budget stopped wrote the files of what it had met,
         and the resumed search numbers its own anew; a file of the
         stopped one that the new result does not name is no result's,
-        and goes."""
+        and goes. Files are told apart by name, since a resume may spell
+        the folder another way: compared whole, the first file, named
+        again under that spelling, went too."""
         with tempfile.TemporaryDirectory() as folder:
-            files = [Path(folder) / f"G1-E-two-{n}.json" for n in (1, 2, 3)]
+            (Path(folder) / deep.TRACES).mkdir()
+            files = [Path(folder) / deep.TRACES / f"G1-E-two-{n}.json" for n in (1, 2, 3)]
             for file in files:
                 file.write_text("{}", encoding="ascii")
             results = lanes.fresh_results()
             results["searches"].append({"space": "E-two", "violations": [{"file": str(f)} for f in files[:2]]})
             results["searches"].append({"space": "E-deep", "violations": []})
-            lanes.take(results, "search E-two", {"space": "E-two", "violations": [{"file": str(files[0])}, {"file": str(files[2])}]})
+            spelt_otherwise = f"{folder}/./{deep.TRACES}/{files[0].name}"
+            lanes.take(results, "search E-two", {"space": "E-two", "violations": [{"file": spelt_otherwise},
+                                                                                  {"file": str(files[2])}]}, folder)
             self.assertEqual([f.exists() for f in files], [True, False, True])
         self.assertEqual(sorted(s["space"] for s in results["searches"]), ["E-deep", "E-two"])
 
@@ -941,7 +1051,9 @@ class TheLaneAsOneRun(unittest.TestCase):
                                       start_new_session=True)
             self.addCleanup(end_session, runner)
             marker = out / lanes.RUNNING
-            workers = wait_for(lambda: children_of(runner.pid) if marker.exists() else [], 60)
+            # deep.json is written after the record, whose git --version
+            # is a child too, so the children then are the parts.
+            workers = wait_for(lambda: children_of(runner.pid) if (out / "deep.json").exists() else [], 60)
             self.assertTrue(workers, "no worker started within a minute")
             runner.send_signal(signal.SIGTERM)
             self.assertEqual(runner.wait(timeout=60), -signal.SIGTERM)
