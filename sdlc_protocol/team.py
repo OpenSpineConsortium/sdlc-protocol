@@ -42,8 +42,9 @@ from .claims import PREFIX as CLAIM_PREFIX, issue_files, number_of
 # worker names itself with worker:<name>, and the older account:<name> and
 # agent:<name> are read as the same label.
 from .labels import (ACCOUNT_PREFIX, AGENT_PREFIX, BLOCKED as BLOCKED_LABEL,
-                     BLOCKER as BLOCKER_LABEL, EPIC as EPIC_LABEL, TODO as TODO_LABEL, WORKER_COLOUR,
-                     agent_label as agent_of, holders, label_names, worker_label)
+                     BLOCKER as BLOCKER_LABEL, CLAIMED as CLAIMED_LABEL, EPIC as EPIC_LABEL,
+                     TODO as TODO_LABEL, WORKER_COLOUR, agent_label as agent_of, holders, label_names,
+                     worker_label)
 from .workers import fits
 
 # The one check the ruleset requires and a member can fix; the board's own
@@ -224,7 +225,18 @@ class Snapshot:
         return self.needs_work[number]
 
     def free(self, issue):
-        return issue["number"] not in self.claimed and BLOCKED_LABEL not in label_names(issue)
+        """Whether an issue may be taken: no claim branch holds it, and it
+        is labelled neither blocked nor claimed. The board shows an issue
+        labelled claimed in neither its Queue nor Given to workers, branch
+        or no branch, as when an issue is reopened after its merged branch
+        was deleted, or a release is undone before its branch is renamed
+        back, so a worker reading the board never takes it, and the clerk
+        never deals it: a worker in Actions that leaves such an issue alone
+        would otherwise be dealt it again on every run, its share of the
+        queue held back behind it."""
+        labels = label_names(issue)
+        return (issue["number"] not in self.claimed and BLOCKED_LABEL not in labels
+                and CLAIMED_LABEL not in labels)
 
     def own_move(self, agent):
         """A member's own work: a claim of its own that needs work, else
