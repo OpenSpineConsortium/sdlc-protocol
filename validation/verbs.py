@@ -12,6 +12,10 @@ what the checker explores.
 Every push a worker makes is a git command, and before the model takes it
 the push guard judges it, by the library's own guard.refusal, as the
 template's PreToolUse hook does; a push the guard refuses never happens.
+The guard reads the claim files a lease is judged by (guard.other_holder)
+from the model as git in the worker's clone would show them
+(claim_files_in): the remote-tracking ref as the worker's last fetch or
+push left it, and the branch pushed.
 
 Actors: the workers of the scope, each a person's session that may write
 (author_association COLLABORATOR); the owner; carol, a collaborator; dana,
@@ -127,22 +131,58 @@ def claim_ref(number):
     return f"{CLAIM_PREFIX}{number}"
 
 
-def guard_says(command, current_branch):
-    """The push guard's refusal of a command, or None when it passes."""
+def guard_says(command, current_branch, claim_file_at=None):
+    """The push guard's refusal of a command, or None when it passes;
+    claim_file_at reads the claim files a lease is judged by, as
+    guard.refusal takes it."""
     for argv in guard.simple_commands(command):
         args = guard.push_arguments(argv)
         if args is not None:
-            reason = guard.refusal(args, current_branch, MAIN)
+            reason = guard.refusal(args, current_branch, MAIN, claim_file_at)
             if reason:
                 return reason
     return None
+
+
+def claim_file_at(model, head, number):
+    """The claim file of issue number at a commit, at its tree, else where
+    the commit's history last added it (a commit whose tree has it and
+    whose parents' do not), as guard.claim_file_reader reads it with git;
+    None when neither has it."""
+    path = f"{CLAIM_DIR}/{number}.md"
+    if not head:
+        return None
+    text = model.tree(head).get(path)
+    if text is None:
+        for commit in reversed(model.in_order(model.ancestors(head))):
+            record = model.commits[commit]
+            if path in dict(record.tree) and not any(path in model.tree(p) for p in record.parents):
+                return dict(record.tree)[path]
+    return text
+
+
+def claim_files_in(model, worker, ref, sha):
+    """What git in the worker's clone shows the guard before a push of sha
+    to ref (guard.claim_file_reader): a claim file at refs/remotes/origin/
+    is read at the worker's remote-tracking ref, as its last fetch or push
+    left it; at a commit, at that commit; at anything else, the branch
+    pushed, which is sha."""
+    def read(name, number):
+        if name.startswith(guard.REMOTE_REFS):
+            head = model.tracking.get(worker, {}).get(name[len(guard.REMOTE_REFS):].partition("/")[2])
+        elif name in model.commits:
+            head = name
+        else:
+            head = sha
+        return claim_file_at(model, head, number)
+    return read
 
 
 def pushed(model, worker, ref, sha, command, force=False, lease=False, allowed=True, guarded=True):
     """Run one push through the guard, unless it is made by hand outside a
     session, then git's rule. A push taken fires push, and create when it
     made the branch."""
-    refused = guard_says(command, ref) if guarded else None
+    refused = guard_says(command, ref, claim_files_in(model, worker, ref, sha)) if guarded else None
     if refused:
         return Outcome(False, "refused by the guard", command, refused, allowed_shape=allowed)
     created = ref not in model.refs
@@ -255,13 +295,15 @@ def rebase_main(model, worker, number):
 
 def lease_onto(model, worker, number, files):
     """The careless rebaser (F7): fetch, then a lease onto a claim another
-    worker holds, with a claim file naming itself."""
+    worker holds, with a claim file naming itself. Git would take it, so
+    the guard must refuse it (spec/PROTOCOL.md, Work in the open: the
+    claim file on origin names another worker)."""
     model.fetch(worker)
     ref = claim_ref(number)
     tree = model.tree(model.refs[MAIN])
     tree[f"{CLAIM_DIR}/{number}.md"] = claim_text(number, worker, files)
     sha = model.commit((model.refs[MAIN],), worker, tree, f"Claim #{number}")
-    return pushed(model, worker, ref, sha, f"git push --force-with-lease origin {ref}", lease=True)
+    return pushed(model, worker, ref, sha, f"git push --force-with-lease origin {ref}", lease=True, allowed=False)
 
 
 def push_old_head(model, worker, number, released_ref):
