@@ -14,14 +14,16 @@ A release is the protocol's (spec/PROTOCOL.md, Release): a claim whose
 branch has gone more than a day without a commit, whose issue is open and
 not labelled in-review, and whose pull request, if it has one, is still a
 draft. The coordinator takes the label claimed and the holder's label off
-the issue, then posts one comment on it, whose first line is
-claims.RELEASE_MARKER, saying why, whose the claim was, what its branch
-holds and what its plan was, so the next worker can carry the work on or
-start over, and the board renames the branch in the same run. The board
-counts a release only once both are done, and a run that fails between
-them puts back the labels it took off, so the issue is as it was and the
-next run starts the release over. Like the board, this module only decides
-and words; adapters/github.py makes the calls.
+the issue, and puts todo on an issue that carries none of todo, epic and
+blocker, so it is listed again (labels_put_on); then it posts one comment
+on it, whose first line is claims.RELEASE_MARKER, saying why, whose the
+claim was, what its branch holds and what its plan was, so the next worker
+can carry the work on or start over, and the board renames the branch in
+the same run. The board counts a release only once both are done, and a
+run that fails between them puts back the labels it took off and takes off
+the todo it put on, so the issue is as it was and the next run starts the
+release over. Like the board, this module only decides and words;
+adapters/github.py makes the calls.
 """
 
 import re
@@ -34,6 +36,10 @@ from . import board, claims, labels
 # run tells again only when work it has not told of starts to meet it.
 OVERLAP_MARKER = "<!-- sdlc-coordinator: overlap {numbers} -->"
 OVERLAP_LINE = re.compile(r"<!-- sdlc-coordinator: overlap ([0-9 ]+) -->")
+# An issue carrying one of these labels gets no todo from a release: todo
+# and blocker each list it on the board with no claim, and the Queue never
+# lists an epic.
+NEEDS_NO_TODO = frozenset({labels.TODO, labels.EPIC, labels.BLOCKER})
 # How many commit subjects and files a release note names before it counts
 # the rest, so a long-lived branch does not bury the comment.
 FILES_NAMED = 20
@@ -180,16 +186,18 @@ def labels_released(snapshot, key):
 
 
 def labels_put_on(snapshot, key):
-    """The labels a release puts on the issue: todo, when it carries
-    neither todo nor epic, since the Queue lists only an issue labelled
+    """The labels a release puts on the issue: todo, when it carries none
+    of todo, epic and blocker, since the Queue lists only an issue labelled
     todo and the spec has a released claim's issue listed there again,
     while a task a worker's label alone gave carries none (F15: until its
     fix such an issue was shown nowhere once its claim was released). An
     epic gets none, since the Queue never lists one and its tasks are the
-    work, and so does an issue the snapshot knows nothing of, which no
-    release is due on (is_candidate)."""
+    work; a blocker none, since the board lists every open blocker under
+    Blockers and the clerk deals one first without todo, so todo would
+    only list it twice; and nor does an issue the snapshot knows nothing
+    of, which no release is due on (is_candidate)."""
     issue = board.as_snapshot(snapshot).claim_issues.get(key)
-    if issue is None or labels.TODO in issue.labels or labels.EPIC in issue.labels:
+    if issue is None or NEEDS_NO_TODO & set(issue.labels):
         return []
     return [labels.TODO]
 

@@ -24,6 +24,9 @@ CLAIM, CLAIMED, WORKER = mutants.CLAIM, mutants.CLAIMED, mutants.WORKER
 HELD = [CLAIM, CLAIMED, WORKER]
 WAIT = Verb("wait", "clock", (25,))
 SHARED = Scope(issues=(1, 2), files=((1, mutants.SHARED), (2, mutants.SHARED)))
+# The seeded issue carries todo; the searches F15's review added seed it
+# with other labels, which a trace here puts on by hand first.
+TODO_OFF = Verb("label-off", M.OWNER, (1, "todo"))
 
 
 def board_with(fault):
@@ -69,6 +72,11 @@ TRACES = {
     "given to workers needing the label todo": "the regression traces",
     "a release that leaves todo off": "the regression traces",
     "a failed release leaves its todo on": "the regression traces",
+    "the release's own page without its todo": "the regression traces",
+    "a refused todo puts no label back": ([TODO_OFF] + HELD + [WAIT, board_with("label-post-500")], Scope()),
+    "a todo written and lost stays on": ([TODO_OFF] + HELD + [WAIT, board_with("label-post-lost")], Scope()),
+    "an epic gets todo": ([TODO_OFF, Verb("label-on", M.OWNER, (1, "epic"))] + HELD + [WAIT, BOARD], Scope()),
+    "a blocker gets todo": ([TODO_OFF, Verb("label-on", M.OWNER, (1, "blocker"))] + HELD + [WAIT, BOARD], Scope()),
     "the landing order by number": "the regression traces",
     "a pull request dated by its opening": "the regression traces",
     "a refused activity read stops the run": "the regression traces",
@@ -103,9 +111,10 @@ class TheLane(unittest.TestCase):
         """Section 7 asks for 10 to 20; step 4 added five for the rules its
         lanes judge, step 5 four that undo fixes of 0.4.1, and each fix
         since at least one that undoes it (F7's first), and the reviews of
-        F13's fix more, so the bound is widened to 60 and the count noted."""
+        F13's and F15's fixes more, so the bound is widened to 60 and the
+        count noted."""
         self.assertTrue(10 <= len(mutants.MUTANTS) <= 60)
-        self.assertEqual(len(mutants.MUTANTS), 41)
+        self.assertEqual(len(mutants.MUTANTS), 46)
         self.assertEqual(sorted(TRACES), sorted(mutants.MUTANTS))
 
     def test_every_mutant_names_a_rule_the_library_still_has(self):
@@ -160,6 +169,26 @@ class TheSearchesCatchWhatTheyWereAddedFor(unittest.TestCase):
         for name in ("an opaque state read by GitHub's word alone", "the comparison read by ahead_by"):
             with self.subTest(mutant=name), mutants.switched_on(mutants.MUTANTS[name]):
                 self.assertIn("G10", {guarantee for guarantee, _ in mutants.violations(search)})
+
+
+    def test_the_searches_from_f15_s_review_catch_its_mutants(self):
+        """The lane credits these mutants to the searches F15's review added
+        (DESIGN.md, section 13), which seed the issue with labels other than
+        todo: each search finds nothing on the library and the violation
+        named under each of its mutants, which it can only while its issue
+        is seeded so, since a release puts no todo on an issue that has it."""
+        caught = {"a released task given by a label alone, under every fault": (
+                      ("worker:a",), {"a refused todo puts no label back": "G3L",
+                                      "a todo written and lost stays on": "G3L"}),
+                  "a released epic": (("epic",), {"an epic gets todo": "G3"}),
+                  "a released blocker": (("blocker",), {"a blocker gets todo": "G3"})}
+        for name, (seeded, guarantees) in caught.items():
+            search = next(s for s in mutants.SEARCHES if s.name == name)
+            self.assertEqual(search.labels, seeded)
+            self.assertEqual(mutants.violations(search), {})
+            for mutant, guarantee in guarantees.items():
+                with self.subTest(search=name, mutant=mutant), mutants.switched_on(mutants.MUTANTS[mutant]):
+                    self.assertIn(guarantee, {g for g, _ in mutants.violations(search)})
 
 
 class TheHarnessFixesTheLaneAskedFor(unittest.TestCase):

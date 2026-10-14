@@ -151,14 +151,18 @@ class ReleaseText(unittest.TestCase):
         self.assertEqual(board.released_keys(snap), {"12"})
         self.assertIn("| #12 | Describe the board | todo |", board.render(snap).split(board.QUEUE_HEADING)[1])
 
-    def test_a_release_puts_todo_on_an_issue_that_carries_neither_todo_nor_epic(self):
+    def test_a_release_puts_todo_on_an_issue_that_carries_none_of_todo_epic_and_blocker(self):
         """F15: the Queue lists only an issue labelled todo, and a task a
         worker's label alone gave carries none, so until the fix its
         released issue was shown nowhere; an epic gets none, since the
-        Queue never lists one."""
+        Queue never lists one, and a blocker none, since the board lists it
+        under Blockers and the clerk deals it first without todo. A task
+        its worker labelled blocked gets todo, so the Queue lists it once
+        the coordinator has settled what it needs."""
         snap = idle_claim()
         for names, put_on in ((["claimed", "worker:nightly"], ["todo"]), (["claimed", "todo", "worker:nightly"], []),
-                              (["claimed", "epic", "worker:nightly"], []), (["blocker", "claimed"], ["todo"]), ([], ["todo"])):
+                              (["claimed", "epic", "worker:nightly"], []), (["blocker", "claimed"], []),
+                              (["blocked", "claimed", "worker:nightly"], ["todo"]), ([], ["todo"])):
             with self.subTest(labels=names):
                 snap.claim_issues["12"].labels = names
                 self.assertEqual(coordinator.labels_put_on(snap, "12"), put_on)

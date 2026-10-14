@@ -74,7 +74,8 @@ class Search(NamedTuple):
     to its start, the scope searched from there and how deep, and the
     violations, as (guarantee, detail), the library as it stands is known
     to meet in it; opaque_pulls has GitHub call every pull request not in
-    conflict blocked, as a rule that holds it does (model.RepoModel)."""
+    conflict blocked, as a rule that holds it does (model.RepoModel), and
+    labels are what the seeded issues carry."""
 
     name: str
     prefix: tuple
@@ -83,6 +84,7 @@ class Search(NamedTuple):
     issues: tuple = (1,)
     known: tuple = ()
     opaque_pulls: bool = False
+    labels: tuple = ("todo",)
 
 
 # --- the replacements ---------------------------------------------------------
@@ -95,6 +97,7 @@ ORIGINAL_OVERLAPS_DUE = coordinator.overlap_comments_due
 ORIGINAL_REFUSAL = guard.refusal
 ORIGINAL_TOLD = coordinator.told_numbers
 ORIGINAL_PUT_BACK = github.put_back
+ORIGINAL_AFTER_RELEASE = coordinator.after_release
 
 
 def comment_then_labels(api, snap, key, now):
@@ -206,6 +209,23 @@ def each_leg_from_its_own_look(clients, workers, looks, areas=None):
     itself at its own moment, so two looks that differ on whether the
     holder's pull request is behind deal its issue twice."""
     return {w: team.next_for(clients[look], w, list(workers), areas) for w, look in zip(workers, looks)}
+
+
+def put_labels_on_then(put_back_of):
+    """github.put_labels_on with one change: once GitHub refuses the todo,
+    put_back_of(taken_off, put_on) says which labels go back on and which
+    come off again, where the library puts back every label it took off and
+    takes the todo off again."""
+    def put_labels_on(api, key, put_on, taken_off):
+        if not put_on:
+            return ""
+        try:
+            api.post(f"/repos/{api.repo}/issues/{key}/labels", {"labels": put_on})
+        except github.GitHubError as problem:
+            return (f"#{key}: not released, putting todo on failed: {problem}"
+                    + github.put_back(api, key, *put_back_of(taken_off, put_on)))
+        return ""
+    return put_labels_on
 
 
 def given_rows_needing_todo(snap):
@@ -418,10 +438,28 @@ MUTANTS = {
         "G9", "every open, unclaimed issue a worker's label names is shown under Given to workers, todo or not (F14)"),
     "a release that leaves todo off": Mutant(
         coordinator, "labels_put_on", lambda snapshot, key: [],
-        "G3", "a release puts todo on an issue that carries neither todo nor epic, so the Queue lists it again (F15)"),
+        "G3", "a release puts todo on an issue that carries none of todo, epic and blocker, so the Queue lists it "
+              "again (F15)"),
     "a failed release leaves its todo on": Mutant(
         github, "put_back", lambda api, key, names, put_on=(): ORIGINAL_PUT_BACK(api, key, names),
         "G3L", "a release that fails after putting todo on takes it off again, so the issue is as the run found it (F15)"),
+    "a refused todo puts no label back": Mutant(
+        github, "put_labels_on", put_labels_on_then(lambda taken_off, put_on: ([], put_on)),
+        "G3L", "a release whose todo GitHub refuses puts back the labels it took off (F15's review)"),
+    "a todo written and lost stays on": Mutant(
+        github, "put_labels_on", put_labels_on_then(lambda taken_off, put_on: (taken_off, ())),
+        "G3L", "a todo GitHub wrote and lost its answer to is taken off again with the labels put back (F15's review)"),
+    "an epic gets todo": Mutant(
+        coordinator, "NEEDS_NO_TODO", frozenset({labels.TODO, labels.BLOCKER}),
+        "G3", "a release puts no todo on an epic, which the Queue never lists (F15's review)"),
+    "a blocker gets todo": Mutant(
+        coordinator, "NEEDS_NO_TODO", frozenset({labels.TODO, labels.EPIC}),
+        "G3", "a release puts no todo on a blocker, which the board lists under Blockers (F15's review)"),
+    "the release's own page without its todo": Mutant(
+        coordinator, "after_release",
+        lambda snapshot, key, released_at, taken_off, put_on=(): ORIGINAL_AFTER_RELEASE(snapshot, key, released_at,
+                                                                                        taken_off),
+        "G5", "the run that releases a claim lists its issue in the Queue on the page it writes (F15)"),
     "an overlap marker read on any line": Mutant(
         coordinator, "told_numbers", told_on_any_line,
         "G7", "a comment that quotes the marker further down told nothing"),
@@ -448,6 +486,9 @@ MUTANTS = {
 CLAIM = Verb("claim", "a", (1,))
 CLAIMED = Verb("label-on", "a", (1, "claimed"))
 WORKER = Verb("label-on", "a", (1, "worker:a"))
+# A claim held and idle past the release: a claims #1, announces it and the
+# clock runs 25 hours.
+DUE = (CLAIM, CLAIMED, WORKER, Verb("wait", "clock", (25,)))
 SHARED = ("src/shared.py",)
 
 # Cheapest first, since a mutant is judged by the first search that
@@ -492,8 +533,12 @@ LANES = (Lane("the regression traces", traces_lane),
          Lane("the guard grammar against git's answers", guard_lane),
          Lane("dealing at every look", dealing_lane))
 SEARCHES = (
-    Search("a released claim under every fault", (CLAIM, CLAIMED, WORKER, Verb("wait", "clock", (25,))),
-           Scope(workers=("a",), people=(), waits=(25,), faults=tuple(verbs.FAULTS)), 2),
+    Search("a released claim under every fault", DUE, Scope(workers=("a",), people=(), waits=(25,),
+                                                             faults=tuple(verbs.FAULTS)), 2),
+    Search("a released task given by a label alone, under every fault", DUE,
+           Scope(workers=("a",), people=(), waits=(25,), faults=tuple(verbs.FAULTS)), 2, labels=("worker:a",)),
+    Search("a released epic", DUE, Scope(workers=("a",), people=(), waits=(25,)), 1, labels=("epic",)),
+    Search("a released blocker", DUE, Scope(workers=("a",), people=(), waits=(25,)), 1, labels=("blocker",)),
     Search("careless workers on a held claim", (CLAIM, CLAIMED),
            Scope(workers=("a", "b"), people=(M.OWNER,), waits=(25,), careless=True), 3),
     Search("two claims on one file", (CLAIM, Verb("claim", "b", (2,))),
@@ -516,7 +561,7 @@ CATCHERS = LANES + SEARCHES
 
 def start(search):
     """The search's starting state, with the violations met on its prefix."""
-    model = M.seeded(search.issues, writers=("a", "b", "c", CAROL, DANA))
+    model = M.seeded(search.issues, writers=("a", "b", "c", CAROL, DANA), labels=search.labels)
     model.opaque_pulls = search.opaque_pulls
     cycle.board_run(model)
     found = []

@@ -1,14 +1,14 @@
 {
   "finding": "F15",
   "title": "a task given by a worker's label alone is shown nowhere once its claim is released",
-  "status": "fixed after 0.4.1: a release puts todo on an issue that carries neither todo nor epic, so the Queue lists it again, and a release that fails takes it off again (DESIGN.md, 13)",
-  "breaks": ["G3", "G3L"],
+  "status": "fixed after 0.4.1: a release puts todo on an issue that carries none of todo, epic and blocker, so the Queue lists it again, and a release that fails takes it off again (DESIGN.md, 13)",
+  "breaks": ["G3", "G3L", "G5"],
   "world": "memory",
   "issues": {"1": ["worker:a"]},
   "workers": ["a"],
   "steps": [
     {"verb": "board", "expect": {"given": {"1": ["a"]}, "queue": []},
-     "note": "the coordinator gave #1 to a by a's label alone, as it gives a planned task, so it carries no todo and is shown under Given to workers"},
+     "note": "a person gave #1 to a by a's label alone, as one gives an issue by hand (the coordinator's own tasks carry todo too), so it carries no todo and is shown under Given to workers"},
     {"verb": "claim", "actor": "a", "args": [1], "expect": {"holders": {"1": "a"}}},
     {"verb": "announce", "actor": "a", "args": [1], "expect": {"labels": {"1": ["claimed", "worker:a"]}}},
     {"verb": "board", "expect": {"given": {}, "queue": []}},

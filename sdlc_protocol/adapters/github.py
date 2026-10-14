@@ -784,12 +784,9 @@ def release_one(api, snap, key, now):
     except GitHubError as problem:
         return (f"#{key}: not released, taking the labels off failed: {problem}{github_words(problem)}"
                 + put_back(api, key, taken_off))
-    if put_on:
-        try:
-            api.post(f"/repos/{api.repo}/issues/{key}/labels", {"labels": put_on})
-        except GitHubError as problem:
-            return (f"#{key}: not released, putting {', '.join(put_on)} on failed: {problem}{github_words(problem)}"
-                    + put_back(api, key, taken_off, put_on))
+    refused = put_labels_on(api, key, put_on, taken_off)
+    if refused:
+        return refused
     text = coordinator.release_text(snap, key, holding(api, snap.default_branch, release.sha))
     lost = ""
     try:
@@ -818,6 +815,22 @@ def take_label_off(api, key, name):
     return True
 
 
+def put_labels_on(api, key, put_on, taken_off):
+    """Put on a claim's issue the labels its release puts on
+    (coordinator.labels_put_on): nothing when they went on, else the
+    release's line saying it failed there, with the labels taken off put
+    back and those put on taken off again, since GitHub may have written
+    them and lost its answer."""
+    if not put_on:
+        return ""
+    try:
+        api.post(f"/repos/{api.repo}/issues/{key}/labels", {"labels": put_on})
+    except GitHubError as problem:
+        return (f"#{key}: not released, putting {', '.join(put_on)} on failed: {problem}{github_words(problem)}"
+                + put_back(api, key, taken_off, put_on))
+    return ""
+
+
 def put_back(api, key, names, put_on=()):
     """Put the labels a release took off back on its issue once a later step
     failed, so the claim stays its holder's until a run releases it whole,
@@ -839,7 +852,7 @@ def put_back(api, key, names, put_on=()):
             if take_label_off(api, key, name):
                 said += f"; {name} taken off again"
         except GitHubError as problem:
-            said += f"; taking {name} off again failed too, so it stays on: {problem}{github_words(problem)}"
+            said += f"; taking {name} off again failed too, so it may still be on: {problem}{github_words(problem)}"
     return said
 
 

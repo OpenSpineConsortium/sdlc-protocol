@@ -1262,7 +1262,8 @@ class Coordinate(unittest.TestCase):
 
     def given_snapshot(self, names=("claimed", "worker:nightly")):
         """idle_snapshot with issue 12 given to nightly by its label alone,
-        as the coordinator gives a planned task, so it carries no todo."""
+        as a person gives one by hand, so it carries no todo (the
+        coordinator's own tasks carry todo too, team.open_task)."""
         snap = idle_snapshot()
         snap.claim_issues["12"].labels = list(names)
         snap.issues[0].labels = list(names)
@@ -1282,8 +1283,11 @@ class Coordinate(unittest.TestCase):
         self.assertEqual(board.released_keys(snap), {"12"})
         self.assertIn("| #12 | Describe the board | todo |", board.render(snap).split(board.QUEUE_HEADING)[1])
 
-    def test_an_issue_with_todo_or_an_epic_gets_no_label_put_on(self):
-        for names in (("claimed", "todo", "worker:nightly"), ("claimed", "epic", "worker:nightly")):
+    def test_an_issue_with_todo_an_epic_or_a_blocker_gets_no_label_put_on(self):
+        """A blocker is listed under Blockers and dealt first without todo,
+        so todo would only list it twice."""
+        for names in (("claimed", "todo", "worker:nightly"), ("claimed", "epic", "worker:nightly"),
+                      ("blocker", "claimed", "worker:nightly")):
             with self.subTest(labels=names):
                 api, opener = client(release_answers())
                 github.coordinate(api, self.given_snapshot(names), NOW)
@@ -1333,8 +1337,8 @@ class Coordinate(unittest.TestCase):
         api, _ = client(answers)
         line, = github.coordinate(api, self.given_snapshot(), NOW)
         self.assertTrue(line.endswith("; claimed, worker:nightly put back; taking todo off again failed too, so it "
-                                      "stays on: DELETE /repos/o/r/issues/12/labels/todo: HTTP 403: Resource not "
-                                      "accessible"), line)
+                                      "may still be on: DELETE /repos/o/r/issues/12/labels/todo: HTTP 403: "
+                                      "Resource not accessible"), line)
 
     def test_a_label_github_refuses_is_a_line_and_posts_no_comment(self):
         answers = release_answers()

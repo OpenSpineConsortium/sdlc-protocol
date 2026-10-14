@@ -432,13 +432,16 @@ def labels_put_back(before, after, calls, actual):
 def put_back_refused(calls, number):
     """Whether GitHub refused a step of putting the issue back: the labels
     taken off, put on again, or the todo put on, taken off again. A refused
-    todo is the release failing, not its putting back."""
+    todo is the release failing, not its putting back; and a 404 to taking
+    the todo off is no refusal, since it says the todo is not there, as
+    after a refused todo GitHub did not write, which the library counts as
+    taken off (github.take_label_off)."""
     for c in calls:
         if c.applied:
             continue
         if c.method == "POST" and c.path == f"/issues/{number}/labels" and c.body["labels"] != [oracle.TODO]:
             return True
-        if c.method == "DELETE" and c.path == f"/issues/{number}/labels/{oracle.TODO}":
+        if c.method == "DELETE" and c.path == f"/issues/{number}/labels/{oracle.TODO}" and c.status != 404:
             return True
     return False
 
