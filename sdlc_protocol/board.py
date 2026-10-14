@@ -170,7 +170,7 @@ class Pull:
             files=[file_name(f) for f in data.get("files") or []],
             draft=bool(data.get("draft")),
             standing=data.get("standing"),
-            created_at=data.get("created_at") or "",
+            created_at=str(data.get("created_at") or ""),
             fork=from_fork(data),
         )
 
@@ -196,13 +196,25 @@ class Pull:
 def from_fork(data):
     """Whether a pull request's branch stands in another repository than the
     one it would merge into, or in none, a fork since deleted, as the API's
-    head and base name them; a dict that does not name both, as a fixture or
-    a snapshot written by hand, says so by the board's own key fork, which
+    head and base name them; a dict that does not name both by their full
+    names, as a fixture or a snapshot written by hand, which may hold
+    anything there, says so by the board's own key fork, which
     Pull.to_dict writes."""
-    head, base = data.get("head") or {}, (data.get("base") or {}).get("repo") or {}
-    if "repo" not in head or not base.get("full_name"):
+    head, base = mapping(data.get("head")), mapping(data.get("base"))
+    base_name = mapping(base.get("repo")).get("full_name")
+    if "repo" not in head or not isinstance(base_name, str) or not base_name:
         return bool(data.get("fork"))
-    return ((head.get("repo") or {}).get("full_name") or "").lower() != base["full_name"].lower()
+    if head["repo"] is None:
+        return True
+    head_name = mapping(head["repo"]).get("full_name")
+    if not isinstance(head_name, str):
+        return bool(data.get("fork"))
+    return head_name.lower() != base_name.lower()
+
+
+def mapping(value):
+    """The value when it is a dict, else an empty one."""
+    return value if isinstance(value, dict) else {}
 
 
 @dataclass
@@ -781,10 +793,11 @@ def pull_began(snap, pull):
     """When a pull request's work began: when the push that made its branch
     came, as the snapshot holds it, so a claim and the pull request later
     opened from its branch are one piece that began at the claim (F13);
-    else, for a pull request from a branch the snapshot says nothing of, or
-    from a fork, whose branch a branch of the same name here is not, when
-    it was opened."""
-    return ("" if pull.fork else snap.began.get(pull.branch, "")) or pull.created_at
+    else, for a pull request from a branch the snapshot says nothing of,
+    or nothing that reads as a time, or from a fork, whose branch a branch
+    of the same name here is not, when it was opened."""
+    made = "" if pull.fork else snap.began.get(pull.branch, "")
+    return made if began_at(made) != UNDATED else pull.created_at
 
 
 def overlaps(snapshot):

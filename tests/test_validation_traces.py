@@ -32,13 +32,17 @@ BUDGET_SECONDS = 10
 # with main is told it moved once the adapter reads the comparison's
 # ahead_by for behind_by, and at its second, step 4, where the draft
 # behind main hears nothing once the adapter takes GitHub's word alone;
-# F13's at its first board run, step 3, where the claim made later lands
-# first once the order is by number again, or once the draft is dated by
-# its opening, two hours after the claim on #2, and at its second, step 4,
-# where the run fails once a refused read of the activity escapes; F15's at
-# its run that fails at the comment, step 6, where the todo the release put
-# on stays on once the putting back forgets it, and at the next run, step
-# 7, where the release puts no todo on once the rule is gone.
+# F13's at its first board run, step 4, where b's draft lands before a's,
+# whose branch was made first, once the order is by number again or once
+# a draft is dated by its opening; at its second, step 5, where GitHub
+# refuses the first read of the activity, the run fails once the refusal
+# escapes, and the drafts land by their openings once no branch is asked
+# about on its own; and at its third, step 7, where GitHub refuses every
+# read, c's claim, which nothing dates then, lands first once such work
+# counts first. F15's at its run that fails at the comment, step 6, where
+# the todo the release put on stays on once the putting back forgets it,
+# and at the next run, step 7, where the release puts no todo on once the
+# rule is gone.
 UNDONE = {
     "F1": [("the comment before the labels", 5, "G3L")],
     "F3": [("the guard passes --force", 1, "G11a")],
@@ -51,8 +55,9 @@ UNDONE = {
     "F10": [("a finished draft's release by hand not seen", 9, "G5")],
     "F11": [("a refused comment stops the run", 6, "G15")],
     "F12": [("main moved told only in the push's run", 8, "G10")],
-    "F13": [("the landing order by number", 3, "G7"), ("a pull request dated by its opening", 3, "G7"),
-            ("a refused activity read stops the run", 4, "G15")],
+    "F13": [("the landing order by number", 4, "G7"), ("a pull request dated by its opening", 4, "G7"),
+            ("a refused activity read stops the run", 5, "G15"), ("a branch never asked about on its own", 5, "G7"),
+            ("work nothing dates landing first", 7, "G7")],
     "F15": [("a release that leaves todo off", 7, "G3"), ("a failed release leaves its todo on", 6, "G3L")],
 }
 # The thirteen fixed findings: F1, F3, F5, F6, F10 and F11 in 0.4.1, and

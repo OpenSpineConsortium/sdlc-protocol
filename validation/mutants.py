@@ -359,6 +359,12 @@ MUTANTS = {
     "a refused activity read stops the run": Mutant(
         github, "began_times", began_times_unguarded,
         "G15", "a branch GitHub will not date leaves its work undated, never a failed run (F13)"),
+    "work nothing dates landing first": Mutant(
+        board, "UNDATED", datetime.min.replace(tzinfo=timezone.utc),
+        "G7", "work whose beginning nothing says lands last, a claim opening its draft at once (F13's review)"),
+    "a branch never asked about on its own": Mutant(
+        github, "branch_made_at", lambda api, branch: "",
+        "G7", "a refused read of the newest creations leaves each branch to its own read, which dates it (F13's review)"),
     "an opaque state read by GitHub's word alone": Mutant(
         github, "standing_of", lambda api, detail, default_branch=None: None, "G10",
         "a pull request GitHub only calls blocked, or a draft, is read through mergeable and the comparison, as the gate reads it, so it hears main moved (F9)"),

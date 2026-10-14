@@ -22,6 +22,7 @@ sys.path.insert(0, str(ROOT))
 from sdlc_protocol.adapters import github  # noqa: E402
 from sdlc_protocol import guard  # noqa: E402
 from validation import cycle, invariants, model as M, mutants, oracle, verbs  # noqa: E402
+from validation.fake_github import Call  # noqa: E402
 from validation.verbs import Scope, Verb  # noqa: E402
 
 BOARD = Verb("board", "board", (cycle.SCHEDULE, ""))
@@ -286,6 +287,33 @@ class TheOpenFindingsShow(unittest.TestCase):
                 self.assertEqual([(v.guarantee, v.detail) for v in found],
                                  [("G7", "the board's Overlaps are {'src/shared.py': [2, 100]}, the oracle's "
                                          "{'src/shared.py': [100, 2]}")])
+
+    def test_f13_work_github_will_not_date_lands_as_the_spec_reads_it(self):
+        """F13's second review: with every read of the activity refused, the
+        draft is dated by its opening and the claim, which nothing dates,
+        lands last; the oracle reads the branches GitHub refused from the
+        run's calls, so the page the spec asks for is green, and under the
+        mutant that puts such work first it is not."""
+        steps = [Verb("claim", "a", (1,)), Verb("wait", "clock", (2,)), Verb("claim", "b", (2,)),
+                 Verb("wait", "clock", (2,)), Verb("open-draft", "b", (2,)), board_with("activity-500-all")]
+        self.assertEqual(violations(steps, SHARED, issues=None), [])
+        with mutants.switched_on(mutants.MUTANTS["work nothing dates landing first"]):
+            found = violations(steps, SHARED, issues=None)
+        self.assertEqual([(v.guarantee, v.detail) for v in found],
+                         [("G7", "the board's Overlaps are {'src/shared.py': [1, 100]}, the oracle's "
+                                 "{'src/shared.py': [100, 1]}")])
+
+    def test_unsaid_branches_are_those_whose_own_read_github_refused(self):
+        """A refused read of the newest creations of the whole repository
+        leaves each branch to its own read, so it makes no branch unsaid."""
+        def read(status, ref=None, injected=False):
+            query = (("activity_type", "branch_creation"),) + ((("ref", ref),) if ref else ())
+            return Call("GET", "/activity", query, None, status, False, injected)
+
+        calls = [read(500, injected=True), read(500, "refs/heads/claude/1", True), read(200, "refs/heads/claude/2"),
+                 read(404, "refs/heads/claude/3")]
+        self.assertEqual(invariants.unsaid_branches(calls), {"claude/1", "claude/3"})
+        self.assertEqual(invariants.unsaid_branches(calls[:1]), set())
 
     def test_f14_an_issue_a_worker_s_label_names_is_shown_under_given_to_workers(self):
         """Found by this step, fixed after 0.4.1: an issue a worker's label

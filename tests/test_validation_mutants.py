@@ -72,6 +72,8 @@ TRACES = {
     "the landing order by number": "the regression traces",
     "a pull request dated by its opening": "the regression traces",
     "a refused activity read stops the run": "the regression traces",
+    "work nothing dates landing first": "the regression traces",
+    "a branch never asked about on its own": "the regression traces",
     "an overlap marker read on any line": ([CLAIM, Verb("claim", "b", (2,)), Verb("overlap-quote", "a", (1, (2,))),
                                             BOARD], SHARED),
     "an overlap marker trusted from any author": ([CLAIM, Verb("claim", "b", (2,)),
@@ -100,18 +102,23 @@ class TheLane(unittest.TestCase):
     def test_it_holds_10_to_30_mutants_each_with_a_trace(self):
         """Section 7 asks for 10 to 20; step 4 added five for the rules its
         lanes judge, step 5 four that undo fixes of 0.4.1, and each fix
-        since one that undoes it (F7's first), so the bound is widened to
-        40 and the count noted."""
-        self.assertTrue(10 <= len(mutants.MUTANTS) <= 40)
-        self.assertEqual(len(mutants.MUTANTS), 39)
+        since at least one that undoes it (F7's first), and the reviews of
+        F13's fix more, so the bound is widened to 60 and the count noted."""
+        self.assertTrue(10 <= len(mutants.MUTANTS) <= 60)
+        self.assertEqual(len(mutants.MUTANTS), 41)
         self.assertEqual(sorted(TRACES), sorted(mutants.MUTANTS))
 
     def test_every_mutant_names_a_rule_the_library_still_has(self):
         """A mutant whose target was renamed would patch nothing the library
-        calls, and so be caught by nothing."""
+        calls, and so be caught by nothing; one that changes a value the
+        library reads, as board.UNDATED, puts one of the same type in."""
         for name, mutant in mutants.MUTANTS.items():
             with self.subTest(mutant=name):
-                self.assertTrue(callable(getattr(mutant.module, mutant.name)))
+                target = getattr(mutant.module, mutant.name)
+                if callable(mutant.replacement):
+                    self.assertTrue(callable(target))
+                else:
+                    self.assertIs(type(target), type(mutant.replacement))
                 self.assertIn(mutant.guarantee, invariants.GUARANTEES)
 
     def test_the_lanes_come_first_then_the_searches_cheapest_first(self):
