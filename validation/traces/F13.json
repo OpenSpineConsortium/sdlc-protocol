@@ -1,7 +1,7 @@
 {
   "finding": "F13",
   "title": "the landing order's oldest is the lowest number",
-  "status": "open; found by build step 1; a fix in the library or a word in the spec, the owner's choice",
+  "status": "fixed after 0.4.1: the landing order reads the oldest as the work that began first, when GitHub says the push that made its branch came (DESIGN.md, 13)",
   "breaks": ["G7"],
   "world": "memory",
   "issues": {"1": ["todo"], "2": ["todo"]},
@@ -11,7 +11,7 @@
     {"verb": "claim", "actor": "a", "args": [1]},
     {"verb": "open-draft", "actor": "a", "args": [1], "expect": {"pulls": [100]}},
     {"at": 5, "verb": "claim", "actor": "b", "args": [2]},
-    {"verb": "board", "shows": "F13", "expect": {"overlaps": {"src/shared.py": [2, 100]}},
-     "note": "as built #2, claimed five hours later, lands before #100, since its number is the lower; reading the spec, the oldest work lands first"}
+    {"verb": "board", "expect": {"overlaps": {"src/shared.py": [100, 2]}},
+     "note": "#100, whose branch a's claim made five hours before b's, lands before #2, as the spec reads the oldest; until the fix #2 landed first, its number being the lower, which the mutant that orders by number again shows (G7)"}
   ]
 }

@@ -21,15 +21,16 @@ search goes on past it and reports it once, as known; without it, the
 oracle reads the spec, and the finding shows as a disagreement. AS_BUILT
 holds the open findings the board's run can reach (DESIGN.md, 13), read
 from validation/known.json since build step 5 (known.py): F2,
-overlapping work told again once a claim opens its pull request; F13,
-the landing order's "oldest" read as the lowest number. Three were
-switches until their fixes: F12, "main moved" told only in the run the
-push to main started, which is now told in whichever run finds the
+overlapping work told again once a claim opens its pull request. Four
+were switches until their fixes: F12, "main moved" told only in the run
+the push to main started, which is now told in whichever run finds the
 branch behind; F14, Given to workers needing the label todo and leaving
 epics out, which now shows every open, unclaimed issue a worker's label
-names; and F9, a draft never told "main moved", which the adapter now
-reads through mergeable and the comparison where GitHub's word is
-opaque, as it reads a blocked one. F13 and F14 are what the
+names; F9, a draft never told "main moved", which the adapter now reads
+through mergeable and the comparison where GitHub's word is opaque, as
+it reads a blocked one; and F13, the landing order's "oldest" read as
+the lowest number, which now reads when the work began, as GitHub
+records the push that made its branch. F13 and F14 are what the
 harness of build step 1 found when its oracle was held to the spec's
 words (DESIGN.md, 13).
 """
@@ -82,6 +83,9 @@ SPEC = {
                  "its claim lists, and a claim with no pull request yet by the files its claim lists",
     "landing order": "a blocker first, since it stops everyone; then work marked ready, which waits only for its "
                      "merge; then the oldest",
+    "oldest": "the work that began first, when GitHub says the push that made its branch came, or, for a pull "
+              "request from a branch it says nothing of, when the pull request was opened; work whose beginning "
+              "nothing says counts as the oldest, and the number breaks a tie",
     "rename refused": "When GitHub refuses the rename for good, for a ruleset whose target takes in the claim "
                       "branches or a token without the right, the board says so once on the issue",
 }
@@ -93,6 +97,9 @@ FILES_HEADING = "## Files to touch"
 TODO, CLAIMED, IN_REVIEW, BLOCKER, EPIC = "todo", "claimed", "in-review", "blocker", "epic"
 WORKER_SPELLINGS = ("worker:", "account:", "agent:")
 IDLE_MINUTES = 24 * HOUR
+# Where work whose beginning nothing says stands among the oldest
+# (SPEC["oldest"]): before every minute the model counts.
+NOTHING_SAYS = float("-inf")
 FINISHED = "finished; ready to mark"
 RELEASE_MARKER = "<!-- sdlc-coordinator: claim-released -->"
 OVERLAP_MARKER = re.compile(r"<!-- sdlc-coordinator: overlap ([0-9 ]+) -->")
@@ -291,15 +298,16 @@ class Piece(NamedTuple):
     """One piece of open work: its identity (the issue a claim's work is
     for, else the pull request's number), the number it is told on and
     shown by now, its files, the landing order's two words, and the minute
-    the work began: the push that made its branch, or the opening of a
-    pull request from a branch that is no claim."""
+    the work began (SPEC["oldest"]): the push that made its branch, or the
+    opening of a pull request from a branch the model records no push of;
+    None when nothing says."""
 
     identity: int
     number: int
     files: tuple
     ready: bool
     blocker: bool
-    began: int = 0
+    began: int | None = None
 
 
 def listed_files(text):
@@ -348,7 +356,7 @@ def open_work(model, known=AS_BUILT):
         if number is None or ref in pulled or released(model, number):
             continue
         files = own(listed_files(claim_file_text(model, ref, number)))
-        pieces.append(Piece(number, number, files, False, is_blocker(model, number), model.created.get(ref, 0)))
+        pieces.append(Piece(number, number, files, False, is_blocker(model, number), model.created.get(ref)))
     return pieces
 
 
@@ -358,11 +366,13 @@ def is_blocker(model, number):
 
 
 def landing(piece, known=AS_BUILT):
-    """SPEC["landing order"]: "the oldest" is the work that began first,
-    the number breaking a tie; with F13 known, the lowest number, as the
-    library reads it, an issue's and a pull request's alike."""
-    age = piece.number if "F13" in known else piece.began
-    return (not piece.blocker, not piece.ready, age, piece.number)
+    """SPEC["landing order"], with "the oldest" read as SPEC["oldest"]
+    says: the work that began first, work whose beginning nothing says
+    first of all, the number breaking a tie. Until F13's fix the library
+    read it as the lowest number, an issue's and a pull request's alike,
+    which the switch F13 read. No finding switches this rule now, and known
+    is taken as every rule of the page takes it."""
+    return (not piece.blocker, not piece.ready, NOTHING_SAYS if piece.began is None else piece.began, piece.number)
 
 
 def overlaps(model, known=AS_BUILT):

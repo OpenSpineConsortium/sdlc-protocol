@@ -319,6 +319,9 @@ MUTANTS = {
     "a board comment posted again": Mutant(
         github, "has_marker", lambda api, number, marker: False,
         "G10", "each board comment is posted once, as its marker says"),
+    "the landing order by number": Mutant(
+        board, "landing_key", lambda work: (not work.blocker, not work.ready, work.number),
+        "G7", "the oldest work lands first, by when GitHub says the push that made its branch came, not by its number (F13)"),
     "an opaque state read as unknown": Mutant(
         github, "standing_of", lambda api, detail, default_branch=None: None, "G10",
         "a pull request GitHub only calls blocked, or a draft, is read through mergeable and the comparison, as the gate reads it, so it hears main moved (F9)"),

@@ -36,7 +36,10 @@ and the comparison carries behind_by (F9); a rename
 closes the pull request whose head the branch is; a rename onto a name
 that stands answers 422; the board posts as github-actions[bot] with the
 author_association NONE; a pull request's updated_at moves with pushes and
-comments.
+comments; and the repository's activity lists the push that made each
+branch at GitHub's own time, newest first (F13), a renamed branch keeping
+the time it was made, which the model's rename does and no canary check
+reads yet.
 """
 
 import base64
@@ -198,6 +201,8 @@ class FakeGitHub:
             raise Refused(404)
         if route == ("GET", "commits") and s[-1] == "check-runs":
             return {"total_count": 0, "check_runs": []}, {}
+        if route == ("GET", "activity") and len(s) == 1:
+            return self.page(self.activity(query), query, url)
         raise Unserved(f"{method} /{'/'.join(s)}")
 
     def page(self, items, query, url):
@@ -309,10 +314,28 @@ class FakeGitHub:
         return {"number": pull.number, "title": pull.title, "body": pull.body, "draft": pull.draft,
                 "state": "open" if pull.state == "open" else "closed", "user": {"login": pull.author},
                 "head": {"ref": pull.head, "sha": sha, "repo": repo}, "base": {"ref": MAIN, "repo": repo},
-                "mergeable": mergeable, "mergeable_state": state, "updated_at": iso(pull.updated_at),
+                "mergeable": mergeable, "mergeable_state": state, "created_at": iso(pull.opened_at),
+                "updated_at": iso(pull.updated_at),
                 "merged_at": iso(pull.merged_at) if pull.merged_at is not None else None}
 
     # --- branches, contents and commits -------------------------------------
+
+    def activity(self, query):
+        """The repository's activity as far as the model records it: the
+        push that made each branch that stands, newest first, filtered as
+        asked by ref (refs/heads/<name> or the name) and by type; a filter
+        the model records nothing of, any type but branch_creation, answers
+        an empty list, as GitHub does for activity that never happened."""
+        model = self.model
+        ref = query.get("ref", "")
+        name = ref[len("refs/heads/"):] if ref.startswith("refs/heads/") else ref
+        if query.get("activity_type", "branch_creation") != "branch_creation":
+            return []
+        made = [(at, branch) for branch, at in model.created.items() if not ref or branch == name]
+        return [{"ref": f"refs/heads/{branch}", "timestamp": iso(at), "activity_type": "branch_creation",
+                 "actor": {"login": model.creators.get(branch, "")}, "before": "0" * 40,
+                 "after": model.refs.get(branch, "")}
+                for at, branch in sorted(made, reverse=True)]
 
     def rename(self, old, new):
         if old not in self.model.refs:

@@ -331,6 +331,9 @@ class FakeRepo:
         runs = self.checks.get(rest[0], [])
         return {"total_count": len(runs), "check_runs": runs}
 
+    def get_activity(self, rest, query, body):
+        return []
+
     def get_contents(self, rest, query, body):
         text = found(self.contents.get((query.get("ref"), "/".join(rest))))
         return {"content": base64.b64encode(text.encode("utf-8")).decode("ascii")}
@@ -551,9 +554,12 @@ class BoardParity(unittest.TestCase):
             old = template_board().collect(template_client(old_repo, old_sleep), sha, trunk)
             new = github.collect(library_client(new_repo, new_sleep), sha, trunk)
             with self.subTest(name):
-                # The template read no releases (DeclaredDifferences); none of
-                # these repositories holds one, and the rest is the same.
+                # The template read no releases and no times work began
+                # (DeclaredDifferences); none of these repositories holds a
+                # release, GitHub records no activity in them, and the rest
+                # is the same.
                 self.assertEqual(new.pop("releases"), {})
+                self.assertEqual(new.pop("began"), {})
                 self.assertEqual(new, old)
                 self.assertEqual(new_sleep.calls, old_sleep.calls)
                 self.assertEqual(*same_page(board.render(github.snapshot(library_client(new_repo), sha, trunk)),

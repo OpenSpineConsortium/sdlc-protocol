@@ -20,13 +20,14 @@ branch so the name is free for the next claim. Nothing here calls GitHub.
 import json
 import unicodedata
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple
 
 from . import labels
 from .claims import (
     CLAIM_DIR, IDLE_AFTER, PREFIX, RELEASED_PREFIX, branch_of, by_number, claim_files, claim_worker,
-    is_claim_branch, is_idle, key_of, number_in, number_of, was_released,
+    is_claim_branch, is_idle, key_of, number_in, number_of, parse_time, was_released,
 )
 
 RECENT_MERGED = 5
@@ -121,7 +122,9 @@ class Pull:
     dict shape is the API's, head and all, so a pull request detail from
     GitHub is a fixture as it is; standing is the adapter's own key, how
     the branch stands where GitHub's word says only that something else
-    stops the merge (adapters.github.standing_of)."""
+    stops the merge (adapters.github.standing_of). created_at, when the
+    pull request was opened, is when its work began where GitHub says
+    nothing of its branch (open_work)."""
 
     number: int
     title: str = ""
@@ -132,6 +135,7 @@ class Pull:
     files: list = field(default_factory=list)
     draft: bool = False
     standing: str | None = None
+    created_at: str = ""
 
     @property
     def state(self):
@@ -163,6 +167,7 @@ class Pull:
             files=[file_name(f) for f in data.get("files") or []],
             draft=bool(data.get("draft")),
             standing=data.get("standing"),
+            created_at=data.get("created_at") or "",
         )
 
     def to_dict(self):
@@ -177,6 +182,8 @@ class Pull:
         }
         if self.standing is not None:
             data["standing"] = self.standing
+        if self.created_at:
+            data["created_at"] = self.created_at
         return data
 
 
@@ -254,7 +261,9 @@ class Snapshot:
     branch names, the claim files by issue key (None for a branch with no
     file yet, UNREAD_CLAIM for one GitHub gave no text of), the issue
     behind each claim branch, what a release reads about a claim by issue
-    key, and the merges last."""
+    key, the merges last, and when the work that meets other work began,
+    by its branch: when GitHub says the push that made the branch came, as
+    the adapter reads it for the overlaps' landing order (began_at)."""
 
     sha: str = ""
     default_branch: str = "main"
@@ -265,6 +274,7 @@ class Snapshot:
     claim_issues: dict = field(default_factory=dict)
     merged: list = field(default_factory=list)
     releases: dict = field(default_factory=dict)
+    began: dict = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, data):
@@ -280,6 +290,7 @@ class Snapshot:
             claim_issues={str(k): ClaimIssue.from_dict(v or {}) for k, v in (data.get("claim_issues") or {}).items()},
             merged=[Merged.from_dict(m) for m in data.get("merged") or []],
             releases={str(k): Release.from_dict(v or {}) for k, v in (data.get("releases") or {}).items()},
+            began={str(k): str(v) for k, v in (data.get("began") or {}).items() if v},
         )
 
     def to_dict(self):
@@ -293,6 +304,7 @@ class Snapshot:
             "claim_issues": {k: v.to_dict() for k, v in self.claim_issues.items()},
             "merged": [m.to_dict() for m in self.merged],
             "releases": {k: v.to_dict() for k, v in self.releases.items()},
+            "began": dict(self.began),
         }
 
     @classmethod
@@ -656,20 +668,45 @@ class Work(NamedTuple):
     request's or, for a claim with no pull request yet, the issue's; the
     files it changes or, before it changes any, the files its claim says it
     will touch; whether it is marked ready and whether its issue is a
-    blocker; and whether it is a pull request at all."""
+    blocker; whether it is a pull request at all; its branch; and when it
+    began, as GitHub writes a time, "" when nothing says (open_work)."""
 
     number: int
     files: tuple
     ready: bool = False
     blocker: bool = False
     is_pull: bool = True
+    branch: str = ""
+    began: str = ""
+
+
+# Where work whose beginning nothing says stands in the landing order: with
+# the oldest, since GitHub keeps what its branches did for as long as the
+# repository has existed, so work it says nothing of is the older; the
+# number orders such work among itself, as it ordered all work before F13.
+UNKNOWN_START = datetime.min.replace(tzinfo=timezone.utc)
 
 
 def landing_key(work):
     """The order open work that meets in a file should land in: a blocker
     first, since it stops everyone; then work marked ready, which is done
-    and waits only for its merge; then the oldest, which started first."""
-    return (not work.blocker, not work.ready, work.number)
+    and waits only for its merge; then the oldest, the work that began
+    first, by the time GitHub gives (began_at), and not by its number,
+    which for a claim is its issue's and for a pull request the pull
+    request's, two numbers that tell nothing of which began first (F13);
+    the number breaks a tie."""
+    return (not work.blocker, not work.ready, began_at(work.began), work.number)
+
+
+def began_at(text):
+    """When a piece of work began, as an aware datetime, from the time
+    GitHub wrote; UNKNOWN_START when there is none or it does not read as
+    a time, since a fixture or a snapshot saved by hand may hold anything
+    and the board never stops for one value."""
+    try:
+        return parse_time(text) if text else UNKNOWN_START
+    except (TypeError, ValueError):
+        return UNKNOWN_START
 
 
 def own_files(files):
@@ -687,7 +724,11 @@ def open_work(snapshot):
     """Every piece of open work, in number order: each open pull request but
     a released claim's, with the files it changes, or the files its claim
     file lists while it changes nothing but that file; and each claim with
-    no pull request yet, with the files its claim file lists."""
+    no pull request yet, with the files its claim file lists. Each began
+    when the push that made its branch came, as the snapshot holds it by
+    branch, so a claim and the pull request later opened from its branch
+    are one piece that began at the claim; a pull request whose branch the
+    snapshot says nothing of began when it was opened."""
     snap = as_snapshot(snapshot)
     released = released_keys(snap)
     pulls = {p.branch: p for p in snap.pulls}
@@ -697,13 +738,14 @@ def open_work(snapshot):
         if key in released:
             continue
         files = own_files(pull.files) or (own_files(claim_files(snap.claims.get(key) or "")) if key else ())
-        work.append(Work(pull.number, files, not pull.draft, bool(key) and is_blocker(snap, key)))
+        work.append(Work(pull.number, files, not pull.draft, bool(key) and is_blocker(snap, key), True,
+                         pull.branch, snap.began.get(pull.branch) or pull.created_at))
     for branch in claim_branches(snap.branches):
         key, number = key_of(branch), number_of(branch)
         if branch in pulls or key in released or number is None:
             continue
         files = own_files(claim_files(snap.claims.get(key) or ""))
-        work.append(Work(number, files, False, is_blocker(snap, key), False))
+        work.append(Work(number, files, False, is_blocker(snap, key), False, branch, snap.began.get(branch, "")))
     return sorted(work, key=lambda w: w.number)
 
 

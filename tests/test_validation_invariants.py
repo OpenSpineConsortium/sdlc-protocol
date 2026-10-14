@@ -261,13 +261,17 @@ class TheOpenFindingsShow(unittest.TestCase):
             found = violations(steps, Scope(careless=True))
         self.assertEqual(guarantees(found), ["G1", "G11a"])
 
-    def test_f13_the_landing_order_s_oldest_is_the_lowest_number(self):
-        """Found by this step: a claim made five hours after another's draft
-        lands first, since its issue's number is below the pull request's."""
+    def test_f13_the_oldest_work_lands_first(self):
+        """Found by this step, fixed after 0.4.1: a draft whose branch was
+        made five hours before another claim lands first, as the spec reads
+        the oldest; until the fix the claim landed first, its issue's number
+        being below the pull request's, which the mutant that orders by
+        number again shows."""
         steps = [Verb("claim", "a", (1,)), Verb("open-draft", "a", (1,)), Verb("wait", "clock", (5,)),
                  Verb("claim", "b", (2,)), BOARD]
         self.assertEqual(violations(steps, SHARED, issues=None), [])
-        found = violations(steps, SHARED, oracle.AS_BUILT - {"F13"}, issues=None)
+        with mutants.switched_on(mutants.MUTANTS["the landing order by number"]):
+            found = violations(steps, SHARED, issues=None)
         self.assertEqual([(v.guarantee, v.detail) for v in found],
                          [("G7", "the board's Overlaps are {'src/shared.py': [2, 100]}, the oracle's "
                                  "{'src/shared.py': [100, 2]}")])

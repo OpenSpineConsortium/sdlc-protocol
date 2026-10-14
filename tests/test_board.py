@@ -265,6 +265,61 @@ class Overlaps(unittest.TestCase):
         self.assertIn("| docs/agents/STATE.md | #40, #42 |", section)
         self.assertNotIn("claims/16.md", section)
 
+    def drafts_meeting(self, began=None, opened=""):
+        """#42, a draft from claude/16, and the claim on #17, with no pull
+        request, both touching docs/agents/STATE.md, and #40 out of it:
+        neither is a blocker or ready, so the oldest lands first. began is
+        the snapshot's times by branch, opened #42's created_at."""
+        snap = self.overlapping()
+        snap["pulls"][0]["files"] = ["docs/agents/README.md"]
+        snap["claims"]["17"] = CLAIM_TEXT.replace("- docs/b.md\n- `docs/a.md`", "- docs/agents/STATE.md")
+        if opened:
+            snap["pulls"][2]["created_at"] = opened
+        if began is not None:
+            snap["began"] = began
+        return [w.number for w in board.overlaps(snap)["docs/agents/STATE.md"]]
+
+    def test_the_oldest_is_the_work_that_began_first_and_not_the_lowest_number(self):
+        """F13: a claim is shown by its issue's number and a pull request by
+        its own, two numbers that say nothing of which work began first;
+        the time GitHub gives for the push that made each branch does."""
+        self.assertEqual(self.drafts_meeting({"claude/16": "2026-09-22T08:00:00Z",
+                                              "claude/17": "2026-09-22T09:00:00Z"}), [42, 17])
+        self.assertEqual(self.drafts_meeting({"claude/16": "2026-09-22T10:00:00Z",
+                                              "claude/17": "2026-09-22T09:00:00Z"}), [17, 42])
+        self.assertEqual(self.drafts_meeting({"claude/16": "2026-09-22T08:00:00+00:00",
+                                              "claude/17": "2026-09-22T09:00:00Z"}), [42, 17])
+
+    def test_work_nothing_dates_counts_as_the_oldest_and_the_number_breaks_a_tie(self):
+        self.assertEqual(self.drafts_meeting(), [17, 42])
+        self.assertEqual(self.drafts_meeting({"claude/16": "2026-09-22T08:00:00Z"}), [17, 42])
+        self.assertEqual(self.drafts_meeting({"claude/17": "2026-09-22T08:00:00Z"}), [42, 17])
+        same = "2026-09-22T08:00:00Z"
+        self.assertEqual(self.drafts_meeting({"claude/16": same, "claude/17": same}), [17, 42])
+
+    def test_a_pull_request_whose_branch_github_says_nothing_of_began_when_it_was_opened(self):
+        claim = {"claude/17": "2026-09-22T09:00:00Z"}
+        self.assertEqual(self.drafts_meeting(claim, opened="2026-09-22T08:30:00Z"), [42, 17])
+        self.assertEqual(self.drafts_meeting(claim, opened="2026-09-22T09:30:00Z"), [17, 42])
+        self.assertEqual(self.drafts_meeting(dict(claim, **{"claude/16": "2026-09-22T09:10:00Z"}),
+                                             opened="2026-09-22T08:30:00Z"), [17, 42],
+                         "the push that made the branch wins over the opening of its pull request")
+
+    def test_a_time_that_does_not_read_as_one_counts_as_nothing_said(self):
+        for word in ("yesterday", "2026-13-40T00:00:00Z", "\u0661\u0662"):
+            with self.subTest(word=word):
+                self.assertEqual(self.drafts_meeting({"claude/16": word, "claude/17": "2026-09-22T09:00:00Z"}),
+                                 [42, 17])
+
+    def test_when_work_began_round_trips_and_is_left_out_where_nothing_says(self):
+        snap = Snapshot.from_dict(dict(snapshot(), began={"claude/12": "2026-09-22T08:00:00Z", "claude/13": ""}))
+        self.assertEqual(snap.began, {"claude/12": "2026-09-22T08:00:00Z"})
+        self.assertEqual(Snapshot.from_json(snap.to_json()), snap)
+        self.assertEqual(Snapshot.from_dict(snapshot()).began, {})
+        opened = Pull(5, "Five", "claude/5", "abc", "clean", created_at="2026-09-22T08:00:00Z")
+        self.assertEqual(Pull.from_dict(opened.to_dict()), opened)
+        self.assertNotIn("created_at", Pull(6, "Six", "claude/6", "def", "clean").to_dict())
+
     def test_a_released_claims_pull_request_meets_nothing(self):
         snap = self.overlapping()
         snap["pulls"][2]["draft"] = True

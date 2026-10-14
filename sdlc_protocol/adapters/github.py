@@ -534,7 +534,7 @@ def collect(api, sha, default_branch, now=None):
     listed = api.get_all(f"/repos/{repo}/branches")
     branches = board.claim_branches(listed)
     found_issues = claim_issues(api, branches, issues)
-    return {
+    found = {
         "sha": sha,
         "default_branch": default_branch,
         "issues": issues,
@@ -545,6 +545,55 @@ def collect(api, sha, default_branch, now=None):
         "merged": recent_merged(api),
         "releases": releases(api, claim_heads(listed), found_issues, pulls, now),
     }
+    found["began"] = began_times(api, found, from_forks(api, pulls))
+    return found
+
+
+def from_forks(api, pulls):
+    """The numbers of the open pull requests whose branch stands in another
+    repository, a fork, or in none, a fork since deleted: a branch of the
+    same name here is another branch, and its history says nothing of
+    theirs."""
+    return {p["number"] for p in pulls
+            if (((p.get("head") or {}).get("repo") or {}).get("full_name") or "").lower() != api.repo.lower()}
+
+
+def began_times(api, found, forks=frozenset()):
+    """When each piece of open work that meets other work in a file began,
+    by its branch: the time GitHub writes for the newest push that made a
+    branch of that name, read from the repository's activity, which GitHub
+    records as the pushes reach it, so no clock of a worker's own comes in
+    (F13). Only the work in the Overlaps is asked about, one call a branch,
+    since the landing order is all the time is for; a pull request from a
+    fork is never asked about, and when GitHub has no such push to give,
+    or no activity at all (a 404), the branch is left out and the board
+    orders that work as work whose beginning nothing says
+    (board.landing_key). Any other failure stops the run, as a failed read
+    of the open issues does, so the order is never drawn or told from half
+    of what GitHub knows."""
+    times, asked = {}, set()
+    for works in board.overlaps(found).values():
+        for work in works:
+            if not work.branch or work.branch in asked or (work.is_pull and work.number in forks):
+                continue
+            asked.add(work.branch)
+            began = branch_made_at(api, work.branch)
+            if began:
+                times[work.branch] = began
+    return times
+
+
+def branch_made_at(api, branch):
+    """When the newest push that made the branch came, as GitHub writes the
+    time, or "" when GitHub records none: the activity list, filtered to the
+    branch and to branch creations, gives the newest first."""
+    listed = api.get(f"/repos/{api.repo}/activity", {"ref": f"refs/heads/{branch}",
+                                                     "activity_type": "branch_creation", "per_page": 1},
+                     missing_ok=True) or []
+    for activity in listed if isinstance(listed, list) else []:
+        if activity.get("ref") == f"refs/heads/{branch}" and activity.get("activity_type") == "branch_creation":
+            return activity.get("timestamp") or ""
+    return ""
 
 
 def snapshot(api, sha, default_branch, now=None):
