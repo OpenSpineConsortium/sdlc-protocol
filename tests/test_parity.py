@@ -573,7 +573,12 @@ class BoardParity(unittest.TestCase):
             snap = fixture(path)
             old_repo, new_repo = FakeRepo(), FakeRepo()
             old_repo.comments, new_repo.comments = copy.deepcopy(already), copy.deepcopy(already)
-            old = template_board().post_comments(template_client(old_repo), snap, event_name, ref_name, now)
+            # The template told "main moved" only in the run of the push to
+            # its default branch; the library tells it in whichever run
+            # finds the branch behind (F12), so every event is held to the
+            # template's answer for that push.
+            old = template_board().post_comments(template_client(old_repo), snap, "push",
+                                                 snap.get("default_branch") or "main", now)
             new = github.post_comments(library_client(new_repo),
                                        board.comments_due(snap, event_name, ref_name, now))
             with self.subTest(f"{path.name} {event_name} {ref_name} {sorted(already)}"):

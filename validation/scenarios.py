@@ -252,10 +252,13 @@ def s05(name="S05", how="rebase", split=False):
                    board(3, cycle.PULL_REQUEST, comments=told_once))
     if split:
         # The merge's four events fire at once; the delete's run starts and
-        # the pull request's replaces the push's, which waited (F12).
-        told_once = {101: {"overlap": 1}}
-        after_merge = (board(3, cycle.DELETE, "main", comments=told_once, shows="F12"),
-                       board(3, cycle.PULL_REQUEST, comments=told_once, shows="F12"))
+        # the pull request's replaces the push's, which waited (F12). Since
+        # the fix the delete's run tells #101, the word depending on the
+        # state and not on the event, and the pull request's run owes no
+        # second word for the same commit of main.
+        after_merge = (board(3, cycle.DELETE, "main", comments=told_once, standing={101: "dirty"},
+                             mentions={101: {"main-moved": ["conflicting"]}}),
+                       board(3, cycle.PULL_REQUEST, comments=told_once))
     steps = (
         board(0),
         step(0, "m", "claim", 1, taken=True),
