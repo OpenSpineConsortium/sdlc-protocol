@@ -148,6 +148,7 @@ class GitHub:
         self.repo = repo
         self.opener = opener or urllib.request.build_opener()
         self.sleep = sleep
+        self.asked = permissions(self)
 
     def headers(self):
         return {
@@ -273,10 +274,13 @@ class GitHub:
         owner, which a fork in the same organization shares (github/docs,
         content/pull-requests/reference/forks.md:113), so a pull request
         from such a fork is left out by the head and base the list gives
-        (board.from_fork; F17's review)."""
+        (board.from_fork; F17's review); and so is one that someone who may
+        not write opened from the branch here, which is no claim's either
+        (claims.opened_by_writer, may_open; F19)."""
         owner = self.repo.split("/")[0]
         found = self.get(f"/repos/{self.repo}/pulls", {"state": "open", "head": f"{owner}:{branch}"}) or []
-        own = [pull for pull in found if not board.from_fork(pull)]
+        own = [pull for pull in found
+               if not board.from_fork(pull) and claims.opened_by_writer(pull, may_open(self.asked))]
         return self.get(f"/repos/{self.repo}/pulls/{own[0]['number']}") if own else None
 
     def check_runs(self, sha):
@@ -493,18 +497,25 @@ def may_be_due(issue):
 def ready_branches(pulls):
     """The head branches of the open pull requests marked ready, as the API
     details them; a pull request whose draft state is not given counts as
-    ready, as the board counts it. One from a fork is left out, whatever
-    its branch is called, since it is no claim's (board.claim_of)."""
-    return {(p.get("head") or {}).get("ref") for p in pulls if not p.get("draft") and not board.from_fork(p)}
+    ready, as the board counts it. One from a fork, or one a stranger
+    opened (mark_strangers), is left out, whatever its branch is called,
+    since it is no claim's (board.claim_of)."""
+    return {(p.get("head") or {}).get("ref") for p in pulls if not p.get("draft") and is_claims(p)}
 
 
-def may_write(api):
+def is_claims(pull):
+    """Whether a pull request, as the API details it, may be a claim's own:
+    not from a fork, and not one mark_strangers found a stranger opened
+    (board.claim_of)."""
+    return not board.from_fork(pull) and not board.from_stranger(pull)
+
+
+def permissions(api):
     """A callable saying whether a login may write to the repository, from
-    GitHub's collaborator permission, asked once per login. It stands in
-    for author_association where that word does not vouch for an author:
-    GitHub may show a private member of the organization to a workflow's
-    token as a contributor. A call GitHub refuses counts as no, so a
-    release by an author nobody can vouch for frees nothing."""
+    GitHub's collaborator permission, asked once per login: True where it
+    may, False where GitHub says it may not or knows no such login, and
+    None where GitHub refused the call, which may_write and may_open each
+    read their own way."""
     answers = {}
 
     def ask(login):
@@ -513,10 +524,49 @@ def may_write(api):
                 found = api.get(f"/repos/{api.repo}/collaborators/{urllib.parse.quote(login, safe='')}/permission",
                                 missing_ok=True) or {}
             except GitHubError:
-                found = {}
-            answers[login] = found.get("permission") in WRITE_PERMISSIONS or found.get("role_name") in WRITE_ROLES
+                answers[login] = None
+            else:
+                answers[login] = (found.get("permission") in WRITE_PERMISSIONS
+                                  or found.get("role_name") in WRITE_ROLES)
         return answers[login]
     return ask
+
+
+def may_write(api, asked=None):
+    """A callable saying whether a login may write to the repository, from
+    GitHub's collaborator permission (permissions), asked once per login.
+    It stands in for author_association where that word does not vouch for
+    an author: GitHub may show a private member of the organization to a
+    workflow's token as a contributor. A call GitHub refuses counts as no,
+    so a release by an author nobody can vouch for frees nothing."""
+    asked = asked or permissions(api)
+    return lambda login: asked(login) is True
+
+
+def may_open(asked):
+    """A callable saying whether a login may have opened a claim's pull
+    request (claims.opened_by_writer), from the answers permissions gives:
+    unless GitHub says it may not write. A call GitHub refuses counts as
+    yes, so a lost answer never takes a claim's own pull request for a
+    stranger's, which would free a finished claim; it costs at most a run
+    that does not release a claim a stranger's ready pull request held."""
+    return lambda login: asked(login) is not False
+
+
+def mark_strangers(pulls, asked):
+    """Write the board's key stranger (board.from_stranger) on each pull
+    request, as the API details it, from a branch of this repository named
+    as a claim's that someone who may not write opened
+    (claims.opened_by_writer, may_open): it is no claim's, whatever its
+    branch is called (board.claim_of; F19). An author author_association
+    or an App's login vouches for costs no call; any other costs one, once
+    a run, through asked. The pull requests are returned."""
+    for pull in pulls:
+        branch = (pull.get("head") or {}).get("ref") or ""
+        if (claims.is_claim_branch(branch) and not board.from_fork(pull)
+                and not claims.opened_by_writer(pull, may_open(asked))):
+            pull["stranger"] = True
+    return pulls
 
 
 def committed_at(api, sha):
@@ -536,7 +586,7 @@ def finished_draft(api, pull):
     return claims.said_finished(api.get_all(f"/repos/{api.repo}/issues/{pull['number']}/comments"), author)
 
 
-def releases(api, heads, found_issues, pulls, now=None):
+def releases(api, heads, found_issues, pulls, now=None, asked=None):
     """What the release rule reads about each claim that has gone more than
     a day without a commit, by key: the branch's head commit with the time
     it was committed, and the time of the latest release comment on its
@@ -557,10 +607,13 @@ def releases(api, heads, found_issues, pulls, now=None):
     one for its draft's comments, then, unless the draft is finished and
     its issue still carries claimed, one for its issue's comments and one
     per author whose permission must be asked, so the run pays only where
-    a release can be due or can have happened."""
+    a release can be due or can have happened. A draft from a fork, or one
+    a stranger opened, is no claim's (is_claims), so what its author says
+    holds no claim. asked is the run's answers to who may write
+    (permissions), shared with mark_strangers."""
     now = now or datetime.now(timezone.utc)
-    ready, trusted = ready_branches(pulls), may_write(api)
-    drafts = {(p.get("head") or {}).get("ref"): p for p in pulls if p.get("draft") and not board.from_fork(p)}
+    ready, trusted = ready_branches(pulls), may_write(api, asked)
+    drafts = {(p.get("head") or {}).get("ref"): p for p in pulls if p.get("draft") and is_claims(p)}
     found = {}
     for branch, sha in sorted(heads.items()):
         key = claims.key_of(branch)
@@ -585,9 +638,10 @@ def collect(api, sha, default_branch, now=None):
     the moment a claim's idleness is measured from, the wall clock unless
     given."""
     repo = api.repo
+    asked = permissions(api)
     issues = [i for i in api.get_all(f"/repos/{repo}/issues", {"state": "open"}) if "pull_request" not in i]
-    pulls = [pull_with_detail(api, p["number"], default_branch)
-             for p in api.get_all(f"/repos/{repo}/pulls", {"state": "open"})]
+    pulls = mark_strangers([pull_with_detail(api, p["number"], default_branch)
+                            for p in api.get_all(f"/repos/{repo}/pulls", {"state": "open"})], asked)
     listed = api.get_all(f"/repos/{repo}/branches")
     branches = board.claim_branches(listed)
     found_issues = claim_issues(api, branches, issues)
@@ -600,7 +654,7 @@ def collect(api, sha, default_branch, now=None):
         "claims": {claims.key_of(b): claim_text(api, b) for b in branches},
         "claim_issues": found_issues,
         "merged": recent_merged(api),
-        "releases": releases(api, claim_heads(listed), found_issues, pulls, now),
+        "releases": releases(api, claim_heads(listed), found_issues, pulls, now, asked),
     }
     found["began"], refused = began_times(api, found)
     if refused:

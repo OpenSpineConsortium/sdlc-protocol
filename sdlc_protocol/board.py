@@ -126,8 +126,9 @@ class Pull:
     pull request was opened, is when its work began where GitHub says
     nothing of its branch (open_work); fork, whether its branch stands in
     another repository, or in none, a fork since deleted, whose branch a
-    branch of the same name here is not (from_fork), so it is never a
-    claim's (claim_of)."""
+    branch of the same name here is not (from_fork), and stranger, whether
+    someone who may not write to the repository opened it (from_stranger),
+    so that either is never a claim's (claim_of)."""
 
     number: int
     title: str = ""
@@ -140,6 +141,7 @@ class Pull:
     standing: str | None = None
     created_at: str = ""
     fork: bool = False
+    stranger: bool = False
 
     @property
     def state(self):
@@ -173,6 +175,7 @@ class Pull:
             standing=data.get("standing"),
             created_at=str(data.get("created_at") or ""),
             fork=from_fork(data),
+            stranger=from_stranger(data),
         )
 
     def to_dict(self):
@@ -191,6 +194,8 @@ class Pull:
             data["created_at"] = self.created_at
         if self.fork:
             data["fork"] = True
+        if self.stranger:
+            data["stranger"] = True
         return data
 
 
@@ -211,6 +216,16 @@ def from_fork(data):
     if not isinstance(head_name, str):
         return bool(data.get("fork"))
     return head_name.lower() != base_name.lower()
+
+
+def from_stranger(data):
+    """Whether someone who may not write to the repository opened a pull
+    request, by the board's own key stranger, which the adapter writes on a
+    pull request from a branch here named as a claim's
+    (adapters.github.mark_strangers) and Pull.to_dict writes back: who may
+    write is an answer GitHub gives the adapter, not one the pull request's
+    own fields always hold (claims.opened_by_writer)."""
+    return bool(data.get("stranger"))
 
 
 def mapping(value):
@@ -467,17 +482,21 @@ def is_released(snap, key, idle_after=IDLE_AFTER):
 
 def claim_of(pull):
     """The key of the claim whose pull request this is: the key its branch
-    names (key_of), or None for a branch that is no claim and for a pull
-    request from a fork, whatever its branch is called. A claim branch
-    lives in this repository, and a fork's branch of the same name is
-    another branch, so such a pull request, marked ready or said finished,
-    finishes no claim, the board lists it and tells it what it tells any
-    other, and a release's rename, which closes the claim's own pull
-    request, leaves it open (F17: until its fix a ready pull request from a
-    fork's claude/<issue> kept that claim from ever being released, and
-    the board took it for the claim's own on the page and in the
-    Overlaps)."""
-    return None if pull.fork else key_of(pull.branch)
+    names (key_of), or None for a branch that is no claim, for a pull
+    request from a fork, whatever its branch is called, and for one that
+    someone who may not write to the repository opened, from the claim's
+    own branch here. A claim branch lives in this repository, and a fork's
+    branch of the same name is another branch; and a claim's pull request
+    is opened by someone who may write, or by an App the repository
+    installed, while GitHub's documentation says anyone who may read the
+    repository may open one from any of its branches. So such a pull
+    request, marked ready or said finished, finishes no claim, and the
+    board lists it and tells it what it tells any other (F17: until its fix
+    a ready pull request from a fork's claude/<issue> kept that claim from
+    ever being released, and the board took it for the claim's own on the
+    page and in the Overlaps; F19, the same for a stranger's pull request
+    from the claim's own branch)."""
+    return None if pull.fork or pull.stranger else key_of(pull.branch)
 
 
 def of_claim(pull, key):
@@ -487,9 +506,12 @@ def of_claim(pull, key):
 
 def closed_by_release(pull, released):
     """Whether the rename of a released claim's branch closes the pull
-    request: the claim's own, from a branch released_branches names
-    (claim_of)."""
-    return claim_of(pull) is not None and pull.branch in released
+    request: every open one from a branch released_branches names, here,
+    the claim's own and a stranger's alike, since GitHub closes each pull
+    request whose head is a branch it renames (renaming-a-branch.md:19);
+    never one from a fork, whose branch of the same name stands in the
+    fork (F17, F19)."""
+    return not pull.fork and pull.branch in released
 
 
 def released_branches(snap):
@@ -805,14 +827,17 @@ def open_work(snapshot):
     branch, and a pull request where pull_began says; a pull request from a
     fork carries no branch, since its branch is none of this
     repository's, and is a piece of its own, whatever its branch is called,
-    since it is no claim's (claim_of)."""
+    since it is no claim's (claim_of), as is a stranger's pull request from
+    a claim's branch here, which a release's rename closes with the claim's
+    own (closed_by_release)."""
     snap = as_snapshot(snapshot)
     released = released_keys(snap)
+    renamed = released_branches(snap)
     pulls = {p.branch: p for p in snap.pulls if claim_of(p) is not None}
     work = []
     for pull in snap.pulls:
         key = claim_of(pull)
-        if key in released:
+        if closed_by_release(pull, renamed):
             continue
         files = own_files(pull.files) or (own_files(claim_files(snap.claims.get(key) or "")) if key else ())
         work.append(Work(pull.number, files, not pull.draft, bool(key) and is_blocker(snap, key), True,

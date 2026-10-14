@@ -14,7 +14,7 @@ length.
 
 from typing import NamedTuple
 
-from . import page, verbs
+from . import oracle, page, verbs
 from .model import CLAIM_PREFIX, HOUR, OWNER, RELEASED_PREFIX
 from .verbs import CLAIM_DIR, Verb
 
@@ -58,7 +58,7 @@ def view(model, worker):
         number = page.number("#" + ref[len(CLAIM_PREFIX):])
         if number is None or number not in model.issues:
             continue
-        issue, pull = model.issues[number], model.open_pull_from(ref)
+        issue, pull = model.issues[number], oracle.own_pull(model, ref)
         head = model.refs[ref]
         own = model.ancestors(head) - model.ancestors(model.refs["main"])
         mine.append(Mine(number, issue.labels, any(c.author == worker for c in issue.comments),

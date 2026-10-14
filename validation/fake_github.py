@@ -44,7 +44,10 @@ whose head the branch is, never one from a fork, whose branch of the same
 name stands in the fork; a pull request from a fork names its author's
 fork in its head and this repository in its base, in its detail and in the
 list's entries, and the list's head filter, owner:branch, matches the
-repository the branch stands in (F17); a rename onto a name that stands
+repository the branch stands in (F17); a pull request names its author
+and the author's author_association, in its detail and in the list's
+entries, and the permission API answers write for the model's writers and
+read for anyone else (F19); a rename onto a name that stands
 answers 422; the board posts as github-actions[bot] with the
 author_association NONE; a pull request's updated_at moves with pushes and
 comments; and the repository's activity lists the push that made each
@@ -293,7 +296,8 @@ class FakeGitHub:
                 return self.page([self.closed_json(p) for p in chosen], query, url)
             chosen.sort(key=lambda p: -p.number)
             return self.page([{"number": p.number, "head": {"ref": p.head, "repo": head_repo(p)},
-                               "base": {"ref": MAIN, "repo": {"full_name": REPO}}} for p in chosen], query, url)
+                               "base": {"ref": MAIN, "repo": {"full_name": REPO}}, "user": {"login": p.author},
+                               "author_association": p.association} for p in chosen], query, url)
         number = int(s[1]) if s[1].isdigit() and s[1].isascii() else None
         pull = pulls.get(number)
         if pull is None:
@@ -326,6 +330,7 @@ class FakeGitHub:
             mergeable, state = None, "unknown"
         return {"number": pull.number, "title": pull.title, "body": pull.body, "draft": pull.draft,
                 "state": "open" if pull.state == "open" else "closed", "user": {"login": pull.author},
+                "author_association": pull.association,
                 "head": {"ref": pull.head, "sha": sha, "repo": head_repo(pull)},
                 "base": {"ref": MAIN, "repo": {"full_name": REPO}},
                 "mergeable": mergeable, "mergeable_state": state, "created_at": iso(pull.opened_at),

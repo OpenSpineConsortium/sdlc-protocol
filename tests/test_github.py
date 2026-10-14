@@ -830,7 +830,8 @@ def released_answers():
     answers[f"/repos/o/r/git/commits/{HEAD_12}"] = FakeAnswer({"sha": HEAD_12,
                                                                "committer": {"date": "2026-09-18T12:00:00Z"}})
     draft = {k: v for k, v in snap["pulls"][0].items() if k != "files"}
-    answers["/repos/o/r/pulls/40"] = FakeAnswer(dict(draft, draft=True, user={"login": "alice"}))
+    answers["/repos/o/r/pulls/40"] = FakeAnswer(dict(draft, draft=True, user={"login": "alice"},
+                                                     author_association="COLLABORATOR"))
     answers[DRAFT_COMMENTS_40] = FakeAnswer([])
     return snap, answers
 

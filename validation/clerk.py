@@ -16,7 +16,7 @@ one look for a whole run, since F4's fix.
 
 from sdlc_protocol import claims, team
 
-from . import fake_github
+from . import fake_github, oracle
 from .model import Issue, OWNER
 
 FIRST_ISSUE_ID = 1000
@@ -56,7 +56,9 @@ class ModelClient:
         return sorted(self.model.refs)
 
     def open_pull(self, branch):
-        pull = self.model.open_pull_from(branch)
+        """The claim's own pull request, as the adapter's pull_detail picks
+        it: never a fork's, nor a stranger's from the branch (F19)."""
+        pull = oracle.own_pull(self.model, branch)
         return fake_github.pull_detail(self.model, pull) if pull else None
 
     def check_runs(self, sha):

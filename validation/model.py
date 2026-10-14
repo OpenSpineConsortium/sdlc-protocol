@@ -111,7 +111,9 @@ class Issue:
 class PullRequest:
     """One pull request. fork says its branch stands in its author's fork,
     where no ref of the model's names it, so sha is its head there: a
-    branch of the same name here is another branch (F17)."""
+    branch of the same name here is another branch (F17). association is
+    the author's author_association, as GitHub shows it on the pull
+    request (F19)."""
 
     number: int
     head: str
@@ -126,6 +128,7 @@ class PullRequest:
     comments: tuple = ()
     fork: bool = False
     sha: str = ""
+    association: str = "COLLABORATOR"
 
 
 class Push(NamedTuple):

@@ -160,9 +160,10 @@ def one_name_one_holder(model):
 
 
 def shown_worker(model, ref, number):
-    """The Worker cell the board's row for the branch would show."""
+    """The Worker cell the board's row for the branch would show, with the
+    claim's own pull request (oracle.own_pull)."""
     issue = model.issues[number]
-    pull = model.open_pull_from(ref)
+    pull = oracle.own_pull(model, ref)
     row = board.claim_row(str(number), ref, oracle.claim_file_text(model, ref, number),
                           board.Pull(pull.number, branch=ref, draft=pull.draft) if pull else None,
                           board.ClaimIssue(issue.state, sorted(issue.labels)))
@@ -537,13 +538,15 @@ def rows_show_labels(after, shown, calls=()):
 
 def claim_rows_name_their_own(after, shown):
     """G9: each claim's row names the claim's own pull request, the open one
-    from its branch here, or none; never one from a fork whose branch bears
-    the same name, which is no claim's (SPEC["fork"])."""
+    from its branch here that someone who may write opened, or none; never
+    one from a fork whose branch bears the same name, nor a stranger's from
+    the branch itself, which are no claim's (SPEC["fork"],
+    SPEC["stranger"])."""
     problems = []
     for _, branch, _, cell in page.claims(shown):
         if oracle.claim_number(branch) is None or branch not in after.refs:
             continue
-        own = after.open_pull_from(branch)
+        own = oracle.own_pull(after, branch)
         if page.number(cell) != (own.number if own else None):
             problems.append(Violation("G9", f"the row of {branch} names {cell}, its own pull request is "
                                             f"{f'#{own.number}' if own else 'none'}"))

@@ -48,7 +48,7 @@ from .model import HOUR, OWNER
 from .scenarios import Expect, Scenario, Step
 
 TRACES = Path(__file__).resolve().parent / "traces"
-FINDINGS = tuple(f"F{n}" for n in range(1, 19))
+FINDINGS = tuple(f"F{n}" for n in range(1, 20))
 SET_FIELDS = ("labels", "told")
 BOARD_VERBS = ("board", "board-start", "board-finish")
 

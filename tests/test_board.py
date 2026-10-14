@@ -1003,6 +1003,74 @@ class ForkPulls(unittest.TestCase):
         self.assertEqual([w.number for w in board.overlaps(snap)["docs/agents/README.md"]], [50, 12])
 
 
+def stranger_pull(number=50, ready=True, updated_at="2026-09-19T12:00:00Z"):
+    """A pull request sam, who may not write, opened from claim 12's own
+    branch here, as the adapter details it, its board key stranger saying
+    so (F19)."""
+    return {"number": number, "title": "Fix the board", "draft": not ready, "mergeable_state": "clean",
+            "head": {"ref": "claude/12", "sha": "ccccccc3333333", "repo": {"full_name": "octo/widgets"}},
+            "base": {"ref": "main", "repo": {"full_name": "octo/widgets"}},
+            "updated_at": updated_at, "files": ["docs/agents/README.md"], "stranger": True}
+
+
+class StrangerPulls(unittest.TestCase):
+    """A claim's pull request is opened by someone who may write to the
+    repository, or by a GitHub App, so one that someone else opens from the
+    claim's own branch is no claim's either (spec, Rules that hold
+    everywhere; F19): until the fix, sam's ready one from claude/12 kept
+    claim 12 from ever being released, as a fork's did until F17's, and the
+    board took it for the claim's own on the page and in the Overlaps. A
+    release's rename closes it with the claim's own, since GitHub closes
+    each open pull request from a branch it renames."""
+
+    def test_a_stranger_s_pull_request_is_no_claim_s_and_a_release_s_rename_closes_it(self):
+        own, theirs = Pull(40, branch="claude/12"), Pull(50, branch="claude/12", stranger=True)
+        self.assertEqual((board.claim_of(own), board.claim_of(theirs)), ("12", None))
+        self.assertEqual((board.of_claim(own, "12"), board.of_claim(theirs, "12")), (True, False))
+        released = {"claude/12"}
+        self.assertEqual((board.closed_by_release(own, released), board.closed_by_release(theirs, released)),
+                         (True, True))
+        self.assertFalse(board.closed_by_release(theirs, set()))
+        read = Pull.from_dict(stranger_pull())
+        self.assertTrue(read.stranger)
+        self.assertTrue(Pull.from_dict(read.to_dict()).stranger)
+        self.assertNotIn("stranger", own.to_dict())
+
+    def test_a_ready_one_keeps_no_release_from_counting_and_the_rename_takes_it_off_the_page(self):
+        snap = released_snapshot()
+        snap["pulls"].append(stranger_pull())
+        self.assertEqual(board.released_keys(snap), {"12"})
+        text = board.render(snap)
+        self.assertNotIn("claude/12 |", section(text, board.CLAIM_HEADING, board.PULL_HEADING))
+        self.assertNotIn("| #50 |", section(text, board.PULL_HEADING, board.QUEUE_HEADING))
+        self.assertIn("| #12 | Describe the board | todo |", section(text, board.QUEUE_HEADING, board.BLOCKER_HEADING))
+        self.assertNotIn(50, [w.number for w in board.open_work(snap)])
+
+    def test_one_from_a_released_claim_s_branch_hears_nothing_more(self):
+        snap = released_snapshot()
+        snap["pulls"].append(stranger_pull(ready=False))
+        now = datetime(2026, 9, 23, 12, 0, tzinfo=timezone.utc)
+        due = board.comments_due(snap, "push", "main", now)
+        self.assertEqual([(c.number, c.kind) for c in due], [(41, "idle")])
+
+    def test_a_claim_s_row_names_its_own_pull_request_never_a_stranger_s(self):
+        theirs_alone = snapshot()
+        theirs_alone["pulls"] = [stranger_pull()] + theirs_alone["pulls"][1:]
+        text = board.render(theirs_alone)
+        self.assertIn("| #12 | claude/12 | main | (no pull request yet) |", text)
+        self.assertIn("| #50 | Fix the board | claude/12 |", section(text, board.PULL_HEADING, board.QUEUE_HEADING))
+
+    def test_one_is_open_work_of_its_own_that_meets_the_claim_whose_branch_it_is_from(self):
+        snap = snapshot()
+        snap["pulls"] = [stranger_pull()] + snap["pulls"][1:]
+        work = {w.number: w for w in board.open_work(snap)}
+        self.assertEqual(sorted(work), [12, 41, 50])
+        self.assertEqual((work[12].branch, work[50].branch), ("claude/12", "claude/12"))
+        self.assertFalse(work[12].is_pull)
+        self.assertTrue(work[50].ready)
+        self.assertEqual([w.number for w in board.overlaps(snap)["docs/agents/README.md"]], [50, 12])
+
+
 ACCOUNT_ENV = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "LC_ALL": "C"}
 ISSUE = 5
 
