@@ -56,10 +56,9 @@ EPIC_LINE = re.compile(r"^Epic: #(\d+)\s*$", re.MULTILINE)
 # A ready pull request with one of these states has fallen behind its
 # base or conflicts with it; any other state waits on checks or a merge.
 NEEDS_REBASE = {"behind", "dirty"}
-# The same, read where GitHub's word does not say it: the standing the
-# adapter reads through a comparison, and mergeable where the word says
-# only that something else stops the merge (adapters.github.standing_of),
-# as the board does (F9, F16).
+# The same, read where GitHub's word says only that something else stops
+# the merge: the standing the adapter reads through mergeable and a
+# comparison (adapters.github.standing_of), as the board does (F9).
 STANDING_NEEDS_REBASE = {"behind", "conflicting"}
 FAILED = {"failure", "timed_out"}
 # The colour a worker's label is made in; kept under team mode's name too.
@@ -207,17 +206,14 @@ def claim_needs_work(client, number):
     checks or its merge needs nothing, and a run spent on it would be usage
     wasted. A branch behind its base counts whether GitHub says so or the
     pull request's standing does, where GitHub's word says only that a
-    check or a review holds it (F9) or is clean under a rule that does not
-    ask for an up-to-date branch (F16), since the board tells such a pull
-    request "main moved" and its holder should hear it from the clerk too.
-    So a ready claim whose check is still running is carried at once when
-    its branch is behind, where until F9 it waited for the check and, under
-    a rule that asks for an up-to-date branch, for GitHub to say behind,
-    and one GitHub calls clean is carried too, where until F16 it waited
-    for its merge; a busy default branch can then take a worker in Actions
-    round after round, each push starting the check again, up to its limit
-    of rounds. integration_due reads the integration's claim the same
-    way."""
+    check or a review holds it, since the board tells such a pull request
+    "main moved" (F9) and its holder should hear it from the clerk too. So
+    a ready claim whose check is still running is carried at once when its
+    branch is behind, where until F9 it waited for the check and, under a
+    rule that asks for an up-to-date branch, for GitHub to say behind; a
+    busy default branch can then take a worker in Actions round after
+    round, each push starting the check again, up to its limit of rounds.
+    integration_due reads the integration's claim the same way."""
     pull = client.open_pull(f"{CLAIM_PREFIX}{number}")
     if not pull:
         return True

@@ -44,8 +44,9 @@ BUDGET_SECONDS = 10
 # and at the next run, step 7, where the release puts no todo on once the
 # rule is gone, or the page that run writes leaves #1 out of the Queue once
 # the snapshot forgets the todo. F16's at its second board run, step 4,
-# where the draft GitHub calls clean while it is behind main hears nothing
-# once a word that does not say how the branch stands is taken as given.
+# where the draft GitHub calls clean while it is behind main hears "main
+# moved", which the spec says it may merge without, once such a word is
+# compared.
 UNDONE = {
     "F1": [("the comment before the labels", 5, "G3L")],
     "F3": [("the guard passes --force", 1, "G11a")],
@@ -63,11 +64,12 @@ UNDONE = {
             ("work nothing dates landing first", 7, "G7")],
     "F15": [("a release that leaves todo off", 7, "G3"), ("a failed release leaves its todo on", 6, "G3L"),
             ("the release's own page without its todo", 7, "G5")],
-    "F16": [("a clean word taken as GitHub gives it", 4, "G10")],
+    "F16": [("a clean word compared", 4, "G10")],
 }
-# The fourteen fixed findings: F1, F3, F5, F6, F10 and F11 in 0.4.1, and
-# F4, F7, F9, F12, F13, F14, F15 and F16 on main after it (known.json's
-# fixed_after).
+# The fourteen settled findings: F1, F3, F5, F6, F10 and F11 fixed in
+# 0.4.1; F4, F7, F9, F12, F13, F14 and F15 fixed on main after it
+# (known.json's fixed_after); and F16, fixed in the spec's words, which the
+# library as built already keeps, so known.json names no version for it.
 FIXED = ("F1", "F3", "F4", "F5", "F6", "F7", "F9", "F10", "F11", "F12", "F13", "F14", "F15", "F16")
 # Findings red as built, which no rule of the library answers: none since
 # F4's fix; the test keeps the case for the next one.
@@ -217,7 +219,7 @@ class KnownJson(unittest.TestCase):
         at that version and before, and new from the next release on."""
         self.assertEqual(known.FIXED_AFTER,
                          {"F4": "0.4.1", "F7": "0.4.1", "F9": "0.4.1", "F12": "0.4.1", "F13": "0.4.1", "F14": "0.4.1",
-                          "F15": "0.4.1", "F16": "0.4.1"})
+                          "F15": "0.4.1"})
         current = known.version_key(sdlc_protocol.__version__)
         for finding, version in known.FIXED_AFTER.items():
             with self.subTest(finding=finding):
@@ -226,8 +228,8 @@ class KnownJson(unittest.TestCase):
                 self.assertIsNotNone(known.version_key(version))
                 self.assertLessEqual(known.version_key(version), current,
                                      "the last version with a finding is one main has stated, never a later one")
-        self.assertEqual(known.as_built_for("0.4.1"), known.AS_BUILT | {"F4", "F7", "F9", "F12", "F13", "F14", "F15", "F16"})
-        self.assertEqual(known.as_built_for("0.4.0"), known.AS_BUILT | {"F4", "F7", "F9", "F12", "F13", "F14", "F15", "F16"})
+        self.assertEqual(known.as_built_for("0.4.1"), known.AS_BUILT | {"F4", "F7", "F9", "F12", "F13", "F14", "F15"})
+        self.assertEqual(known.as_built_for("0.4.0"), known.AS_BUILT | {"F4", "F7", "F9", "F12", "F13", "F14", "F15"})
         self.assertEqual(known.as_built_for("0.4.2"), known.AS_BUILT, "the next release carries the fixes")
         self.assertEqual(known.as_built_for("0.5.0"), known.AS_BUILT)
         self.assertEqual(known.as_built_for("1.0.0"), known.AS_BUILT)

@@ -50,7 +50,7 @@ TRACES = {
     "a board comment posted again": (HELD + [WAIT, BOARD, Verb("push-old-head", "a", (1, "released/1-6d6ae03")),
                                              BOARD], Scope()),
     "an opaque state read by GitHub's word alone": "the regression traces",
-    "a clean word taken as GitHub gives it": "the regression traces",
+    "a clean word compared": "the regression traces",
     "the comparison read by ahead_by": "the regression traces",
     "main moved told only in the push's run": "the regression traces",
     "the rename skipped": (HELD + [WAIT, BOARD], Scope()),
@@ -174,13 +174,18 @@ class TheSearchesCatchWhatTheyWereAddedFor(unittest.TestCase):
 
     def test_a_draft_github_calls_clean_while_it_is_behind_catches_f16_s_mutant(self):
         """As F9's search: the lane credits F16's mutant to the regression
-        traces, so the search added with the fix is held here, which can
-        catch it only while GitHub calls the branch clean when behind."""
+        traces, so the search added with F16 is held here. It finds nothing
+        on the library, which tells a branch GitHub calls clean nothing, as
+        the spec says, and finds "main moved" made and not owed under the
+        mutant that compares such a branch, which it can only while GitHub
+        calls the branch clean when it is behind."""
         search = next(s for s in mutants.SEARCHES if s.name == "a draft GitHub calls clean while it is behind")
         self.assertTrue(search.lenient_rules)
         self.assertEqual(mutants.violations(search), {})
-        with mutants.switched_on(mutants.MUTANTS["a clean word taken as GitHub gives it"]):
-            self.assertIn("G10", {guarantee for guarantee, _ in mutants.violations(search)})
+        with mutants.switched_on(mutants.MUTANTS["a clean word compared"]):
+            found = mutants.violations(search)
+        self.assertIn("G10", {guarantee for guarantee, _ in found})
+        self.assertTrue(any("main-moved" in detail and "not owed" in detail for _, detail in found), found)
 
     def test_the_searches_from_f15_s_review_catch_its_mutants(self):
         """The lane credits these mutants to the searches F15's review added

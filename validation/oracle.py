@@ -91,6 +91,13 @@ SPEC = {
               "newest, since a claim opens its draft at once (Work in the open), and the number breaks a tie",
     "rename refused": "When GitHub refuses the rename for good, for a ruleset whose target takes in the claim "
                       "branches or a token without the right, the board says so once on the issue",
+    "behind": "The board reads a branch as behind where GitHub calls its pull request behind, as it does under a "
+              "rule that requires an up-to-date branch, or, where GitHub's word says only that something else "
+              "stops the merge, a rule still holding the pull request or the draft itself, where the comparison "
+              "of the branch with the default branch says so",
+    "as it stands": "a pull request GitHub calls clean, unstable or has_hooks may merge as it stands under the "
+                    "repository's rules, so it hears nothing however far the default branch has moved, and one in "
+                    "conflict always hears it.",
 }
 
 CLAIM_PREFIX = "claude/"
@@ -448,13 +455,28 @@ def main_moved_effects(model, event, ref_name, known=AS_BUILT):
     conflicting with main hears so once for main's commit, in whichever
     run finds it so (DESIGN.md, G10; the event and the ref no longer
     decide, since F12's fix, and a draft, or a pull request a rule or a
-    review blocks, hears it like any other, since F9's fix)."""
+    review blocks, hears it like any other, since F9's fix), behind as
+    owes_main_moved reads it."""
     marker = BOARD_MARKERS["main-moved"].format(sha=short_sha(model.refs[MAIN]))
     found = []
     for pull in pulls_spoken_to(model):
-        if model.standing(pull.head) in ("behind", "dirty") and not has_marker(model, pull.number, marker):
+        if owes_main_moved(model, pull) and not has_marker(model, pull.number, marker):
             found.append(Effect("comment", pull.number, "main-moved"))
     return found
+
+
+def owes_main_moved(model, pull):
+    """Whether the pull request's branch stands so the board tells it "main
+    moved": in conflict with main, or behind it where GitHub says behind or
+    a rule still holds the pull request, so the comparison says it
+    (SPEC["behind"]); a branch behind main under a rule that does not
+    require an up-to-date branch, the model's lenient_rules, with no rule
+    holding it, which GitHub calls clean, may merge as it stands and is
+    owed nothing (SPEC["as it stands"], F16)."""
+    standing = model.standing(pull.head)
+    if standing == "dirty":
+        return True
+    return standing == "behind" and (model.opaque_pulls or not model.lenient_rules)
 
 
 def idle_effects(model):

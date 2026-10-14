@@ -1863,12 +1863,9 @@ def compares_asked(opener):
 
 class Standing(unittest.TestCase):
     """What pull_with_detail reads for a pull request whose mergeable_state
-    does not say how its branch stands: one that says only that something
-    else stops the merge (F9), a rule, a review or the draft itself, each of
-    which GitHub answers as blocked, or draft in older answers, without
-    saying whether the branch is behind; and clean, unstable, has_hooks or
-    unknown, which GitHub gives a branch that is behind too under a rule
-    that does not ask for an up-to-date branch, or under none (F16)."""
+    says only that something else stops the merge (F9): a rule, a review or
+    the draft itself, each of which GitHub answers as blocked, or draft in
+    older answers, without saying whether the branch is behind."""
 
     def test_an_opaque_state_is_resolved_through_one_compare_into_a_standing(self):
         """Until this the board read blocked as blocked and draft as unknown
@@ -1903,35 +1900,24 @@ class Standing(unittest.TestCase):
             self.assertEqual(github.pull_with_detail(api, 7)["standing"], "conflicting", state)
             self.assertEqual(compares_asked(opener), [], state)
 
-    def test_a_state_that_says_how_the_branch_stands_gets_no_standing_and_no_compare(self):
-        """behind and dirty say how the branch stands under any rule, so a
-        standing beside them would be a second word for the same thing, and
-        a comparison a call that changes nothing."""
-        for state, mergeable in (("behind", True), ("dirty", False)):
-            api, opener = client(detail_answers(state, mergeable=mergeable))
+    def test_a_state_the_board_reads_as_it_is_gets_no_standing_and_no_compare(self):
+        """behind and dirty already say how the branch stands and unknown is
+        GitHub still computing, so a standing beside them would be a second
+        word for the same thing on a dict no fixture ever held. clean,
+        unstable and has_hooks say the repository's rules let the pull
+        request merge as it stands, which they do for a branch behind main
+        only under a rule that does not require an up-to-date branch, and
+        the spec owes such a pull request nothing however far main has moved
+        (F16), so a comparison there could change no answer."""
+        for state, mergeable in (("clean", True), ("unstable", True), ("has_hooks", True), ("behind", True),
+                                 ("dirty", False), ("unknown", None)):
+            waits = []
+            api, opener = client(detail_answers(state, mergeable=mergeable), waits)
             pull = github.pull_with_detail(api, 7)
             self.assertNotIn("standing", pull, state)
             self.assertEqual((pull["mergeable_state"], compares_asked(opener)), (state, []), state)
+            self.assertEqual(waits, [github.MERGEABLE_RETRY_SECONDS] if mergeable is None else [], state)
             self.assertIsNone(github.standing_of(api, {"mergeable_state": state, "mergeable": mergeable}))
-
-    def test_a_branch_github_calls_clean_while_it_is_behind_reads_behind(self):
-        """F16: under a rule that does not ask for an up-to-date branch, or
-        under none, GitHub calls a pull request whose rules are met clean
-        while its branch is behind, unstable where a check that is not
-        required fails and has_hooks where a hook stands; and unknown is
-        GitHub still computing. One comparison tells a branch that is
-        behind, which then reads behind and hears "main moved"; one that is
-        not keeps GitHub's word, with no standing beside it."""
-        for state, mergeable in (("clean", True), ("unstable", True), ("has_hooks", True), ("unknown", None)):
-            for behind_by, standing in ((0, None), (2, "behind")):
-                with self.subTest(state=state, behind_by=behind_by):
-                    waits = []
-                    api, opener = client(detail_answers(state, mergeable=mergeable, behind_by=behind_by), waits)
-                    pull = github.pull_with_detail(api, 7)
-                    self.assertEqual(pull.get("standing"), standing)
-                    self.assertEqual((pull["mergeable_state"], compares_asked(opener)), (state, [COMPARE]))
-                    self.assertEqual(waits, [github.MERGEABLE_RETRY_SECONDS] if mergeable is None else [])
-                    self.assertEqual(board.Pull.from_dict(pull).state, standing or board.state_word(state))
 
     def test_standing_of_compares_against_the_base_and_leaves_a_stacked_pull_request_alone(self):
         """A detail from GitHub names its base. On the default branch the
@@ -1971,8 +1957,7 @@ class Standing(unittest.TestCase):
             api, opener = client({**answers, "/repos/o/r/pulls/40": FakeAnswer(dict(held, base={"ref": base})),
                                   compare: FakeAnswer({"behind_by": 2})})
             pull = next(p for p in github.collect(api, "abc", "main")["pulls"] if p["number"] == 40)
-            mine = [path for path in compares_asked(opener) if path.endswith("aaaaaaa1111111")]
-            self.assertEqual((pull.get("standing"), mine), (standing, asked), base)
+            self.assertEqual((pull.get("standing"), compares_asked(opener)), (standing, asked), base)
 
     def test_a_comparison_github_refuses_reads_as_unknown_and_keeps_github_s_word(self):
         """A 5xx, a 422 or a secondary rate limit's 403 on one pull
@@ -1985,9 +1970,6 @@ class Standing(unittest.TestCase):
             api, _ = client({**detail_answers("blocked"), COMPARE: Refusal(status)})
             pull = github.pull_with_detail(api, 7)
             self.assertEqual((pull["standing"], board.Pull.from_dict(pull).state), ("unknown", "blocked"), status)
-            api, _ = client({**detail_answers("clean"), COMPARE: Refusal(status)})
-            pull = github.pull_with_detail(api, 7)
-            self.assertEqual((pull.get("standing"), board.Pull.from_dict(pull).state), (None, "clean"), status)
 
     def test_open_pull_carries_the_standing_the_clerk_reads_and_the_gate_compares_once(self):
         """The clerk deals a claim back when its pull request is behind, and
@@ -2002,15 +1984,9 @@ class Standing(unittest.TestCase):
         api, opener = client(answers)
         world = github.GitHubWorld(api, gate.Policy(), "main")
         self.assertEqual((world.standing("claude/7"), compares_asked(opener)), (gate.BEHIND, [COMPARE]))
-        api, opener = client({**detail_answers("clean", behind_by=0), listed: FakeAnswer([{"number": 7}])})
+        api, opener = client({**detail_answers("clean"), listed: FakeAnswer([{"number": 7}])})
         self.assertNotIn("standing", api.open_pull("claude/7"))
-        self.assertEqual(compares_asked(opener), [COMPARE])
-        clean_behind = {**detail_answers("clean", behind_by=2), listed: FakeAnswer([{"number": 7}])}
-        api, opener = client(clean_behind)
-        self.assertEqual(api.open_pull("claude/7")["standing"], "behind", "F16: the clerk carries it")
-        api, opener = client(clean_behind)
-        world = github.GitHubWorld(api, gate.Policy(), "main")
-        self.assertEqual((world.standing("claude/7"), compares_asked(opener)), (gate.BEHIND, [COMPARE]))
+        self.assertEqual(compares_asked(opener), [])
 
     def test_neither_a_draft_for_the_clerk_nor_the_merge_pays_for_a_comparison(self):
         """The clerk carries a draft whatever its standing, and the merge

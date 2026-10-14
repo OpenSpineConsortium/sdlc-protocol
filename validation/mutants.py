@@ -101,7 +101,6 @@ ORIGINAL_REFUSAL = guard.refusal
 ORIGINAL_TOLD = coordinator.told_numbers
 ORIGINAL_PUT_BACK = github.put_back
 ORIGINAL_AFTER_RELEASE = coordinator.after_release
-ORIGINAL_STANDING_OF = github.standing_of
 
 
 def comment_then_labels(api, snap, key, now):
@@ -232,14 +231,28 @@ def put_labels_on_then(put_back_of):
     return put_labels_on
 
 
-def standing_of_opaque_words_alone(api, detail, default_branch=None):
-    """github.standing_of as F9's fix left it: only a word that says that
-    something else stops the merge, blocked or draft, is read through the
-    comparison, so a branch GitHub calls clean while it is behind main
-    keeps that word (F16)."""
-    if detail.get("mergeable_state") not in github.OPAQUE_STATES:
+def standing_of_every_word(api, detail, default_branch=None):
+    """github.standing_of reading every word but behind and dirty through
+    the comparison, as the first build of F16's answer did: a pull request
+    GitHub calls clean, unstable or has_hooks while its branch is behind,
+    as under a rule that does not require an up-to-date branch, reads
+    behind and hears "main moved", though the spec says it may merge as it
+    stands."""
+    word = detail.get("mergeable_state")
+    if word in ("behind", "dirty"):
         return None
-    return ORIGINAL_STANDING_OF(api, detail, default_branch)
+    base = (detail.get("base") or {}).get("ref")
+    if default_branch and base and base != default_branch:
+        return None
+    if word in github.OPAQUE_STATES and not detail.get("mergeable"):
+        return github.standing_word(detail)
+    try:
+        behind = github.behind_by(api, detail, default_branch)
+    except github.GitHubError:
+        behind = None
+    if word in github.OPAQUE_STATES:
+        return github.standing_word(detail, behind)
+    return "behind" if behind else None
 
 
 def given_rows_needing_todo(snap):
@@ -405,10 +418,10 @@ MUTANTS = {
     "the comparison read by ahead_by": Mutant(
         github, "behind_by", ahead_read_as_behind, "G10",
         "how far a held branch is behind is the comparison's behind_by, the commits of main it lacks, never its own commits (F9)"),
-    "a clean word taken as GitHub gives it": Mutant(
-        github, "standing_of", standing_of_opaque_words_alone, "G10",
-        "a pull request GitHub calls clean, unstable or has_hooks is read through the comparison too, since GitHub "
-        "gives those words a branch that is behind under a rule that does not ask for an up-to-date one (F16)"),
+    "a clean word compared": Mutant(
+        github, "standing_of", standing_of_every_word, "G10",
+        "a pull request GitHub calls clean, unstable or has_hooks may merge as it stands under the repository's "
+        "rules and hears nothing, however far main has moved (F16)"),
     "main moved told only in the push's run": Mutant(
         board, "comments_due", main_moved_only_in_the_push_s_run,
         "G10", "main moved is told by whichever run finds the branch behind, once per commit of main (F12)"),
