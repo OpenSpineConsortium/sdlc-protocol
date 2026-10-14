@@ -8,6 +8,7 @@ import random
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -38,6 +39,50 @@ class OverMemory(unittest.TestCase):
         self.assertEqual(lanes.red_lines(results), [f"gate account: stopped by the budget after {stopped.states} states, not done"])
         self.assertIn("stopped by the budget", lanes.summary_lines(results)[0])
 
+    def test_the_lane_sees_a_gate_that_breaks_part_2_or_part_3(self):
+        """Three faults of the gate G13 names, each made here by hand: a
+        pull request marked ready by someone other than its author, a mark
+        that keeps the claim, and mark_ready merging where the owner or
+        auto-merge lands. The lane meets each: at depth 4, or at depth 5
+        where a merge needs the check made green first."""
+
+        def anybody_marks_ready(policy, queue, number, who):
+            pull = gate.pull_of(policy, queue, number)
+            if pull.state == gate.MERGED:
+                raise gate.Refused("merged already")
+            return pull
+
+        def keeps_the_claim(queue, pull):
+            pull.state = gate.READY
+
+        def merges_everywhere(policy, world, queue, number, who):
+            pull = gate.pull_to_ready(policy, queue, number, who)
+            attempt = gate.prepare(policy, world, number)
+            gate.require_green(policy, world, attempt.branch)
+            gate.begin_attempt(queue, pull)
+            return gate.finish_attempt(policy, world, queue, attempt)
+
+        faults = [("pull_to_ready", anybody_marks_ready, "arm", 4, "not its author"),
+                  ("release_claim", keeps_the_claim, "account", 4, "with its claim held"),
+                  ("mark_ready", merges_everywhere, "account", 5, "merged by ready where owner merges"),
+                  ("mark_ready", merges_everywhere, "team", 5, "merged by ready where auto-merge merges")]
+        for name, fault, policy, depth, words in faults:
+            with self.subTest(fault=name, policy=policy), mock.patch.object(gate, name, fault):
+                found = gate_search.explore(policy, depth)
+                self.assertTrue(any(words in problem for _, problems in found.violations for problem in problems),
+                                found.violations[:2])
+
+    def test_a_merge_of_a_branch_in_conflict_is_a_violation(self):
+        policy = gate_search.POLICIES["arm"]
+        queue = gate.Queue({1: "a"}, open_queue=True)
+        merged = gate.Outcome(1, gate.MERGED, "", 0, "t", "m", "m2")
+        step = gate_search.StepWithCheck(gate_search.Act("land", "", 1), merged, None, "m", "m2", gate.GREEN,
+                                         gate.CONFLICTING)
+        self.assertIn("merged a branch standing conflicting", gate_search.problems(policy, queue, step, {}))
+        moved = gate.Outcome(1, gate.MAIN_MOVED, "", 3, "t", "m", "m")
+        step = gate_search.StepWithCheck(gate_search.Act("land", "", 1), moved, None, "m", "m", gate.GREEN, gate.CLEAN)
+        self.assertIn("main moved answer for a branch standing clean", gate_search.problems(policy, queue, step, {}))
+
     def test_a_landing_that_moves_main_without_saying_so_is_a_violation(self):
         policy = gate_search.POLICIES["arm"]
         queue = gate.Queue({1: "a"}, open_queue=True)
@@ -59,6 +104,20 @@ class OverGit(unittest.TestCase):
         self.assertEqual(results["sequences"], 3)
         self.assertEqual(results["violations"], [])
         self.assertGreater(results["merges"], 0)
+
+    def test_main_moving_anywhere_but_forward_is_a_violation_over_git(self):
+        remote = gate_search.SharedRemote()
+        try:
+            first = remote.main()
+            gate_search.GitPusher(remote).move_main(None)
+            second = remote.main()
+            ahead = gate_search.StepWithCheck(gate_search.Act("move_main"), None, None, first, second, None)
+            self.assertEqual(gate_search.forward(remote.bare, ahead), [])
+            back = gate_search.StepWithCheck(gate_search.Act("move_main"), None, None, second, first, None)
+            self.assertEqual(gate_search.forward(remote.bare, back),
+                             [f"main moved from {second[:7]} to {first[:7]}, not forward"])
+        finally:
+            remote.close()
 
     def test_the_shared_remote_s_repositories_carry_the_git_world_s_settings(self):
         """git hands the receive-pack of a local remote none of the pushing

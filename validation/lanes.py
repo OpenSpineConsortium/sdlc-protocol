@@ -56,6 +56,10 @@ GATE_DEPTH = 8
 GATE_SEQUENCES = 40
 GATE_LENGTH = 12
 SHRINK_BUDGET = 600.0
+# The most one part spends shortening all its violations, so a red search
+# or soak chunk ends within half an hour of its search, inside the job's
+# six hours when the searches run under validate.yml's five.
+SHRINK_TOTAL = 1800.0
 # Where the searches keep their checkpoints under the output folder.
 CHECKPOINTS = "checkpoints"
 # The parts --only may name.
@@ -117,7 +121,8 @@ def run_search(name, out, depth, budget, checkpoint=None, checkpoint_every=deep.
     space = deep.SPACES[name]
     found = deep.search_space(space, oracle.AS_BUILT, budget, lambda line: say(f"{name}: {line}"), depth, checkpoint,
                               checkpoint_every)
-    written = deep.write_counterexamples(out, space, found.found, oracle.AS_BUILT, SHRINK_BUDGET, found.depth)
+    written = deep.write_counterexamples(out, space, found.found, oracle.AS_BUILT, SHRINK_BUDGET, found.depth,
+                                         SHRINK_TOTAL)
     for violation in written:
         violation["finding"] = known.search_finding(name, violation["guarantee"], violation["detail"])
     return {"space": name, "depth": found.depth, "states": found.states, "transitions": found.transitions,
@@ -129,13 +134,15 @@ def run_soak(seeds, steps, out):
     """A chunk of the soak's seeds; each violation shortened from the walk
     that met it and written as a trace file."""
     walks, written = [], []
+    ends = time.perf_counter() + SHRINK_TOTAL
     for seed in seeds:
         walk = soak.walk(seed, steps)
         walks.append(walk)
         for guarantee, detail, at in walk.violations:
             target = (guarantee, detail)
+            allowed = max(0.0, min(SHRINK_BUDGET, ends - time.perf_counter()))
             shorter = shrink.shrink(soak.SPACE.start, soak.SCOPE, deep.symbolic_trace(soak.SPACE, walk.verbs[:at + 1]),
-                                    target, oracle.AS_BUILT, SHRINK_BUDGET)
+                                    target, oracle.AS_BUILT, allowed)
             data = deep.trace_json(soak.SPACE, shorter.trace, f"{guarantee} {detail}")
             path = deep.write_trace(out, f"{guarantee}-soak-{seed}-{at}", data)
             written.append({"seed": seed, "step": at, "guarantee": guarantee, "detail": detail,

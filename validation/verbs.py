@@ -276,7 +276,11 @@ def merge_main(model, worker, number):
 
 def rebase_main(model, worker, number):
     """Fetch, replay the branch's own commits onto main, and push with a
-    lease, the one forced push the protocol allows."""
+    lease, the one forced push the protocol allows. A merge commit the
+    branch holds, one that brought main in, is dropped, as git's rebase
+    drops it (the git world runs `git rebase origin/main`): replayed, its
+    change against its first parent would write main's old text over main
+    as it is now, where git keeps main's."""
     model.fetch(worker)
     ref = claim_ref(number)
     head, main = model.refs[ref], model.refs[MAIN]
@@ -284,6 +288,8 @@ def rebase_main(model, worker, number):
     tip = main
     for sha in own:
         record = model.commits[sha]
+        if len(record.parents) > 1:
+            continue
         parent = record.parents[0] if record.parents else ""
         tree = model.tree(tip)
         for path in model.changed(parent, sha):

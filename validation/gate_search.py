@@ -4,12 +4,18 @@ The merge gate (sdlc_protocol.gate) decides over a World; this lane runs
 every interleaving of two agents' claims, pushes, pull requests, marks and
 landings, with main moving and the check changing, over MemoryWorld,
 under the two presets, the coordbench arm's policy and a gated check, to
-a depth, and checks the gate's guarantee after every act: a refusal
-carries the exit code of its kind and moves main not at all; a landing
-moves main exactly when it says it merged; the gate merges only on
-mark_ready, and never without a green required check; an issue is closed
-exactly when its pull request merged; a pull request is its claimant's;
-no branch merges twice. The prototype of it is
+a depth, and checks the gate's guarantee (G13's eight parts, DESIGN.md
+2.3) after every act: a pull request is its claimant's and an issue is
+closed exactly when its pull request merged (1); a mark that goes through
+is its author's and releases the claim (2); a merge comes from
+mark_ready where the gate merges and from a landing where the owner or
+auto-merge does (3); never without a green required check (4); only of a
+branch standing clean or behind as the act found it, and a main moved
+answer only for one standing in conflict (5); a main moved answer moves
+nothing, and a refusal moves nothing (6); over git, main only moves
+forward, its new commit a descendant of the old (7), which MemoryWorld,
+whose commits have no ancestry, cannot show; a refusal carries the exit
+code of its kind (8); and no branch merges twice. The prototype of it is
 validation/prototype/gate_explore.py.
 
 Over BareGitWorld, where every merge is git's own, the same acts run as
@@ -130,12 +136,22 @@ def problems(policy, queue, step, merged_before):
             found.append(f"outcome {outcome.result} but main {'moved' if moved else 'stayed'}")
         if outcome.result == gate.MAIN_MOVED and moved:
             found.append("main moved answer, yet main moved")
-        if outcome.merged and policy.who_merges == gate.GATE and act.kind != "ready":
-            found.append("the gate merged outside mark_ready")
+        if outcome.merged and (act.kind == "ready") != (policy.who_merges == gate.GATE):
+            found.append(f"merged by {act.kind} where {policy.who_merges} merges")
         if outcome.merged and policy.required_check and step.check_at_landing != gate.GREEN:
             found.append("merged without a green required check")
+        if outcome.merged and step.standing_at_landing not in (gate.CLEAN, gate.BEHIND):
+            found.append(f"merged a branch standing {step.standing_at_landing}")
+        if outcome.result == gate.MAIN_MOVED and step.standing_at_landing != gate.CONFLICTING:
+            found.append(f"main moved answer for a branch standing {step.standing_at_landing}")
         if outcome.merged and merged_before.get(policy.branch_of(outcome.issue)):
             found.append(f"{policy.branch_of(outcome.issue)} merged twice")
+    if act.kind == "ready" and error is None:
+        pull = queue.pulls.get(act.issue)
+        if pull is None or pull.author != act.agent:
+            found.append(f"#{act.issue} marked ready by {act.agent}, not its author")
+        if not queue.issues[act.issue].claim_released:
+            found.append(f"#{act.issue} marked ready with its claim held")
     for n, issue in queue.issues.items():
         pull = queue.pulls.get(n)
         if issue.closed != (pull is not None and pull.state == gate.MERGED):
@@ -169,16 +185,18 @@ class MemoryPusher:
 
 
 def check_before(world, policy, act):
-    """The required check's state as the act found it, for the landing
-    rule, read before the act moves anything."""
+    """The required check's state and the branch's standing as the act
+    found them, for the landing rules, read before the act moves
+    anything; none for an act that lands nothing."""
     if act.kind in ("ready", "land"):
-        return world.check(policy.branch_of(act.issue))
-    return None
+        branch = policy.branch_of(act.issue)
+        return world.check(branch), world.standing(branch)
+    return None, None
 
 
 class StepWithCheck(NamedTuple):
-    """A step with the required check's state as the landing found it,
-    which the landing rule reads (problems)."""
+    """A step with the required check's state and the branch's standing
+    as the landing found them, which the landing rules read (problems)."""
 
     act: Act
     outcome: object
@@ -186,6 +204,19 @@ class StepWithCheck(NamedTuple):
     main_before: str
     main_after: str
     check_at_landing: object
+    standing_at_landing: object = None
+
+
+def forward(repository, step):
+    """G13's part 7 over git: main, when the act moved it, moved to a
+    descendant of where it was."""
+    if not step.main_before or step.main_after == step.main_before:
+        return []
+    done = subprocess.run(["git", "merge-base", "--is-ancestor", step.main_before, step.main_after], cwd=repository,
+                          capture_output=True, text=True, env=ENV, timeout=120)
+    if done.returncode != 0:
+        return [f"main moved from {step.main_before[:7]} to {step.main_after[:7]}, not forward"]
+    return []
 
 
 def key(world, queue):
@@ -225,7 +256,7 @@ def explore(name, depth, agents=("a", "b"), issues=(1, 2), budget=None):
         for act in acts:
             next_world, next_queue = copy.deepcopy(world), copy.deepcopy(queue)
             check = check_before(next_world, policy, act)
-            step = StepWithCheck(*apply(policy, next_world, next_queue, act, pusher), check)
+            step = StepWithCheck(*apply(policy, next_world, next_queue, act, pusher), *check)
             transitions += 1
             found = problems(policy, next_queue, step, merged)
             next_merged = dict(merged)
@@ -383,9 +414,9 @@ def play_over_git(policy, acts_taken, issues=(1, 2)):
             for act in acts_taken:
                 with world:
                     check = check_before(world, policy, act)
-                    step = StepWithCheck(*apply(policy, world, queue, act, pusher), check)
+                    step = StepWithCheck(*apply(policy, world, queue, act, pusher), *check)
                 steps.append(step)
-                found += [(str(act), p) for p in problems(policy, queue, step, merged)]
+                found += [(str(act), p) for p in problems(policy, queue, step, merged) + forward(remote.bare, step)]
                 if step.outcome is not None and step.outcome.merged:
                     branch = policy.branch_of(step.outcome.issue)
                     merged[branch] = merged.get(branch, 0) + 1
@@ -439,8 +470,8 @@ def s05g():
             def act(one):
                 with world:
                     check = check_before(world, policy, one)
-                    step = StepWithCheck(*apply(policy, world, queue, one, pusher), check)
-                found.extend((str(one), p) for p in problems(policy, queue, step, merged))
+                    step = StepWithCheck(*apply(policy, world, queue, one, pusher), *check)
+                found.extend((str(one), p) for p in problems(policy, queue, step, merged) + forward(remote.bare, step))
                 if step.outcome is not None and step.outcome.merged:
                     merged[policy.branch_of(step.outcome.issue)] = 1
                 timeline.append(f"{one}: {step.outcome.result if step.outcome else step.error or 'done'}")

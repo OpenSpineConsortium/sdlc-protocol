@@ -158,6 +158,19 @@ def is_worker_label(name):
     return any(name.startswith(prefix) and name[len(prefix):] for prefix in WORKER_SPELLINGS)
 
 
+def label_worker(labels):
+    """The worker the issue's label names (spec, Labels: `worker:<name>`,
+    with the older spellings read as the same label), worker: before the
+    older; None when no label names one. The oracle's own reading, so the
+    Worker cell is not judged by the library's labels.worker_of, which the
+    board renders it with."""
+    for prefix in WORKER_SPELLINGS:
+        named = sorted(name[len(prefix):] for name in labels if name.startswith(prefix) and name[len(prefix):])
+        if named:
+            return named[0]
+    return None
+
+
 def workers_named(labels):
     found = []
     for name in sorted(labels):

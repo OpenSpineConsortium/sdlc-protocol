@@ -16,7 +16,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from validation import git_store, known, model as M, replay, run, scenarios, verbs  # noqa: E402
+from validation import deep, git_store, known, model as M, replay, run, scenarios, verbs  # noqa: E402
 from validation.verbs import Scope, Verb  # noqa: E402
 
 # A guard against a hung git, not against a slow runner: the lane's own
@@ -99,6 +99,14 @@ class TheStore(unittest.TestCase):
             verbs.apply(copied, Verb("commit", "a", (1,)), Scope())
             self.assertEqual(store.refs()["claude/1"], model.refs["claude/1"])
             self.assertNotEqual(copied.refs["claude/1"], model.refs["claude/1"])
+
+    def test_a_rebase_after_a_merge_of_main_leaves_the_same_trees_in_both_worlds(self):
+        """git's rebase drops the merge of main, and the memory rebase now
+        drops it too, so the two worlds agree on a path with no conflict
+        (the review found the trees differing at the rebase)."""
+        path = (Verb("claim", "a", (1,)), Verb("move-main", M.OWNER), Verb("merge-main", "a", (1,)),
+                Verb("move-main", M.OWNER), Verb("rebase-main", "a", (1,)))
+        self.assertEqual(deep.compare(deep.SPACES["E-deep"], path), [])
 
     def test_standing_and_files_changed_come_from_git(self):
         with attached() as (store, model):

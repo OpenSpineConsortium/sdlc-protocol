@@ -90,6 +90,21 @@ class CommitsInOrder(unittest.TestCase):
         self.assertEqual({p: after.get(p) for p in own}, {p: before[p] for p in own})
         self.assertTrue(model.is_ancestor(model.refs[M.MAIN], model.refs["claude/1"]))
 
+    def test_a_rebase_after_a_merge_of_main_drops_the_merge_as_git_does(self):
+        """Replayed, the merge's change against its first parent wrote
+        main's old text over main as it is now; git's rebase drops the
+        merge and keeps main's text, so the branch changes only its own
+        files (the review of the deep lane, played over both worlds)."""
+        model = M.seeded()
+        for verb in (Verb("claim", "a", (1,)), Verb("move-main", M.OWNER), Verb("merge-main", "a", (1,)),
+                     Verb("move-main", M.OWNER), Verb("rebase-main", "a", (1,))):
+            verbs.apply(model, verb)
+        main, branch = model.tree(model.refs[M.MAIN]), model.tree(model.refs["claude/1"])
+        self.assertEqual(branch["README.md"], main["README.md"])
+        self.assertEqual(model.files_changed("claude/1"), ["docs/agents/claims/1.md"])
+        self.assertTrue(all(len(model.commits[sha].parents) < 2
+                            for sha in model.ancestors(model.refs["claude/1"]) - model.ancestors(model.refs[M.MAIN])))
+
 
 class Standing(unittest.TestCase):
     def setUp(self):

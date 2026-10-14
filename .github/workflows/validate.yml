@@ -19,7 +19,11 @@ name: Validate
 # its space. The searches' checkpoints (validation-out/checkpoints/, a
 # pickle of each search's state every quarter of an hour) stay out of
 # the artifact, since nothing resumes a run here and each is hundreds of
-# megabytes. Both read the checkout and write nothing, so the token reads
+# megabytes. A label other than "deep validation" put on a pull request
+# starts nothing and cancels nothing: its run has a concurrency group of
+# its own and skips both jobs, since the protocol's labels (claimed,
+# in-review, worker:<name>) come and go while a deep run of hours is on.
+# Both read the checkout and write nothing, so the token reads
 # contents and nothing else. Neither is a required check: the required
 # check, "check", runs each mutant on its shortest trace
 # (tests/test_validation_mutants.py) and a few steps of the deep lane
@@ -47,11 +51,14 @@ permissions:
   contents: read
 
 concurrency:
-  group: validate-${{ github.ref }}
+  group: >-
+    validate-${{ github.ref }}${{ github.event.action == 'labeled' && github.event.label.name != 'deep validation'
+    && format('-label-{0}', github.run_id) || '' }}
   cancel-in-progress: true
 
 jobs:
   mutants:
+    if: github.event.action != 'labeled' || github.event.label.name == 'deep validation'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -67,7 +74,8 @@ jobs:
   deep:
     if: >-
       github.event_name != 'pull_request'
-      || contains(github.event.pull_request.labels.*.name, 'deep validation')
+      || (contains(github.event.pull_request.labels.*.name, 'deep validation')
+      && (github.event.action != 'labeled' || github.event.label.name == 'deep validation'))
     runs-on: ubuntu-latest
     timeout-minutes: 360
     steps:

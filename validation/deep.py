@@ -318,13 +318,18 @@ def write_trace(folder, name, data):
     return path
 
 
-def write_counterexamples(folder, space, found, known=oracle.AS_BUILT, budget=60.0, depth=None):
+def write_counterexamples(folder, space, found, known=oracle.AS_BUILT, budget=60.0, depth=None, total=None):
     """Each violation of a search, shortened and written as a trace file;
-    the files' paths with what each holds."""
+    the files' paths with what each holds. budget bounds the shortening
+    of one violation and total, when given, of them all, so a search that
+    met many cannot spend the hours after it shortening them: a violation
+    the total has no time left for is written as the search met it."""
     written = []
+    ends = None if total is None else time.perf_counter() + total
     for at, violation in enumerate(sorted(found, key=lambda f: (f.guarantee, f.detail)), 1):
         target = (violation.guarantee, violation.detail)
-        shorter = shrink.shrink(space.start, space.scope, symbolic_trace(space, violation.trace), target, known, budget)
+        allowed = budget if ends is None else max(0.0, min(budget, ends - time.perf_counter()))
+        shorter = shrink.shrink(space.start, space.scope, symbolic_trace(space, violation.trace), target, known, allowed)
         data = trace_json(space, shorter.trace, f"{violation.guarantee} {violation.detail}", depth=depth)
         path = write_trace(folder, f"{violation.guarantee}-{space.name}-{at}", data)
         written.append({"guarantee": violation.guarantee, "detail": violation.detail, "count": violation.count,

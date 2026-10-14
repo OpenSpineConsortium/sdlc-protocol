@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from sdlc_protocol.adapters import github  # noqa: E402
-from sdlc_protocol import guard  # noqa: E402
+from sdlc_protocol import board, guard  # noqa: E402
 from validation import cycle, invariants, model as M, mutants, oracle, verbs  # noqa: E402
 from validation.verbs import Scope, Verb  # noqa: E402
 
@@ -111,6 +111,29 @@ class TheWorkerCell(unittest.TestCase):
         model = self.claim("b", "b")
         self.drop_file(model, "b")
         self.assertEqual(invariants.one_name_one_holder(model), [])
+
+    def test_a_board_that_shows_another_cell_than_the_rule_owes_is_seen(self):
+        """The cell is held to one value: a board that drops the label once
+        the file is gone, or says there is no claim file while one is
+        there, breaks G1."""
+        no_file = mock.patch.object(invariants.board, "claim_row",
+                                    lambda key, branch, text, pull, issue: ["", branch, board.NO_CLAIM_FILE, "", ""])
+        model = self.claim("b", "b", labels=("todo", "worker:e"))
+        self.drop_file(model, "b")
+        with no_file:
+            found = invariants.one_name_one_holder(model)
+        self.assertEqual([(v.guarantee, v.detail) for v in found],
+                         [("G1", "the board names no claim file yet for claude/1, whose claim file is gone and whose "
+                                 "issue's label names e")])
+        with no_file:
+            found = invariants.one_name_one_holder(self.claim("b", "b"))
+        self.assertEqual([(v.guarantee, v.detail) for v in found],
+                         [("G1", "the board names no claim file yet for claude/1, whose holder is b")])
+
+    def test_the_oracle_reads_the_worker_label_by_itself(self):
+        self.assertEqual(oracle.label_worker(["todo", "account:main", "worker:e"]), "e")
+        self.assertEqual(oracle.label_worker(["agent:w1", "todo"]), "w1")
+        self.assertIsNone(oracle.label_worker(["todo", "worker:"]))
 
 
 class TheProtocolCheckIsReadAsGitHubReadsABody(unittest.TestCase):

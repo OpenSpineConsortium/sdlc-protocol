@@ -137,6 +137,18 @@ class Shortening(unittest.TestCase):
                 self.assertFalse(shrink.reproduces(ONE.start, ONE.scope, without, target))
         self.assertLessEqual(len(shorter.trace), len(longest.trace))
 
+    def test_a_part_s_total_bounds_the_shortening_of_all_its_violations(self):
+        """With no time left in the total, each violation is written as
+        the search met it, unshortened, so a red search ends in time."""
+        with mock.patch.object(claims, "is_idle", at_exactly_24_hours):
+            found = deep.search_space(ONE)
+            with tempfile.TemporaryDirectory() as folder:
+                written = deep.write_counterexamples(folder, ONE, found.found, budget=60.0, total=0.0)
+                files = sorted(p.name for p in (Path(folder) / deep.TRACES).glob("*.json"))
+        self.assertEqual(len(written), len(found.found))
+        self.assertEqual(len(files), len(found.found))
+        self.assertTrue(all(w["shortened_to"] == w["found_at"] for w in written), written)
+
     def test_a_counterexample_file_replays_red_in_memory_and_over_git(self):
         with tempfile.TemporaryDirectory() as folder:
             with mock.patch.object(claims, "is_idle", at_exactly_24_hours):
