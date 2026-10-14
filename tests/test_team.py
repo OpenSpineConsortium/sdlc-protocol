@@ -166,6 +166,17 @@ class NextTest(unittest.TestCase):
         self.api.issues[3]["labels"] = [{"name": "worker:w1"}, {"name": "blocked"}]
         self.assertEqual(team.next_for(self.api, "w1"), "take 2")
 
+    def test_an_epic_is_dealt_to_nobody_with_todo_or_as_a_blocker(self):
+        """Pick never takes an epic, whatever section lists it, since the
+        coordinator plans it (F15's fourth review): the clerk keeps an epic
+        labelled todo or blocker out of the shared pool, and deals the next
+        issue in its place."""
+        self.api.issues[1]["labels"] = [{"name": "epic"}, {"name": "todo"}]
+        self.api.add_issue(2, ["epic", "blocker"])
+        self.assertEqual(team.next_for(self.api, "w1"), "none")
+        self.api.add_issue(3, ["todo"])
+        self.assertEqual(team.deals(self.api, ["w1", "w2"]), {"w1": "take 3", "w2": "none"})
+
     def test_a_claimed_task_is_not_taken_again(self):
         self.api.add_issue(2, ["todo"])
         self.api.branches.add("claude/2")
@@ -232,6 +243,14 @@ class NextTest(unittest.TestCase):
     def test_a_blocked_task_waits_for_help(self):
         self.api.add_issue(2, ["todo", "agent:w1", "blocked"])
         self.assertEqual(team.next_for(self.api, "w1"), "none")
+
+    def test_an_issue_labelled_blocked_is_dealt_from_neither_the_queue_nor_the_blockers(self):
+        """F15: Pick never takes an issue labelled blocked, which waits on a
+        peer or the coordinator, whether it carries todo or blocker."""
+        self.api.add_issue(2, ["todo", "blocked"])
+        self.api.add_issue(3, ["blocker", "blocked"])
+        self.assertEqual(team.next_for(self.api, "w1"), "none")
+        self.assertEqual(team.deals(self.api, ["w1", "w2"]), {"w1": "none", "w2": "none"})
 
     def test_a_task_another_account_claimed_is_never_carried(self):
         self.api.add_issue(6, ["todo", "agent:w1", "claimed", "account:second"])

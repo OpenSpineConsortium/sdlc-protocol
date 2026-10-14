@@ -105,10 +105,15 @@ class FakeSite:
     repo = "OpenSpineConsortium/symphony-protocol-canary"
     default_branch = "main"
 
-    def __init__(self, adopted=True, runs=None, admin=False, take_every_push=False, vendoring="0.4.1", queued=True):
+    def __init__(self, adopted=True, runs=None, admin=False, take_every_push=False, vendoring="0.4.1", queued=True,
+                 ready_word="behind"):
         self.vendored = f"sdlc-protocol {vendoring} {COMMIT}\nhash  file\n" if adopted else None
         # The copy's board.yml, with or without F12's queue: max.
         self.board_yml = "concurrency:\n  group: board\n" + ("  queue: max\n" if queued else "")
+        # GitHub's word for a ready pull request once computed: behind, as
+        # under the canary's ruleset, which asks for an up-to-date branch,
+        # for the one C2 leaves behind main; clean under one that does not.
+        self.ready_word = ready_word
         self.issues, self.pulls, self.branches = {}, {}, {MAIN: None}
         self.branches = {self.default_branch: MAIN}
         self.files, self.parents, self.dates = {MAIN: {}}, {MAIN: None}, {}
@@ -274,7 +279,7 @@ class FakeSite:
         found["reads"] += 1
         detail = dict(found)
         detail["mergeable"] = None if found["reads"] == 1 else True
-        detail["mergeable_state"] = None if found["reads"] == 1 else ("draft" if found["draft"] else "clean")
+        detail["mergeable_state"] = None if found["reads"] == 1 else ("draft" if found["draft"] else self.ready_word)
         return detail
 
     def open_pulls(self):
@@ -366,10 +371,11 @@ def delete_second_push(number, closes=True):
 
 
 def main_moved(site):
-    """The board's word to the pull request C2 leaves behind main."""
-    behind = [p["number"] for p in site.pulls.values() if "stays behind" in p["title"]][0]
+    """The board's word to the pull request and the draft C2 leaves behind
+    main."""
     sha7 = board.short_sha(site.main_sha())
-    site.comment(behind, board.MAIN_MOVED_MARKER.format(sha=sha7) + "\nmain moved: ...", BOT, "NONE")
+    for behind in [p["number"] for p in site.pulls.values() if "behind" in p["title"]]:
+        site.comment(behind, board.MAIN_MOVED_MARKER.format(sha=sha7) + "\nmain moved: ...", BOT, "NONE")
 
 
 def nothing(site):
@@ -413,18 +419,40 @@ class TheChecks(unittest.TestCase):
         self.assertTrue(seen.values["push beside it"]["ok"])
         self.assertEqual(seen.values["checks on the merged head"], {"check": "success"})
         self.assertEqual(seen.values["checks on the behind head"], {"check": "success"})
-        self.assertEqual(seen.values["the pull request left behind after the merge"], "clean")
+        self.assertEqual(seen.values["the pull request left behind after the merge"], "behind")
+        self.assertEqual(seen.values["the draft left behind after the merge"], "draft")
+        self.assertEqual([e["expectation"] for e in seen.expectations if "main moved" in e["expectation"]],
+                         ["the pull request behind main hears main moved for main's new commit",
+                          "the draft behind main hears main moved for main's new commit"])
         self.assertTrue(seen.values["board.yml queues its runs"])
         self.assertEqual(seen.notes, [])
         self.assertEqual(site.runs_asked_since, site.now() - canary.RUNS_MARGIN,
                          "the runs are asked for from a minute before the merge, against the clocks' skew")
 
-    def test_c2_without_main_moved_is_known_while_f12_is_known(self):
+    def test_c2_owes_no_main_moved_where_github_says_the_pull_request_may_merge_as_it_stands(self):
+        """F16: under a ruleset that does not ask for an up-to-date branch
+        GitHub calls the pull request left behind clean, unstable or
+        has_hooks, and the spec owes it nothing, so C2 does not judge the
+        word and passes without it; the note says why."""
+        for word in canary.AS_IT_STANDS:
+            site = FakeSite(runs=[{"event": "push", "head_branch": "main", "conclusion": "success"}], ready_word=word)
+            site.reactions.append(main_moved)
+            seen, _ = run(site, "C2")
+            self.assertEqual(seen.status, "passed", seen.as_dict())
+            self.assertEqual(seen.values["the pull request left behind after the merge"], word)
+            self.assertNotIn("the pull request behind main hears main moved for main's new commit",
+                             [e["expectation"] for e in seen.expectations])
+            self.assertTrue(any("(F16)" in note for note in seen.notes), seen.notes)
+
+    def test_c2_without_main_moved_is_known_while_f12_and_f9_are_known(self):
+        """The pull request left behind misses the word for F12 and the
+        draft for F9, as under a release with neither fix."""
         site = FakeSite()
-        seen, _ = run(site, "C2", frozenset({"F12"}))
+        seen, _ = run(site, "C2", frozenset({"F9", "F12"}))
         self.assertEqual(seen.status, "known")
-        missed = [(e["expectation"], e["known"]) for e in seen.expectations if not e["holds"]]
-        self.assertEqual(missed, [("the pull request behind main hears main moved for main's new commit", True)])
+        missed = [(e["expectation"], e["finding"], e["known"]) for e in seen.expectations if not e["holds"]]
+        self.assertEqual(missed, [("the pull request behind main hears main moved for main's new commit", "F12", True),
+                                  ("the draft behind main hears main moved for main's new commit", "F9", True)])
         self.assertIn("the token may not list workflow runs", seen.notes[0])
         self.assertTrue(seen.values["board.yml queues its runs"], "recorded whether the runs are read or not")
         seen, _ = run(FakeSite(), "C2")
@@ -483,7 +511,9 @@ class TheChecks(unittest.TestCase):
                     return [{"name": "check", "status": "completed", "conclusion": "success"}]
                 return [{"name": "check", "status": "completed" if word else "in_progress", "conclusion": word}]
             site.check_runs = check_runs
-            site.reactions.append(main_moved)
+            # The wait for the check left behind takes twelve ticks; the
+            # word comes after the merge, to the draft as well.
+            site.reactions += [nothing] * 12 + [main_moved]
             seen, _ = run(site, "C2", frozenset({"F12"}))
             self.assertEqual(seen.status, "failed", seen.as_dict())
             missed = [e["expectation"] for e in seen.expectations if not e["holds"]]
@@ -690,7 +720,7 @@ class TheRecords(unittest.TestCase):
         self.assertIn("vendoring sdlc-protocol 0.4.1 438844f. A failed expectation is known for: F2 (as built); "
                       "F9 (fixed after 0.4.1); F12 (fixed after 0.4.1).", text)
         self.assertIn("- C1: passed, 3 of 3 expectations held", text)
-        self.assertIn("- C2: failed, 4 of 5 expectations held", text)
+        self.assertIn("- C2: failed, 5 of 6 expectations held", text)
         self.assertIn("- C2: did not hold: something more", text)
         self.assertIn("known for: none.", canary.summary(records, "v", "o/r"))
 
@@ -726,7 +756,7 @@ class TheRecords(unittest.TestCase):
         self.assertIsNone(canary.vendored_version("unreadable"))
         self.assertIsNone(canary.vendored_version(None))
         self.assertEqual(canary.known_for(first_line),
-                         canary.known.AS_BUILT | {"F4", "F7", "F9", "F12", "F13", "F14"})
+                         canary.known.AS_BUILT | {"F4", "F7", "F9", "F12", "F13", "F14", "F15", "F17"})
         self.assertEqual(canary.known_for(f"sdlc-protocol 0.5.0 {COMMIT}"), canary.known.AS_BUILT)
         self.assertEqual(canary.known_for("unreadable"), canary.known.AS_BUILT)
         self.assertEqual(canary.known_words(frozenset({"F12", "F2", "F13", "F99"})),
@@ -737,7 +767,7 @@ class TheRecords(unittest.TestCase):
             path = Path(scratch) / "c.json"
             self.assertEqual(canary.run_site(FakeSite(), ["C2"], path, None, out), 0)
             data = json.loads(path.read_text())
-            self.assertEqual(data["known_for"], ["F2", "F4", "F7", "F9", "F12", "F13", "F14"])
+            self.assertEqual(data["known_for"], ["F2", "F4", "F7", "F9", "F12", "F13", "F14", "F15", "F17"])
             self.assertEqual(data["results"][0]["status"], "known")
             self.assertIn("F12 (fixed after 0.4.1)", out.getvalue())
             self.assertEqual(canary.run_site(FakeSite(vendoring="0.5.0"), ["C2"], path, None, out), 1)

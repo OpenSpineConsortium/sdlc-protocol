@@ -17,9 +17,10 @@ it: the board reads only what the fake GitHub (fake_github.py) answers.
 canonical() is the state key (DESIGN.md, 6.3): everything a guarantee,
 the oracle or a scripted worker reads, comment bodies whole, the label
 events, every head a claim branch ever had, the tracking refs, the
-board's last page and whether GitHub hides a held branch's standing
-(opaque_pulls) included, so two states with one key behave the same under
-every verb. The reductions of section 6.4
+board's last page, whether GitHub hides a held branch's standing
+(opaque_pulls) and whether it calls a branch that is behind clean
+(lenient_rules) included, so two states with one key behave the same
+under every verb. The reductions of section 6.4
 (times capped, workers by symmetry) come with the checker's fast lane.
 """
 
@@ -55,10 +56,17 @@ def moment(minute):
     return T0 + timedelta(minutes=minute)
 
 
+# The ref name the model gives the run a pull request from a fork queues,
+# whose job board.yml skips, since that run's token is read-only; GitHub's
+# own ref for it is the pull request's merge ref, which no run here reads.
+FORK_RUN = "fork"
+
+
 def skipped(run):
     """Whether the run, as (event, ref name), is one board.yml's job skips:
-    a push to any branch but the default."""
-    return run[0] == "push" and run[1] != MAIN
+    a push to any branch but the default, or a pull request's from a fork
+    (FORK_RUN)."""
+    return (run[0] == "push" and run[1] != MAIN) or run == ("pull_request", FORK_RUN)
 
 
 @dataclass(frozen=True)
@@ -101,6 +109,10 @@ class Issue:
 
 @dataclass
 class PullRequest:
+    """One pull request. fork says its branch stands in its author's fork,
+    where no ref of the model's names it, so sha is its head there: a
+    branch of the same name here is another branch (F17)."""
+
     number: int
     head: str
     author: str
@@ -112,6 +124,8 @@ class PullRequest:
     updated_at: int = 0
     merged_at: int | None = None
     comments: tuple = ()
+    fork: bool = False
+    sha: str = ""
 
 
 class Push(NamedTuple):
@@ -153,6 +167,12 @@ class RepoModel:
     # given; rather than clean or behind (F9). Part of the key, since the
     # fake's answers turn on it.
     opaque_pulls: bool = False
+    # Whether GitHub's word for an open pull request whose branch is behind
+    # the default branch is "clean", as GitHub gives under a rule that does
+    # not require the branch to be up to date before merging, as the
+    # template's crowd ruleset, or under no rule; rather than "behind",
+    # which it gives only under one that does (F16). Part of the key.
+    lenient_rules: bool = False
     # The board branch's STATE.md: written only by a board run that exits 0.
     board_text: str = ""
     # The board workflow's concurrency group (DESIGN.md, 3.3), each run as
@@ -259,12 +279,14 @@ class RepoModel:
             self.ever_heads = self.ever_heads | {sha}
 
     def delete_ref(self, ref):
-        """GitHub's delete: the ref goes, and the open pull request whose
-        head it was is closed, as the rename closes one ("If the branch
+        """GitHub's delete: the ref goes, and the open pull requests whose
+        head it was are closed, as the rename closes one ("If the branch
         is associated with at least one open pull request, deleting the
         branch closes the pull requests", managing-branches-within-your-
-        repository.md). The soak found the model keeping such a pull
-        request open, which the board then told "idle" on every run."""
+        repository.md:71), never one from a fork whose branch bears the
+        same name, which is another branch. The soak found the model
+        keeping such a pull request open, which the board then told "idle"
+        on every run."""
         if self.store is not None:
             self.store.delete(ref)
         self.refs.pop(ref, None)
@@ -272,14 +294,15 @@ class RepoModel:
         self.created.pop(ref, None)
         self.made.pop(ref, None)
         for pull in self.pulls.values():
-            if pull.head == ref and pull.state == "open":
+            if pull.head == ref and pull.state == "open" and not pull.fork:
                 pull.state = "closed"
                 pull.updated_at = self.now
 
     def rename_ref(self, old, new):
         """GitHub's rename: the ref moves, and the open pull request whose
-        head it was is closed (renaming-a-branch.md:19). Who made the old
-        name made the new one."""
+        head it was is closed (renaming-a-branch.md:19), never one from a
+        fork whose branch bears the same name, which is another branch. Who
+        made the old name made the new one."""
         if self.store is not None:
             self.store.rename(old, new)
         self.set_ref(new, self.refs.pop(old))
@@ -288,7 +311,7 @@ class RepoModel:
             self.created[new] = self.created.pop(old)
             self.made[new] = self.made.pop(old)
         for pull in self.pulls.values():
-            if pull.head == old and pull.state == "open":
+            if pull.head == old and pull.state == "open" and not pull.fork:
                 pull.state = "closed"
                 pull.updated_at = self.now
 
@@ -300,13 +323,19 @@ class RepoModel:
     # --- how a branch stands ------------------------------------------------
 
     def standing(self, ref):
-        """clean, behind or dirty against main: behind when main is not in
-        the branch, dirty when a path both sides changed since the merge
-        base differs between them; in the git world, git's own answer, at
-        line level."""
+        """How the branch of this name here stands to main: in the git
+        world, git's own answer, at line level; in memory, standing_at's."""
         if self.store is not None:
             return self.store.standing(ref, MAIN)
-        head, main = self.refs.get(ref, ""), self.refs[MAIN]
+        return self.standing_at(self.refs.get(ref, ""))
+
+    def standing_at(self, head):
+        """clean, behind or dirty against main, by the model's own rule:
+        behind when main is not in the commit, dirty when a path both sides
+        changed since the merge base differs between them. The git world
+        judges a fork's head by it too, since the bare repository holds
+        none of a fork's commits."""
+        main = self.refs[MAIN]
         if not head or self.is_ancestor(main, head):
             return CLEAN
         base = self.merge_base(head, main)
@@ -317,17 +346,38 @@ class RepoModel:
         return BEHIND
 
     def files_changed(self, ref):
-        """The paths a branch changes beside its merge base with main, as a
-        pull request's files are."""
+        """The paths the branch of this name here changes: in the git world,
+        git's own diff from the merge base; in memory, files_changed_at's."""
         if self.store is not None:
             return self.store.files_changed(ref, MAIN)
-        head = self.refs.get(ref, "")
+        return self.files_changed_at(self.refs.get(ref, ""))
+
+    def files_changed_at(self, head):
+        """The paths a commit changes beside its merge base with main, as a
+        pull request's files are, by the model's own commits: a fork's head
+        in the git world too."""
         if not head:
             return []
         return self.changed(self.merge_base(head, self.refs[MAIN]), head)
 
+    def pull_head(self, pull):
+        """The commit a pull request's branch points at: the ref of that
+        name here, or a fork's head, which no ref here names."""
+        return pull.sha if pull.fork else self.refs.get(pull.head, "")
+
+    def pull_standing(self, pull):
+        """How a pull request's branch stands: the branch of that name here,
+        git's answer in the git world, or a fork's head, by the model's
+        rule in either world."""
+        return self.standing_at(pull.sha) if pull.fork else self.standing(pull.head)
+
+    def pull_files(self, pull):
+        return self.files_changed_at(pull.sha) if pull.fork else self.files_changed(pull.head)
+
     def open_pull_from(self, ref):
-        return next((p for p in self.pulls.values() if p.head == ref and p.state == "open"), None)
+        """The open pull request from the branch of this name here; never
+        one from a fork, whose branch is another (F17)."""
+        return next((p for p in self.pulls.values() if p.head == ref and p.state == "open" and not p.fork), None)
 
     # --- issues, labels and comments ----------------------------------------
 
@@ -428,7 +478,7 @@ class RepoModel:
             tuple(sorted(self.refs.items())),
             tuple(sorted((n, i.state, tuple(sorted(i.labels)), i.comments, i.body) for n, i in self.issues.items())),
             tuple(sorted((n, p.head, p.author, p.body, p.draft, p.state, p.opened_at, p.updated_at, p.merged_at,
-                          p.comments) for n, p in self.pulls.items())),
+                          p.comments, p.fork, p.sha) for n, p in self.pulls.items())),
             self.next_pull,
             tuple(sorted(self.writers)),
             tuple(sorted(self.ever_heads)),
@@ -438,6 +488,7 @@ class RepoModel:
             tuple(sorted((w, tuple(sorted(refs.items()))) for w, refs in self.tracking.items())),
             self.board_text,
             self.opaque_pulls,
+            self.lenient_rules,
         )
 
     def digest(self):
@@ -468,6 +519,7 @@ class RepoModel:
             made=dict(self.made), made_count=self.made_count,
             tracking={w: dict(refs) for w, refs in self.tracking.items()}, board_text=self.board_text,
             queued=self.queued, pending=self.pending, running=None, opaque_pulls=self.opaque_pulls,
+            lenient_rules=self.lenient_rules,
         )
 
 

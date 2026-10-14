@@ -54,15 +54,19 @@ SPEC = {
     "older spellings": "The older spellings account:<name> and agent:<name> are read as the same label.",
     "given": "An issue a worker's label names is that worker's alone: it is left out of the board's Queue and "
              "shown under Given to workers until the worker claims it.",
-    "todo": "An issue labelled todo and shown unclaimed on the board is free to take.",
+    "todo": "An issue labelled todo and shown unclaimed on the board is free to take as Pick says.",
+    "epic": "The board's Queue leaves an epic out, since nobody takes one whole.",
+    "blockers": "The board lists every open issue labelled blocker under Blockers, claimed or not",
     "idle": "A claim whose branch has had no commit for more than 24 hours, by the committer date of its head, is "
             "released by the coordinator, unless it is finished",
     "finished": "an issue labelled in-review, a pull request marked ready, or a draft whose author's latest comment "
                 "on it starts with \"finished; ready to mark\" waits for review however long it takes.",
     "order": "The coordinator first takes the label claimed and every worker's label off the issue, a label "
-             "already gone counting as taken off; then it posts a comment on the issue whose first line is "
-             "`<!-- sdlc-coordinator: claim-released -->`",
-    "put back": "A run that fails between the two puts back the labels it took off",
+             "already gone counting as taken off, and puts the label todo on it when it carries none of todo, "
+             "epic and blocker, so the Queue lists it again even when a worker's label alone gave it to the "
+             "worker, while a blocker is listed under Blockers without it; then it posts a comment on the issue "
+             "whose first line is `<!-- sdlc-coordinator: claim-released -->`",
+    "put back": "A run that fails between the two puts back the labels it took off and takes off the todo it put on",
     "candidates": "It takes its candidates from the open issues that have a branch `claude/<issue>`, whatever "
                   "their labels, and skips a claim whose latest release comment came more than 24 hours after "
                   "the branch's last commit, which is a claim already released",
@@ -89,6 +93,18 @@ SPEC = {
               "newest, since a claim opens its draft at once (Work in the open), and the number breaks a tie",
     "rename refused": "When GitHub refuses the rename for good, for a ruleset whose target takes in the claim "
                       "branches or a token without the right, the board says so once on the issue",
+    "behind": "The board reads a branch as behind where GitHub calls its pull request behind, as it does under a "
+              "rule that requires an up-to-date branch, or, where GitHub's word is blocked or draft, which says "
+              "only that something else stops the merge, a rule still holding the pull request or the draft "
+              "itself, where the comparison of the branch with the default branch says so.",
+    "fork": "A claim and its pull request live in the repository itself, so a pull request from a fork is no "
+            "claim's, whatever its branch is called: the board lists it as a pull request of its own and tells it "
+            "what it tells any other, it finishes no claim, marked ready or said finished, and a release's rename, "
+            "which closes the claim's own pull request, leaves it open",
+    "as it stands": "A pull request GitHub calls clean, unstable or has_hooks, a draft among them, since GitHub gives "
+                    "a draft the word its branch has, is not held for being behind under the repository's rules, so "
+                    "it hears nothing however far the default branch has moved; one GitHub calls dirty, in conflict "
+                    "with the default branch, hears it.",
 }
 
 CLAIM_PREFIX = "claude/"
@@ -269,11 +285,21 @@ def held_numbers(model):
 
 
 def queue(model):
-    """The Queue: open issues labelled todo, unclaimed, and given to no
-    worker (SPEC["todo"], SPEC["given"])."""
+    """The Queue: open issues labelled todo, unclaimed, given to no worker
+    and no epic (SPEC["todo"], SPEC["given"], SPEC["epic"]). Until F15's
+    fourth review the oracle listed an epic labelled todo, which no search
+    seeded, and the library has always left out; the labels lane met it
+    (mutants.labels_lane), and the spec's epic line now says so."""
     held = held_numbers(model)
     return sorted(n for n, i in model.issues.items() if i.state == "open" and TODO in i.labels
-                  and CLAIMED not in i.labels and n not in held and not workers_named(i.labels))
+                  and EPIC not in i.labels and CLAIMED not in i.labels and n not in held
+                  and not workers_named(i.labels))
+
+
+def blockers(model):
+    """Blockers: every open issue labelled blocker, claimed or not, in
+    number order (SPEC["blockers"])."""
+    return sorted(n for n, i in model.issues.items() if i.state == "open" and BLOCKER in i.labels)
 
 
 def given(model, known=AS_BUILT):
@@ -304,6 +330,13 @@ def labels_released(model, number):
     """The labels a release takes off: claimed and every worker's label in
     the three spellings, the ones still on."""
     return sorted(n for n in model.issues[number].labels if n == CLAIMED or is_worker_label(n))
+
+
+def labels_put_on(model, number):
+    """The label a release puts on (SPEC["order"]): todo, when the issue
+    carries none of todo, epic and blocker."""
+    names = model.issues[number].labels
+    return () if names & {TODO, EPIC, BLOCKER} else (TODO,)
 
 
 # --- overlaps -----------------------------------------------------------------
@@ -346,11 +379,20 @@ def claim_file_text(model, ref, number):
     return model.tree(model.refs.get(ref, "")).get(f"{CLAIM_DIR}{number}.md")
 
 
+def claim_of(pull):
+    """The issue whose claim the pull request is: its branch's number here,
+    and never one from a fork, whose branch is another whatever it is
+    called (SPEC["fork"])."""
+    return None if pull.fork else claim_number(pull.head)
+
+
 def open_work(model, known=AS_BUILT, unsaid=frozenset()):
     """Every piece of open work (SPEC["open work"]) but a released claim's.
     A claim and the pull request from its branch are one piece, which
     keeps the issue's number as its identity; with F2 known, the identity
-    is the number it is shown by, as the library reads it. unsaid names
+    is the number it is shown by, as the library reads it. A pull request
+    from a fork is a piece of its own, whatever its branch is called, and
+    began when it was opened (SPEC["fork"], SPEC["oldest"]). unsaid names
     the branches GitHub refused to date in the run, whose work then began
     when nothing else says (SPEC["oldest"]): a pull request's at its
     opening, and a claim's never."""
@@ -359,14 +401,15 @@ def open_work(model, known=AS_BUILT, unsaid=frozenset()):
     for pull in sorted(model.pulls.values(), key=lambda p: p.number):
         if pull.state != "open":
             continue
-        number = claim_number(pull.head)
+        number = claim_of(pull)
         if number is not None and released(model, number):
             continue
-        pulled.add(pull.head)
+        if not pull.fork:
+            pulled.add(pull.head)
         listed = listed_files(claim_file_text(model, pull.head, number)) if number is not None else []
-        files = own(model.files_changed(pull.head)) or own(listed)
+        files = own(model.pull_files(pull)) or own(listed)
         identity = number if number is not None and "F2" not in known else pull.number
-        began = None if pull.head in unsaid else model.created.get(pull.head)
+        began = None if pull.fork or pull.head in unsaid else model.created.get(pull.head)
         began = pull.opened_at if began is None else began
         pieces.append(Piece(identity, pull.number, files, not pull.draft, is_blocker(model, number), began))
     for ref in sorted(model.refs):
@@ -411,7 +454,7 @@ def told_of(model, piece, by_number, known=AS_BUILT):
     known, on its current number alone, numbers as written."""
     places = {piece.number}
     if "F2" not in known:
-        places |= {piece.identity} | {p.number for p in model.pulls.values() if claim_number(p.head) == piece.identity}
+        places |= {piece.identity} | {p.number for p in model.pulls.values() if claim_of(p) == piece.identity}
     told = set()
     for place in places:
         for comment in model.comments_on(place):
@@ -426,8 +469,8 @@ def overlap_effects(model, known=AS_BUILT):
     by_number = {p.number: p.identity for p in pieces}
     if "F2" not in known:
         for pull in model.pulls.values():
-            if claim_number(pull.head) is not None:
-                by_number.setdefault(pull.number, claim_number(pull.head))
+            if claim_of(pull) is not None:
+                by_number.setdefault(pull.number, claim_of(pull))
     effects = []
     for piece in sorted(pieces, key=lambda p: p.number):
         meets = {other.identity for other in pieces if other.identity != piece.identity
@@ -452,13 +495,30 @@ def main_moved_effects(model, event, ref_name, known=AS_BUILT):
     conflicting with main hears so once for main's commit, in whichever
     run finds it so (DESIGN.md, G10; the event and the ref no longer
     decide, since F12's fix, and a draft, or a pull request a rule or a
-    review blocks, hears it like any other, since F9's fix)."""
+    review blocks, hears it like any other, since F9's fix), behind as
+    owes_main_moved reads it."""
     marker = BOARD_MARKERS["main-moved"].format(sha=short_sha(model.refs[MAIN]))
     found = []
     for pull in pulls_spoken_to(model):
-        if model.standing(pull.head) in ("behind", "dirty") and not has_marker(model, pull.number, marker):
+        if owes_main_moved(model, pull) and not has_marker(model, pull.number, marker):
             found.append(Effect("comment", pull.number, "main-moved"))
     return found
+
+
+def owes_main_moved(model, pull):
+    """Whether the pull request's branch stands so the board tells it "main
+    moved": in conflict with main, or behind it where GitHub says behind,
+    or says blocked, a rule still holding the pull request, so the
+    comparison says it (SPEC["behind"]); GitHub gives a draft the word its
+    branch has, never draft (C0). A branch behind main under a rule that
+    does not require an up-to-date branch, the model's lenient_rules, with
+    no rule holding it, which GitHub calls clean, draft or not, is not held
+    for being behind and is owed nothing (SPEC["as it stands"], F16). A
+    pull request from a fork stands as its own head does (SPEC["fork"])."""
+    standing = model.pull_standing(pull)
+    if standing == "dirty":
+        return True
+    return standing == "behind" and (model.opaque_pulls or not model.lenient_rules)
 
 
 def idle_effects(model):
@@ -469,9 +529,10 @@ def idle_effects(model):
 
 def pulls_spoken_to(model):
     """The open pull requests the board speaks to: all but a released
-    claim's, which the rename closes."""
+    claim's, which the rename closes, one from a fork being no claim's
+    (SPEC["fork"])."""
     return [p for p in sorted(model.pulls.values(), key=lambda p: p.number) if p.state == "open"
-            and not ((n := claim_number(p.head)) is not None and released(model, n))]
+            and not ((n := claim_of(p)) is not None and released(model, n))]
 
 
 # --- what a board run must do -------------------------------------------------
@@ -485,9 +546,13 @@ def expected_effects(before, event="schedule", ref_name="", known=AS_BUILT):
     model = before.clone()
     effects = []
     for number in sorted(n for n in model.issues if due(model, n)):
+        put_on = labels_put_on(model, number)
         for name in labels_released(model, number):
             effects.append(Effect("label-off", number, name))
             model.issues[number].labels = model.issues[number].labels - {name}
+        if put_on:
+            effects.append(Effect("label-on", number, put_on))
+            model.issues[number].labels = model.issues[number].labels | set(put_on)
         effects.append(Effect("comment", number, "claim-released"))
         model.issues[number].comments += (Comment(BOT, "NONE", model.now, RELEASE_MARKER),)
     effects += overlap_effects(model, known)

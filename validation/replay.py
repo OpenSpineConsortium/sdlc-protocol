@@ -1,7 +1,7 @@
 """One replayable regression trace per finding (DESIGN.md, 5.3 and 14, step 5).
 
 Each file under validation/traces/, <finding>.json, is the trace of
-DESIGN.md's table in 5.3 for one finding F1 to F14: the repository it
+DESIGN.md's table in 5.3 for one finding F1 to F17: the repository it
 starts from (its issues with their labels, its workers, the people beside
 them, the files each claim lists, whether the workers are careless, the
 events the board hears and whether a run is made in two halves) and its
@@ -13,9 +13,10 @@ mismatches and a timeline a person reads; scripts/validate.py replay
 <file> prints it.
 
 A trace of a fixed finding (F1, F3, F5, F6, F10 and F11 in 0.4.1; F4,
-F7, F9, F12, F13 and F14 after it) is green, and the mutant that undoes its
-fix turns it red at the step where the finding showed, for the guarantee
-the table names, which tests/test_validation_traces.py holds it to. A
+F7, F9, F12, F13, F14, F15 and F17 after it; F16 in the spec's words,
+which the library already kept) is green, and the mutant that undoes its fix turns
+it red at the step where the finding showed, for the guarantee the table
+names, which tests/test_validation_traces.py holds it to. A
 trace of an open finding is red where known.json records it, with the
 finding's switch off in the oracle for the ones the oracle reads as built
 (F2); none is red as built now, as F4's was until its fix.
@@ -46,7 +47,7 @@ from .model import HOUR, OWNER
 from .scenarios import Expect, Scenario, Step
 
 TRACES = Path(__file__).resolve().parent / "traces"
-FINDINGS = tuple(f"F{n}" for n in range(1, 15))
+FINDINGS = tuple(f"F{n}" for n in range(1, 18))
 SET_FIELDS = ("labels", "told")
 BOARD_VERBS = ("board", "board-start", "board-finish")
 
@@ -107,7 +108,8 @@ def scenario_of(data):
                     {w: None for w in data["workers"]}, steps_of(data["steps"]), tuple(data.get("people", (OWNER,))),
                     tuple((int(n), tuple(paths)) for n, paths in data.get("files", {}).items()),
                     data.get("careless", False), tuple(data.get("events", (cycle.SCHEDULE,))),
-                    data.get("split_board", False), data.get("opaque_pulls", False))
+                    data.get("split_board", False), data.get("opaque_pulls", False),
+                    data.get("lenient_rules", False))
 
 
 def load(path):

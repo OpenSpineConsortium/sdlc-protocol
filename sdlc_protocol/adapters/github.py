@@ -269,10 +269,15 @@ class GitHub:
     def pull_detail(self, branch):
         """The open pull request from a branch of this repository, in the
         detail that holds mergeable_state and the head's sha, as GitHub
-        gives it, or None."""
+        gives it, or None. The list's head filter names the branch by its
+        owner, which a fork in the same organization shares (github/docs,
+        content/pull-requests/reference/forks.md:113), so a pull request
+        from such a fork is left out by the head and base the list gives
+        (board.from_fork; F17's review)."""
         owner = self.repo.split("/")[0]
         found = self.get(f"/repos/{self.repo}/pulls", {"state": "open", "head": f"{owner}:{branch}"}) or []
-        return self.get(f"/repos/{self.repo}/pulls/{found[0]['number']}") if found else None
+        own = [pull for pull in found if not board.from_fork(pull)]
+        return self.get(f"/repos/{self.repo}/pulls/{own[0]['number']}") if own else None
 
     def check_runs(self, sha):
         """Every check run on one commit, page by page: the endpoint wraps
@@ -342,9 +347,16 @@ def standing_of(api, detail, default_branch=None):
     a conflict apart, and the comparison tells behind from clean, as the
     gate's world reads such a pull request (F9: until this the board read
     blocked as blocked and draft as unknown, and neither heard "main
-    moved"). None where GitHub's word is one the board reads as it is, and
-    for a pull request stacked on a branch other than the default branch
-    the caller names, since "main moved" speaks of the default branch. A
+    moved"). None where GitHub's word is one the board reads as it is:
+    behind and dirty say how the branch stands, unknown is GitHub still
+    computing, and clean, unstable and has_hooks say the repository's
+    rules do not hold the pull request for being behind, a draft's as any
+    other's, since GitHub gives a draft the word its branch has (C0), which
+    they say of a branch that is behind only under a rule that does not
+    require an up-to-date branch, or under none, so the spec owes it
+    nothing however far the default branch has moved (F16). None too for a pull request
+    stacked on a branch other than the default branch the caller names,
+    since "main moved" speaks of the default branch. A
     comparison GitHub refuses, a 5xx, a 422 or a rate limit's 403, reads
     as unknown, which keeps GitHub's own word, as the coordinator's own
     comparison does (holding): one pull request GitHub will not compare
@@ -476,8 +488,9 @@ def may_be_due(issue):
 def ready_branches(pulls):
     """The head branches of the open pull requests marked ready, as the API
     details them; a pull request whose draft state is not given counts as
-    ready, as the board counts it."""
-    return {(p.get("head") or {}).get("ref") for p in pulls if not p.get("draft")}
+    ready, as the board counts it. One from a fork is left out, whatever
+    its branch is called, since it is no claim's (board.claim_of)."""
+    return {(p.get("head") or {}).get("ref") for p in pulls if not p.get("draft") and not board.from_fork(p)}
 
 
 def may_write(api):
@@ -542,7 +555,7 @@ def releases(api, heads, found_issues, pulls, now=None):
     a release can be due or can have happened."""
     now = now or datetime.now(timezone.utc)
     ready, trusted = ready_branches(pulls), may_write(api)
-    drafts = {(p.get("head") or {}).get("ref"): p for p in pulls if p.get("draft")}
+    drafts = {(p.get("head") or {}).get("ref"): p for p in pulls if p.get("draft") and not board.from_fork(p)}
     found = {}
     for branch, sha in sorted(heads.items()):
         key = claims.key_of(branch)
@@ -763,16 +776,21 @@ def holding(api, default_branch, sha):
 
 
 def release_one(api, snap, key, now):
-    """Release one claim: the labels first, then the comment, in the
-    protocol's order, and the board counts a release only once both are
-    done. A run that fails between them puts back the labels it took off,
-    so the issue is as the run found it and the next run starts the
-    release over, unless the comment turns out to be there after all, one
-    GitHub wrote and lost its answer to, which makes the release whole.
-    Only when GitHub refuses the putting back too are the labels left off
-    with no comment, until a run releases the claim or a person puts them
-    back. What was done, in a line."""
-    release, names, taken_off = snap.releases[key], coordinator.labels_released(snap, key), []
+    """Release one claim: the labels first, claimed and every worker's off
+    and todo on where the issue carries none of todo, epic and blocker
+    (coordinator.labels_put_on), then the comment, in the protocol's
+    order, and the board counts a release only once both are done. A run
+    that fails between them puts back the labels it took off and takes off
+    the todo it put on, so the issue is as the run found it and the next
+    run starts the release over, unless the comment turns out to be there
+    after all, one GitHub wrote and lost its answer to, which makes the
+    release whole. Only when GitHub refuses the putting back too are the
+    labels left as the failure left them with no comment, until a run
+    releases the claim or a person puts them back. What was done, in a
+    line."""
+    release = snap.releases[key]
+    names, put_on = coordinator.labels_released(snap, key), coordinator.labels_put_on(snap, key)
+    taken_off = []
     try:
         for name in names:
             if take_label_off(api, key, name):
@@ -780,6 +798,9 @@ def release_one(api, snap, key, now):
     except GitHubError as problem:
         return (f"#{key}: not released, taking the labels off failed: {problem}{github_words(problem)}"
                 + put_back(api, key, taken_off))
+    refused = put_labels_on(api, key, put_on, taken_off)
+    if refused:
+        return refused
     text = coordinator.release_text(snap, key, holding(api, snap.default_branch, release.sha))
     lost = ""
     try:
@@ -788,9 +809,9 @@ def release_one(api, snap, key, now):
         released_at = landed_release(api, key, release)
         if not released_at:
             return (f"#{key}: not released, the comment failed: {problem}{github_words(problem)}"
-                    + put_back(api, key, taken_off))
+                    + put_back(api, key, taken_off, put_on))
         lost = f" (GitHub's answer to the comment was lost, {problem}, but the comment is there)"
-    coordinator.after_release(snap, key, released_at or now.isoformat(), names)
+    coordinator.after_release(snap, key, released_at or now.isoformat(), names, put_on)
     return f"#{key}: claim released, idle since {release.committed_at}{lost}"
 
 
@@ -808,18 +829,45 @@ def take_label_off(api, key, name):
     return True
 
 
-def put_back(api, key, names):
-    """Put the labels a release took off back on its issue once a later step
-    failed, so the claim stays its holder's until a run releases it whole;
-    what was done, as the end of the release's line."""
-    if not names:
+def put_labels_on(api, key, put_on, taken_off):
+    """Put on a claim's issue the labels its release puts on
+    (coordinator.labels_put_on): nothing when they went on, else the
+    release's line saying it failed there, with the labels taken off put
+    back and those put on taken off again, since GitHub may have written
+    them and lost its answer."""
+    if not put_on:
         return ""
-    listed = ", ".join(names)
     try:
-        api.post(f"/repos/{api.repo}/issues/{key}/labels", {"labels": names})
+        api.post(f"/repos/{api.repo}/issues/{key}/labels", {"labels": put_on})
     except GitHubError as problem:
-        return f"; putting {listed} back failed too, so they stay off: {problem}{github_words(problem)}"
-    return f"; {listed} put back"
+        return (f"#{key}: not released, putting {', '.join(put_on)} on failed: {problem}{github_words(problem)}"
+                + put_back(api, key, taken_off, put_on))
+    return ""
+
+
+def put_back(api, key, names, put_on=()):
+    """Put the labels a release took off back on its issue once a later step
+    failed, so the claim stays its holder's until a run releases it whole,
+    then take off the labels it put on, so the issue is as the run found
+    it; what was done, as the end of the release's line. A label put on
+    whose answer was an error is taken off too, since GitHub may have
+    written it and lost the answer; one that is not there counts as taken
+    off, as in the release itself."""
+    said = ""
+    if names:
+        listed = ", ".join(names)
+        try:
+            api.post(f"/repos/{api.repo}/issues/{key}/labels", {"labels": names})
+            said += f"; {listed} put back"
+        except GitHubError as problem:
+            said += f"; putting {listed} back failed too, so they may still be off: {problem}{github_words(problem)}"
+    for name in put_on:
+        try:
+            if take_label_off(api, key, name):
+                said += f"; {name} taken off again"
+        except GitHubError as problem:
+            said += f"; taking {name} off again failed too, so it may still be on: {problem}{github_words(problem)}"
+    return said
 
 
 def landed_release(api, key, release):
@@ -1066,6 +1114,13 @@ class GitHubWorld:
             return gate.UNKNOWN
         found = standing_of(self.api, pull)
         return found if found is not None else standing_word(pull)
+
+    def standing_detail(self, branch):
+        """The branch's gate.Standing, which never says a clean branch is
+        level with the default branch: GitHub's word clean says only that
+        it merges as it stands, behind or not under a rule that does not
+        ask for an up-to-date branch (F16)."""
+        return gate.Standing(self.standing(branch), level=False)
 
     def check(self, branch):
         sha = self.branch_sha(branch)

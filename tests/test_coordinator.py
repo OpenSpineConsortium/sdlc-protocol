@@ -41,6 +41,13 @@ def idle_claim(**changes):
     return board.Snapshot.from_dict(snap)
 
 
+def fork_pull():
+    """sam's pull request #50, marked ready, from a branch of a fork named
+    claude/12 there (F17)."""
+    return board.Pull(50, "Fix the board", "claude/12", "ddddddd4444444", "clean", "2026-09-19T12:00:00Z",
+                      ["docs/agents/README.md"], draft=False, fork=True)
+
+
 class ReleasesDue(unittest.TestCase):
     def test_a_claim_idle_for_more_than_a_day_is_due(self):
         self.assertEqual(coordinator.releases_due(idle_claim(), NOW), ["12"])
@@ -77,6 +84,18 @@ class ReleasesDue(unittest.TestCase):
     def test_a_claim_with_no_pull_request_is_due_too(self):
         self.assertEqual(coordinator.releases_due(idle_claim(pulls=[]), NOW), ["12"])
 
+    def test_a_ready_pull_request_from_a_fork_named_like_the_claim_keeps_no_claim_from_its_release(self):
+        """F17: a stranger's pull request from a fork's claude/12 is no
+        claim's, so marked ready it finishes nothing; the claim's own, marked
+        ready, still does."""
+        for own in (idle_claim(), idle_claim(pulls=[])):
+            own.pulls.insert(0, fork_pull())
+            self.assertEqual(coordinator.releases_due(own, NOW), ["12"])
+        ready = idle_claim()
+        ready.pulls[0].draft = False
+        ready.pulls.insert(0, fork_pull())
+        self.assertEqual(coordinator.releases_due(ready, NOW), [])
+
 
 class ReleaseText(unittest.TestCase):
     def test_the_release_says_why_whose_what_and_how_to_carry_on(self):
@@ -95,6 +114,16 @@ class ReleaseText(unittest.TestCase):
         self.assertIn("The claim's plan: Describe the board, section by section.", text)
         self.assertIn("a new claude/12 from main, and bring the commits in from released/12-aaaaaaa", text)
         self.assertTrue(text.endswith("put the label claimed back on the issue.\n"))
+
+    def test_the_release_names_the_claim_s_own_pull_request_never_a_fork_s(self):
+        """F17: the pull request a release names is the claim's own, whatever
+        a fork's branch is called."""
+        snap = idle_claim()
+        snap.pulls.insert(0, fork_pull())
+        self.assertIn("its pull request #40 is still a draft", coordinator.release_text(snap, "12", coordinator.Holding()))
+        alone = idle_claim(pulls=[])
+        alone.pulls.append(fork_pull())
+        self.assertIn("and it has no pull request, so", coordinator.release_text(alone, "12", coordinator.Holding()))
 
     def test_what_a_release_says_without_a_pull_request_a_comparison_or_a_claim_file(self):
         snap = idle_claim(pulls=[], claims={"12": None})
@@ -143,6 +172,13 @@ class ReleaseText(unittest.TestCase):
         snap.claim_issues["12"].labels = ["account:main", "blocker", "claimed", "todo", "worker:nightly"]
         self.assertEqual(coordinator.labels_released(snap, "12"), ["account:main", "claimed", "worker:nightly"])
 
+    def test_a_bare_worker_prefix_stays_on(self):
+        """F15's fourth review: a bare worker: names no worker, so a release
+        leaves it on, as the board and the spec read it."""
+        snap = idle_claim()
+        snap.claim_issues["12"].labels = ["claimed", "todo", "worker:", "worker:nightly"]
+        self.assertEqual(coordinator.labels_released(snap, "12"), ["claimed", "worker:nightly"])
+
     def test_after_the_release_the_board_counts_it_and_the_queue_has_the_issue(self):
         snap = idle_claim()
         coordinator.after_release(snap, "12", "2026-09-20T12:00:05Z", ["claimed", "worker:nightly"])
@@ -150,6 +186,35 @@ class ReleaseText(unittest.TestCase):
         self.assertEqual(snap.issues[0].labels, ["todo"])
         self.assertEqual(board.released_keys(snap), {"12"})
         self.assertIn("| #12 | Describe the board | todo |", board.render(snap).split(board.QUEUE_HEADING)[1])
+
+    def test_a_release_puts_todo_on_an_issue_that_carries_none_of_todo_epic_and_blocker(self):
+        """F15: the Queue lists only an issue labelled todo, and a task a
+        worker's label alone gave carries none, so until the fix its
+        released issue was shown nowhere; an epic gets none, since the
+        Queue never lists one, and a blocker none, since the board lists it
+        under Blockers and the clerk deals it first without todo. A task
+        its worker labelled blocked gets todo too: the Queue lists it with
+        blocked beside it, and nobody takes it, neither a worker reading
+        the board (Pick) nor the clerk, until blocked comes off."""
+        snap = idle_claim()
+        for names, put_on in ((["claimed", "worker:nightly"], ["todo"]), (["claimed", "todo", "worker:nightly"], []),
+                              (["claimed", "epic", "worker:nightly"], []), (["blocker", "claimed"], []),
+                              (["blocked", "claimed", "worker:nightly"], ["todo"]), ([], ["todo"])):
+            with self.subTest(labels=names):
+                snap.claim_issues["12"].labels = names
+                self.assertEqual(coordinator.labels_put_on(snap, "12"), put_on)
+        self.assertEqual(coordinator.labels_put_on(snap, "99"), [])
+
+    def test_after_a_release_that_put_todo_on_the_queue_has_the_issue_given_by_a_label_alone(self):
+        snap = idle_claim()
+        snap.claim_issues["12"].labels = ["claimed", "worker:nightly"]
+        snap.issues[0].labels = ["claimed", "worker:nightly"]
+        self.assertNotIn("#12", board.render(snap).split(board.QUEUE_HEADING)[1])
+        coordinator.after_release(snap, "12", "2026-09-20T12:00:05Z", ["claimed", "worker:nightly"], ["todo"])
+        self.assertEqual(snap.claim_issues["12"].labels, ["todo"])
+        self.assertEqual(snap.issues[0].labels, ["todo"])
+        self.assertIn("| #12 | Describe the board | todo |", board.render(snap).split(board.QUEUE_HEADING)[1])
+        self.assertEqual(coordinator.relabelled(["todo", "blocker"], ["blocker"], ["todo"]), ["todo"])
 
 
 def meeting_work():

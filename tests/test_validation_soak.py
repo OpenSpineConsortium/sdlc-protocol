@@ -75,7 +75,7 @@ class TheSoak(unittest.TestCase):
         from; each file names the detail a replay of it meets, sha and
         all, not the one the walk met."""
         with tempfile.TemporaryDirectory() as folder, mock.patch.object(claims, "is_idle", at_exactly_24_hours):
-            result = lanes.run_soak([3], 12, folder)
+            result = lanes.run_soak([9], 12, folder)
             self.assertTrue(any("released/" in v["detail"] for v in result["violations"]), result["violations"])
             for v in result["violations"]:
                 with self.subTest(file=Path(v["file"]).name):

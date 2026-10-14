@@ -81,6 +81,7 @@ def seeded(scenario):
     writers = tuple(w for w in scenario.workers if w != verbs.SAM) + (CAROL, DANA)
     model = M.seeded(tuple(scenario.issues), writers=writers)
     model.opaque_pulls = scenario.opaque_pulls
+    model.lenient_rules = scenario.lenient_rules
     for number, labels in scenario.issues.items():
         model.issues[number].labels = frozenset(labels)
     return model
@@ -200,7 +201,7 @@ def observed(model, expect, outcomes, scenario, step):
     if expect.released is not None:
         yield "released", expect.released, {n: len(verbs.released_refs(model, n)) for n in expect.released}
     if expect.standing is not None:
-        yield "standing", expect.standing, {n: model.standing(model.pulls[n].head) for n in expect.standing}
+        yield "standing", expect.standing, {n: model.pull_standing(model.pulls[n]) for n in expect.standing}
     if expect.no_writes is not None:
         writes = [f"{c.method} {c.path}" for c in (run.calls if run else ()) if c.method != "GET"]
         yield "no_writes", expect.no_writes, not writes

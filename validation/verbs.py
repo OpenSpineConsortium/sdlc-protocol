@@ -21,6 +21,8 @@ Actors: the workers of the scope, each a person's session that may write
 (author_association COLLABORATOR); the owner; carol, a collaborator; dana,
 a writer GitHub shows as a contributor, whom only the permission API
 vouches for; sam, a stranger with no write access; the clock; the board.
+Where the scope's forks is on, sam opens pull requests from a fork, from
+a branch named there as a claim's, which is no claim's (F17).
 
 Two comments a person can write that look like the coordinator's, offered
 where the scope has more than one issue: a worker's comment that quotes
@@ -65,6 +67,9 @@ FAULTS = {
                                   retry_after="60"),
     "label-delete-500": Fault("DELETE", "/issues/*/labels/*", 500),
     "label-post-500": Fault("POST", "/issues/*/labels", 500),
+    # A label GitHub writes and loses its answer to, as a release's todo
+    # can be (F15's review).
+    "label-post-lost": Fault("POST", "/issues/*/labels", 502, applied=True),
     "rename-403": Fault("POST", "/branches/*/rename", 403),
     "rename-422": Fault("POST", "/branches/*/rename", 422),
     "ref-delete-422": Fault("DELETE", "/git/refs/heads/*", 422),
@@ -113,9 +118,11 @@ class Scope(NamedTuple):
     other verbs between them, whether workers may be careless (a lease
     onto another's claim, a misnamed claim, and the owner's push of one by
     hand, which meets no guard), the files each issue's claim lists, by
-    issue, and the clock skews, in hours, a worker's commits may carry
-    (F8: a pusher whose clock is ahead or behind stamps its commits so,
-    and the committer date is what idleness is read from)."""
+    issue, the clock skews, in hours, a worker's commits may carry (F8: a
+    pusher whose clock is ahead or behind stamps its commits so, and the
+    committer date is what idleness is read from), and whether a stranger
+    opens pull requests from a fork whose branch bears a claim's name
+    (F17)."""
 
     workers: tuple = ("a", "b")
     issues: tuple = (1,)
@@ -127,6 +134,7 @@ class Scope(NamedTuple):
     files: tuple = ()
     split_board: bool = False
     skews: tuple = ()
+    forks: bool = False
 
     def files_of(self, number):
         return dict(self.files).get(number, (f"src/{number}.py",))
@@ -396,6 +404,28 @@ def open_draft(model, worker, number):
     return Outcome(True, f"opened #{pull.number}", events=((cycle.PULL_REQUEST, ""),))
 
 
+def fork_pull(model, number, files, ready):
+    """sam, a stranger, opens a pull request from a fork, from a branch named
+    claude/<number> there: one commit on main's tip changing the issue's
+    files, which stands in the fork, so no ref here names it. Its body
+    closes the issue, as a claim's would, and it may be opened ready
+    (F17). GitHub runs board.yml for it, and the job skips such a run,
+    whose token is read-only (model.skipped)."""
+    main = model.refs[MAIN]
+    sha = model.commit((main,), SAM, edited(model, main, SAM, files), f"Fix #{number}")
+    pull = PullRequest(model.next_pull, claim_ref(number), SAM, f"Closes #{number}", f"Fix #{number}",
+                       draft=not ready, opened_at=model.now, updated_at=model.now, fork=True, sha=sha)
+    model.pulls[pull.number] = pull
+    model.next_pull += 1
+    return Outcome(True, f"opened #{pull.number} from a fork", events=((cycle.PULL_REQUEST, M.FORK_RUN),))
+
+
+def open_fork_pull(model, number):
+    """sam's open pull request from the fork's claude/<number>, or None."""
+    return next((p for p in model.pulls.values() if p.fork and p.state == "open" and p.head == claim_ref(number)),
+                None)
+
+
 def mark_ready(model, number):
     pull = model.pulls[number]
     pull.draft = False
@@ -555,6 +585,8 @@ def act(model, verb, scope):
         return carry_on(model, actor, number, args[1])
     if name == "open-draft":
         return open_draft(model, actor, number)
+    if name == "fork-pull":
+        return fork_pull(model, number, scope.files_of(number), args[1])
     if name == "mark-ready":
         return mark_ready(model, number)
     if name == "merge":
@@ -621,6 +653,8 @@ def issue_verbs(model, scope, number):
             found.append(Verb("marker", person, (number,)))
             if person == SAM and len(scope.issues) > 1:
                 found.append(Verb("overlap-marker", person, (number, others(scope, number))))
+    if scope.forks and issue.state == "open":
+        found += fork_verbs(model, number)
     if OWNER in scope.people:
         found += owner_verbs(model, number, pull)
         misnamed = f"{CLAIM_PREFIX}0{number}"
@@ -670,6 +704,16 @@ def worker_verbs(model, scope, number, worker, pull):
     return found
 
 
+def fork_verbs(model, number):
+    """sam's acts on the fork's pull request for the issue: open one, as a
+    draft or ready, where none is open, and say such a draft finished,
+    as a claim's author would (F17)."""
+    fork = open_fork_pull(model, number)
+    if fork is None:
+        return [Verb("fork-pull", SAM, (number, False)), Verb("fork-pull", SAM, (number, True))]
+    return [Verb("finished", SAM, (fork.number,))] if fork.draft else []
+
+
 def others(scope, number):
     """The scope's other issues, as the numbers an overlap marker on this
     issue would name."""
@@ -690,7 +734,8 @@ def owner_verbs(model, number, pull):
         if ref not in model.refs:
             found.append(Verb("rename-back", OWNER, (number, old)))
     for closed in sorted(model.pulls.values(), key=lambda p: p.number):
-        if closed.state == "closed" and closed.head == ref and ref in model.refs and model.open_pull_from(ref) is None:
+        if (closed.state == "closed" and closed.head == ref and not closed.fork and ref in model.refs
+                and model.open_pull_from(ref) is None):
             found.append(Verb("reopen", OWNER, (closed.number,)))
     if issue.state == "open":
         found.append(Verb("close-issue", OWNER, (number,)))

@@ -138,17 +138,21 @@ class Turns(list):
 
 
 class InTurn(FakeOpener):
-    """A FakeOpener that answers a path given Turns with them in turn."""
+    """A FakeOpener that answers a path given Turns with them in turn, keyed
+    as FakeOpener keys its answers: by path and query for GET and by
+    "METHOD path" otherwise."""
 
     def open(self, call, timeout=None):
-        turns = self.answers.get(call.selector)
+        method = call.get_method()
+        key = call.selector if method == "GET" else f"{method} {call.selector}"
+        turns = self.answers.get(key)
         if not isinstance(turns, Turns):
             return super().open(call, timeout)
-        self.answers = dict(self.answers, **{call.selector: turns[0]})
+        self.answers = dict(self.answers, **{key: turns[0]})
         try:
             return super().open(call, timeout)
         finally:
-            self.answers[call.selector] = Turns(*turns[1:]) if len(turns) > 1 else turns
+            self.answers[key] = Turns(*turns[1:]) if len(turns) > 1 else turns
 
 
 def too_large_to_give(path, ref):
@@ -979,6 +983,47 @@ class Releases(unittest.TestCase):
         self.assertIn("| #12 | Describe the board | todo |", board.render(snap).split(board.QUEUE_HEADING)[1])
         self.assertEqual(coordinator.releases_due(snap, NOW), [])
 
+    def test_a_pull_request_from_a_fork_named_like_the_claim_neither_finishes_nor_holds_it(self):
+        """F17: sam's pull request from a fork's claude/12 is no claim's.
+        Marked ready, it leaves the claim to be read for its release; as a
+        draft its author said is finished, it holds nothing, and its comments
+        cost no call; and the board lists it beside the released claim."""
+        fork = {"number": 50, "title": "Fix the board", "mergeable_state": "clean", "updated_at": "2026-09-19T12:00:00Z",
+                "user": {"login": "sam"}, "head": {"ref": "claude/12", "sha": "ddd", "repo": {"full_name": "sam/r"}},
+                "base": {"ref": "main", "repo": {"full_name": "o/r"}}}
+        self.assertEqual(github.ready_branches([dict(fork, draft=False), {"head": {"ref": "claude/13"}}]), {"claude/13"})
+        for ready in (True, False):
+            _, answers = released_answers()
+            answers["/repos/o/r/pulls?state=open&per_page=100"] = FakeAnswer([{"number": n} for n in (40, 41, 50)])
+            answers["/repos/o/r/pulls/50"] = FakeAnswer(dict(fork, draft=not ready))
+            answers["/repos/o/r/pulls/50/files?per_page=100"] = FakeAnswer([{"filename": "docs/agents/README.md"}])
+            answers["/repos/o/r/issues/50/comments?per_page=100"] = FakeAnswer([dict(FINISHED, user={"login": "sam"})])
+            api, opener = client(answers)
+            snap = github.snapshot(api, "abc", "main")
+            with self.subTest(ready=ready):
+                self.assertEqual(snap.releases["12"].released_at, RELEASE_COMMENT["created_at"])
+                self.assertEqual(board.released_keys(snap), {"12"})
+                self.assertNotIn("/repos/o/r/issues/50/comments?per_page=100",
+                                 [c.full_url.replace(github.API, "") for c in opener.calls])
+                self.assertIn("| #50 | Fix the board | claude/12 |", board.render(snap))
+        # While the claim is still held, the claim's own draft, which nobody
+        # said is finished, decides, so the claim is read for its release;
+        # until the fix the fork's draft, listed after it, took its place
+        # and sam's "finished; ready to mark" held the claim (F17's review).
+        _, answers = released_answers()
+        answers["/repos/o/r/issues?state=open&per_page=100"] = FakeAnswer([
+            {"number": 12, "title": "Describe the board", "state": "open",
+             "labels": [{"name": "claimed"}, {"name": "todo"}, {"name": "worker:alice"}]}])
+        answers["/repos/o/r/pulls?state=open&per_page=100"] = FakeAnswer([{"number": n} for n in (40, 41, 50)])
+        answers["/repos/o/r/pulls/50"] = FakeAnswer(dict(fork, draft=True))
+        answers["/repos/o/r/pulls/50/files?per_page=100"] = FakeAnswer([{"filename": "docs/agents/README.md"}])
+        answers["/repos/o/r/issues/50/comments?per_page=100"] = FakeAnswer([dict(FINISHED, user={"login": "sam"})])
+        api, opener = client(answers)
+        self.assertIn("12", github.collect(api, "abc", "main")["releases"])
+        asked = [c.full_url.replace(github.API, "") for c in opener.calls]
+        self.assertIn(DRAFT_COMMENTS_40, asked)
+        self.assertNotIn("/repos/o/r/issues/50/comments?per_page=100", asked)
+
     def test_a_finished_claim_costs_no_call(self):
         ready, answers = released_answers()
         answers["/repos/o/r/pulls/40"] = FakeAnswer({k: v for k, v in ready["pulls"][0].items() if k != "files"})
@@ -1253,8 +1298,88 @@ class Coordinate(unittest.TestCase):
         api, _ = client(answers)
         self.assertEqual(github.coordinate(api, idle_snapshot(), NOW), [
             "#12: not released, the comment failed: POST /repos/o/r/issues/12/comments: HTTP 502; putting claimed, "
-            "worker:nightly back failed too, so they stay off: POST /repos/o/r/issues/12/labels: HTTP 403: "
+            "worker:nightly back failed too, so they may still be off: POST /repos/o/r/issues/12/labels: HTTP 403: "
             "Resource not accessible"])
+
+    def given_snapshot(self, names=("claimed", "worker:nightly")):
+        """idle_snapshot with issue 12 given to nightly by its label alone,
+        as a person gives one by hand, so it carries no todo (the
+        coordinator's own tasks carry todo too, team.open_task)."""
+        snap = idle_snapshot()
+        snap.claim_issues["12"].labels = list(names)
+        snap.issues[0].labels = list(names)
+        return snap
+
+    def test_a_release_puts_todo_on_an_issue_given_by_a_label_alone_so_the_queue_lists_it_again(self):
+        """F15: the Queue lists only an issue labelled todo, so until the fix
+        such an issue was shown nowhere once its claim was released."""
+        answers = release_answers()
+        answers[LABELS_12] = FakeAnswer([])
+        snap = self.given_snapshot()
+        api, opener = client(answers)
+        self.assertEqual(github.coordinate(api, snap, NOW), ["#12: claim released, idle since 2026-09-18T12:00:00Z"])
+        self.assertEqual([c.get_method() for c in opener.calls], ["DELETE", "DELETE", "POST", "GET", "POST"])
+        self.assertEqual(opener.sent("POST")[0], {"labels": ["todo"]})
+        self.assertEqual((snap.claim_issues["12"].labels, snap.issues[0].labels), (["todo"], ["todo"]))
+        self.assertEqual(board.released_keys(snap), {"12"})
+        self.assertIn("| #12 | Describe the board | todo |", board.render(snap).split(board.QUEUE_HEADING)[1])
+
+    def test_an_issue_with_todo_an_epic_or_a_blocker_gets_no_label_put_on(self):
+        """A blocker is listed under Blockers and dealt first without todo,
+        so todo would only list it twice."""
+        for names in (("claimed", "todo", "worker:nightly"), ("claimed", "epic", "worker:nightly"),
+                      ("blocker", "claimed", "worker:nightly")):
+            with self.subTest(labels=names):
+                api, opener = client(release_answers())
+                github.coordinate(api, self.given_snapshot(names), NOW)
+                self.assertEqual([c.get_method() for c in opener.calls], ["DELETE", "DELETE", "GET", "POST"])
+
+    def test_a_comment_github_refuses_takes_off_the_todo_the_release_put_on(self):
+        answers = release_answers()
+        answers["POST /repos/o/r/issues/12/comments"] = Refusal(502)
+        answers[COMMENTS_12] = FakeAnswer([])
+        answers[LABELS_12] = FakeAnswer([])
+        answers["DELETE /repos/o/r/issues/12/labels/todo"] = FakeAnswer(None)
+        snap = self.given_snapshot()
+        api, opener = client(answers)
+        self.assertEqual(github.coordinate(api, snap, NOW), [
+            "#12: not released, the comment failed: POST /repos/o/r/issues/12/comments: HTTP 502; claimed, "
+            "worker:nightly put back; todo taken off again"])
+        self.assertEqual([f"{c.get_method()} {c.selector}" for c in opener.calls][-2:], [
+            "POST /repos/o/r/issues/12/labels", "DELETE /repos/o/r/issues/12/labels/todo"])
+        self.assertEqual(opener.sent("POST")[2], {"labels": ["claimed", "worker:nightly"]})
+        self.assertEqual(board.released_keys(snap), set())
+        self.assertEqual(snap.claim_issues["12"].labels, ["claimed", "worker:nightly"])
+
+    def test_todo_github_refuses_puts_the_labels_back_and_takes_off_a_todo_it_may_have_written(self):
+        """GitHub may write a label and lose its answer, so the run takes off
+        the todo whose putting on it was told failed; a 404 says it was
+        never written, which counts as taken off."""
+        for todo_there, said in ((True, "; todo taken off again"), (False, "")):
+            with self.subTest(todo_there=todo_there):
+                answers = release_answers()
+                answers[LABELS_12] = Turns(Refusal(502), FakeAnswer([]))
+                if todo_there:
+                    answers["DELETE /repos/o/r/issues/12/labels/todo"] = FakeAnswer(None)
+                api = github.GitHub("t", "o/r", opener=InTurn(answers), sleep=lambda seconds: None)
+                snap = self.given_snapshot()
+                self.assertEqual(github.coordinate(api, snap, NOW), [
+                    "#12: not released, putting todo on failed: POST /repos/o/r/issues/12/labels: HTTP 502; "
+                    f"claimed, worker:nightly put back{said}"])
+                self.assertEqual(api.opener.sent("POST"), [{"labels": ["todo"]}, {"labels": ["claimed", "worker:nightly"]}])
+                self.assertEqual(board.released_keys(snap), set())
+
+    def test_a_todo_github_will_not_take_off_again_is_said(self):
+        answers = release_answers()
+        answers["POST /repos/o/r/issues/12/comments"] = Refusal(502)
+        answers[COMMENTS_12] = FakeAnswer([])
+        answers[LABELS_12] = FakeAnswer([])
+        answers["DELETE /repos/o/r/issues/12/labels/todo"] = Refusal(403, {"message": "Resource not accessible"})
+        api, _ = client(answers)
+        line, = github.coordinate(api, self.given_snapshot(), NOW)
+        self.assertTrue(line.endswith("; claimed, worker:nightly put back; taking todo off again failed too, so it "
+                                      "may still be on: DELETE /repos/o/r/issues/12/labels/todo: HTTP 403: "
+                                      "Resource not accessible"), line)
 
     def test_a_label_github_refuses_is_a_line_and_posts_no_comment(self):
         answers = release_answers()
@@ -1471,7 +1596,7 @@ class ReleaseAcrossRuns(unittest.TestCase):
     def test_a_release_whose_labels_did_not_go_back_on_is_finished_by_the_next_run(self):
         repository, snap, page, first, second = self.runs(
             {"POST /repos/o/r/issues/12/comments": Refusal(502), LABELS_12: Refusal(502)})
-        self.assertIn("back failed too, so they stay off", first[0])
+        self.assertIn("back failed too, so they may still be off", first[0])
         self.assert_released(repository, snap, page)
 
     def test_a_holder_who_comes_back_after_a_failed_comment_keeps_the_claim_and_its_labels(self):
@@ -1580,6 +1705,24 @@ class TeamClient(unittest.TestCase):
         api, _ = client({PULL_LIST: FakeAnswer([])})
         self.assertIsNone(api.open_pull("claude/7"))
 
+    def test_open_pull_leaves_out_a_pull_request_from_a_fork_the_owner_s_filter_matches(self):
+        """A fork in the same organization shares the owner the list's head
+        filter names, so the list may give its pull request from a branch
+        named like the claim's; the detail asked for is the repository's own
+        (F17's review)."""
+        fork = {"number": 506, "head": {"ref": "claude/7", "repo": {"full_name": "o/r-fork"}},
+                "base": {"ref": "main", "repo": {"full_name": "o/r"}}}
+        own = {"number": 507, "head": {"ref": "claude/7", "repo": {"full_name": "o/r"}},
+               "base": {"ref": "main", "repo": {"full_name": "o/r"}}}
+        answers = pull_answers(state="behind")
+        answers[PULL_LIST] = FakeAnswer([fork, own])
+        api, opener = client(answers)
+        self.assertEqual(api.open_pull("claude/7")["number"], 507)
+        self.assertNotIn("/repos/o/r/pulls/506", [c.full_url.replace(github.API, "") for c in opener.calls])
+        answers[PULL_LIST] = FakeAnswer([fork])
+        api, _ = client(answers)
+        self.assertIsNone(api.open_pull("claude/7"))
+
     def test_check_runs_reads_every_page(self):
         first = "/repos/o/r/commits/sha7/check-runs?per_page=100"
         api, _ = client({
@@ -1655,6 +1798,15 @@ class World(unittest.TestCase):
                             ("behind", "behind"), ("dirty", "conflicting"), ("unknown", "unknown")):
             place, _ = world(pull_answers(state=state))
             self.assertEqual(place.standing("claude/7"), word, state)
+
+    def test_its_standing_never_vouches_a_clean_branch_is_level(self):
+        """GitHub calls a branch clean that a rule not asking for an
+        up-to-date branch lets merge while behind (F16), so the standing the
+        gate reads, which it prefers to the word, keeps GitHub's word and
+        says the branch may not be level."""
+        for state, word in (("clean", "clean"), ("behind", "behind"), ("dirty", "conflicting")):
+            place, _ = world(pull_answers(state=state))
+            self.assertEqual(gate.standing_of(place, "claude/7"), gate.Standing(word, level=False), state)
 
     def test_a_blocked_or_draft_pull_is_read_from_the_comparison(self):
         for state in ("blocked", "draft"):
@@ -1817,10 +1969,16 @@ class Standing(unittest.TestCase):
             self.assertEqual(compares_asked(opener), [], state)
 
     def test_a_state_the_board_reads_as_it_is_gets_no_standing_and_no_compare(self):
-        """clean, behind and dirty already say how the branch stands and
-        unknown is GitHub still computing, so a standing beside them would
-        be a second word for the same thing on a dict no fixture ever held."""
-        for state, mergeable in (("clean", True), ("behind", True), ("dirty", False), ("unknown", None)):
+        """behind and dirty already say how the branch stands and unknown is
+        GitHub still computing, so a standing beside them would be a second
+        word for the same thing on a dict no fixture ever held. clean,
+        unstable and has_hooks say the repository's rules do not hold the
+        pull request for being behind, which they say of a branch behind
+        main only under a rule that does not require an up-to-date branch,
+        and the spec owes such a pull request nothing however far main has
+        moved (F16), so a comparison there could change no answer."""
+        for state, mergeable in (("clean", True), ("unstable", True), ("has_hooks", True), ("behind", True),
+                                 ("dirty", False), ("unknown", None)):
             waits = []
             api, opener = client(detail_answers(state, mergeable=mergeable), waits)
             pull = github.pull_with_detail(api, 7)

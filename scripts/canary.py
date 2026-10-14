@@ -96,6 +96,12 @@ UPDATED_AT_TICK = 2
 # back, past the spec's 24 hours, so the next board run releases the claim.
 BACKDATED = timedelta(hours=25)
 MONTHLY = ("C1", "C2", "C3", "C5", "C6")
+# GitHub's words for a pull request the repository's rules do not hold for
+# being behind, which the spec owes no "main moved" however far the default
+# branch has moved (spec/PROTOCOL.md, Work in the open; F16): under a
+# ruleset that asks for an up-to-date branch, as the canary's does, GitHub
+# calls a branch behind main behind instead.
+AS_IT_STANDS = ("clean", "unstable", "has_hooks")
 # The names C3 pushes, as \u escapes so this file stays ASCII: a superscript
 # two, which reads as a digit and is none, and an e with an acute accent.
 ODD_NAMES = ("claude/\u00b2", "claude/caf\u00e9")
@@ -709,10 +715,14 @@ def check_c2(site, seen):
     judged by the state, the marker on the pull request within the budget
     whichever run posts it, as the library tells it since F12's fix, and
     read as known (F12) while the canary vendors a release without that
-    fix; whether the push to main's run survives the concurrency group,
-    which the copy's board.yml keeps with queue: max, F12's other half,
-    which the template brings and no release of the library changes, so
-    it is never read as known; and what each event's run did."""
+    fix; whether a draft the merge leaves behind main hears it too, read as
+    known (F9) while the release has no fix for that; each judged only
+    where the spec owes it, as GitHub's word for the pull request after the
+    merge says (owed_main_moved); whether the push to main's run survives
+    the concurrency group, which the copy's board.yml keeps with queue:
+    max, F12's other half, which the template brings and no release of the
+    library changes, so it is never read as known; and what each event's
+    run did."""
     behind, merged = site.throwaway("C2 behind"), site.throwaway("C2 merged")
     clone_behind, clone_merged = site.clone(), site.clone()
     for clone, number in ((clone_behind, behind), (clone_merged, merged)):
@@ -725,6 +735,23 @@ def check_c2(site, seen):
             raise CanaryError(f"the second push of #{number} was not taken: {pushed.words}")
     pull_behind = site.open_pull(claims.branch_of(behind), f"canary C2: stays behind, #{behind}", f"Closes #{behind}", False)
     pull_merged = site.open_pull(claims.branch_of(merged), f"canary C2: merged, #{merged}", f"Closes #{merged}", False)
+    # A draft the merge leaves behind main too, which keeps its claim file,
+    # as a draft does: the spec's words rest on GitHub giving a draft the
+    # word its branch has (F16), which C0 read for a clean draft and a
+    # conflicting one but never for one behind. Its check is not waited
+    # for, since a word that says a rule still holds it is read through
+    # the comparison (F9).
+    drafted = site.throwaway("C2 draft behind")
+    clone_drafted = site.clone()
+    pushed = claim(site, clone_drafted, drafted)
+    if not pushed.ok:
+        raise CanaryError(f"the claim of #{drafted} was not taken: {pushed.words}")
+    clone_drafted.commit({canary_file(drafted): FILE_TEXT}, f"Work on #{drafted}")
+    pushed = clone_drafted.push(claims.branch_of(drafted))
+    if not pushed.ok:
+        raise CanaryError(f"the second push of #{drafted} was not taken: {pushed.words}")
+    pull_drafted = site.open_pull(claims.branch_of(drafted), f"canary C2: draft left behind, #{drafted}",
+                                  f"Closes #{drafted}", True)
     # Both pull requests have their check done before the merge: the merge
     # needs it on one, and the other must have passed it, since GitHub
     # reads a pull request whose required check failed or is pending as
@@ -772,17 +799,8 @@ def check_c2(site, seen):
     if not queued:
         seen.note("the copy's board.yml does not queue its runs (queue: max), F12's half that the template brings and "
                   "no release of the library changes: adopt the copy from the current template")
-    if judge_the_word:
-        marker = board.MAIN_MOVED_MARKER.format(sha=board.short_sha(main_sha))
-        comments, heard = site.wait(lambda: site.comments(pull_behind), lambda cs: bool(has_marker(cs, marker)))
-        seen.expect("the pull request behind main hears main moved for main's new commit", heard, finding="F12")
-    # How GitHub stands the pull request left behind to main, so a missed
-    # word names its cause: behind with no word is the library's; blocked
-    # is the check; clean is a ruleset that does not ask for an up-to-date
-    # branch.
-    detail, _ = site.wait(lambda: site.pull(pull_behind), mergeability_computed, budget=60, every=3)
-    seen.values["the pull request left behind after the merge"] = (detail if isinstance(detail, dict) else {}).get(
-        "mergeable_state")
+    owed_main_moved(site, seen, pull_behind, "pull request", main_sha, "F12", judge_the_word)
+    owed_main_moved(site, seen, pull_drafted, "draft", main_sha, "F9", True)
     runs = site.runs_since(since)
     if runs is None:
         seen.note(RUNS_NOT_READ)
@@ -797,6 +815,33 @@ def check_c2(site, seen):
     seen.expect("the push to main started a board run that was not cancelled",
                 any(r.get("status") == "completed" and r.get("conclusion") not in ("cancelled", "skipped")
                     for r in to_main))
+
+
+def owed_main_moved(site, seen, pull, which, main_sha, finding, judge):
+    """GitHub's word for a pull request the merge left behind main, which
+    says what the spec owes it and, for a missed word, its cause: behind
+    with no word is the library's, as is blocked or draft, which say that
+    something else holds it, its branch behind main all the same; clean,
+    unstable and has_hooks say the repository's rules do not hold it for
+    being behind, as under a ruleset that does not ask for an up-to-date
+    branch, and the spec owes it nothing (F16). Where the spec owes it,
+    and judge says the word can be judged, whether it hears "main moved"
+    for main's new commit within the budget, read as known for the finding
+    named. A word GitHub has not computed within the minute is judged as
+    the canary's ruleset gives it, behind."""
+    detail, _ = site.wait(lambda: site.pull(pull), mergeability_computed, budget=60, every=3)
+    word = (detail if isinstance(detail, dict) else {}).get("mergeable_state")
+    seen.values[f"the {which} left behind after the merge"] = word
+    if not judge:
+        return
+    if word in AS_IT_STANDS:
+        seen.note(f"the main-moved expectation on the {which} was not judged: GitHub calls it {word}, which says the "
+                  f"repository's rules do not hold it for being behind, so the spec owes it no main moved (F16); the "
+                  f"copy's ruleset does not ask for an up-to-date branch")
+        return
+    marker = board.MAIN_MOVED_MARKER.format(sha=board.short_sha(main_sha))
+    _, heard = site.wait(lambda: site.comments(pull), lambda cs: bool(has_marker(cs, marker)))
+    seen.expect(f"the {which} behind main hears main moved for main's new commit", heard, finding=finding)
 
 
 def check_c3(site, seen):

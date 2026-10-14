@@ -14,14 +14,16 @@ A release is the protocol's (spec/PROTOCOL.md, Release): a claim whose
 branch has gone more than a day without a commit, whose issue is open and
 not labelled in-review, and whose pull request, if it has one, is still a
 draft. The coordinator takes the label claimed and the holder's label off
-the issue, then posts one comment on it, whose first line is
-claims.RELEASE_MARKER, saying why, whose the claim was, what its branch
-holds and what its plan was, so the next worker can carry the work on or
-start over, and the board renames the branch in the same run. The board
-counts a release only once both are done, and a run that fails between
-them puts back the labels it took off, so the issue is as it was and the
-next run starts the release over. Like the board, this module only decides
-and words; adapters/github.py makes the calls.
+the issue, and puts todo on an issue that carries none of todo, epic and
+blocker, so it is listed again (labels_put_on); then it posts one comment
+on it, whose first line is claims.RELEASE_MARKER, saying why, whose the
+claim was, what its branch holds and what its plan was, so the next worker
+can carry the work on or start over, and the board renames the branch in
+the same run. The board counts a release only once both are done, and a
+run that fails between them puts back the labels it took off and takes off
+the todo it put on, so the issue is as it was and the next run starts the
+release over. Like the board, this module only decides and words;
+adapters/github.py makes the calls.
 """
 
 import re
@@ -34,6 +36,10 @@ from . import board, claims, labels
 # run tells again only when work it has not told of starts to meet it.
 OVERLAP_MARKER = "<!-- sdlc-coordinator: overlap {numbers} -->"
 OVERLAP_LINE = re.compile(r"<!-- sdlc-coordinator: overlap ([0-9 ]+) -->")
+# An issue carrying one of these labels gets no todo from a release: todo
+# and blocker each list it on the board with no claim, and the Queue never
+# lists an epic.
+NEEDS_NO_TODO = frozenset({labels.TODO, labels.EPIC, labels.BLOCKER})
 # How many commit subjects and files a release note names before it counts
 # the rest, so a long-lived branch does not bury the comment.
 FILES_NAMED = 20
@@ -52,14 +58,15 @@ NAME_QUOTED = 200
 def is_candidate(snap, key):
     """Whether a release can be due on the claim with this key: its branch
     exists, its issue is open and not labelled in-review, no pull request
-    from its branch is marked ready, and its head commit and when it was
-    committed are known."""
+    from its branch is marked ready, one from a fork whose branch bears the
+    same name being no claim's (board.of_claim), and its head commit and
+    when it was committed are known."""
     issue, release = snap.claim_issues.get(key), snap.releases.get(key)
     if issue is None or release is None or not release.sha or not release.committed_at:
         return False
     if claims.branch_of(key) not in snap.branches or issue.state != "open" or labels.IN_REVIEW in issue.labels:
         return False
-    return not any(p.branch == claims.branch_of(key) and not p.draft for p in snap.pulls)
+    return not any(board.of_claim(p, key) and not p.draft for p in snap.pulls)
 
 
 def releases_due(snapshot, now, idle_after=claims.IDLE_AFTER):
@@ -137,7 +144,7 @@ def release_text(snapshot, key, holding, idle_after=claims.IDLE_AFTER):
     release = snap.releases[key]
     old, new = claims.branch_of(key), claims.released_branch(key, release.sha)
     hours = int(idle_after.total_seconds() // 3600)
-    pull = next((p for p in snap.pulls if p.branch == old), None)
+    pull = next((p for p in snap.pulls if board.of_claim(p, key)), None)
     pull_clause = f"its pull request #{pull.number} is still a draft" if pull else "it has no pull request"
     return "\n".join([
         claims.RELEASE_MARKER,
@@ -172,28 +179,53 @@ def plan_line(text, key, new):
 
 def labels_released(snapshot, key):
     """The labels a release takes off the issue: claimed and every label
-    that names a worker, so the issue is nobody's and, labelled todo, back
-    in the open queue."""
+    that names a worker, so the issue is nobody's, but a bare worker:,
+    which names nobody (labels.is_holder_label); labels_put_on says what
+    goes on, so it is back in the open queue."""
     issue = board.as_snapshot(snapshot).claim_issues.get(key)
     names = issue.labels if issue else []
-    return [name for name in names if name == labels.CLAIMED or name.startswith(labels.HOLDER_PREFIXES)]
+    return [name for name in names if name == labels.CLAIMED or labels.is_holder_label(name)]
 
 
-def after_release(snapshot, key, released_at, taken_off):
+def labels_put_on(snapshot, key):
+    """The labels a release puts on the issue: todo, when it carries none
+    of todo, epic and blocker, since the Queue lists only an issue labelled
+    todo and the spec has a released claim's issue listed there again,
+    while a task a worker's label alone gave carries none (F15: until its
+    fix such an issue was shown nowhere once its claim was released). An
+    epic gets none, since the Queue never lists one and its tasks are the
+    work; a blocker none, since the board lists every open blocker under
+    Blockers and the clerk deals one first without todo, so todo would
+    only list it twice; and nor does an issue the snapshot knows nothing
+    of, which no release is due on (is_candidate)."""
+    issue = board.as_snapshot(snapshot).claim_issues.get(key)
+    if issue is None or NEEDS_NO_TODO & set(issue.labels):
+        return []
+    return [labels.TODO]
+
+
+def after_release(snapshot, key, released_at, taken_off, put_on=()):
     """The snapshot as GitHub knows it once the claim with this key is
     released: the comment made at released_at, the labels taken off its
-    issue in both places the board reads them, so the same run renders the
-    release and renames the branch without asking GitHub again. A Snapshot
-    given is changed in place, and returned."""
+    issue and put on it in both places the board reads them, so the same
+    run renders the release and renames the branch without asking GitHub
+    again. A Snapshot given is changed in place, and returned."""
     snap = board.as_snapshot(snapshot)
     release = snap.releases[key]
     snap.releases[key] = board.Release(released_at, release.sha, release.committed_at)
     issue = snap.claim_issues[key]
-    issue.labels = [name for name in issue.labels if name not in taken_off]
+    issue.labels = relabelled(issue.labels, taken_off, put_on)
     for listed in snap.issues:
         if str(listed.number) == key:
-            listed.labels = [name for name in listed.labels if name not in taken_off]
+            listed.labels = relabelled(listed.labels, taken_off, put_on)
     return snap
+
+
+def relabelled(names, taken_off, put_on):
+    """An issue's labels once a release took taken_off off and put put_on
+    on: those kept, then those put on that it did not carry."""
+    kept = [name for name in names if name not in taken_off]
+    return kept + [name for name in put_on if name not in kept]
 
 
 # --- overlaps -----------------------------------------------------------------

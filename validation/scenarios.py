@@ -97,6 +97,10 @@ class Scenario(NamedTuple):
     # rule that holds it gives: a required check pending or red, or a
     # review not yet given (model.RepoModel.opaque_pulls, F9).
     opaque_pulls: bool = False
+    # GitHub's word for a pull request whose branch is behind is "clean", as
+    # under a rule that does not require an up-to-date branch or under none
+    # (model.RepoModel.lenient_rules, F16).
+    lenient_rules: bool = False
 
 
 def board(at, event=cycle.SCHEDULE, ref_name="", **expect):
