@@ -658,7 +658,11 @@ SHARED = ("src/shared.py",)
 # does (F9), so the adapter's reading of how a held branch stands is
 # searched and not only traced. The holder's search runs each board run in
 # its two halves (DESIGN.md, 3.3), so a rule that reads the repository
-# again in the second half is met.
+# again in the second half is met. The released blocker's search under
+# every fault comes after the blocker's two without faults, which are
+# cheaper and so are credited with the mutants they were added for; it
+# keeps the one only a refused comment shows, a release that relabels the
+# board before its comment.
 PLAIN_COMMANDS = [c for c in guard_grammar.commands() if c.prefix == "" and c.wrapper == "{}"]
 
 
@@ -719,13 +723,13 @@ SEARCHES = (
                                                              faults=tuple(verbs.FAULTS)), 2),
     Search("a released task given by a label alone, under every fault", DUE,
            Scope(workers=("a",), people=(), waits=(25,), faults=tuple(verbs.FAULTS)), 2, labels=("worker:a",)),
-    Search("a released blocker under every fault", DUE,
-           Scope(workers=("a",), people=(), waits=(25,), faults=tuple(verbs.FAULTS)), 2, labels=("blocker",)),
     Search("a released epic", DUE, Scope(workers=("a",), people=(), waits=(25,)), 1, labels=("epic",)),
     Search("a released blocker", DUE, Scope(workers=("a",), people=(), waits=(25,)), 1, labels=("blocker",)),
     Search("a released blocked task", DUE, Scope(workers=("a",), people=(), waits=(25,)), 1, labels=("blocked",)),
     Search("a held blocker", (CLAIM, CLAIMED, WORKER), Scope(workers=("a",), people=(), waits=(25,)), 2,
            labels=("blocker",)),
+    Search("a released blocker under every fault", DUE,
+           Scope(workers=("a",), people=(), waits=(25,), faults=tuple(verbs.FAULTS)), 2, labels=("blocker",)),
     Search("careless workers on a held claim", (CLAIM, CLAIMED),
            Scope(workers=("a", "b"), people=(M.OWNER,), waits=(25,), careless=True), 3),
     Search("two claims on one file", (CLAIM, Verb("claim", "b", (2,))),

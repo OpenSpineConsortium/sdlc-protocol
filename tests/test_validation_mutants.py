@@ -215,7 +215,6 @@ class TheSearchesCatchWhatTheyWereAddedFor(unittest.TestCase):
             with self.subTest(mutant=name), mutants.switched_on(mutants.MUTANTS[name]):
                 self.assertIn("G10", {guarantee for guarantee, _ in mutants.violations(search)})
 
-
     def test_a_draft_github_calls_clean_while_it_is_behind_catches_f16_s_mutant(self):
         """As F9's search: the lane credits F16's mutant to the regression
         traces, so the search added with F16 is held here. It finds nothing
@@ -244,7 +243,8 @@ class TheSearchesCatchWhatTheyWereAddedFor(unittest.TestCase):
                   "a released epic": (("epic",), {"an epic gets todo": "G3"}),
                   "a released blocker": (("blocker",), {"a blocker gets todo": "G3",
                                                         "the Blockers section left empty": "G9"}),
-                  "a released blocked task": (("blocked",), {"a blocked task gets no todo": "G3"}),
+                  "a released blocked task": (("blocked",), {"a blocked task gets no todo": "G3",
+                                                             "a row without blocked": "G9"}),
                   "a held blocker": (("blocker",), {"the Blockers section without the held blockers": "G9",
                                                     "a held blocker's row without claimed": "G9"}),
                   "a released blocker under every fault": (("blocker",), {

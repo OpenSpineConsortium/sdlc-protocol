@@ -89,8 +89,8 @@ def free_issue(seen, area=None):
     Blockers section lists, with or without todo, that nobody has claimed
     and no worker's label gives to another; else the first in the Queue.
     Of the Blockers and the Queue, whose rows show an issue's labels, it
-    takes only one in its area when it has an area, which Pick's "first"
-    allows, and never an epic or an issue labelled blocked. Whether an
+    takes only one in its area when it has an area, as Pick says, and
+    never an epic or an issue labelled blocked. Whether an
     open blocker stands in the way of a Queue issue is for the blocker's
     issue to say, which no row shows, so it is not modelled here."""
     for number, workers in sorted(page.given(seen.page).items()):
