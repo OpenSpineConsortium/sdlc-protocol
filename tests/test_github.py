@@ -128,6 +128,29 @@ class FakeOpener:
         return [json.loads(c.data) for c in self.calls if c.get_method() == method]
 
 
+class Turns(list):
+    """The answers to one path, given in turn, the last for every ask after
+    it, as GitHub answers a pull request's detail before and after it has
+    computed the pull request's mergeability."""
+
+    def __init__(self, *answers):
+        super().__init__(answers)
+
+
+class InTurn(FakeOpener):
+    """A FakeOpener that answers a path given Turns with them in turn."""
+
+    def open(self, call, timeout=None):
+        turns = self.answers.get(call.selector)
+        if not isinstance(turns, Turns):
+            return super().open(call, timeout)
+        self.answers = dict(self.answers, **{call.selector: turns[0]})
+        try:
+            return super().open(call, timeout)
+        finally:
+            self.answers[call.selector] = Turns(*turns[1:]) if len(turns) > 1 else turns
+
+
 def too_large_to_give(path, ref):
     """What GitHub answers through the contents API's default media type
     for a file it gives no text of, as it answered on 2026-10-13 for a
@@ -1778,11 +1801,11 @@ class Standing(unittest.TestCase):
             pull = github.pull_with_detail(api, 7)
             self.assertEqual((pull["standing"], board.Pull.from_dict(pull).state), ("unknown", "blocked"), status)
 
-    def test_open_pull_carries_the_standing_the_clerk_reads_and_the_gate_takes_it_as_it_is(self):
+    def test_open_pull_carries_the_standing_the_clerk_reads_and_the_gate_compares_once(self):
         """The clerk deals a claim back when its pull request is behind, and
         where GitHub's word is opaque only the standing says so; the gate's
-        world reads the same standing rather than comparing the branch
-        twice."""
+        world reads the pull request without one and compares the branch
+        itself, once."""
         listed = "/repos/o/r/pulls?state=open&head=o%3Aclaude%2F7"
         answers = {**detail_answers("blocked", behind_by=3), listed: FakeAnswer([{"number": 7}])}
         api, opener = client(answers)
@@ -1794,6 +1817,41 @@ class Standing(unittest.TestCase):
         api, opener = client({**detail_answers("clean"), listed: FakeAnswer([{"number": 7}])})
         self.assertNotIn("standing", api.open_pull("claude/7"))
         self.assertEqual(compares_asked(opener), [])
+
+    def test_neither_a_draft_for_the_clerk_nor_the_merge_pays_for_a_comparison(self):
+        """The clerk carries a draft whatever its standing, and the merge
+        asks GitHub to merge the head it read, so neither compares the
+        branch: a comparison is made only where it can change the answer."""
+        behind = {COMPARE: FakeAnswer({"behind_by": 2})}
+        api, opener = client({**pull_answers(state="blocked", draft=True), **behind})
+        self.assertNotIn("standing", api.open_pull("claude/7"))
+        self.assertTrue(team.claim_needs_work(api, 7))
+        self.assertEqual(compares_asked(opener), [])
+        place, opener = world({**pull_answers(state="blocked"), **behind,
+                               "PUT /repos/o/r/pulls/507/merge": FakeAnswer({"sha": "m1", "merged": True})})
+        self.assertEqual(place.merge("claude/7"), gate.MergeResult("m1"))
+        self.assertEqual(compares_asked(opener), [])
+
+    def test_a_refused_comparison_reads_unknown_however_late_github_computed_mergeability(self):
+        """The gate's world compares the branch itself, so a comparison
+        GitHub refuses reads as unknown whether the pull request's
+        mergeability was computed at the first read or only at the read
+        after the pause, and a refused merge is then GitHub's own refusal,
+        never the gate failing."""
+        blocked = {"number": 507, "draft": False, "mergeable": True, "mergeable_state": "blocked",
+                   "head": {"ref": "claude/7", "sha": "sha7"}, "base": {"ref": "main"}}
+        computing = dict(blocked, mergeable=None, mergeable_state="unknown")
+        put = "PUT /repos/o/r/pulls/507/merge"
+        for first in (blocked, computing):
+            with self.subTest(first=first["mergeable_state"]):
+                answers = {PULL_LIST: FakeAnswer([{"number": 507}]),
+                           "/repos/o/r/pulls/507": Turns(FakeAnswer(first), FakeAnswer(blocked)),
+                           COMPARE: Refusal(502), put: Refusal(405, {"message": "Required status check is expected"})}
+                api = github.GitHub("t", "o/r", opener=InTurn(answers), sleep=lambda seconds: None)
+                place = github.GitHubWorld(api, gate.Policy(who_merges=gate.GATE))
+                self.assertEqual(place.standing("claude/7"), gate.UNKNOWN)
+                with self.assertRaises(gate.MergeRefused):
+                    place.merge("claude/7")
 
 
 # Names a person writes, with characters outside ASCII and the characters
