@@ -77,6 +77,22 @@ class Violation(NamedTuple):
     detail: str
 
 
+# A sha inside a violation's detail: a released branch's name, and main's
+# commit in the "main moved" marker.
+SHA_IN_DETAIL = re.compile(r"(released/\d+-)[0-9a-f]{7,40}|(main-moved )[0-9a-f]{7,40}")
+
+
+def identity(detail):
+    """The detail with each sha in it read as any sha, what the deep lane
+    keys a violation by: a released branch's name and main's commit move
+    with the clock and the tree, so one fault met from several prefixes
+    showed as a violation per sha, each shortened and written on its own,
+    and a shrink could take out no wait before the branch's head, since
+    the sha then differed. A trace file names the detail its own steps
+    show, sha and all (shrink.shown)."""
+    return SHA_IN_DETAIL.sub(lambda m: (m.group(1) or m.group(2)) + "*", detail)
+
+
 # --- what a run wrote ---------------------------------------------------------
 
 def effects_of(calls):
@@ -142,7 +158,24 @@ def readers_of(model):
 
 
 def one_name_one_holder(model):
-    """G1."""
+    """G1. The board's Worker cell names the branch's holder while the
+    claim file is on the branch, since the file is what the board reads
+    the worker from (spec, Claim: "the `- Worker:` line ... whose name is
+    the worker's label without the `worker:` prefix"); once the finishing
+    push has deleted the file (spec, Finish: "The pull request deletes its
+    claim file"), the spec says nothing of the cell, and the cell is held
+    to the library's documented reading (board.claim_row): the issue's
+    worker label, which the Announce step put there and which the spec's
+    Labels line gives the holder, as the spec has the board read a file
+    over 1 MB, so the cell names that label's worker, by the oracle's own
+    reading of the labels, else says there is no claim file. The cell is
+    held to that one value, so a board that
+    drops the label, or says there is no claim file while one is there, is
+    seen. The soak found the harness holding the cell to the holder after
+    the file was gone, on a closed issue's leftover branch whose stale
+    label named the worker that had merged, which the spec's words do not
+    ask of the board. A file over 1 MB, which the board does not read, is
+    one no verb writes."""
     problems = []
     for ref, numbers in sorted(readers_of(model).items()):
         for number in numbers:
@@ -153,9 +186,15 @@ def one_name_one_holder(model):
         if number is None or number not in model.issues or oracle.released(model, number):
             continue
         shown = shown_worker(model, ref, number)
-        if shown not in (model.creators.get(ref), board.NO_CLAIM_FILE, board.CLAIM_FILE_NOT_READ):
-            problems.append(Violation("G1", f"the board names {shown} for {ref}, whose holder is "
-                                            f"{model.creators.get(ref)}"))
+        if oracle.claim_file_text(model, ref, number):
+            if shown != model.creators.get(ref):
+                problems.append(Violation("G1", f"the board names {shown} for {ref}, whose holder is "
+                                                f"{model.creators.get(ref)}"))
+        else:
+            owed = oracle.label_worker(model.issues[number].labels) or board.NO_CLAIM_FILE
+            if shown != owed:
+                problems.append(Violation("G1", f"the board names {shown} for {ref}, whose claim file is gone "
+                                                f"and whose issue's label names {owed}"))
     return problems
 
 

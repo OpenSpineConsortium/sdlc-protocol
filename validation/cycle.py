@@ -22,7 +22,6 @@ the model as the run found it and as the first half left it, which the
 checks read, since the writes of a run are judged from the state it read.
 """
 
-import copy
 from dataclasses import dataclass, field
 from typing import NamedTuple
 
@@ -128,7 +127,7 @@ def start_run(model, event=SCHEDULE, ref_name="", faults=(), keep_states=True):
     api, fake = api_for(model, tuple(faults))
     half = HalfRun(event, ref_name, model.now, tuple(faults), api, fake)
     if keep_states:
-        half.started_from = copy.deepcopy(model)
+        half.started_from = model.copied_whole()
     try:
         half.snapshot, half.page = cli.plan_board(api, model.refs[MAIN], MAIN, moment(model.now),
                                                   say=half.lines.append)
@@ -138,7 +137,7 @@ def start_run(model, event=SCHEDULE, ref_name="", faults=(), keep_states=True):
         failed(half, problem, "plan")
     half.first_calls = len(fake.calls)
     if keep_states:
-        half.planned = copy.deepcopy(model)
+        half.planned = model.copied_whole()
     model.running = half
     return half
 

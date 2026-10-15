@@ -127,8 +127,8 @@ def traces(folder=TRACES):
     return {trace.finding: trace for trace in (load(p) for p in paths)}
 
 
-def replay(trace, known=AS_BUILT):
-    return run.play(trace.scenario, trace.scenario.steps, known)[1]
+def replay(trace, known=AS_BUILT, world=run.MEMORY):
+    return run.play(trace.scenario, trace.scenario.steps, known, world)[1]
 
 
 def results(record):

@@ -1,0 +1,454 @@
+{
+ "finding": "",
+ "title": "a counterexample of the deep lane's soak",
+ "status": "counterexample",
+ "violated": "G9 a second run with nothing new wrote: ['POST /issues/103/comments']",
+ "breaks": [
+  "G9"
+ ],
+ "library": {
+  "version": "0.4.1"
+ },
+ "scope": {
+  "name": "soak",
+  "depth": 0,
+  "workers": [
+   "a",
+   "b",
+   "c",
+   "d",
+   "e"
+  ],
+  "issues": [
+   1,
+   2,
+   3,
+   4,
+   5,
+   6
+  ],
+  "faults": [
+   "comment-500",
+   "comment-lost",
+   "comment-rate-limited",
+   "label-delete-500",
+   "label-post-500",
+   "rename-403",
+   "rename-422",
+   "ref-delete-422",
+   "compare-404",
+   "comments-read-500"
+  ],
+  "waits": [
+   1,
+   2,
+   3,
+   6,
+   12,
+   23,
+   24,
+   25,
+   30
+  ],
+  "skews": []
+ },
+ "issues": {
+  "1": [
+   "todo"
+  ],
+  "2": [
+   "todo"
+  ],
+  "3": [
+   "todo"
+  ],
+  "4": [
+   "todo"
+  ],
+  "5": [
+   "todo"
+  ],
+  "6": [
+   "todo"
+  ]
+ },
+ "workers": [
+  "a",
+  "b",
+  "c",
+  "d",
+  "e"
+ ],
+ "people": [
+  "owner",
+  "dana",
+  "sam"
+ ],
+ "files": {
+  "1": [
+   "src/shared.py"
+  ],
+  "2": [
+   "src/shared.py"
+  ],
+  "3": [
+   "src/three.py"
+  ],
+  "4": [
+   "src/three.py"
+  ],
+  "5": [
+   "src/5.py"
+  ],
+  "6": [
+   "src/6.py"
+  ]
+ },
+ "careless": false,
+ "events": [
+  "schedule",
+  "push",
+  "create",
+  "delete",
+  "pull_request",
+  "issues"
+ ],
+ "split_board": false,
+ "world": "memory",
+ "steps": [
+  {
+   "verb": "board",
+   "event": "schedule",
+   "ref": "",
+   "faults": [],
+   "at": 0
+  },
+  {
+   "verb": "claim",
+   "actor": "b",
+   "args": [
+    1
+   ],
+   "at": 0
+  },
+  {
+   "verb": "board",
+   "event": "create",
+   "ref": "claude/1",
+   "faults": [],
+   "at": 0
+  },
+  {
+   "verb": "claim",
+   "actor": "d",
+   "args": [
+    4
+   ],
+   "at": 0
+  },
+  {
+   "verb": "board",
+   "event": "create",
+   "ref": "claude/4",
+   "faults": [],
+   "at": 0
+  },
+  {
+   "verb": "wait",
+   "args": [
+    25
+   ],
+   "at": 0
+  },
+  {
+   "verb": "label-on",
+   "actor": "b",
+   "args": [
+    1,
+    "claimed"
+   ],
+   "at": 25
+  },
+  {
+   "verb": "board",
+   "event": "issues",
+   "ref": "",
+   "faults": [],
+   "at": 25
+  },
+  {
+   "verb": "claim",
+   "actor": "b",
+   "args": [
+    4
+   ],
+   "at": 25
+  },
+  {
+   "verb": "board",
+   "event": "create",
+   "ref": "claude/4",
+   "faults": [
+    "rename-422"
+   ],
+   "at": 25
+  },
+  {
+   "verb": "claim",
+   "actor": "d",
+   "args": [
+    5
+   ],
+   "at": 25
+  },
+  {
+   "verb": "board",
+   "event": "create",
+   "ref": "claude/5",
+   "faults": [],
+   "at": 25
+  },
+  {
+   "verb": "wait",
+   "args": [
+    23
+   ],
+   "at": 25
+  },
+  {
+   "verb": "wait",
+   "args": [
+    12
+   ],
+   "at": 48
+  },
+  {
+   "verb": "label-on",
+   "actor": "d",
+   "args": [
+    5,
+    "worker:d"
+   ],
+   "at": 60
+  },
+  {
+   "verb": "board",
+   "event": "issues",
+   "ref": "",
+   "faults": [],
+   "at": 60
+  },
+  {
+   "verb": "label-on",
+   "actor": "owner",
+   "args": [
+    4,
+    "claimed"
+   ],
+   "at": 60
+  },
+  {
+   "verb": "board",
+   "event": "issues",
+   "ref": "",
+   "faults": [],
+   "at": 60
+  },
+  {
+   "verb": "claim",
+   "actor": "a",
+   "args": [
+    1
+   ],
+   "at": 60
+  },
+  {
+   "verb": "board",
+   "event": "create",
+   "ref": "claude/1",
+   "faults": [],
+   "at": 60
+  },
+  {
+   "verb": "push-old-head",
+   "actor": "b",
+   "args": [
+    4,
+    [
+     "released",
+     4,
+     1
+    ]
+   ],
+   "at": 60
+  },
+  {
+   "verb": "board",
+   "event": "create",
+   "ref": "claude/4",
+   "faults": [],
+   "at": 60
+  },
+  {
+   "verb": "label-on",
+   "actor": "a",
+   "args": [
+    1,
+    "worker:a"
+   ],
+   "at": 60
+  },
+  {
+   "verb": "board",
+   "event": "issues",
+   "ref": "",
+   "faults": [],
+   "at": 60
+  },
+  {
+   "verb": "open-draft",
+   "actor": "a",
+   "args": [
+    1
+   ],
+   "at": 60
+  },
+  {
+   "verb": "board",
+   "event": "pull_request",
+   "ref": "",
+   "faults": [],
+   "at": 60
+  },
+  {
+   "verb": "wait",
+   "args": [
+    25
+   ],
+   "at": 60
+  },
+  {
+   "verb": "label-off",
+   "actor": "owner",
+   "args": [
+    1,
+    "worker:a"
+   ],
+   "at": 85
+  },
+  {
+   "verb": "board",
+   "event": "issues",
+   "ref": "",
+   "faults": [],
+   "at": 85
+  },
+  {
+   "verb": "claim",
+   "actor": "d",
+   "args": [
+    1
+   ],
+   "at": 85
+  },
+  {
+   "verb": "board",
+   "event": "create",
+   "ref": "claude/1",
+   "faults": [],
+   "at": 85
+  },
+  {
+   "verb": "claim",
+   "actor": "a",
+   "args": [
+    3
+   ],
+   "at": 85
+  },
+  {
+   "verb": "board",
+   "event": "create",
+   "ref": "claude/3",
+   "faults": [],
+   "at": 85
+  },
+  {
+   "verb": "open-draft",
+   "actor": "a",
+   "args": [
+    3
+   ],
+   "at": 85
+  },
+  {
+   "verb": "board",
+   "event": "pull_request",
+   "ref": "",
+   "faults": [
+    "label-delete-500"
+   ],
+   "at": 85
+  },
+  {
+   "verb": "open-draft",
+   "actor": "d",
+   "args": [
+    1
+   ],
+   "at": 85
+  },
+  {
+   "verb": "board",
+   "event": "pull_request",
+   "ref": "",
+   "faults": [],
+   "at": 85
+  },
+  {
+   "verb": "open-draft",
+   "actor": "b",
+   "args": [
+    4
+   ],
+   "at": 85
+  },
+  {
+   "verb": "board",
+   "event": "pull_request",
+   "ref": "",
+   "faults": [],
+   "at": 85
+  },
+  {
+   "verb": "wait",
+   "args": [
+    23
+   ],
+   "at": 85
+  },
+  {
+   "verb": "wait",
+   "args": [
+    12
+   ],
+   "at": 108
+  },
+  {
+   "verb": "label-off",
+   "actor": "owner",
+   "args": [
+    4,
+    "claimed"
+   ],
+   "at": 120
+  },
+  {
+   "verb": "board",
+   "event": "issues",
+   "ref": "",
+   "faults": [],
+   "at": 120
+  }
+ ]
+}

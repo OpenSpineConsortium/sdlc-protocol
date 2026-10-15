@@ -152,6 +152,13 @@ class RepoModel:
     # and the minute the push made it: when that piece of work began.
     creators: dict = field(default_factory=dict)
     created: dict = field(default_factory=dict)
+    # The order the branches that stand were made in, a count per branch,
+    # which no guarantee reads and the key leaves out: a trace names a
+    # released branch by its place among its issue's (run.released_order),
+    # and two made in one minute, by one worker even, are told apart by
+    # this in both worlds, where the sha in the name differs.
+    made: dict = field(default_factory=dict)
+    made_count: int = 0
     # Each worker's remote-tracking refs, as its last fetch or push left them.
     tracking: dict = field(default_factory=dict)
     # Whether GitHub's word for an open pull request that is not in conflict
@@ -177,6 +184,22 @@ class RepoModel:
     queued: tuple = ()
     pending: tuple = ()
     running: object = None
+    # The git world's store (git_store.GitStore), when the model's refs,
+    # commits and standings are git's; None in the memory world. It is no
+    # part of the key: the key is read from the model, which mirrors it.
+    store: object = None
+    # git's word for how each branch it was asked about stands to main, by
+    # the branch's head and main's, which the attached model keeps and
+    # every copy of it shares (clone, copied_whole) and reads before the
+    # model's own rule: git judges a conflict at line level and the model
+    # at file level, so where three pieces of work change one file the two
+    # part, behind against dirty, and since F16 a branch behind main under
+    # lenient rules is owed nothing where a dirty one is owed "main moved",
+    # so the oracle and G9's quiet second run, which read copies (the
+    # states a split run keeps among them), must hear git's word. None in
+    # the memory world; no part of the key, since git's word for two
+    # commits never changes.
+    standings: object = None
 
     # --- commits ------------------------------------------------------------
 
@@ -248,11 +271,19 @@ class RepoModel:
         if not (fast_forward or force or lease):
             return Push(False, "fetch first")
         if current is None:
-            self.creators[ref] = worker
-            self.created[ref] = self.now
+            self.made_by(ref, worker)
         self.set_ref(ref, sha)
         mine[ref] = sha
         return Push(True)
+
+    def made_by(self, ref, worker):
+        """A branch the worker's push makes now: who made it, the minute,
+        and its place in the order the branches were made in; the git
+        world's push (git_store.pushed) records the same."""
+        self.creators[ref] = worker
+        self.created[ref] = self.now
+        self.made_count += 1
+        self.made[ref] = self.made_count
 
     def set_ref(self, ref, sha):
         self.refs[ref] = sha
@@ -261,12 +292,21 @@ class RepoModel:
 
     def delete_ref(self, ref):
         """GitHub's delete: the ref goes, and the open pull requests whose
-        head it was are closed (managing-branches-within-your-repository.md:71),
-        never one from a fork whose branch bears the same name, which is
-        another branch."""
+        head it was are closed, as the rename closes one, never one from a
+        fork whose branch bears the same name, which is another branch.
+        The web UI's page says so of its delete ("If the branch is
+        associated with at least one open pull request, deleting the
+        branch closes the pull requests", managing-branches-within-your-
+        repository.md:71); for the REST delete the board makes it is
+        assumed, and canary C6 settles it. The soak found the model
+        keeping such a pull request open, which the board then told "idle"
+        on every run."""
+        if self.store is not None:
+            self.store.delete(ref)
         self.refs.pop(ref, None)
         self.creators.pop(ref, None)
         self.created.pop(ref, None)
+        self.made.pop(ref, None)
         for pull in self.pulls.values():
             if pull.head == ref and pull.state == "open" and not pull.fork:
                 pull.state = "closed"
@@ -277,29 +317,47 @@ class RepoModel:
         head it was is closed (renaming-a-branch.md:19), never one from a
         fork whose branch bears the same name, which is another branch. Who
         made the old name made the new one."""
+        if self.store is not None:
+            self.store.rename(old, new)
         self.set_ref(new, self.refs.pop(old))
         if old in self.creators:
             self.creators[new] = self.creators.pop(old)
             self.created[new] = self.created.pop(old)
+            self.made[new] = self.made.pop(old)
         for pull in self.pulls.values():
             if pull.head == old and pull.state == "open" and not pull.fork:
                 pull.state = "closed"
                 pull.updated_at = self.now
 
     def fetch(self, worker):
+        if self.store is not None:
+            self.store.fetch(worker)
         self.tracking[worker] = dict(self.refs)
 
     # --- how a branch stands ------------------------------------------------
 
     def standing(self, ref):
-        """How the branch of this name here stands to main (standing_at)."""
+        """How the branch of this name here stands to main: in the git
+        world, git's own answer, at line level, kept in standings for the
+        model's copies; in memory, standing_at's."""
+        if self.store is not None:
+            answer = self.store.standing(ref, MAIN)
+            self.standings[(self.refs.get(ref, ""), self.refs[MAIN])] = answer
+            return answer
         return self.standing_at(self.refs.get(ref, ""))
 
     def standing_at(self, head):
-        """clean, behind or dirty against main: behind when main is not in
-        the commit, dirty when a path both sides changed since the merge
-        base differs between them."""
+        """clean, behind or dirty against main: git's word, where git gave
+        one for this head and main (standings, which a copy of a model in
+        the git world shares), else by the model's own rule: behind when
+        main is not in the commit, dirty when a path both sides changed
+        since the merge base differs between them. The git world judges a
+        fork's head by the rule too, since the bare repository holds none
+        of a fork's commits."""
         main = self.refs[MAIN]
+        said = self.standings.get((head, main)) if self.standings else None
+        if said is not None:
+            return said
         if not head or self.is_ancestor(main, head):
             return CLEAN
         base = self.merge_base(head, main)
@@ -310,12 +368,16 @@ class RepoModel:
         return BEHIND
 
     def files_changed(self, ref):
-        """The paths the branch of this name here changes (files_changed_at)."""
+        """The paths the branch of this name here changes: in the git world,
+        git's own diff from the merge base; in memory, files_changed_at's."""
+        if self.store is not None:
+            return self.store.files_changed(ref, MAIN)
         return self.files_changed_at(self.refs.get(ref, ""))
 
     def files_changed_at(self, head):
         """The paths a commit changes beside its merge base with main, as a
-        pull request's files are."""
+        pull request's files are, by the model's own commits: a fork's head
+        in the git world too."""
         if not head:
             return []
         return self.changed(self.merge_base(head, self.refs[MAIN]), head)
@@ -326,10 +388,13 @@ class RepoModel:
         return pull.sha if pull.fork else self.refs.get(pull.head, "")
 
     def pull_standing(self, pull):
-        return self.standing_at(self.pull_head(pull))
+        """How a pull request's branch stands: the branch of that name here,
+        git's answer in the git world, or a fork's head, by the model's
+        rule in either world."""
+        return self.standing_at(pull.sha) if pull.fork else self.standing(pull.head)
 
     def pull_files(self, pull):
-        return self.files_changed_at(self.pull_head(pull))
+        return self.files_changed_at(pull.sha) if pull.fork else self.files_changed(pull.head)
 
     def open_pull_from(self, ref):
         """The open pull request from the branch of this name here; never
@@ -437,7 +502,7 @@ class RepoModel:
             tuple(sorted((n, p.head, p.author, p.body, p.draft, p.state, p.opened_at, p.updated_at, p.merged_at,
                           p.comments, p.fork, p.sha) for n, p in self.pulls.items())),
             self.next_pull,
-            self.writers,
+            tuple(sorted(self.writers)),
             tuple(sorted(self.ever_heads)),
             self.label_events,
             tuple(sorted(self.creators.items())),
@@ -452,24 +517,46 @@ class RepoModel:
         """A 16-byte digest of the key, for the deep scopes' seen-set."""
         return hashlib.sha256(repr(self.canonical()).encode("utf-8")).digest()[:16]
 
+    def copied_whole(self):
+        """A copy of every level, as a run in two halves keeps its states
+        and as clone copies a model with a run between its halves:
+        detached from the store (GitStore.__deepcopy__), and sharing the
+        standings git gave, at every level, so the oracle that judges a
+        split run from the state it started from hears git's word as one
+        that judges a whole run does (the second review of the merge of
+        F16)."""
+        return copy.deepcopy(self, {id(self.standings): self.standings})
+
     def clone(self):
         """A copy no verb on it changes this one through. The commits, the
         comments and the label events are immutable records, so they are
         shared; the issues, the pull requests and the maps are copied one
         level deep, which is every level a verb writes. A run between its
         halves holds a client over this model, so a model with one is
-        copied whole."""
+        copied whole. A copy of a model in the git world is detached from
+        the store: it keeps the refs, commits and trees the model read
+        from git, and answers from them, so a verb or a run on a copy (the
+        dealing lane's looks, the quiet second run of G9) never changes
+        the one repository the model is attached to; and it shares the
+        standings git gave, so a branch git calls behind stands behind on
+        the copy too, for a head and main the attached model asked git
+        about. A commit made on a copy, as a look's change makes one, is
+        no git object, and a branch at one is judged by the model's
+        rule."""
         if self.running is not None:
-            return copy.deepcopy(self)
+            copied = self.copied_whole()
+            copied.store = None
+            return copied
         return RepoModel(
             now=self.now, commits=dict(self.commits), refs=dict(self.refs),
             issues={n: copy.copy(i) for n, i in self.issues.items()},
             pulls={n: copy.copy(p) for n, p in self.pulls.items()},
             next_pull=self.next_pull, writers=self.writers, ever_heads=self.ever_heads,
             label_events=self.label_events, creators=dict(self.creators), created=dict(self.created),
+            made=dict(self.made), made_count=self.made_count,
             tracking={w: dict(refs) for w, refs in self.tracking.items()}, board_text=self.board_text,
             queued=self.queued, pending=self.pending, running=None, opaque_pulls=self.opaque_pulls,
-            lenient_rules=self.lenient_rules,
+            lenient_rules=self.lenient_rules, standings=self.standings,
         )
 
 

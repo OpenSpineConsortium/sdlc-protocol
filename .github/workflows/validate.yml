@@ -1,37 +1,64 @@
 name: Validate
 
 # The validation harness's lanes that take too long for the required check
-# (validation/DESIGN.md, section 12). For now the one lane built, the
-# mutation lane: every mutant of validation/mutants.py run against every
-# search there, each of which must catch it, so a change to the harness
-# that stops it seeing a broken rule goes red. It runs on a pull request
-# that changes the harness or the library, whose rules the mutants change
-# by name, weekly, so a lane that slowed or rotted is seen, and by hand.
-# It reads the checkout and writes nothing, so its token reads contents
-# and nothing else. It is not a required check: the required check,
-# "check", runs each mutant on its shortest trace
-# (tests/test_validation_mutants.py).
+# (validation/DESIGN.md, section 12). Two jobs. The mutation lane: every
+# mutant of validation/mutants.py run against every search there, each of
+# which must catch it, so a change to the harness that stops it seeing a
+# broken rule goes red; it runs on a pull request that changes the harness
+# or the library, whose rules the mutants change by name, weekly, so a
+# lane that slowed or rotted is seen, and by hand. The deep lane
+# (validation/lanes.py): the searches of hours, the soak, the gate over
+# git, the scenarios and the regression traces over the git world, git's
+# answers for the guard grammar recorded again and conformance between
+# the two worlds; it runs weekly, by hand, and on a pull request labelled
+# "deep validation", and uploads what it found (deep.json and a trace
+# file per violation, replayed with scripts/validate.py replay) whether or
+# not it is green. Each search runs for as long as it takes, under a
+# budget of five hours so the artifact is uploaded before the job's six
+# run out; a search the budget stopped is red, since it has not checked
+# its space. The searches' checkpoints (validation-out/checkpoints/, a
+# pickle of each search's state every quarter of an hour) stay out of
+# the artifact, since nothing resumes a run here and each is hundreds of
+# megabytes. A label other than "deep validation" put on a pull request
+# starts nothing and cancels nothing: its run has a concurrency group of
+# its own and skips both jobs, since the protocol's labels (claimed,
+# in-review, worker:<name>) come and go while a deep run of hours is on.
+# Both read the checkout and write nothing, so the token reads
+# contents and nothing else. Neither is a required check: the required
+# check, "check", runs each mutant on its shortest trace
+# (tests/test_validation_mutants.py) and a few steps of the deep lane
+# (tests/test_validation_deep.py).
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, labeled]
     paths:
       - "validation/**"
       - "sdlc_protocol/**"
+      - "scripts/validate.py"
       - "tests/test_validation_*.py"
+      - "tests/test_validate.py"
       - ".github/workflows/validate.yml"
   schedule:
     - cron: "37 5 * * 1"
   workflow_dispatch:
+    inputs:
+      budget:
+        description: "Seconds each search of the deep lane may take (18000, five hours)"
+        default: "18000"
 
 permissions:
   contents: read
 
 concurrency:
-  group: validate-${{ github.ref }}
+  group: >-
+    validate-${{ github.ref }}${{ github.event.action == 'labeled' && github.event.label.name != 'deep validation'
+    && format('-label-{0}', github.run_id) || '' }}
   cancel-in-progress: true
 
 jobs:
   mutants:
+    if: github.event.action != 'labeled' || github.event.label.name == 'deep validation'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -43,3 +70,35 @@ jobs:
 
       - name: Run the mutation lane
         run: python3 -m validation.mutants
+
+  deep:
+    if: >-
+      github.event_name != 'pull_request'
+      || (contains(github.event.pull_request.labels.*.name, 'deep validation')
+      && (github.event.action != 'labeled' || github.event.label.name == 'deep validation'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Run the deep lane
+        env:
+          BUDGET: ${{ github.event.inputs.budget || '18000' }}
+        # exec, so the lane is the step's own process: a cancellation or the
+        # job's timeout signals that process alone, and the shell would
+        # die of it and leave the lane running past the upload.
+        run: exec python3 scripts/validate.py deep --out validation-out --budget "$BUDGET"
+
+      - name: Keep what it found
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: validation-out
+          path: |
+            validation-out/
+            !validation-out/checkpoints/
+          if-no-files-found: ignore
