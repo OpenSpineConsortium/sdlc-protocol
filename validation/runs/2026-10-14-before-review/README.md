@@ -14,4 +14,4 @@
 | Guard | 699 argument lists recorded again on git 2.43.0, none differing, none missing |
 | Conformance | 200 paths in both worlds, 0 disagreements, 172 s |
 
-It is kept as the measure of the lane's size and time, not as the run of record: the review's fixes changed what the gate checks (parts 3, 5 and 7 of G13), what G1 holds the Worker cell to and how the memory world rebases, so the run of record is the one at the pull request's final head, under validation/runs/2026-10-14/ once it is made.
+It is kept as the measure of the lane's size and time, not as the run of record: the review's fixes changed what the gate checks (parts 3, 5 and 7 of G13), what G1 holds the Worker cell to and how the memory world rebases, so the run of record is validation/runs/2026-10-14/, made at the pull request's code before main's F15, F16 and F17 came in, with validation/runs/2026-10-14-merged/ beside it for the final code.

@@ -15,4 +15,6 @@
 | Guard | 699 argument lists recorded again on git version 2.43.0, 0 differing, 0 missing |
 | Conformance | 200 paths and 0 counterexamples in both worlds, 0 disagreements, 204 s |
 
-This is the run the docs' measurements come from (validation/README.md, step 6; DESIGN.md, section 14, step 6, and the table of section 6.8). The two earlier runs beside it, 2026-10-14-partial and 2026-10-14-before-review, are kept for what they showed on the way: the soak's three leads, judged faults of the harness's model, and the lane's size and time before the review's fixes.
+It measured the library as main held it at c2de8b1: 0.4.1 with F4, F7, F9, F12, F13 and F14 fixed. Main merged F15, F16 and F17 (#28 to #31) while it ran, and the pull request took them in afterwards (0a99040), so this run did not measure them; validation/runs/2026-10-14-merged/ holds every part but the four searches run again at the final code, 01afc41, green.
+
+This is the run the docs' measurements come from (validation/README.md, step 6; DESIGN.md, section 14, step 6, and the table of section 6.8). The two earlier runs beside it, 2026-10-14-partial and 2026-10-14-before-review, are kept for what they showed on the way: the soak's three leads, judged faults of the harness's model, and the lane's size and time before the review's fixes; the one after it, 2026-10-14-merged, for the final code.
