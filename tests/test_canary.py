@@ -357,9 +357,16 @@ def rename(number, head):
     return react
 
 
-def delete_second_push(number):
+def delete_second_push(number, closes=True):
+    """The board's delete of the second push of a freed name, which closes
+    the open draft from it, as GitHub does on a delete; with closes off,
+    a GitHub that left it open."""
     def react(site):
-        site.branches.pop(claims.branch_of(number), None)
+        branch = claims.branch_of(number)
+        site.branches.pop(branch, None)
+        for pull in site.pulls.values():
+            if closes and pull["head"] == branch and pull["state"] == "open":
+                pull["state"] = "closed"
     return react
 
 
@@ -568,6 +575,9 @@ class TheChecks(unittest.TestCase):
         self.assertIn("the rename closed the draft", held)
         self.assertIn("the issue is back in the Queue and the claim is off the board", held)
         self.assertIn("the next run deletes the second push, since the released branch keeps its head", held)
+        self.assertIn("the delete closed the draft opened from the second push", held)
+        self.assertEqual(len(site.pulls_opened), 2)
+        self.assertEqual([p["state"] for p in site.pulls.values()], ["closed", "closed"])
         self.assertIn("the comment moved the draft's updated_at", held)
         self.assertIn("the push moved the draft's updated_at", held)
         self.assertEqual(list(seen.values["draft updated_at"]), ["after the open", "after the comment", "after the push"])
@@ -575,6 +585,18 @@ class TheChecks(unittest.TestCase):
         self.assertEqual(seen.values["labels after the release"], [labels.TODO])
         self.assertIn("C6: passed", out)
         self.assertTrue(site.cleaned)
+
+    def test_c6_fails_when_the_delete_leaves_the_draft_open(self):
+        """The harness's model closes the open pull request whose head a
+        delete removes, as the documentation says of a rename and the web
+        UI's page of a delete; a GitHub that left it open would fail the
+        check and the assumption with it."""
+        site = FakeSite(runs=[{"event": "pull_request", "head_branch": "claude/101", "conclusion": "success"}])
+        site.reactions += [release(101, "sha-002"), delete_second_push(101, closes=False)]
+        seen, _ = run(site, "C6")
+        self.assertEqual(seen.status, "failed", seen.as_dict())
+        missed = [e["expectation"] for e in seen.expectations if not e["holds"]]
+        self.assertEqual(missed, ["the delete closed the draft opened from the second push"])
 
     def test_c6_fails_when_the_board_s_own_push_started_a_run(self):
         runs = [{"event": "pull_request", "head_branch": "claude/101", "conclusion": "success"},

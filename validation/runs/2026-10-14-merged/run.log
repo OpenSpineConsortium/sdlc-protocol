@@ -1,0 +1,40 @@
+    soak 0 done at 24.8 s
+    soak 100 done at 25.0 s
+    soak 50 done at 25.3 s
+    soak 250 done at 49.9 s
+    soak 200 done at 50.0 s
+    soak 150 done at 50.4 s
+    soak 350 done at 73.8 s
+    soak 300 done at 73.9 s
+    soak 400 done at 74.0 s
+    soak 450 done at 97.7 s
+    soak 500 done at 98.0 s
+    soak 550 done at 98.2 s
+    soak 600 done at 122.4 s
+    soak 650 done at 122.8 s
+    soak 700 done at 123.1 s
+    soak 750 done at 145.8 s
+    soak 850 done at 147.1 s
+    soak 800 done at 147.7 s
+    soak 900 done at 171.6 s
+    soak 950 done at 172.2 s
+    git traces done at 179.4 s
+    git scenarios done at 181.7 s
+    guard done at 210.6 s
+    gate done at 354.6 s
+    conformance E-deep done at 391.0 s
+    conformance E-two done at 392.2 s
+    conformance E-faults done at 408.1 s
+    conformance E-activity done at 442.8 s
+soak: 1000 walks, 200000 steps, 490.9 s of walking, 0 violations
+gate account: depth 8, 57836 states, 581296 transitions, 43.5 s, 0 violations
+gate team: depth 8, 57836 states, 581296 transitions, 41.3 s, 0 violations
+gate arm: depth 8, 63780 states, 560408 transitions, 40.3 s, 0 violations
+gate gated-check: depth 8, 51424 states, 492056 transitions, 33.9 s, 0 violations
+gate S05g: 10 acts, 0 mismatches
+gate over git: 40 sequences, 480 acts, 18 merges, 5 main moved, 71 refusals, 47.0 s
+git scenarios: 11 played, 10.2 s, matching known.json
+git traces: 17 played, 7.2 s, matching known.json
+guard: 699 argument lists recorded again under git version 2.43.0, 0 differing from guard_git.json (git version 2.43.0), 0 of the file's missing
+conformance: 200 paths and 0 counterexamples in both worlds, 0 disagreements, 179.2 s
+deep lane: ok in 442.8 s; validation-out/deep.json

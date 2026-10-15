@@ -18,6 +18,9 @@ dist/
 .claude/settings.local.json
 *.local.md
 
+# What scripts/validate.py deep writes: its results and the counterexamples
+validation-out/
+
 # Operating system clutter
 .DS_Store
 Thumbs.db

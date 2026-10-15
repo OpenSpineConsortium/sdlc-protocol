@@ -7,5 +7,6 @@
     {"scenario": "S05a", "step": 12, "guarantee": "G7", "finding": "F2"},
     {"scenario": "S05b", "step": 12, "guarantee": "G7", "finding": "F2"},
     {"scenario": "S05q", "step": 12, "guarantee": "G7", "finding": "F2"}
-  ]
+  ],
+  "searches": []
 }

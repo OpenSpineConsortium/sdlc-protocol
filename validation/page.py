@@ -100,3 +100,8 @@ def not_claims(page):
 def claim_workers(page):
     """The Claims section as a map from branch to the worker shown."""
     return {r[1]: r[2] for r in rows(page, board.CLAIM_HEADING)}
+
+
+def claim_rows(page):
+    """The Claims section's rows whole, the files each touches included."""
+    return [tuple(r) for r in rows(page, board.CLAIM_HEADING)]

@@ -40,17 +40,18 @@ the word for a branch that is behind is "clean", as GitHub gives under a
 rule that does not require an up-to-date branch or under none (F16), and
 with both on the word is "blocked", since a rule that holds the pull
 request holds it whatever its branch; a rename closes the pull request
-whose head the branch is, never one from a fork, whose branch of the same
-name stands in the fork; a pull request from a fork names its author's
-fork in its head and this repository in its base, in its detail and in the
-list's entries, and the list's head filter, owner:branch, matches the
-repository the branch stands in (F17); a rename onto a name that stands
-answers 422; the board posts as github-actions[bot] with the
-author_association NONE; a pull request's updated_at moves with pushes and
-comments; and the repository's activity lists the push that made each
-branch at GitHub's own time, newest first (F13), a renamed branch keeping
-the time it was made, which the model's rename does and no canary check
-reads yet.
+whose head the branch is, and so does a delete (the web UI's page says
+so; canary C6 settles the REST delete), never one from a fork, whose
+branch of the same name stands in the fork; a pull request from a fork
+names its author's fork in its head and this repository in its base, in
+its detail and in the list's entries, and the list's head filter,
+owner:branch, matches the repository the branch stands in (F17); a
+rename onto a name that stands answers 422; the board posts as
+github-actions[bot] with the author_association NONE; a pull request's
+updated_at moves with pushes and comments; and the repository's activity
+lists the push that made each branch at GitHub's own time, newest first
+(F13), a renamed branch keeping the time it was made, which the model's
+rename does and no canary check reads yet.
 """
 
 import base64
@@ -314,7 +315,7 @@ class FakeGitHub:
         read in a run for each head and main it stands on."""
         model = self.model
         sha = model.pull_head(pull) if pull.state == "open" else ""
-        standing = model.standing_at(sha) if sha else "clean"
+        standing = model.pull_standing(pull) if sha else "clean"
         seen = (pull.number, sha, model.refs[MAIN])
         if seen in self.computed:
             mergeable = standing != "dirty"
