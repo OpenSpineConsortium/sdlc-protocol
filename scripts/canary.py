@@ -13,7 +13,10 @@ and starts every board run with an event the token can make. It writes
 canary.json, one record per check with the values it saw and the library
 version the canary vendors, and a job summary; .github/workflows/canary.yml
 runs it monthly and by hand and opens, or updates, one issue here when a
-check fails.
+check fails. A run closes the throwaway issues it opened, but for the one
+claim C6 or C7 holds in review for a later run at least HELD_FOR on, which
+releases it: a claim is released after a day without a push, and a run's
+token lives an hour.
 
     python3 scripts/canary.py run                      the monthly checks (C1, C2, C3, C5 and C6)
     python3 scripts/canary.py run --checks C0 C7       chosen checks; C7 needs CANARY_ADMIN_TOKEN
@@ -93,8 +96,18 @@ TOKEN_LIFE = timedelta(minutes=55)
 # in the same second and look as if it moved nothing.
 UPDATED_AT_TICK = 2
 # What C6 and C7 push: a commit whose committer date is a day and an hour
-# back, past the spec's 24 hours, so the next board run releases the claim.
+# back, past the spec's 24 hours. A copy before F8's fix dates the claim by
+# that date and releases it in the next board run, which the check then
+# follows; a copy with the fix dates it by when GitHub received the push,
+# which is now, and holds it, which is F8's own check, so the release by
+# idleness the check follows is that of a claim an earlier run held
+# (DESIGN.md, section 11): no run's token lives the day a claim must wait.
 BACKDATED = timedelta(hours=25)
+# How long after its issue was made a claim a run held for a later one has
+# surely gone more than the spec's day without a push: the push came within
+# the run's TOKEN_LIFE after the issue was made, and five minutes cover the
+# skew between the runner's clock and GitHub's.
+HELD_FOR = claims.IDLE_AFTER + TOKEN_LIFE + timedelta(minutes=5)
 MONTHLY = ("C1", "C2", "C3", "C5", "C6")
 # GitHub's words for a pull request the repository's rules do not hold for
 # being behind, which the spec owes no "main moved" however far the default
@@ -425,12 +438,30 @@ class Site:
 
     def throwaway(self, check):
         """A throwaway issue for one check, labelled todo so a released
-        claim's issue shows in the Queue; closed when the run ends."""
-        made = self.api.create_issue(f"canary {check}: throwaway", f"Made by the validation harness's canary "
+        claim's issue shows in the Queue; closed when the run ends, or, for
+        the claim C6 or C7 holds (hold), by the later run that releases it."""
+        made = self.api.create_issue(throwaway_title(check), f"Made by the validation harness's canary "
                                      f"(symphony-protocol, scripts/canary.py) for check {check}; closed when "
-                                     f"the run ends.", [labels.TODO])
+                                     f"the run ends, or by a later run when this one holds it in review.",
+                                     [labels.TODO])
         self.issues.append(made["number"])
         return made["number"]
+
+    def hold(self, number, pull):
+        """Leave a claim standing for a later run: the label in-review on
+        its issue, which the coordinator never releases, then its issue and
+        its draft out of this run's clean-up, so a refused label leaves
+        them to be closed."""
+        self.add_labels(number, [labels.IN_REVIEW])
+        self.issues = [n for n in self.issues if n != number]
+        self.pulls = [n for n in self.pulls if n != pull]
+
+    def take_over(self, number, pull):
+        """Close with this run a claim an earlier run held, and its draft."""
+        if number not in self.issues:
+            self.issues.append(number)
+        if pull is not None and pull not in self.pulls:
+            self.pulls.append(pull)
 
     def issue(self, number):
         return self.api.issue(number)
@@ -508,16 +539,20 @@ class Site:
         """What an earlier run that died left behind: its pull requests
         closed, then its issues, whose closing starts the template's tidy
         workflow, which deletes their branches, then the names no issue
-        owns; with an administrator, the ruleset C7 makes. Each refusal is
-        a line, never a failure."""
+        owns; with an administrator, the ruleset C7 makes. A claim an
+        earlier run of C6 or C7 held for a later one (is_held) stands, with
+        the pull requests from its branch, for that check to release. Each
+        refusal is a line, never a failure."""
         said = []
         try:
+            issues = [i for i in self.open_issues() if i.get("title", "").startswith("canary ")]
+            held = {claims.branch_of(i["number"]) for i in issues if is_held(i)}
             for pull in self.open_pulls():
-                if pull.get("title", "").startswith("canary "):
+                if pull.get("title", "").startswith("canary ") and head_ref(pull) not in held:
                     self.close_pull(pull["number"])
                     said.append(f"closed the pull request #{pull['number']} an earlier run left")
-            for issue in self.open_issues():
-                if issue.get("title", "").startswith("canary "):
+            for issue in issues:
+                if not is_held(issue):
                     self.close_issue(issue["number"])
                     said.append(f"closed the issue #{issue['number']} an earlier run left")
             for name in ODD_NAMES:
@@ -571,6 +606,58 @@ def ascii_name(name):
     """A branch name as a key in the records: ASCII, every other character
     as the \\u escape the design writes it with."""
     return "".join(c if ord(c) < 128 else f"\\u{ord(c):04x}" for c in name)
+
+
+def throwaway_title(check):
+    return f"canary {check}: throwaway"
+
+
+def label_names(issue):
+    return {label.get("name") for label in (issue or {}).get("labels", []) if isinstance(label, dict)}
+
+
+def is_held(issue):
+    """Whether an open issue is a claim an earlier run of C6 or C7 held for
+    a later one: a canary throwaway labelled in-review, which the spec's
+    coordinator never releases, so the claim waits however long it takes,
+    until a run at least HELD_FOR on takes the label off."""
+    return (issue or {}).get("title", "").startswith("canary ") and labels.IN_REVIEW in label_names(issue)
+
+
+def head_ref(pull):
+    return ((pull or {}).get("head") or {}).get("ref")
+
+
+def pull_of(site, branch):
+    """The number of the open pull request from the branch, or None."""
+    found = [p["number"] for p in site.open_pulls() if head_ref(p) == branch]
+    return found[0] if found else None
+
+
+def made_at(issue):
+    """When GitHub says the issue was made, or None for an answer that
+    names no time."""
+    try:
+        return claims.parse_time(issue.get("created_at") or "")
+    except (TypeError, ValueError):
+        return None
+
+
+class Claim:
+    """A throwaway claim a check follows: its issue, branch and head, its
+    draft, a clone that can push that head again, the instant the board's
+    runs are asked for from, and, for a claim an earlier run held, when its
+    issue was made and whether it has gone HELD_FOR since."""
+
+    def __init__(self, number, head, pull, clone=None, since=None, made=None):
+        self.number = number
+        self.branch = claims.branch_of(number)
+        self.head = head
+        self.pull = pull
+        self.clone = clone
+        self.since = since
+        self.made = made
+        self.due = False
 
 
 # --- the steps the checks share ------------------------------------------------
@@ -902,11 +989,37 @@ def check_c5(site, seen):
 
 
 def check_c6(site, seen):
-    """A release end to end on a throwaway claim: the comment, the labels,
-    the rename, the closed draft, the issue back in the Queue, the second
-    push of the freed name deleted, and the draft opened from that push
-    closed by the delete, which the harness's model assumes of a delete as
-    the documentation says of a rename (DESIGN.md, 3.2)."""
+    """A release end to end: the comment, the labels, the rename, the
+    closed draft, the issue back in the Queue, the second push of the
+    freed name deleted, and the draft opened from that push closed by the
+    delete, which the harness's model assumes of a delete as the
+    documentation says of a rename (DESIGN.md, 3.2). A fresh claim pushes
+    a commit dated BACKDATED back: a copy before F8's fix releases it at
+    once, and that release is followed; a copy with the fix does not,
+    which is F8's own check, and the release followed is that of the claim
+    an earlier run held (held_claim), once it has gone HELD_FOR, the fresh
+    one held in its place for a later run."""
+    held = held_claim(site, seen, "C6")
+    fresh = backdated_claim(site, seen)
+    released = released_at_once(site, seen, "C6", fresh)
+    if released:
+        follow_release(site, seen, fresh)
+        return
+    if released is None or (held is not None and not held.due):
+        return
+    hold(site, seen, "C6", fresh, held)
+    if held is None:
+        return
+    held.clone, held.since = site.clone(), site.now() - RUNS_MARGIN
+    unhold(site, held)
+    follow_release(site, seen, held)
+
+
+def backdated_claim(site, seen):
+    """C6's fresh claim up to its backdated push: a claim announced, a
+    draft from it and a comment on that draft, then a commit dated
+    BACKDATED back, pushed last on purpose (DESIGN.md, section 11), with
+    whether the comment and the push moved the draft's updated_at."""
     number = site.throwaway("C6")
     branch = claims.branch_of(number)
     clone = site.clone()
@@ -930,11 +1043,103 @@ def check_c6(site, seen):
     updated["after the push"], by_push = site.wait(
         lambda: site.pull(pull).get("updated_at"), moved_from(updated["after the comment"]), budget=60)
     seen.values["draft updated_at"] = updated
-    # The push's runs may be the ones a burst replaces; one more event,
-    # nothing newer behind it, makes sure a run reads after the commit.
-    site.poke(number)
     seen.expect("the comment moved the draft's updated_at", by_comment)
     seen.expect("the push moved the draft's updated_at", by_push)
+    return Claim(number, head, pull, clone, since)
+
+
+def released_at_once(site, seen, check, fresh):
+    """Whether the board released at once the fresh claim whose commit is
+    dated BACKDATED back, as a copy before F8's fix does: judged once a
+    board run that read the repository after the push is seen, by the
+    release comment or by the board listing a mark, an issue opened after
+    the push, with the claim still on it. The mark's opening is the one
+    more event, nothing newer behind it, that makes sure a run reads after
+    the commit; the board reads the open issues before the branches
+    (adapters.github.collect, 0.4.1's as well), so a page that lists the
+    mark read the claim's branch after the push, and since the coordinator
+    releases before the board is rendered, that page says the run released
+    nothing. The expectation is F8's, so its miss is known on a copy before
+    the fix. None when no such run was seen within the budget."""
+    mark = site.throwaway(f"{check} mark")
+
+    def read():
+        return bool(has_marker(site.comments(fresh.number), claims.RELEASE_MARKER)), site.board() or ""
+
+    def settled(value):
+        released, text = value
+        return released or (mark in page.queue(text) and claim_row(text, fresh.number) is not None)
+    value, ran = site.wait(read, settled)
+    released = ran and value[0]
+    seen.values["released at once"] = released if ran else None
+    if not seen.expect("a board run after the backdated push is seen: the release, or the board listing the claim "
+                       "and an issue opened after the push", ran):
+        return None
+    seen.expect("the board does not release at once a claim whose commit is dated 25 hours back, since a claim is "
+                "idle by when GitHub received its push (F8)", not released, finding="F8")
+    return released
+
+
+def held_claim(site, seen, check):
+    """The claim an earlier run of the check held for a later one
+    (is_held), the oldest if there are more, or None: with whether it has
+    gone HELD_FOR since its issue was made, so more than a day since its
+    push, and the spec's expectation that a finished claim waits however
+    long it takes, its branch standing, its draft open, the label claimed
+    on and no release comment. One found released is closed with this run
+    and counts as none, so the run holds another."""
+    found = sorted((i for i in site.open_issues() if is_held(i) and i.get("title") == throwaway_title(check)),
+                   key=lambda i: i["number"])
+    if not found:
+        return None
+    issue = found[0]
+    number = issue["number"]
+    branch = claims.branch_of(number)
+    held = Claim(number, site.branch_sha(branch), pull_of(site, branch), made=made_at(issue))
+    held.due = held.made is not None and site.now() - held.made > HELD_FOR
+    seen.values["held claim"] = {"issue": number, "made": issue.get("created_at"), "due": held.due}
+    waited = (held.head is not None and held.pull is not None and labels.CLAIMED in label_names(issue)
+              and not has_marker(site.comments(number), claims.RELEASE_MARKER))
+    if not seen.expect("the claim an earlier run held in review waited unreleased, as a finished claim waits however "
+                       "long it takes", waited):
+        site.take_over(number, held.pull)
+        return None
+    if not held.due:
+        seen.note(f"#{number}, the claim an earlier run held, was made at {issue.get('created_at')}, less than "
+                  f"{hours(HELD_FOR)} hours ago, so it stands for a later run and this run holds no other")
+    return held
+
+
+def hold(site, seen, check, fresh, held):
+    """Hold the fresh claim, which the board did not release at once, for
+    the first run of the check at least HELD_FOR on, which takes the label
+    in-review off and follows its release; when no earlier claim was held,
+    this run follows none, and says so."""
+    site.hold(fresh.number, fresh.pull)
+    seen.values["held for a later run"] = fresh.number
+    if held is None:
+        seen.note(f"no claim an earlier run of {check} held stands, so this run follows no release by idleness: "
+                  f"#{fresh.number} is held in review for the first run of {check} at least {hours(HELD_FOR)} hours "
+                  f"on, which releases it")
+
+
+def unhold(site, held):
+    """Take the label in-review off a held claim that has gone a day without
+    a push: the board run the removal starts is to release it by the
+    spec's day, and its issue and draft close with this run."""
+    site.take_over(held.number, held.pull)
+    site.remove_label(held.number, labels.IN_REVIEW)
+
+
+def hours(span):
+    return int(span.total_seconds() // 3600)
+
+
+def follow_release(site, seen, subject):
+    """The release of a claim gone a day without a push, end to end, from
+    the release comment to the delete of the second push of the freed name
+    and the draft that push opened."""
+    number, branch, head, pull = subject.number, subject.branch, subject.head, subject.pull
     comments, released = site.wait(lambda: site.comments(number),
                                    lambda cs: bool(has_marker(cs, claims.RELEASE_MARKER)))
     if not seen.expect("the coordinator posts the release comment, with its marker first", released):
@@ -962,7 +1167,7 @@ def check_c6(site, seen):
         seen.note(why_not_renamed(site, number, renamed))
     wait_for_board(site, seen, "the issue is back in the Queue and the claim is off the board",
                    lambda text: number in page.queue(text) and claim_row(text, number) is None)
-    runs = site.runs_since(since)
+    runs = site.runs_since(subject.since)
     if runs is not None:
         seen.values["board runs by event"] = by_event(runs)
         seen.expect("the board's own pushes started no board run",
@@ -971,7 +1176,8 @@ def check_c6(site, seen):
         seen.note(RUNS_NOT_READ)
     if not kept:
         return
-    again = clone.push(branch)
+    subject.clone.branch(branch, head)
+    again = subject.clone.push(branch)
     seen.values["second push at the released head"] = again.as_dict()
     if not seen.expect("the freed name takes a push at the released head", again.ok):
         return
@@ -1008,58 +1214,90 @@ def check_c7(site, seen):
     """Under a ruleset over claude/** with only non_fast_forward: a lease
     push onto a claim is refused (G11b's second fence), the board's rename
     of a released claim is refused and said once, naming the ruleset, and
-    the next run after the ruleset goes renames."""
+    the next run after the ruleset goes renames. The released claim is the
+    fresh one when the board releases its backdated push at once, as a copy
+    before F8's fix does; on a copy with the fix it is the claim an earlier
+    run of C7 held, once it has gone HELD_FOR, and the fresh one is held in
+    its place, as C6 does."""
     if site.admin is None:
         seen.skip("C7 needs CANARY_ADMIN_TOKEN, a token with Administration on the canary repository, for its ruleset")
         return
-    number = site.throwaway("C7")
-    branch = claims.branch_of(number)
+    held = held_claim(site, seen, "C7")
     ruleset = site.ruleset_add(RULESET, f"refs/heads/{claims.PREFIX}**", ["non_fast_forward"])
     seen.values["ruleset"] = ruleset
+    subject = None
     try:
-        clone = site.clone()
-        pushed = claim(site, clone, number)
-        if not pushed.ok:
-            raise CanaryError(f"the claim was not taken: {pushed.words}")
-        first = clone.head()
-        clone.branch(branch)
-        clone.commit({claims.claim_path(number): claim_text(site.repo, number, WORKER, "Rewritten under the ruleset.")},
-                     f"Claim #{number}, rewritten")
-        leased = clone.push(branch, lease=first)
-        seen.values["lease push under the ruleset"] = leased.as_dict()
-        seen.expect("the ruleset refuses a lease push onto the claim", not leased.ok)
-        clone.branch(branch, first)
-        announce(site, number)
-        pull = site.open_pull(branch, f"canary C7: a draft for #{number}", f"Closes #{number}", True)
-        head = clone.commit({canary_file(number): FILE_TEXT}, "Work, dated 25 hours back", site.now() - BACKDATED)
-        pushed = clone.push(branch)
-        if not pushed.ok:
-            raise CanaryError(f"the backdated push was not taken: {pushed.words}")
-        site.poke(number)
-        comments, released = site.wait(lambda: site.comments(number),
-                                       lambda cs: bool(has_marker(cs, claims.RELEASE_MARKER)))
-        if not seen.expect("the coordinator releases the claim under the ruleset", released):
-            return
-        # The marker names the branch the rename was to make (board.py).
-        renamed = claims.released_branch(number, head)
-        marker = board.RENAME_REFUSED_MARKER.format(branch=renamed)
-        comments, refused = site.wait(lambda: site.comments(number), lambda cs: len(has_marker(cs, marker)) == 1)
-        seen.expect("the board says once that GitHub refused the rename", refused)
-        if refused:
-            seen.expect("the saying names the ruleset", RULESET in has_marker(comments, marker)[0].get("body", ""))
-        seen.expect("the claim's name is still taken", site.branch_sha(branch) == head)
-        seen.values["draft"] = site.pull(pull).get("state")
+        fresh = leased_claim(site, seen)
+        released = released_at_once(site, seen, "C7", fresh)
+        if released:
+            subject = fresh
+        elif released is False and (held is None or held.due):
+            hold(site, seen, "C7", fresh, held)
+            if held is not None:
+                unhold(site, held)
+                subject = held
+        if subject is not None and not rename_refused(site, seen, subject):
+            subject = None
     finally:
         try:
             site.ruleset_delete(ruleset)
         except GitHubError as problem:
             seen.fail(f"the ruleset {RULESET} ({ruleset}) is still on the repository, delete it by hand: {problem}")
-    site.add_labels(number, [labels.BLOCKED])
-    site.remove_label(number, labels.BLOCKED)
-    renamed = claims.released_branch(number, head)
-    _, kept = site.wait(lambda: (site.branch_sha(renamed), site.branch_sha(branch)),
-                        lambda pair: pair[0] == head and pair[1] is None)
+    if subject is None:
+        return
+    site.add_labels(subject.number, [labels.BLOCKED])
+    site.remove_label(subject.number, labels.BLOCKED)
+    renamed = claims.released_branch(subject.number, subject.head)
+    _, kept = site.wait(lambda: (site.branch_sha(renamed), site.branch_sha(subject.branch)),
+                        lambda pair: pair[0] == subject.head and pair[1] is None)
     seen.expect("once the ruleset is gone, the next run renames the branch", kept)
+
+
+def leased_claim(site, seen):
+    """C7's fresh claim under the ruleset up to its backdated push: a claim,
+    a lease push onto it, which the ruleset is to refuse, then the claim
+    announced, a draft from it, and a commit dated BACKDATED back."""
+    number = site.throwaway("C7")
+    branch = claims.branch_of(number)
+    clone = site.clone()
+    pushed = claim(site, clone, number)
+    if not pushed.ok:
+        raise CanaryError(f"the claim was not taken: {pushed.words}")
+    first = clone.head()
+    clone.branch(branch)
+    clone.commit({claims.claim_path(number): claim_text(site.repo, number, WORKER, "Rewritten under the ruleset.")},
+                 f"Claim #{number}, rewritten")
+    leased = clone.push(branch, lease=first)
+    seen.values["lease push under the ruleset"] = leased.as_dict()
+    seen.expect("the ruleset refuses a lease push onto the claim", not leased.ok)
+    clone.branch(branch, first)
+    announce(site, number)
+    pull = site.open_pull(branch, f"canary C7: a draft for #{number}", f"Closes #{number}", True)
+    head = clone.commit({canary_file(number): FILE_TEXT}, "Work, dated 25 hours back", site.now() - BACKDATED)
+    pushed = clone.push(branch)
+    if not pushed.ok:
+        raise CanaryError(f"the backdated push was not taken: {pushed.words}")
+    return Claim(number, head, pull, clone)
+
+
+def rename_refused(site, seen, subject):
+    """Under the ruleset: the claim released, the board saying once that
+    GitHub refused its rename, naming the ruleset, and the claim's name
+    still taken; whether the release came."""
+    number = subject.number
+    _, released = site.wait(lambda: site.comments(number), lambda cs: bool(has_marker(cs, claims.RELEASE_MARKER)))
+    if not seen.expect("the coordinator releases the claim under the ruleset", released):
+        return False
+    # The marker names the branch the rename was to make (board.py).
+    renamed = claims.released_branch(number, subject.head)
+    marker = board.RENAME_REFUSED_MARKER.format(branch=renamed)
+    comments, refused = site.wait(lambda: site.comments(number), lambda cs: len(has_marker(cs, marker)) == 1)
+    seen.expect("the board says once that GitHub refused the rename", refused)
+    if refused:
+        seen.expect("the saying names the ruleset", RULESET in has_marker(comments, marker)[0].get("body", ""))
+    seen.expect("the claim's name is still taken", site.branch_sha(subject.branch) == subject.head)
+    seen.values["draft"] = site.pull(subject.pull).get("state")
+    return True
 
 
 CHECKS = {
@@ -1068,8 +1306,10 @@ CHECKS = {
     "C2": (check_c2, "the concurrency group: a merge's four events beside a worker's push, and main moved (F12)"),
     "C3": (check_c3, "names outside ASCII: what GitHub and the board's run do with them (F6, live)"),
     "C5": (check_c5, "the activity API: a lease push listed as a force_push with before and after (F7, F8)"),
-    "C6": (check_c6, "a release end to end: comment, labels, rename, closed draft, the Queue, the freed name"),
-    "C7": (check_c7, "rulesets: a lease push and the rename refused under non_fast_forward on claude/** (G11b)"),
+    "C6": (check_c6, "a release end to end: comment, labels, rename, closed draft, the Queue, the freed name; a "
+                     "backdated push not released at once (F8), its claim held for a run a day on"),
+    "C7": (check_c7, "rulesets: a lease push and the rename refused under non_fast_forward on claude/** (G11b); "
+                     "with F8, on a claim an earlier run held"),
 }
 NEEDS_ADMIN = {"C7"}
 

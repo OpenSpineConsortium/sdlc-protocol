@@ -56,8 +56,12 @@ def page_text(fake):
         if number is not None:
             claimed.add(number)
         claim_rows.append([board.cell(c) for c in (issue, board.escaped(name), worker, board.NO_PULL_YET, "-")])
+    # The Queue lists an issue once a board run after its opening has
+    # rendered, a tick of the fake's wait (rendered_through), so a page read
+    # at once does not list an issue the board has not seen yet.
     queue = [[f"#{n}", f"issue {n}", labels.TODO] for n, issue in sorted(fake.issues.items())
-             if issue["state"] == "open" and labels.TODO in issue["labels"] and n not in claimed]
+             if issue["state"] == "open" and labels.TODO in issue["labels"] and n not in claimed
+             and n <= fake.rendered_through]
     lines = ["# Board", ""]
     lines += table(board.CLAIM_HEADING, board.CLAIM_COLUMNS, claim_rows)
     lines += table(board.QUEUE_HEADING, board.ISSUE_COLUMNS, queue)
@@ -89,7 +93,7 @@ class FakeClone:
         sha = f"sha-{self.site.counter:03d}"
         self.site.parents[sha] = self.head_sha
         self.site.files[sha] = dict(self.files)
-        self.site.dates[sha] = committer_date
+        self.site.dates[sha] = committer_date or self.site.now()
         self.head_sha = sha
         return sha
 
@@ -99,8 +103,12 @@ class FakeClone:
 
 class FakeSite:
     """canary.Site's methods over dictionaries. reactions is what the live
-    board would do, queued by the test and played one per tick of wait:
-    a reaction is a function of the site."""
+    board would do, queued by the test and played one per tick of wait,
+    each tick a board run: a reaction is a function of the site. The
+    release reaction dates a claim as the copy's version does, by its push
+    once the copy carries F8's fix (last_commit), and the clock stands
+    still within a run, so a test moves it to run a check again a day or a
+    month on, on the same fake, as the hold across runs needs."""
 
     repo = "OpenSpineConsortium/symphony-protocol-canary"
     default_branch = "main"
@@ -108,6 +116,7 @@ class FakeSite:
     def __init__(self, adopted=True, runs=None, admin=False, take_every_push=False, vendoring="0.4.1", queued=True,
                  ready_word="behind"):
         self.vendored = f"sdlc-protocol {vendoring} {COMMIT}\nhash  file\n" if adopted else None
+        self.version = vendoring
         # The copy's board.yml, with or without F12's queue: max.
         self.board_yml = "concurrency:\n  group: board\n" + ("  queue: max\n" if queued else "")
         # GitHub's word for a ready pull request once computed: behind, as
@@ -119,6 +128,16 @@ class FakeSite:
         self.files, self.parents, self.dates = {MAIN: {}}, {MAIN: None}, {}
         self.counter, self.next_number = 0, 100
         self.reactions, self.ticks, self.activity_events = [], 0, []
+        # The clock, which a test moves between two runs on the same fake,
+        # and when each push set a branch's head, by branch and head, as the
+        # repository's activity records it.
+        self.clock = datetime(2026, 10, 14, 4, 43, tzinfo=timezone.utc)
+        self.pushed_at = {}
+        # A copy with F8's fix dates a claim by its push, one before it by
+        # the head's committer date (known.json's fixed_after).
+        self.carries_f8 = "F8" not in canary.known_for(f"sdlc-protocol {vendoring} {COMMIT}")
+        self.rendered_through = self.next_number
+        self.held = []
         # A run is completed unless the test says otherwise, as the runs a
         # check reads at the end of its wait mostly are.
         self.runs = None if runs is None else [{"status": "completed", **found} for found in runs]
@@ -139,7 +158,17 @@ class FakeSite:
         return self.issues_opened
 
     def now(self):
-        return datetime(2026, 10, 14, 4, 43, tzinfo=timezone.utc)
+        return self.clock
+
+    def last_commit(self, branch, by_committer_date=False):
+        """When the branch's last commit came, as the board reads it: when
+        GitHub received the push that set its head on a copy with F8's fix,
+        the head's committer date on one before it or where by_committer_date
+        says the activity listed no push."""
+        sha = self.branches.get(branch)
+        if self.carries_f8 and not by_committer_date:
+            return self.pushed_at.get((branch, sha))
+        return self.dates.get(sha)
 
     def sleep(self, seconds):
         pass
@@ -159,6 +188,7 @@ class FakeSite:
             self.ticks += 1
             if self.reactions:
                 self.reactions.pop(0)(self)
+            self.rendered_through = self.next_number
         return read(), False
 
     def clone(self):
@@ -189,10 +219,12 @@ class FakeSite:
                                          "actor": {"login": "app[bot]"}, "timestamp": "2026-10-14T04:44:00Z",
                                          "ref": f"refs/heads/{branch}"})
             self.branches[branch] = sha
+            self.pushed_at[(branch, sha)] = self.now()
             return canary.Pushed(True, "pushed")
         if held is not None and not self.descends(sha, held) and not self.take_every_push:
             return canary.Pushed(False, "! [rejected] claude/n -> claude/n (fetch first)")
         self.branches[branch] = sha
+        self.pushed_at[(branch, sha)] = self.now()
         for pull in self.pulls.values():
             if pull["head"] == branch:
                 pull["updated_at"] = f"p{self.counter}"
@@ -235,13 +267,28 @@ class FakeSite:
     # issues and pull requests
     def throwaway(self, check):
         self.next_number += 1
-        self.issues[self.next_number] = {"labels": {labels.TODO}, "comments": [], "state": "open", "title": check}
+        self.issues[self.next_number] = {"labels": {labels.TODO}, "comments": [], "state": "open",
+                                         "title": canary.throwaway_title(check),
+                                         "created_at": self.now().strftime("%Y-%m-%dT%H:%M:%SZ")}
         self.issues_opened.append(self.next_number)
         return self.next_number
 
     def issue(self, number):
         found = self.issues[number]
-        return {"number": number, "labels": [{"name": n} for n in sorted(found["labels"])], "state": found["state"]}
+        return {"number": number, "labels": [{"name": n} for n in sorted(found["labels"])], "state": found["state"],
+                "title": found["title"], "created_at": found["created_at"]}
+
+    def hold(self, number, pull):
+        self.add_labels(number, [labels.IN_REVIEW])
+        self.issues_opened = [n for n in self.issues_opened if n != number]
+        self.pulls_opened = [n for n in self.pulls_opened if n != pull]
+        self.held.append(number)
+
+    def take_over(self, number, pull):
+        if number not in self.issues_opened:
+            self.issues_opened.append(number)
+        if pull is not None and pull not in self.pulls_opened:
+            self.pulls_opened.append(pull)
 
     def labels_of(self, number):
         return sorted(self.issues[number]["labels"])
@@ -283,7 +330,8 @@ class FakeSite:
         return detail
 
     def open_pulls(self):
-        return [dict(p) for p in self.pulls.values() if p["state"] == "open"]
+        """As the API lists them, the head branch under head.ref."""
+        return [{**p, "head": {"ref": p["head"]}} for p in self.pulls.values() if p["state"] == "open"]
 
     def close_pull(self, number):
         self.pulls[number]["state"] = "closed"
@@ -317,27 +365,40 @@ class FakeSite:
         self.pokes.append(number)
 
     def open_issues(self):
-        return [{"number": n, "title": i["title"]} for n, i in self.issues.items() if i["state"] == "open"]
+        return [self.issue(n) for n, i in self.issues.items() if i["state"] == "open"]
 
     def clean_up(self):
+        """What the live clean-up does: the run's pull requests and issues
+        closed, which leaves standing a claim a check held."""
+        for number in self.pulls_opened:
+            self.pulls[number]["state"] = "closed"
+        for number in self.issues_opened:
+            self.issues[number]["state"] = "closed"
         self.cleaned = True
         return []
 
 
-def release(number, head, refuse_rename=False):
-    """What the live board's run does to a claim 25 hours idle: the
-    coordinator's comment and labels, then the rename, which closes the
-    draft and is said once, or, under a ruleset, the refusal said once."""
+def release(number, head=None, refuse_rename=False, by_committer_date=False):
+    """What the live board's coordinator does to the claim on issue number,
+    played once a run: nothing while its issue is labelled in-review or the
+    claim has gone no more than a day without a commit, when the reaction
+    waits at the front for the next run; else the comment and the labels,
+    then the rename, which closes the draft and is said once, or, under a
+    ruleset, the refusal said once. The last commit is the fake's reading
+    (last_commit): the push on a copy with F8's fix, the committer date on
+    one before it, or, with by_committer_date, on a copy with the fix whose
+    activity listed no push. head is the branch's head when not given."""
     def react(site):
         branch = claims.branch_of(number)
-        date = site.dates.get(site.branches.get(branch))
-        if date is None or site.now() - date <= claims.IDLE_AFTER:
+        last = site.last_commit(branch, by_committer_date)
+        issue = site.issues[number]
+        if labels.IN_REVIEW in issue["labels"] or last is None or site.now() - last <= claims.IDLE_AFTER:
             site.reactions.insert(0, react)
             return
-        issue = site.issues[number]
+        sha = head or site.branches[branch]
         issue["labels"] -= {labels.CLAIMED, labels.WORKER_PREFIX + canary.WORKER}
         site.comment(number, claims.RELEASE_MARKER + "\nreleased: ...", BOT, "NONE")
-        renamed = claims.released_branch(number, head)
+        renamed = claims.released_branch(number, sha)
         if refuse_rename:
             site.comment(number, board.RENAME_REFUSED_MARKER.format(branch=renamed) + "\nrename refused: "
                          "GitHub refused ...\n\nThese rulesets apply to the two names:\n- canary C7: non_fast_forward",
@@ -351,9 +412,10 @@ def release(number, head, refuse_rename=False):
     return react
 
 
-def rename(number, head):
+def rename(number, head=None):
     def react(site):
-        site.branches[claims.released_branch(number, head)] = site.branches.pop(claims.branch_of(number))
+        sha = head or site.branches[claims.branch_of(number)]
+        site.branches[claims.released_branch(number, sha)] = site.branches.pop(claims.branch_of(number))
     return react
 
 
@@ -386,6 +448,24 @@ def run(site, name, known_findings=frozenset()):
     out = io.StringIO()
     records = canary.run_checks(site, [name], known_findings, out)
     return records[0], out.getvalue()
+
+
+def known_of(site):
+    """What a run reads as known on the fake: what its copy's version still
+    has, as run_site reads it from the copy's record."""
+    return canary.known_for(f"sdlc-protocol {site.version} {COMMIT}")
+
+
+def missed(seen):
+    """The expectations that did not hold and are not known."""
+    return [e["expectation"] for e in seen.expectations if not e["holds"] and not e["known"]]
+
+
+NOT_AT_ONCE = ("the board does not release at once a claim whose commit is dated 25 hours back, since a claim is idle "
+               "by when GitHub received its push (F8)")
+WAITED = "the claim an earlier run held in review waited unreleased, as a finished claim waits however long it takes"
+RUN_SEEN = ("a board run after the backdated push is seen: the release, or the board listing the claim and an issue "
+            "opened after the push")
 
 
 class TheChecks(unittest.TestCase):
@@ -565,10 +645,23 @@ class TheChecks(unittest.TestCase):
         self.assertEqual(seen.values["force_push"], [])
 
     def test_c6_follows_a_release_end_to_end(self):
+        """On a copy before F8's fix, as the canary's 0.4.1 is, the board
+        releases the backdated push at once, which misses F8's expectation
+        as known, and the release is followed in the same run; nothing is
+        held for a later one."""
         site = FakeSite(runs=[{"event": "pull_request", "head_branch": "claude/101", "conclusion": "success"}])
+        self.assertFalse(site.carries_f8)
         site.reactions += [release(101, "sha-002"), delete_second_push(101)]
-        seen, out = run(site, "C6")
-        self.assertEqual(seen.status, "passed", seen.as_dict())
+        seen, out = run(site, "C6", known_of(site))
+        self.assertEqual(seen.status, "known", seen.as_dict())
+        self.assertEqual(missed(seen), [])
+        self.assertEqual([(e["expectation"], e["finding"]) for e in seen.expectations if not e["holds"]],
+                         [(NOT_AT_ONCE, "F8")])
+        self.assertTrue(seen.values["released at once"])
+        self.assertEqual(site.held, [])
+        self.assertNotIn("held claim", seen.values)
+        self.assertEqual(site.issues[101]["state"], "closed", "the run's clean-up closed its claim")
+        self.assertNotIn(labels.IN_REVIEW, site.issues[101]["labels"])
         held = [e["expectation"] for e in seen.expectations if e["holds"]]
         self.assertIn("the coordinator posts the release comment, with its marker first", held)
         self.assertIn("the branch is renamed to released/101-sha-002 and the claim's name is free", held)
@@ -583,7 +676,7 @@ class TheChecks(unittest.TestCase):
         self.assertEqual(list(seen.values["draft updated_at"]), ["after the open", "after the comment", "after the push"])
         self.assertEqual(seen.values["release comment"], {"author": BOT, "author_association": "NONE"})
         self.assertEqual(seen.values["labels after the release"], [labels.TODO])
-        self.assertIn("C6: passed", out)
+        self.assertIn("C6: known", out)
         self.assertTrue(site.cleaned)
 
     def test_c6_fails_when_the_delete_leaves_the_draft_open(self):
@@ -593,20 +686,18 @@ class TheChecks(unittest.TestCase):
         check and the assumption with it."""
         site = FakeSite(runs=[{"event": "pull_request", "head_branch": "claude/101", "conclusion": "success"}])
         site.reactions += [release(101, "sha-002"), delete_second_push(101, closes=False)]
-        seen, _ = run(site, "C6")
+        seen, _ = run(site, "C6", known_of(site))
         self.assertEqual(seen.status, "failed", seen.as_dict())
-        missed = [e["expectation"] for e in seen.expectations if not e["holds"]]
-        self.assertEqual(missed, ["the delete closed the draft opened from the second push"])
+        self.assertEqual(missed(seen), ["the delete closed the draft opened from the second push"])
 
     def test_c6_fails_when_the_board_s_own_push_started_a_run(self):
         runs = [{"event": "pull_request", "head_branch": "claude/101", "conclusion": "success"},
                 {"event": "push", "head_branch": "board", "conclusion": "success"}]
         site = FakeSite(runs=runs)
         site.reactions += [release(101, "sha-002"), delete_second_push(101)]
-        seen, _ = run(site, "C6")
+        seen, _ = run(site, "C6", known_of(site))
         self.assertEqual(seen.status, "failed", seen.as_dict())
-        missed = [e["expectation"] for e in seen.expectations if not e["holds"]]
-        self.assertEqual(missed, ["the board's own pushes started no board run"])
+        self.assertEqual(missed(seen), ["the board's own pushes started no board run"])
         self.assertEqual(seen.values["board runs by event"]["push on board"], {"success": 1})
 
     def test_c6_fails_when_the_comment_moves_nothing(self):
@@ -620,18 +711,16 @@ class TheChecks(unittest.TestCase):
                 site.pulls[number]["updated_at"] = before
         site.comment = comment_that_moves_nothing
         site.reactions += [release(101, "sha-002"), delete_second_push(101)]
-        seen, _ = run(site, "C6")
+        seen, _ = run(site, "C6", known_of(site))
         self.assertEqual(seen.status, "failed", seen.as_dict())
-        missed = [e["expectation"] for e in seen.expectations if not e["holds"]]
-        self.assertEqual(missed, ["the comment moved the draft's updated_at"])
+        self.assertEqual(missed(seen), ["the comment moved the draft's updated_at"])
 
     def test_c6_names_a_refused_rename_and_asks_nothing_that_depends_on_it(self):
         site = FakeSite()
         site.reactions.append(release(101, "sha-002", refuse_rename=True))
-        seen, _ = run(site, "C6")
+        seen, _ = run(site, "C6", known_of(site))
         self.assertEqual(seen.status, "failed")
-        missed = [e["expectation"] for e in seen.expectations if not e["holds"]]
-        self.assertEqual(missed[0], "the branch is renamed to released/101-sha-002 and the claim's name is free")
+        self.assertEqual(missed(seen)[0], "the branch is renamed to released/101-sha-002 and the claim's name is free")
         asked = [e["expectation"] for e in seen.expectations]
         for depends in ("the rename closed the draft", "the board says once on the issue where the branch went",
                         "the freed name takes a push at the released head"):
@@ -645,20 +734,184 @@ class TheChecks(unittest.TestCase):
         number = site.throwaway("C6")
         self.assertIn("the board said nothing of a refusal", canary.why_not_renamed(site, number, "released/1-abc1234"))
 
+    def first_f8_run(self, check="C6", **kwargs):
+        """The first run of the check on a copy with F8's fix, with the
+        board's release of the claim it holds queued for a later run; the
+        fake, its record and the run's output."""
+        site = FakeSite(vendoring="0.5.0", **kwargs)
+        self.assertTrue(site.carries_f8)
+        self.assertEqual(known_of(site), frozenset())
+        if check == "C6":
+            site.reactions += [release(101), delete_second_push(101)]
+        else:
+            site.reactions += [release(101, refuse_rename=True), rename(101)]
+        seen, out = run(site, check, known_of(site))
+        return site, seen, out
+
+    def test_c6_on_a_copy_with_f8_holds_the_backdated_claim_and_a_run_a_day_on_releases_it(self):
+        """On a copy with F8's fix the board dates the backdated push by
+        when GitHub received it, so the first run sees it not released,
+        F8's own check, and holds the claim in review; a run a month on,
+        as the monthly schedule makes it, takes the label off and follows
+        the release by idleness end to end, and holds its own fresh claim
+        in its place."""
+        runs = [{"event": "issues", "head_branch": "main", "conclusion": "success"}]
+        site, seen, out = self.first_f8_run(runs=runs)
+        self.assertEqual(seen.status, "passed", seen.as_dict())
+        held = [e["expectation"] for e in seen.expectations if e["holds"]]
+        self.assertIn(NOT_AT_ONCE, held)
+        self.assertIn(RUN_SEEN, held)
+        self.assertNotIn("the coordinator posts the release comment, with its marker first",
+                         [e["expectation"] for e in seen.expectations], "no claim an earlier run held stands")
+        self.assertFalse(seen.values["released at once"])
+        self.assertEqual(seen.values["held for a later run"], 101)
+        self.assertTrue(any(note.startswith("no claim an earlier run of C6 held stands") for note in seen.notes),
+                        seen.notes)
+        self.assertEqual(site.held, [101])
+        self.assertEqual((site.issues[101]["state"], site.pulls[102]["state"]), ("open", "open"),
+                         "the clean-up leaves the held claim and its draft")
+        self.assertIn(labels.IN_REVIEW, site.issues[101]["labels"])
+        self.assertEqual(site.issues[103]["state"], "closed", "the mark closes with its run")
+        self.assertEqual(site.branches["claude/101"], "sha-002")
+
+        site.clock += timedelta(days=30)
+        seen, out = run(site, "C6", known_of(site))
+        self.assertEqual(seen.status, "passed", seen.as_dict())
+        self.assertEqual(seen.values["held claim"], {"issue": 101, "made": "2026-10-14T04:43:00Z", "due": True})
+        held = [e["expectation"] for e in seen.expectations if e["holds"]]
+        for expectation in (WAITED, NOT_AT_ONCE, "the coordinator posts the release comment, with its marker first",
+                            "the labels claimed and the worker's are off the issue",
+                            "the branch is renamed to released/101-sha-002 and the claim's name is free",
+                            "the rename closed the draft", "the board says once on the issue where the branch went",
+                            "the issue is back in the Queue and the claim is off the board",
+                            "the board's own pushes started no board run",
+                            "the freed name takes a push at the released head",
+                            "the next run deletes the second push, since the released branch keeps its head",
+                            "the delete closed the draft opened from the second push"):
+            self.assertIn(expectation, held)
+        self.assertEqual(site.runs_asked_since, site.now() - canary.RUNS_MARGIN,
+                         "the runs are read from just before the label came off the held claim")
+        self.assertEqual(seen.values["held for a later run"], 104)
+        self.assertEqual(site.held, [101, 104])
+        self.assertEqual(site.issues[101]["state"], "closed", "the claim followed closes with the run that followed it")
+        self.assertEqual(site.issues[104]["state"], "open")
+        self.assertIn(labels.IN_REVIEW, site.issues[104]["labels"])
+        self.assertEqual(site.branches.get("released/101-sha-002"), "sha-002")
+
+    def test_c6_leaves_a_held_claim_not_a_day_old_and_holds_no_other(self):
+        """A run sooner than HELD_FOR after the one that held a claim, as a
+        run by hand the same day is, leaves that claim standing, follows
+        no release, and closes its own fresh claim with the run, so one
+        claim at most is held."""
+        site, _, _ = self.first_f8_run()
+        site.clock += timedelta(hours=3)
+        seen, _ = run(site, "C6", known_of(site))
+        self.assertEqual(seen.status, "passed", seen.as_dict())
+        self.assertFalse(seen.values["held claim"]["due"])
+        self.assertTrue(any("less than 25 hours ago" in note for note in seen.notes), seen.notes)
+        self.assertNotIn("held for a later run", seen.values)
+        self.assertEqual(site.held, [101])
+        self.assertEqual((site.issues[101]["state"], site.issues[104]["state"]), ("open", "closed"))
+        self.assertIn(labels.IN_REVIEW, site.issues[101]["labels"])
+        self.assertNotIn("the coordinator posts the release comment, with its marker first",
+                         [e["expectation"] for e in seen.expectations])
+
+    def test_c6_fails_when_the_claim_held_in_review_was_released_while_it_waited(self):
+        """A finished claim waits however long it takes: one the board
+        released while it was held fails the check, closes with the run,
+        and the run holds its fresh claim in its place."""
+        site, _, _ = self.first_f8_run()
+        site.reactions.clear()
+        site.issues[101]["labels"].discard(labels.CLAIMED)
+        site.comment(101, claims.RELEASE_MARKER + "\nreleased: ...", BOT, "NONE")
+        site.clock += timedelta(days=30)
+        seen, _ = run(site, "C6", known_of(site))
+        self.assertEqual(seen.status, "failed", seen.as_dict())
+        self.assertEqual(missed(seen), [WAITED])
+        self.assertEqual(site.issues[101]["state"], "closed")
+        self.assertEqual(site.held, [101, 104])
+
+    def test_c6_on_a_copy_with_f8_fails_when_the_backdated_push_is_released_at_once(self):
+        """With the fix, a release at once says the board read the claim by
+        its committer date, as where the activity had not listed the push
+        by the second read: not known on such a copy, so the check fails,
+        and the release is still followed end to end; nothing is held."""
+        site = FakeSite(vendoring="0.5.0", runs=[])
+        site.reactions += [release(101, by_committer_date=True), delete_second_push(101)]
+        seen, _ = run(site, "C6", known_of(site))
+        self.assertEqual(seen.status, "failed", seen.as_dict())
+        self.assertEqual(missed(seen), [NOT_AT_ONCE])
+        self.assertTrue(seen.values["released at once"])
+        self.assertIn("the delete closed the draft opened from the second push",
+                      [e["expectation"] for e in seen.expectations if e["holds"]])
+        self.assertEqual(site.held, [])
+
+    def test_c6_judges_nothing_and_holds_nothing_when_no_board_run_is_seen(self):
+        """Not released is judged only once a board run that read the
+        repository after the push is seen; a board that never lists the
+        mark misses that expectation alone, and the claim is not held."""
+        site = FakeSite(vendoring="0.5.0")
+        site.board = lambda: page_text(site).split(board.QUEUE_HEADING)[0]
+        seen, _ = run(site, "C6", known_of(site))
+        self.assertEqual(seen.status, "failed", seen.as_dict())
+        self.assertEqual(missed(seen), [RUN_SEEN])
+        self.assertNotIn(NOT_AT_ONCE, [e["expectation"] for e in seen.expectations])
+        self.assertIsNone(seen.values["released at once"])
+        self.assertEqual(site.held, [])
+        self.assertEqual(site.issues[101]["state"], "closed")
+
     def test_c7_is_skipped_without_an_administrator(self):
         seen, _ = run(FakeSite(), "C7")
         self.assertEqual(seen.status, "skipped")
         self.assertIn("CANARY_ADMIN_TOKEN", seen.notes[0])
 
     def test_c7_sees_the_lease_and_the_rename_refused_then_the_rename(self):
+        """On a copy before F8's fix the backdated push is released at once,
+        F8's known miss, and the rename refused under the ruleset is that of
+        the fresh claim, in the same run."""
         site = FakeSite(admin=True)
         site.reactions += [release(101, "sha-003", refuse_rename=True), rename(101, "sha-003")]
-        seen, _ = run(site, "C7")
-        self.assertEqual(seen.status, "passed", seen.as_dict())
+        seen, _ = run(site, "C7", known_of(site))
+        self.assertEqual(seen.status, "known", seen.as_dict())
+        self.assertEqual(missed(seen), [])
+        self.assertEqual(site.held, [])
         self.assertFalse(seen.values["lease push under the ruleset"]["ok"])
         self.assertEqual(site.rulesets_made, {})
         self.assertIn(("add", 101, (labels.BLOCKED,)), site.label_calls)
         self.assertIn(("remove", 101, labels.BLOCKED), site.label_calls)
+
+    def test_c7_on_a_copy_with_f8_holds_its_claim_and_a_later_run_sees_the_rename_refused(self):
+        """With F8's fix the backdated push is not released, so the first
+        run checks the lease push under the ruleset and holds its claim;
+        the next run by hand a day on makes the ruleset again, takes the
+        label off the held claim, sees its release, the rename refused and
+        said once, and the rename once the ruleset is gone."""
+        site, seen, _ = self.first_f8_run("C7", admin=True)
+        self.assertEqual(seen.status, "passed", seen.as_dict())
+        self.assertFalse(seen.values["lease push under the ruleset"]["ok"])
+        self.assertIn(NOT_AT_ONCE, [e["expectation"] for e in seen.expectations if e["holds"]])
+        self.assertNotIn("the coordinator releases the claim under the ruleset",
+                         [e["expectation"] for e in seen.expectations])
+        self.assertEqual(site.held, [101])
+        self.assertEqual(site.rulesets_made, {})
+        self.assertNotIn(("add", 101, (labels.BLOCKED,)), site.label_calls)
+
+        site.clock += timedelta(hours=26)
+        seen, _ = run(site, "C7", known_of(site))
+        self.assertEqual(seen.status, "passed", seen.as_dict())
+        held = [e["expectation"] for e in seen.expectations if e["holds"]]
+        for expectation in (WAITED, "the ruleset refuses a lease push onto the claim", NOT_AT_ONCE,
+                            "the coordinator releases the claim under the ruleset",
+                            "the board says once that GitHub refused the rename", "the saying names the ruleset",
+                            "the claim's name is still taken",
+                            "once the ruleset is gone, the next run renames the branch"):
+            self.assertIn(expectation, held)
+        self.assertEqual(seen.values["held claim"]["issue"], 101)
+        self.assertEqual(site.held, [101, 104])
+        self.assertEqual(site.rulesets_made, {})
+        self.assertIn(("add", 101, (labels.BLOCKED,)), site.label_calls)
+        self.assertEqual(site.branches.get("released/101-sha-003"), "sha-003")
+        self.assertEqual(site.issues[101]["state"], "closed")
 
     def test_c0_reads_a_draft_and_opens_one_when_none_is_open(self):
         site = FakeSite()
@@ -666,8 +919,10 @@ class TheChecks(unittest.TestCase):
         self.assertEqual(seen.status, "passed", seen.as_dict())
         self.assertEqual(seen.values["draft"]["mergeable_state"], "draft")
         self.assertIn("no open draft, so one was opened", seen.notes[0])
+        self.assertEqual([p["state"] for p in site.pulls.values()], ["closed"], "the run closed the draft it opened")
+        draft = site.open_pull("claude/9", "Someone's draft", "Closes #9", True)
         seen, _ = run(site, "C0")
-        self.assertIn("read the open draft", seen.notes[0])
+        self.assertIn(f"read the open draft #{draft}", seen.notes[0])
 
     def test_a_check_that_stops_is_recorded_failed_and_the_rest_still_run(self):
         site = FakeSite()
@@ -1132,11 +1387,16 @@ class TheSite(unittest.TestCase):
 
     def test_the_sweep_closes_what_an_earlier_run_left_and_stops_on_a_refusal(self):
         odd = canary.ODD_NAMES[0]
+        in_review = [{"name": labels.TODO}, {"name": labels.IN_REVIEW}]
         site, opener = self.site({
-            listed("/repos/o/r/pulls", state="open"): FakeAnswer([{"number": 3, "title": "canary C2: merged, #1"},
-                                                                  {"number": 4, "title": "Someone's own"}]),
-            listed("/repos/o/r/issues", state="open"): FakeAnswer([{"number": 5, "title": "canary C6: throwaway"},
-                                                                   {"number": 6, "title": "A real issue"}]),
+            listed("/repos/o/r/pulls", state="open"): FakeAnswer([
+                {"number": 3, "title": "canary C2: merged, #1", "head": {"ref": "claude/1"}},
+                {"number": 4, "title": "Someone's own", "head": {"ref": "claude/2"}},
+                {"number": 8, "title": "canary C6: a draft for #7", "head": {"ref": "claude/7"}}]),
+            listed("/repos/o/r/issues", state="open"): FakeAnswer([
+                {"number": 5, "title": "canary C6: throwaway"},
+                {"number": 6, "title": "A real issue", "labels": in_review},
+                {"number": 7, "title": "canary C6: throwaway", "labels": in_review}]),
             f"/repos/o/r/git/ref/heads/{canary.quote(odd)}": FakeAnswer({"object": {"sha": "odd"}}),
             "PATCH /repos/o/r/pulls/3": FakeAnswer({}),
             "PATCH /repos/o/r/issues/5": FakeAnswer({}),
@@ -1148,11 +1408,30 @@ class TheSite(unittest.TestCase):
         self.assertEqual(said, ["closed the pull request #3 an earlier run left", "closed the issue #5 an earlier run left",
                                 f"deleted the branch {canary.ascii_name(odd)} an earlier run left",
                                 f"deleted the ruleset {canary.RULESET} an earlier run left"])
-        self.assertEqual(self.paths(opener, "PATCH"), ["/repos/o/r/pulls/3", "/repos/o/r/issues/5"])
+        self.assertEqual(self.paths(opener, "PATCH"), ["/repos/o/r/pulls/3", "/repos/o/r/issues/5"],
+                         "the claim C6 held, #7, stands with its draft #8 for a later run")
         self.assertEqual(self.paths(opener, "DELETE"),
                          [f"/repos/o/r/git/refs/heads/{canary.quote(odd)}", "/repos/o/r/rulesets/11"])
-        self.assertEqual(self.site({listed("/repos/o/r/pulls", state="open"): Refusal(500)})[0].sweep(),
-                         ["the sweep stopped: GET /repos/o/r/pulls: HTTP 500"])
+        self.assertEqual(self.site({listed("/repos/o/r/issues", state="open"): Refusal(500)})[0].sweep(),
+                         ["the sweep stopped: GET /repos/o/r/issues: HTTP 500"])
+
+    def test_a_held_claim_leaves_the_clean_up_and_a_claim_taken_over_joins_it(self):
+        site, opener = self.site({
+            "POST /repos/o/r/labels": Refusal(422, {"message": "Validation Failed"}),
+            "POST /repos/o/r/issues/7/labels": FakeAnswer([]),
+        })
+        site.issues, site.pulls = [5, 7], [6, 8]
+        site.hold(7, 8)
+        self.assertEqual(opener.sent("POST"), [{"labels": [labels.IN_REVIEW]}])
+        self.assertEqual((site.issues, site.pulls), ([5], [6]))
+        site.take_over(3, 4)
+        site.take_over(3, None)
+        self.assertEqual((site.issues, site.pulls), ([5, 3], [6, 4]))
+        site, _ = self.site({"POST /repos/o/r/issues/7/labels": Refusal(500)})
+        site.issues, site.pulls = [7], [8]
+        with self.assertRaises(canary.GitHubError):
+            site.hold(7, 8)
+        self.assertEqual((site.issues, site.pulls), ([7], [8]), "a claim GitHub would not label closes with the run")
 
     def test_the_clean_up_closes_the_run_s_own_and_a_refusal_is_a_line(self):
         site, opener = self.site({
@@ -1229,6 +1508,47 @@ class TheEnvironment(unittest.TestCase):
         self.assertEqual(text.count("CANARY_RUNS:"), 1)
         for check in canary.MONTHLY:
             self.assertIn(check, text)
+
+    def test_a_held_claim_is_due_a_day_and_the_token_s_hour_after_its_issue(self):
+        """The push of a held claim came within the run's TOKEN_LIFE after
+        its issue was made, so HELD_FOR after the issue it has surely gone
+        more than the spec's day without a push; the five minutes are the
+        clocks' skew."""
+        self.assertEqual(canary.HELD_FOR, claims.IDLE_AFTER + canary.TOKEN_LIFE + timedelta(minutes=5))
+        self.assertEqual(canary.HELD_FOR, timedelta(hours=25))
+        self.assertGreater(canary.BACKDATED, claims.IDLE_AFTER)
+        in_review = [{"name": labels.IN_REVIEW}]
+        self.assertTrue(canary.is_held({"title": "canary C6: throwaway", "labels": in_review}))
+        self.assertFalse(canary.is_held({"title": "canary C6: throwaway", "labels": [{"name": labels.TODO}]}))
+        self.assertFalse(canary.is_held({"title": "Someone's issue", "labels": in_review}))
+        self.assertFalse(canary.is_held(None))
+        self.assertIsNone(canary.made_at({"created_at": "not a time"}))
+        self.assertIsNone(canary.made_at({}))
+        self.assertEqual(canary.made_at({"created_at": "2026-10-14T04:43:00Z"}),
+                         datetime(2026, 10, 14, 4, 43, tzinfo=timezone.utc))
+
+    def test_the_board_reads_the_open_issues_before_the_branches(self):
+        """C6's and C7's judgment of the backdated push rests on this order
+        (released_at_once): a page that lists the mark, an issue opened
+        after the push, then read the claim's branch after the push."""
+        asked = []
+
+        class Api:
+            repo = "o/r"
+
+            def get_all(self, path, params=None):
+                asked.append(path)
+                return []
+
+            def pages(self, path, params=None):
+                asked.append(path)
+                return []
+
+            def get(self, path, params=None, missing_ok=False):
+                asked.append(path)
+                return None
+        github.collect(Api(), "sha", "main", now=datetime(2026, 10, 14, 4, 43, tzinfo=timezone.utc))
+        self.assertLess(asked.index("/repos/o/r/issues"), asked.index("/repos/o/r/branches"), asked)
 
     def test_the_claim_file_follows_the_template(self):
         text = canary.claim_text("o/r", 12, "canary", "plan")
