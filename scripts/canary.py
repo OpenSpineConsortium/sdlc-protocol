@@ -118,6 +118,33 @@ AS_IT_STANDS = ("clean", "unstable", "has_hooks")
 # The names C3 pushes, as \u escapes so this file stays ASCII: a superscript
 # two, which reads as a digit and is none, and an e with an acute accent.
 ODD_NAMES = ("claude/\u00b2", "claude/caf\u00e9")
+# How many of a ref's newest activity entries C6 records around a release:
+# all one name can gather in the check, the claim's making and its
+# backdated push, an entry of the rename, the second push's making and
+# the board's delete of it, with one to spare, in one call per read.
+ACTIVITY_SEEN = 6
+# What each record of the activity around C6's release settles. These are
+# observations of GitHub, which the harness's model assumes and no
+# expectation reads: a GitHub that answers otherwise fails nothing and
+# shows what the model is to change (DESIGN.md, section 11).
+ACTIVITY_SETTLES = {
+    "activity after the rename": (
+        "whether GitHub keeps a renamed branch's entries, its making and its pushes, under its new name, as the "
+        "model's rename carries them over (model.rename_ref, F13's order of a released claim renamed back); "
+        "whether it lists the rename as a new entry under the name the rename makes, dated by the rename, which "
+        "on a rename back to the claim's name would date the claim by the rename and hold it a day from it (F8, "
+        "What it leaves); and whether the name the rename frees keeps any entry, where the model keeps none"),
+    "activity after the second push": (
+        "how GitHub lists the push that makes the freed name again at the released head, read before the board's "
+        "run deletes it where the timing allows: the model lists that push's making alone, a branch_creation "
+        "setting the head, with no entry of the rename before it (model.pushed_now, model.deleted), and the "
+        "board dates the push by its newest entry (F8) and the Overlaps the work by its making (F13)"),
+    "activity after the wait for the delete": (
+        "whether GitHub lists the board's REST delete of that push as a branch_deletion whose before names the "
+        "head it took away, as the model lists a claim branch's delete once a push makes the branch again "
+        "(model.delete_ref, fake_github.FakeGitHub.branch_entries; F8's second review), read once the run that "
+        "deletes it was waited for, whether the delete came or not"),
+}
 RULESET = "canary C7"
 ISSUE_TITLE = "Canary failed: "
 ISSUE_LABEL = "canary"
@@ -413,8 +440,19 @@ class Site:
     def check_runs(self, sha):
         return self.api.check_runs(sha)
 
-    def activity(self, ref):
-        return self.api.get_all(f"/repos/{self.repo}/activity", {"ref": ref, "activity_type": "force_push"})
+    def activity(self, ref, kind="force_push", newest=None):
+        """The repository's activity on one ref: every entry of one kind,
+        as C5 reads the force_push of its lease push; or, with newest,
+        that many of the newest entries in one call, of every kind where
+        kind is None, as C6 records them around a release
+        (record_activity)."""
+        params = {"ref": ref}
+        if kind:
+            params["activity_type"] = kind
+        path = f"/repos/{self.repo}/activity"
+        if newest is None:
+            return self.api.get_all(path, params)
+        return self.api.get(path, {**params, "direction": "desc", "per_page": newest}) or []
 
     def runs_since(self, when):
         """The board workflow's runs created since when, or None when the
@@ -998,7 +1036,10 @@ def check_c6(site, seen):
     once, and that release is followed; a copy with the fix does not,
     which is F8's own check, and the release followed is that of the claim
     an earlier run held (held_claim), once it has gone HELD_FOR, the fresh
-    one held in its place for a later run."""
+    one held in its place for a later run. Around the release followed it
+    records, as observations, what GitHub's activity lists after the
+    rename and after the second push of the freed name (record_activity,
+    ACTIVITY_SETTLES)."""
     held = held_claim(site, seen, "C6")
     fresh = backdated_claim(site, seen)
     released = released_at_once(site, seen, "C6", fresh)
@@ -1167,7 +1208,10 @@ def hours(span):
 def follow_release(site, seen, subject):
     """The release of a claim gone a day without a push, end to end, from
     the release comment to the delete of the second push of the freed name
-    and the draft that push opened."""
+    and the draft that push opened; and, judged by nothing, the activity
+    of both names once the rename is seen, and of the freed name after its
+    second push and after the wait for its delete (record_activity), which
+    the harness's model assumes and no expectation reads."""
     number, branch, head, pull = subject.number, subject.branch, subject.head, subject.pull
     comments, released = site.wait(lambda: site.comments(number),
                                    lambda cs: bool(has_marker(cs, claims.RELEASE_MARKER)))
@@ -1205,6 +1249,7 @@ def follow_release(site, seen, subject):
         seen.note(RUNS_NOT_READ)
     if not kept:
         return
+    record_activity(site, seen, "activity after the rename", [f"refs/heads/{renamed}", f"refs/heads/{branch}"])
     subject.clone.branch(branch, head)
     again = subject.clone.push(branch)
     seen.values["second push at the released head"] = again.as_dict()
@@ -1212,12 +1257,51 @@ def follow_release(site, seen, subject):
         return
     second = site.open_pull(branch, f"canary C6: a draft from the second push of {branch}", f"Closes #{number}", True)
     site.poke(number)
+    record_activity(site, seen, "activity after the second push", [f"refs/heads/{branch}"])
     _, deleted = site.wait(lambda: (site.branch_sha(branch), site.branch_sha(renamed)),
                            lambda pair: pair[0] is None and pair[1] == head)
+    record_activity(site, seen, "activity after the wait for the delete", [f"refs/heads/{branch}"])
     if not seen.expect("the next run deletes the second push, since the released branch keeps its head", deleted):
         return
     _, closed = site.wait(lambda: site.pull(second).get("state"), lambda found: found == "closed")
     seen.expect("the delete closed the draft opened from the second push", closed)
+
+
+def record_activity(site, seen, record, refs):
+    """Record the newest ACTIVITY_SEEN entries of each ref's activity as
+    seen.values[record], with when they were read, and note what the
+    record settles (ACTIVITY_SETTLES). It is an observation and judges
+    nothing, so a read GitHub refuses is noted and the check goes on; a
+    401 alone stops it, as every wait does, since the token itself is
+    refused and the next call would be too."""
+    read = {"read at": site.now().strftime("%Y-%m-%dT%H:%M:%SZ")}
+    answered = False
+    for ref in refs:
+        try:
+            read[ref] = activity_entries(site.activity(ref, kind=None, newest=ACTIVITY_SEEN))
+            answered = True
+        except GitHubError as problem:
+            if problem.status == 401:
+                raise
+            read[ref] = f"not read: {problem}"
+            seen.note(f"the {record} was not read for {ref}: {problem}; it is an observation, so nothing failed")
+    seen.values[record] = read
+    if answered:
+        seen.note(f"the {record} is recorded, an observation and no expectation: it settles {ACTIVITY_SETTLES[record]}")
+
+
+def activity_entries(listed):
+    """The fields of the activity's entries the harness's model reasons
+    about, the actor by login alone, newest first as GitHub lists them;
+    an answer that is no list keeps nothing."""
+    entries = [e for e in listed if isinstance(e, dict)] if isinstance(listed, list) else []
+    return [{"activity_type": e.get("activity_type"), "timestamp": e.get("timestamp"), "before": e.get("before"),
+             "after": e.get("after"), "ref": e.get("ref"), "actor": login_of(e.get("actor"))}
+            for e in entries[:ACTIVITY_SEEN]]
+
+
+def login_of(actor):
+    return actor.get("login") if isinstance(actor, dict) else None
 
 
 def moved_from(before):
@@ -1339,7 +1423,8 @@ CHECKS = {
     "C3": (check_c3, "names outside ASCII: what GitHub and the board's run do with them (F6, live)"),
     "C5": (check_c5, "the activity API: a lease push listed as a force_push with before and after (F7, F8)"),
     "C6": (check_c6, "a release end to end: comment, labels, rename, closed draft, the Queue, the freed name; a "
-                     "backdated push not released at once (F8), its claim held for a run a day on"),
+                     "backdated push not released at once (F8), its claim held for a run a day on; the activity "
+                     "after the rename and the freed name's second push, recorded"),
     "C7": (check_c7, "rulesets: a lease push and the rename refused under non_fast_forward on claude/** (G11b); "
                      "with F8, on a claim an earlier run held"),
 }

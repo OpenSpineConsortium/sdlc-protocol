@@ -35,6 +35,9 @@ from test_github import FakeAnswer, FakeOpener, Refusal  # noqa: E402
 
 MAIN = "sha-main-1"
 BOT = "github-actions[bot]"
+# The head GitHub's activity names on the side of a push that made or
+# deleted a branch.
+NO_HEAD = "0" * 40
 COMMIT = "438844fbaca69df9e38a59ce4aa09635e39baf09"
 
 
@@ -205,9 +208,17 @@ class FakeSite:
             sha = self.parents.get(sha)
         return False
 
+    def record(self, kind, branch, before, after):
+        """An entry of the repository's activity, as GitHub shapes one,
+        with an id and the actor's id the canary's record leaves out."""
+        self.activity_events.append({"id": len(self.activity_events) + 1, "activity_type": kind, "before": before,
+                                     "after": after, "actor": {"login": "app[bot]", "id": 9},
+                                     "timestamp": self.now().strftime("%Y-%m-%dT%H:%M:%SZ"),
+                                     "ref": f"refs/heads/{branch}"})
+
     def push(self, branch, sha, lease=None, delete=False):
         if delete:
-            self.branches.pop(branch, None)
+            self.delete_branch(branch)
             return canary.Pushed(True, "deleted")
         held = self.branches.get(branch)
         if lease:
@@ -223,6 +234,8 @@ class FakeSite:
             return canary.Pushed(True, "pushed")
         if held is not None and not self.descends(sha, held) and not self.take_every_push:
             return canary.Pushed(False, "! [rejected] claude/n -> claude/n (fetch first)")
+        if held != sha:
+            self.record("branch_creation" if held is None else "push", branch, held or NO_HEAD, sha)
         self.branches[branch] = sha
         self.pushed_at[(branch, sha)] = self.now()
         for pull in self.pulls.values():
@@ -252,13 +265,30 @@ class FakeSite:
         return self.branches[self.default_branch]
 
     def delete_branch(self, name):
-        self.branches.pop(name, None)
+        """GitHub's REST delete, listed in the activity as a branch_deletion
+        naming the head it took away."""
+        gone = self.branches.pop(name, None)
+        if gone is not None:
+            self.record("branch_deletion", name, gone, NO_HEAD)
+
+    def rename_branch(self, old, new):
+        """GitHub's rename, whose activity the fake carries over to the new
+        name, as the harness's model assumes (model.rename_ref) and C6
+        records of the live service."""
+        self.branches[new] = self.branches.pop(old)
+        for entry in self.activity_events:
+            if entry["ref"] == f"refs/heads/{old}":
+                entry["ref"] = f"refs/heads/{new}"
 
     def check_runs(self, sha):
         return self.check_runs_by_sha.get(sha, [{"name": "check", "status": "completed", "conclusion": "success"}])
 
-    def activity(self, ref):
-        return [e for e in self.activity_events if e["ref"] == ref]
+    def activity(self, ref, kind="force_push", newest=None):
+        """The ref's entries of one kind, or of every kind where kind is
+        None, oldest first, or the newest first and that many with newest,
+        as canary.Site asks GitHub for them."""
+        found = [e for e in self.activity_events if e["ref"] == ref and (kind is None or e["activity_type"] == kind)]
+        return found if newest is None else found[::-1][:newest]
 
     def runs_since(self, when):
         self.runs_asked_since = when
@@ -404,7 +434,7 @@ def release(number, head=None, refuse_rename=False, by_committer_date=False):
                          "GitHub refused ...\n\nThese rulesets apply to the two names:\n- canary C7: non_fast_forward",
                          BOT, "NONE")
             return
-        site.branches[renamed] = site.branches.pop(branch)
+        site.rename_branch(branch, renamed)
         for pull in site.pulls.values():
             if pull["head"] == branch:
                 pull["state"] = "closed"
@@ -415,7 +445,7 @@ def release(number, head=None, refuse_rename=False, by_committer_date=False):
 def rename(number, head=None):
     def react(site):
         sha = head or site.branches[claims.branch_of(number)]
-        site.branches[claims.released_branch(number, sha)] = site.branches.pop(claims.branch_of(number))
+        site.rename_branch(claims.branch_of(number), claims.released_branch(number, sha))
     return react
 
 
@@ -425,7 +455,7 @@ def delete_second_push(number, closes=True):
     a GitHub that left it open."""
     def react(site):
         branch = claims.branch_of(number)
-        site.branches.pop(branch, None)
+        site.delete_branch(branch)
         for pull in site.pulls.values():
             if closes and pull["head"] == branch and pull["state"] == "open":
                 pull["state"] = "closed"
@@ -746,6 +776,95 @@ class TheChecks(unittest.TestCase):
         site = FakeSite()
         number = site.throwaway("C6")
         self.assertIn("the board said nothing of a refusal", canary.why_not_renamed(site, number, "released/1-abc1234"))
+
+    def test_c6_records_the_activity_around_the_release_and_judges_none_of_it(self):
+        """Once the rename is seen, C6 records the newest entries of both
+        names' activity, then the freed name's after its second push and
+        after the wait for the board's delete of it, each entry with only
+        the fields the model reasons about and the actor by login; these
+        are observations, so no expectation reads them, and a note says
+        what each settles. The fake carries a rename's entries over to the
+        new name, as the model assumes."""
+        site = FakeSite(runs=[])
+        site.reactions += [release(101, "sha-002"), delete_second_push(101)]
+        seen, _ = run(site, "C6", known_of(site))
+        self.assertEqual(seen.status, "known", seen.as_dict())
+        self.assertEqual(missed(seen), [])
+        self.assertEqual([e["expectation"] for e in seen.expectations if "activity" in e["expectation"]], [])
+        at = "2026-10-14T04:43:00Z"
+
+        def entry(kind, before, after, ref="refs/heads/claude/101"):
+            return {"activity_type": kind, "timestamp": at, "before": before, "after": after, "ref": ref,
+                    "actor": "app[bot]"}
+        renamed = "refs/heads/released/101-sha-002"
+        self.assertEqual(seen.values["activity after the rename"], {
+            "read at": at,
+            renamed: [entry("push", "sha-001", "sha-002", renamed),
+                      entry("branch_creation", NO_HEAD, "sha-001", renamed)],
+            "refs/heads/claude/101": []})
+        self.assertEqual(seen.values["activity after the second push"], {
+            "read at": at, "refs/heads/claude/101": [entry("branch_creation", NO_HEAD, "sha-002")]})
+        self.assertEqual(seen.values["activity after the wait for the delete"], {
+            "read at": at, "refs/heads/claude/101": [entry("branch_deletion", "sha-002", NO_HEAD),
+                                                     entry("branch_creation", NO_HEAD, "sha-002")]})
+        recorded = [note for note in seen.notes if note.startswith("the activity after")]
+        self.assertEqual(len(recorded), 3, seen.notes)
+        for note, record in zip(recorded, canary.ACTIVITY_SETTLES):
+            self.assertTrue(note.startswith(f"the {record} is recorded, an observation and no expectation"), note)
+            self.assertIn(canary.ACTIVITY_SETTLES[record], note)
+        json.dumps(seen.as_dict())
+
+    def test_c6_notes_a_refused_read_of_the_activity_and_fails_nothing(self):
+        """A read of the activity GitHub refuses is a note and fails
+        nothing, the record holding what GitHub said in place of the
+        entries; the flow goes on to the delete as before, and only what
+        was read says what it settles. A 401 stops the check, as every
+        wait does, since the token itself is refused."""
+        site = FakeSite(runs=[])
+        site.reactions += [release(101, "sha-002"), delete_second_push(101)]
+        activity = site.activity
+
+        def refused_for_the_claim(ref, kind="force_push", newest=None):
+            if ref == "refs/heads/claude/101":
+                raise canary.GitHubError("GET /repos/o/r/activity: HTTP 403", 403)
+            return activity(ref, kind, newest)
+        site.activity = refused_for_the_claim
+        seen, _ = run(site, "C6", known_of(site))
+        self.assertEqual(seen.status, "known", seen.as_dict())
+        self.assertEqual(missed(seen), [])
+        self.assertIn("the delete closed the draft opened from the second push",
+                      [e["expectation"] for e in seen.expectations if e["holds"]])
+        refused = "not read: GET /repos/o/r/activity: HTTP 403"
+        self.assertEqual(seen.values["activity after the rename"]["refs/heads/claude/101"], refused)
+        self.assertEqual(len(seen.values["activity after the rename"]["refs/heads/released/101-sha-002"]), 2)
+        self.assertEqual(seen.values["activity after the second push"]["refs/heads/claude/101"], refused)
+        self.assertEqual(seen.values["activity after the wait for the delete"]["refs/heads/claude/101"], refused)
+        not_read = [note for note in seen.notes if " was not read for refs/heads/claude/101: " in note]
+        self.assertEqual(len(not_read), 3, seen.notes)
+        self.assertTrue(all(note.endswith("it is an observation, so nothing failed") for note in not_read))
+        recorded = [note for note in seen.notes if " is recorded, an observation" in note]
+        self.assertEqual(len(recorded), 1, "only the read GitHub answered says what it settles")
+        self.assertTrue(recorded[0].startswith("the activity after the rename"))
+
+        site = FakeSite(runs=[])
+        site.reactions += [release(101, "sha-002"), delete_second_push(101)]
+        site.activity = lambda ref, kind="force_push", newest=None: (_ for _ in ()).throw(
+            canary.GitHubError("GET /repos/o/r/activity: HTTP 401", 401))
+        seen, _ = run(site, "C6", known_of(site))
+        self.assertEqual(seen.status, "failed")
+        self.assertIn("stopped: GET /repos/o/r/activity: HTTP 401", seen.notes)
+        self.assertNotIn("second push at the released head", seen.values)
+
+    def test_the_activity_s_record_keeps_the_model_s_fields_of_the_newest_entries(self):
+        many = [{"id": n, "activity_type": "push", "timestamp": f"t{n}", "before": "a", "after": "b",
+                 "ref": "refs/heads/claude/5", "actor": {"login": "w", "id": 1}, "node_id": "x"} for n in range(9)]
+        kept = canary.activity_entries(["no entry"] + many)
+        self.assertEqual([e["timestamp"] for e in kept], [f"t{n}" for n in range(canary.ACTIVITY_SEEN)])
+        self.assertEqual(sorted(kept[0]), ["activity_type", "actor", "after", "before", "ref", "timestamp"])
+        self.assertEqual(kept[0]["actor"], "w")
+        self.assertEqual(canary.activity_entries([{"activity_type": "push", "actor": None}])[0]["actor"], None)
+        self.assertEqual(canary.activity_entries({"message": "Not Found"}), [])
+        self.assertEqual(canary.activity_entries(None), [])
 
     def first_f8_run(self, check="C6", **kwargs):
         """The first run of the check on a copy with F8's fix, with the
@@ -1396,6 +1515,22 @@ class TheSite(unittest.TestCase):
             site, _ = self.site({listed(runs_path, created=">=2026-10-14T04:00:00Z"): Refusal(status)}, runs_allowed=True)
             with self.assertRaises(canary.GitHubError, msg=f"a {status} is the copy's or GitHub's, not the token's"):
                 site.runs_since(since)
+
+    def test_it_reads_a_ref_s_newest_activity_of_every_kind_in_one_call(self):
+        """C6's record of the activity asks one page, newest first and of
+        every kind, where C5's reader asks every page of one kind; an empty
+        answer is no entry, and a refusal is GitHub's, for the record to
+        note."""
+        newest = key("/repos/o/r/activity", ref="refs/heads/claude/5", direction="desc", per_page=canary.ACTIVITY_SEEN)
+        site, opener = self.site({newest: FakeAnswer([{"activity_type": "branch_deletion", "before": "b"}])})
+        self.assertEqual(site.activity("refs/heads/claude/5", kind=None, newest=canary.ACTIVITY_SEEN),
+                         [{"activity_type": "branch_deletion", "before": "b"}])
+        self.assertEqual(self.paths(opener, "GET"), [newest])
+        site, _ = self.site({newest: FakeAnswer(None)})
+        self.assertEqual(site.activity("refs/heads/claude/5", kind=None, newest=canary.ACTIVITY_SEEN), [])
+        site, _ = self.site({newest: Refusal(500)})
+        with self.assertRaises(canary.GitHubError):
+            site.activity("refs/heads/claude/5", kind=None, newest=canary.ACTIVITY_SEEN)
 
     def test_it_opens_labels_comments_pokes_and_closes_issues(self):
         site, opener = self.site({
