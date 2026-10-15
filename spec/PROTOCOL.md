@@ -14,7 +14,7 @@ Each worker has a name, unique in the repository: its label is `worker:<name>` a
 - claimed: a worker has pushed its branch. The worker's own label goes on with it.
 - in-review: the pull request is ready; the owner merges it and the merge closes the issue.
 - blocker: the issue stops everyone: work it stands in the way of waits until it is done (Blockers).
-- worker:<name>: the worker that holds the issue, or that the coordinator gave it before any claim. An issue a worker's label names is that worker's alone: it is left out of the board's Queue and shown under Given to workers until the worker claims it. Where the labels of several workers name one issue, it is theirs alone in the same way: given to each of them, and held by the first of them to claim it. The older spellings account:<name> and agent:<name> are read as the same label.
+- worker:<name>: the worker that holds the issue, or that the coordinator gave it before any claim. An issue a worker's label names is that worker's alone: it is left out of the board's Queue and shown under Given to workers until the worker claims it. Where the labels of several workers name one issue, it is theirs alone in the same way: given to each of them, and held by the first of them to claim it, whose Announce takes the others' labels off. The older spellings account:<name> and agent:<name> are read as the same label.
 - epic: a request the coordinator plans into tasks (Planning, below). The board's Queue leaves an epic out, since nobody takes one whole.
 - blocked: a worker waits on a peer or the coordinator.
 
@@ -48,7 +48,7 @@ Two to five sentences: what will change and why, in the order it will land.
 
 ## Announce
 
-Add the label claimed and the worker's label to the issue, taking off any other worker's label an earlier claim left there, and post the plan as a comment, so the board and the people reading the issue see the same thing the branch says.
+Add the label claimed and the worker's label to the issue, taking off every other worker's label, one an earlier claim left there or one that gave the issue to several workers, so that from the claim on the labels name the holder alone, as the claim file does; and post the plan as a comment, so the board and the people reading the issue see the same thing the branch says.
 
 ## Work in the open
 

@@ -25,8 +25,9 @@ F8's trace breaks nothing and records the assumption under which
 G2 and G3 hold, that idleness is the committer date the pusher sets.
 
 The file's steps are objects: "verb" (a verb of verbs.py, or "announce",
-the three Announce verbs; "guard" and "deal", the two steps run.py plays
-without the model), "actor" (the board's and the clock's need none),
+the Announce verbs, claimed and the worker's label on, each other worker's
+label the step's second argument lists off, and the plan; "guard" and
+"deal", the two steps run.py plays without the model), "actor" (the board's and the clock's need none),
 "args" as a list, "at", the hour, kept from the step before when left
 out, "skew", hours added to a claim's or a commit's committer date,
 "event", "ref" and "faults" for a board verb, "expect" in Expect's shape
@@ -34,7 +35,7 @@ with lists for its sets and numbers for its keys where JSON has strings,
 "shows", the finding the step is red for, and "note" and the file's
 "world", read by nobody. A step is numbered, in known.json, in the tests
 and in a replay's report, by its place among the steps as played, from
-zero, where an "announce" counts as its three verbs. Every file is ASCII:
+zero, where an "announce" counts as each of its verbs. Every file is ASCII:
 a character outside it is written as a \\u escape.
 """
 
@@ -91,9 +92,11 @@ def steps_of(raw_steps):
         verb, actor = raw["verb"], raw.get("actor", "board" if raw["verb"] in BOARD_VERBS else "clock")
         expect, shows = expectation(raw.get("expect")), raw.get("shows", "")
         if verb == "announce":
-            number = raw["args"][0]
+            number, off = raw["args"][0], raw["args"][1] if len(raw["args"]) > 1 else ()
             steps.append(Step(at, actor, "label-on", (number, "claimed")))
             steps.append(Step(at, actor, "label-on", (number, f"worker:{actor}")))
+            for label in off:
+                steps.append(Step(at, actor, "label-off", (number, label)))
             steps.append(Step(at, actor, "plan", (number,), expect, shows))
         elif verb in ("board", "board-start"):
             args = (raw.get("event", cycle.SCHEDULE), raw.get("ref", ""), tuple(raw.get("faults", ())))

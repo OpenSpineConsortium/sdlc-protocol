@@ -111,7 +111,7 @@ SPEC = {
     "another's": "An issue with a branch `claude/<issue>` on origin, or a file `docs/agents/claims/<issue>.md` on the "
                  "default branch, is another worker's, whatever its labels say.",
     "several": "Where the labels of several workers name one issue, it is theirs alone in the same way: given to "
-               "each of them, and held by the first of them to claim it.",
+               "each of them, and held by the first of them to claim it, whose Announce takes the others' labels off.",
     "blocked": "- blocked: a worker waits on a peer or the coordinator.",
     "held blocker": "a second worker that sees it held waits for it, helps on the one pull request by review, or "
                     "takes other work it does not stand in the way of (Pick)",

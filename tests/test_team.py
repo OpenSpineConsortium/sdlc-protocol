@@ -22,7 +22,7 @@ class FakeClient:
     def __init__(self):
         self.issues, self.branches, self.pulls, self.checks = {}, set(), {}, {}
         self.labels, self.sub_issues = {"todo", "epic"}, []
-        self.claims, self.released_claims = {}, set()
+        self.claims, self.released_claims, self.released_asked = {}, set(), []
         self.next_number = 100
 
     def add_claim(self, issue, worker):
@@ -60,6 +60,7 @@ class FakeClient:
         return self.claims.get(branch)
 
     def released(self, branch):
+        self.released_asked.append(branch)
         return branch in self.released_claims
 
     def create_label(self, name, colour):
@@ -315,6 +316,35 @@ class NextTest(unittest.TestCase):
         self.api.add_issue(3, ["todo", "worker:a", "worker:b"])
         self.assertEqual(team.deals(self.api, ["a", "b"]), {"a": "carry 2", "b": "take 3"})
         self.assertEqual(team.next_for(self.api, "b", ["a", "b"]), "take 3")
+
+    def test_a_released_claim_is_nobody_s_until_the_board_renames_its_branch(self):
+        """The release took the labels off and the branch still stands: the
+        board shows the issue unclaimed again, so the clerk sends its former
+        holder back to it no more, and deals the issue to nobody either,
+        since the name claude/N is not free until the rename (F18's review);
+        the Client is asked once a look."""
+        self.api.add_issue(2, ["todo"])
+        self.api.add_claim(2, "a")
+        self.api.released_claims.add("claude/2")
+        self.assertEqual(team.deals(self.api, ["a", "b"]), {"a": "none", "b": "none"})
+        self.assertEqual(self.api.released_asked, ["claude/2"])
+        self.api.released_claims.clear()
+        self.assertEqual(team.deals(self.api, ["a", "b"]), {"a": "carry 2", "b": "none"})
+
+    def test_whether_a_claim_is_released_is_asked_only_where_a_release_is_possible(self):
+        """A claim whose issue is labelled claimed or in-review, or whose own
+        pull request is ready, cannot count as released (board.is_released),
+        so the Client is not asked, which over REST costs the branch's head,
+        its commit and the issue's comments."""
+        self.api.add_claim(2, "a")
+        self.api.released_claims.add("claude/2")
+        for labels in (["claimed"], ["in-review"], ["claimed", "worker:b"]):
+            self.api.add_issue(2, labels)
+            self.assertEqual(team.deals(self.api, ["a", "b"]), {"a": "carry 2", "b": "none"}, labels)
+        self.api.add_issue(2, ["todo"])
+        self.api.add_pull(2, draft=False, state="behind")
+        self.assertEqual(team.deals(self.api, ["a", "b"]), {"a": "carry 2", "b": "none"})
+        self.assertEqual(self.api.released_asked, [])
 
     def test_a_task_given_to_one_alone_comes_before_a_shared_one(self):
         """A worker with a task of its own has something else to do, so a

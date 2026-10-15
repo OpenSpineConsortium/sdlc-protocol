@@ -331,6 +331,19 @@ class FakeRepo:
         runs = self.checks.get(rest[0], [])
         return {"total_count": len(runs), "check_runs": runs}
 
+    def get_git(self, rest, query, body):
+        """A branch's ref and a commit, which the library asks for where a
+        claim's labels and pull request leave a release possible (F18's
+        review, github.claim_released); the template's tools never did.
+        Every branch this GitHub holds was committed to just now, so no
+        claim is idle and no release comment is read."""
+        if rest[:2] == ["ref", "heads"]:
+            branch = "/".join(rest[2:])
+            return {"object": {"sha": f"sha{branch.rsplit('/', 1)[-1]}"}} if branch in self.branches else found(None)
+        if rest[:1] == ["commits"]:
+            return {"sha": rest[1], "committer": {"date": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}}
+        return found(None)
+
     def get_activity(self, rest, query, body):
         return []
 
