@@ -58,6 +58,11 @@ UNDATED_STRANGER = ("date a stranger's pull request from it by when it was opene
 # GitHub computes mergeability after the first ask; one more ask after a
 # pause is enough, and "unknown" is the honest word when it still has not.
 MERGEABLE_RETRY_SECONDS = 3
+# The repository's activity may not list a push the moment GitHub takes it:
+# one more read after a pause before a claim is dated by its committer
+# date (head_since, F8).
+PUSH_RETRY_SECONDS = 3
+NO_PUSH_LISTED = "the repository's activity, read twice, lists no push that set the branch's head"
 RECENT_MERGED = board.RECENT_MERGED
 
 # GitHub's mergeable_state words that say only that something besides the
@@ -609,48 +614,93 @@ def head_since(api, branch, sha, refused=None):
     (head_pushed_at), so no worker's clock decides how long a claim has
     been idle (F8: until its fix the head's committer date did, which the
     pusher sets, so a commit dated ahead held a claim past its day and one
-    dated back had it released at once); else, where the activity records
-    no such push or GitHub refuses to read it, the head's committer date,
-    the rule before the fix, so a token that may not read the activity
-    still sees claims released. A refusal is recorded in refused, by
-    branch, for the run's log (pushed_refused_lines). It costs one call,
-    and one more where the activity does not date the push."""
+    dated back had it released at once). A first read that lists no push
+    that set the head, or that GitHub gives no answer to that holds (a
+    5xx, a 429, a rate limit's 403, or none at all), is made once more
+    after a pause, as settled asks again for mergeable: the push a run was
+    started by is the one the activity is likeliest not to list yet, and
+    the committer date in its place would let a commit dated back have its
+    claim released in the run its own push started. Where the second read
+    dates no push either, or GitHub refuses the read for good, the head's
+    committer date stands in, the rule before the fix, so a token that may
+    not read the activity still sees claims released and no claim is held
+    for good; refused records why, by branch, for the run's log
+    (pushed_refused_lines), except for a repository GitHub keeps no
+    activity of (a 404), whose committer dates were always the rule. It
+    costs one call; a pause and one more where the first read does not
+    date the push; and one more, the commit, where the activity does not
+    date it in the end."""
+    pushed, why, again = read_push(api, branch, sha)
+    if again:
+        api.sleep(PUSH_RETRY_SECONDS)
+        pushed, why, _ = read_push(api, branch, sha)
+    if pushed:
+        return pushed, ""
+    if why and refused is not None:
+        refused[branch] = why
+    return "", committed_at(api, sha)
+
+
+def read_push(api, branch, sha):
+    """One read of when the push that set the branch's head came, as
+    (pushed_at, why, again): GitHub's time of the push when the activity
+    dates it; else why the committer date would stand in, in words for
+    the run's log, "" for a repository GitHub keeps no activity of (a
+    404); and whether a second read may tell more, as one may after an
+    answer that does not hold (may_answer_later) or a list that names no
+    push of the head yet."""
     try:
         pushed = head_pushed_at(api, branch, sha)
     except GitHubError as problem:
-        if refused is not None:
-            refused[branch] = f"{problem}{github_words(problem)}"
-        pushed = ""
-    return (pushed, "") if pushed else ("", committed_at(api, sha))
+        return ("", f"GitHub refused to say when the push that set the branch's head came "
+                    f"({problem}{github_words(problem)})", may_answer_later(problem))
+    if pushed is None:
+        return "", "", False
+    return (pushed, "", False) if pushed else ("", NO_PUSH_LISTED, True)
+
+
+def may_answer_later(problem):
+    """Whether GitHub may answer the same call after a pause: it gave no
+    answer, a 5xx, a 429, or a 403 that says a rate limit was reached,
+    which GitHub sends for its secondary limits; any other refusal, a 401,
+    a 403 for a token that may not read, a 422, is its answer for good."""
+    status = problem.status
+    if status is None or status >= 500 or status == 429:
+        return True
+    return status == 403 and "rate limit" in (problem.detail or str(problem)).lower()
 
 
 def head_pushed_at(api, branch, sha):
     """When GitHub received the push that set the branch's head, as the
     repository's activity records it: the time of the newest entry of the
     branch's activity, when that entry set the head the board read, a
-    push, a forced push, the branch's creation or a merge into it; "" when
-    the newest entry set another head or none, as a push that came after
-    the board read the branch, one the activity does not list yet, or a
-    deletion does, or when there is no entry at all (a 404 included). A
-    refusal other than a 404 raises."""
+    push, a forced push, the branch's creation or a merge into it, or set
+    the branch from that head to another, a push after the board read the
+    branch, which says the claim had a push then; "" when the newest entry
+    names that head on neither side, as one the activity has not listed
+    the latest push yet, or when there is no entry at all; None when
+    GitHub keeps no activity of the repository (a 404). Any other refusal
+    raises."""
     listed = api.get(f"/repos/{api.repo}/activity", {"ref": f"refs/heads/{branch}", "direction": "desc",
-                                                     "per_page": 1}, missing_ok=True) or []
+                                                     "per_page": 1}, missing_ok=True)
+    if listed is None:
+        return None
     newest = listed[0] if isinstance(listed, list) and listed else None
-    if isinstance(newest, dict) and newest.get("ref") == f"refs/heads/{branch}" and newest.get("after") == sha:
+    if (isinstance(newest, dict) and newest.get("ref") == f"refs/heads/{branch}"
+            and sha in (newest.get("after"), newest.get("before"))):
         return newest.get("timestamp") or ""
     return ""
 
 
 def pushed_refused_lines(snapshot):
-    """A line for each claim branch GitHub refused to say when its head was
-    pushed in this run, for the workflow's log, since the page says nothing
-    of it: a token that may not read the repository's activity would
-    otherwise have every claim's idleness read from its committer date on
-    every run unseen."""
+    """A line for each claim branch whose head the run dated by its
+    committer date, saying why, for the workflow's log, since the page
+    says nothing of it: a token that may not read the repository's
+    activity would otherwise have every claim's idleness read from its
+    committer date on every run unseen."""
     snap = board.as_snapshot(snapshot)
-    return [f"{branch}: GitHub refused to say when the push that set the branch's head came ({answer}), so its "
-            f"idleness is read from its committer date"
-            for branch, answer in sorted(snap.pushed_refused.items())]
+    return [f"{branch}: {why}, so its idleness is read from its committer date"
+            for branch, why in sorted(snap.pushed_refused.items())]
 
 
 def claim_released(api, branch, now=None):
@@ -714,12 +764,12 @@ def releases(api, heads, found_issues, pulls, now=None, asked=None, every_head=N
     the board counts the release and the coordinator, which finds it done,
     adds none. A claim whose issue is labelled in-review or is not open,
     or whose pull request is marked ready, costs no call; any other costs
-    what dating its head costs (head_since: one call, two where the
-    activity does not date the push), and, when its last commit is more
-    than a day old or its head is kept, one for its draft's comments,
-    then, unless the draft is finished and its issue still carries
-    claimed, one for its issue's comments and one
-    per author whose permission must be asked, so the run pays only where
+    what dating its head costs (head_since: one call where the activity
+    dates the push at once, up to three where it does not), and, when its
+    last commit is more than a day old or its head is kept, one for its
+    draft's comments, then, unless the draft is finished and its issue
+    still carries claimed, one for its issue's comments and one per
+    author whose permission must be asked, so the run pays only where
     a release can be due or can have happened. A draft from a fork, or one
     a stranger opened, is no claim's (is_claims), so what its author says
     holds no claim. asked is the run's answers to who may write

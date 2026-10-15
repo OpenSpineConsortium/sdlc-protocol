@@ -885,7 +885,7 @@ class Releases(unittest.TestCase):
         """F8: where the activity dates the push of the head, that time
         decides, whatever the committer date says; and a branch pushed
         again at a head a release already kept is released by that
-        release however soon after the push it came."""
+        release whenever it came, before the push or after."""
         cases = (
             ("dated after the release, pushed two days before it", {"committed_at": "2026-09-21T10:00:00Z",
                                                                     "pushed_at": LAST_COMMIT}, {"12"}),

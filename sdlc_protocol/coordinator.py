@@ -78,19 +78,22 @@ def releases_due(snapshot, now, idle_after=claims.IDLE_AFTER):
     only once a person's release of it counts (adapters.github.releases),
     so it is never released here."""
     snap = board.as_snapshot(snapshot)
-    keys = [key for key in snap.releases if is_candidate(snap, key) and not kept_released(snap.releases[key])]
+    keys = [key for key in snap.releases if is_candidate(snap, key) and not kept_released(snap, key)]
     last_commits = {key: snap.releases[key].last_commit for key in keys}
     released = {key: snap.releases[key].released_at for key in keys}
     return claims.release_due(last_commits, now, idle_after, released)
 
 
-def kept_released(release):
-    """Whether a release already counts for a claim whose head a release
-    kept (board.release_counts): such a branch was pushed again with
-    nothing new, and the board deletes it, so a release of it would be a
-    second one for the same work; with no release comment that counts, it
-    is released as any idle claim is, its push dating it."""
-    return release.kept and board.release_counts(release)
+def kept_released(snap, key):
+    """Whether the board counts released a claim whose head a release
+    kept (board.is_released): such a branch was pushed again with nothing
+    new, and the board deletes it, so a release of it would be a second
+    one for the same work. With no release comment that counts, or with
+    the label claimed put back, which undoes a release, it is released as
+    any idle claim is, its push dating it, so a person's undoing never
+    holds it for good."""
+    release = snap.releases[key]
+    return release.kept and board.is_released(snap, key)
 
 
 class Holding(NamedTuple):

@@ -128,18 +128,29 @@ class ReleasesDue(unittest.TestCase):
                       coordinator.release_text(ahead, "12", coordinator.Holding()))
 
     def test_a_branch_pushed_again_at_a_kept_head_is_released_once(self):
-        """F8: a release comment counts for a head a release kept however
-        soon after the push it came, so the coordinator adds none; with no
-        release comment such a branch is due as any idle claim is, by its
-        push."""
+        """F8: a release comment counts for a head a release kept whenever
+        it came, so the coordinator adds none while the board counts the
+        claim released; with no release comment, or with the label claimed
+        put back, which undoes the release, such a branch is due as any idle
+        claim is, by its push, so a person's undoing never holds it for
+        good."""
         kept = {"sha": HEAD, "committed_at": "2026-09-10T12:00:00Z", "kept": True}
+        freed = {"12": {"state": "open", "labels": ["todo"]}}
         counted = idle_claim(releases={"12": dict(kept, released_at="2026-09-19T13:00:00Z",
-                                                  pushed_at="2026-09-20T11:00:00Z")})
+                                                  pushed_at="2026-09-20T11:00:00Z")}, claim_issues=freed)
+        self.assertEqual(board.released_keys(counted), {"12"})
         self.assertEqual(coordinator.releases_due(counted, NOW), [])
         fresh = idle_claim(releases={"12": dict(kept, released_at="", pushed_at="2026-09-20T11:00:00Z")})
         self.assertEqual(coordinator.releases_due(fresh, NOW), [])
         idle = idle_claim(releases={"12": dict(kept, released_at="", pushed_at="2026-09-18T11:00:00Z")})
         self.assertEqual(coordinator.releases_due(idle, NOW), ["12"])
+        undone = idle_claim(releases={"12": dict(kept, released_at="2026-09-17T13:00:00Z",
+                                                 pushed_at="2026-09-18T11:00:00Z")})
+        self.assertEqual(board.released_keys(undone), set())
+        self.assertEqual(coordinator.releases_due(undone, NOW), ["12"])
+        undone_fresh = idle_claim(releases={"12": dict(kept, released_at="2026-09-17T13:00:00Z",
+                                                       pushed_at="2026-09-20T11:00:00Z")})
+        self.assertEqual(coordinator.releases_due(undone_fresh, NOW), [])
 
 
 class ReleaseText(unittest.TestCase):

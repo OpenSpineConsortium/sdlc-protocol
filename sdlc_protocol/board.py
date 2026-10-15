@@ -332,9 +332,10 @@ class Snapshot:
     by its branch: when GitHub says the push that made the branch came, as
     the adapter reads it for the overlaps' landing order (began_at), with
     GitHub's answer for each branch it refused to date, which the run's log
-    names (adapters.github.began_refused_lines); and GitHub's answer for
-    each claim branch whose head's push it refused to date, so a release
-    read its committer date (adapters.github.pushed_refused_lines)."""
+    names (adapters.github.began_refused_lines); and why each claim
+    branch whose head the run dated by its committer date was so dated,
+    GitHub's refusal or an activity that lists no push of the head
+    (adapters.github.pushed_refused_lines)."""
 
     sha: str = ""
     default_branch: str = "main"
@@ -476,7 +477,10 @@ def released_keys(snapshot, idle_after=IDLE_AFTER):
     write, by issue key: a claim branch whose issue is open and no longer
     labelled claimed, whose latest release comment came after the branch
     had gone without a commit for more than idle_after, and which nothing
-    has been committed to since (claims.was_released). It takes both acts
+    has been committed to since (claims.was_released), or whose head a
+    release already kept, whenever its comment came (release_counts); the
+    last commit is when GitHub received the push that set the head, else
+    its committer date (Release.last_commit, F8). It takes both acts
     of a release, the comment and the label claimed taken off, so a stray
     comment frees nothing; a commit after the release, its holder's or a
     new claim's, ends it; and putting the label claimed back undoes it. A

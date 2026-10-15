@@ -938,7 +938,7 @@ class Releases(unittest.TestCase):
         """F8: the activity's time of the push that set the head decides
         whether a release can be due, whatever the committer date says, and
         the commit is not asked for; a release that kept the head counts
-        however soon after a push of it came."""
+        whenever it came, before a push of it or after."""
         _, answers = released_answers()
         answers[pushes_path("claude/12")] = FakeAnswer([pushed("claude/12", "2026-09-20T11:00:00Z", HEAD_12)])
         api, opener = client(answers)
@@ -970,32 +970,49 @@ class Releases(unittest.TestCase):
         self.assertEqual(board.released_keys(found), {"12"})
 
     def test_a_push_github_will_not_date_is_read_by_the_committer_date_and_said_in_the_log(self):
-        for answer in (Refusal(403, {"message": "Resource not accessible by integration"}), Refusal(500)):
+        """A refusal for good is read once; one that may be answered later
+        is read once more after a pause, and where both fail the committer
+        date stands in, said in the run's log, which a snapshot keeps."""
+        cases = ((Refusal(403, {"message": "Resource not accessible by integration"}), []),
+                 (Refusal(500), [github.PUSH_RETRY_SECONDS]))
+        for answer, paused in cases:
             _, answers = released_answers()
             answers[pushes_path("claude/12")] = answer
-            api, _ = client(answers)
+            waits = []
+            api, opener = client(answers, waits)
             found = github.collect(api, "abc", "main")
             self.assertEqual(found["releases"]["12"], {"released_at": "2026-09-20T09:00:00Z", "sha": HEAD_12,
                                                        "committed_at": "2026-09-18T12:00:00Z"})
-            self.assertEqual(sorted(found["pushed_refused"]), ["claude/12"])
+            self.assertEqual(waits, paused)
+            self.assertEqual(len([c for c in opener.calls if c.selector == pushes_path("claude/12")]),
+                             1 + len(paused))
+            why = found["pushed_refused"]["claude/12"]
+            self.assertTrue(why.startswith("GitHub refused to say when the push that set the branch's head came ("),
+                            why)
             self.assertEqual(github.pushed_refused_lines(found), [
-                f"claude/12: GitHub refused to say when the push that set the branch's head came "
-                f"({found['pushed_refused']['claude/12']}), so its idleness is read from its committer date"])
+                f"claude/12: {why}, so its idleness is read from its committer date"])
             self.assertEqual(github.pushed_refused_lines(board.Snapshot.from_json(
                 board.Snapshot.from_dict(found).to_json())), github.pushed_refused_lines(found))
 
-    def test_the_push_dates_the_head_only_when_the_newest_entry_set_that_head(self):
-        """head_pushed_at reads the branch's newest entry of any kind: a
-        later push, a deletion or another branch's entry dates nothing, nor
-        does no entry or a 404, and any other refusal raises."""
+    def test_the_push_dates_the_head_only_when_the_newest_entry_names_that_head(self):
+        """head_pushed_at reads the branch's newest entry of any kind: one
+        that set the head, or moved the branch off it, a push after the
+        board read the branch, dates it; one that names the head on neither
+        side, another branch's entry or no entry dates nothing; a 404 says
+        GitHub keeps no activity; and any other refusal raises."""
         path = pushes_path("claude/12")
+        moved_off = dict(pushed("claude/12", "2026-09-19T12:00:00Z", "bbbbbbb2222222"), before=HEAD_12)
+        deleted = dict(pushed("claude/12", "2026-09-19T12:00:00Z", "0" * 40, "branch_deletion"), before=HEAD_12)
         cases = (
             ([pushed("claude/12", "2026-09-18T12:00:00Z", HEAD_12)], "2026-09-18T12:00:00Z"),
             ([pushed("claude/12", "2026-09-18T12:00:00Z", HEAD_12, "force_push")], "2026-09-18T12:00:00Z"),
             ([pushed("claude/12", "2026-09-18T12:00:00Z", HEAD_12, "branch_creation")], "2026-09-18T12:00:00Z"),
+            ([moved_off], "2026-09-19T12:00:00Z"),
+            ([deleted], "2026-09-19T12:00:00Z"),
             ([pushed("claude/12", "2026-09-18T12:00:00Z", "bbbbbbb2222222")], ""),
             ([pushed("claude/12", "2026-09-18T12:00:00Z", "0" * 40, "branch_deletion")], ""),
             ([pushed("claude/13", "2026-09-18T12:00:00Z", HEAD_12)], ""),
+            ([dict(moved_off, ref="refs/heads/claude/13")], ""),
             ([dict(pushed("claude/12", "", HEAD_12), timestamp=None)], ""),
             ([], ""),
             ({"message": "not a list"}, ""),
@@ -1006,18 +1023,55 @@ class Releases(unittest.TestCase):
             self.assertEqual(github.head_pushed_at(api, "claude/12", HEAD_12), expected, answer)
             self.assertEqual([c.selector for c in opener.calls], [path])
         api, _ = client({})
-        self.assertEqual(github.head_pushed_at(api, "claude/12", HEAD_12), "")
+        self.assertIsNone(github.head_pushed_at(api, "claude/12", HEAD_12))
         api, _ = client({path: Refusal(500)})
         with self.assertRaises(github.GitHubError):
             github.head_pushed_at(api, "claude/12", HEAD_12)
-        refused = {}
-        api, opener = client({path: Refusal(500), f"/repos/o/r/git/commits/{HEAD_12}": FakeAnswer(
-            {"committer": {"date": "2026-09-18T12:00:00Z"}})})
-        self.assertEqual(github.head_since(api, "claude/12", HEAD_12, refused), ("", "2026-09-18T12:00:00Z"))
-        self.assertEqual(list(refused), ["claude/12"])
         api, opener = client({path: FakeAnswer([pushed("claude/12", "2026-09-19T12:00:00Z", HEAD_12)])})
         self.assertEqual(github.head_since(api, "claude/12", HEAD_12), ("2026-09-19T12:00:00Z", ""))
         self.assertEqual(len(opener.calls), 1, "a dated push costs one call")
+
+    def test_a_push_the_first_read_does_not_date_is_read_once_more_after_a_pause(self):
+        """The push a run was started by may not be listed yet, and GitHub
+        may not answer the first read: one more read after a pause, as for
+        mergeable, dates the head where it lists the push, and only where
+        it does not either does the committer date stand in. A refusal for
+        good, and a repository GitHub keeps no activity of, are read once."""
+        path, commit = pushes_path("claude/12"), f"/repos/o/r/git/commits/{HEAD_12}"
+        listed = FakeAnswer([pushed("claude/12", "2026-09-19T12:00:00Z", HEAD_12)])
+        older = FakeAnswer([pushed("claude/12", "2026-09-17T12:00:00Z", "bbbbbbb2222222")])
+        dated_commit = FakeAnswer({"committer": {"date": "2026-09-16T12:00:00Z"}})
+        limited = {"message": "You have exceeded a secondary rate limit."}
+        cases = (
+            (Turns(older, listed), ("2026-09-19T12:00:00Z", ""), 2, None),
+            (Turns(FakeAnswer([]), listed), ("2026-09-19T12:00:00Z", ""), 2, None),
+            (Turns(Refusal(502), listed), ("2026-09-19T12:00:00Z", ""), 2, None),
+            (Turns(Refusal(429), listed), ("2026-09-19T12:00:00Z", ""), 2, None),
+            (Turns(Refusal(403, limited), listed), ("2026-09-19T12:00:00Z", ""), 2, None),
+            (Turns(older, older), ("", "2026-09-16T12:00:00Z"), 2, github.NO_PUSH_LISTED),
+            (Turns(Refusal(500), Refusal(503)), ("", "2026-09-16T12:00:00Z"), 2, "refused"),
+            (Turns(Refusal(500), FakeAnswer([])), ("", "2026-09-16T12:00:00Z"), 2, github.NO_PUSH_LISTED),
+            (Refusal(403, {"message": "Resource not accessible by integration"}), ("", "2026-09-16T12:00:00Z"), 1,
+             "refused"),
+            (Refusal(401), ("", "2026-09-16T12:00:00Z"), 1, "refused"),
+            (Refusal(422), ("", "2026-09-16T12:00:00Z"), 1, "refused"),
+            (None, ("", "2026-09-16T12:00:00Z"), 1, None),
+        )
+        for answer, expected, reads, why in cases:
+            answers = {commit: dated_commit} | ({path: answer} if answer is not None else {})
+            waits, refused = [], {}
+            opener = InTurn(answers)
+            api = github.GitHub("t", "o/r", opener=opener, sleep=waits.append)
+            self.assertEqual(github.head_since(api, "claude/12", HEAD_12, refused), expected, answer)
+            self.assertEqual(len([c for c in opener.calls if c.selector == path]), reads, answer)
+            self.assertEqual(waits, [github.PUSH_RETRY_SECONDS] * (reads - 1), answer)
+            if why is None:
+                self.assertEqual(refused, {}, answer)
+            elif why == "refused":
+                self.assertTrue(refused["claude/12"].startswith("GitHub refused to say"), refused)
+            else:
+                self.assertEqual(refused, {"claude/12": why})
+            self.assertEqual(commit in [c.selector for c in opener.calls], bool(expected[1]), answer)
 
     def test_an_author_github_does_not_vouch_for_counts_with_write_permission(self):
         # GitHub may show a private member of the organization to the

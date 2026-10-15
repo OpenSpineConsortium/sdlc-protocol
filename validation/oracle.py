@@ -62,8 +62,9 @@ SPEC = {
             "it is finished",
     "last commit": "When a branch's last commit came, here and below, is when GitHub received the push that set its "
                    "head, as the repository's activity records that push, so no worker's clock decides it",
-    "undated push": "the head's committer date stands in where the activity records no push that set the head, or "
-                    "GitHub refuses to read it.",
+    "undated push": "the head's committer date stands in where the activity, read once more after a pause when the "
+                    "first read lists no push that set the head or GitHub gives it no answer that holds, still lists "
+                    "none, or where GitHub refuses to read it",
     "finished": "an issue labelled in-review, a pull request marked ready, or a draft whose author's latest comment "
                 "on it starts with \"finished; ready to mark\" waits for review however long it takes.",
     "order": "The coordinator first takes the label claimed and every worker's label off the issue, a label "
@@ -85,10 +86,10 @@ SPEC = {
     "rename": "renames the branch to `released/<issue>-<short sha of its head>`",
     "pushed again": "A branch pushed again at the head a release already kept, one a branch "
                     "`released/<issue>-<short sha>` stands at, brings nothing new: its latest release comment counts "
-                    "for it however soon after that push it came",
+                    "for it whenever it came, before that push or after",
     "kept deleted": "so the board deletes it instead of renaming it, since its work is already kept, and the "
-                    "coordinator releases it only where no release comment counts, once it has gone a day without a "
-                    "commit.",
+                    "coordinator releases it only where the board counts no release of it, no release comment "
+                    "counting or the label claimed put back, once it has gone a day without a commit.",
     "overlap": "the coordinator tells each piece of open work about the work it meets, once, in a comment whose "
                "first line is `<!-- sdlc-coordinator: overlap <numbers> -->` naming every piece it told of",
     "told again": "tells it again only when work it has not been told of starts to meet it",
