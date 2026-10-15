@@ -254,7 +254,7 @@ S04 = Scenario(
 
 def s05(name="S05", how="rebase", split=False):
     bringer = policies.MainBringer(how, k=1)
-    told_once = {101: {"overlap": 1, "main-moved": 1}}
+    told_once = {2: {"overlap": 1}, 101: {"main-moved": 1}}
     after_merge = (board(3, cycle.PUSH, "main", comments=told_once, standing={101: "dirty"},
                          mentions={101: {"main-moved": ["conflicting"]}}),
                    board(3, cycle.PULL_REQUEST, comments=told_once))
@@ -277,7 +277,7 @@ def s05(name="S05", how="rebase", split=False):
         step(1, "m", "open-draft", 1, pulls=[100]),
         step(1, "r", "open-draft", 2, pulls=[100, 101]),
         board(1, cycle.PULL_REQUEST, overlaps={"src/shared.py": [100, 101]},
-              comments={100: {"overlap": 1}, 101: {"overlap": 1}}, shows="F2"),
+              comments={1: {"overlap": 1}, 2: {"overlap": 1}, 100: {}, 101: {}}),
         step(2, "m", "commit", 1, taken=True),
         step(2, "m", "drop-claim-file", 1, taken=True),
         step(2, "m", "mark-ready", 100),
@@ -287,7 +287,7 @@ def s05(name="S05", how="rebase", split=False):
         step(2, "r", "mark-ready", 101),
         step(2, "r", "label-on", 2, "in-review"),
         board(2, cycle.PULL_REQUEST, overlaps={"src/shared.py": [100, 101]},
-              comments={100: {"overlap": 1}, 101: {"overlap": 1}}),
+              comments={1: {"overlap": 1}, 2: {"overlap": 1}, 100: {}, 101: {}}),
         step(3, OWNER, "merge", 100, refs={"claude/1": False}, merged=[]),
     ) + after_merge + (
         step(4, "r", "guard", "git push --force origin claude/2", refused=True),

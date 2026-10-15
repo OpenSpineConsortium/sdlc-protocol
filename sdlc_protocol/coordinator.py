@@ -232,17 +232,53 @@ def relabelled(names, taken_off, put_on):
 
 def meeting(snapshot):
     """For each piece of open work that meets other work in a file, by its
-    number: the work it meets with the files they share, in landing order.
-    """
+    identity (board.identity: the issue for a claim's work, the pull
+    request's number for one that is no claim's): the work it meets with
+    the files they share, each file once however many of the piece's pull
+    requests change it, in landing order."""
     found = {}
     for path, works in board.overlaps(snapshot).items():
         for work in works:
             for other in works:
-                if other.number != work.number:
-                    found.setdefault(work.number, {}).setdefault(other, []).append(path)
-    return {number: sorted(((other, tuple(sorted(paths))) for other, paths in others.items()),
-                           key=lambda pair: board.landing_key(pair[0]))
-            for number, others in sorted(found.items())}
+                if board.identity(other) != board.identity(work):
+                    found.setdefault(board.identity(work), {}).setdefault(other, set()).add(path)
+    return {identity: sorted(((other, tuple(sorted(paths))) for other, paths in others.items()),
+                             key=lambda pair: board.landing_key(pair[0]))
+            for identity, others in sorted(found.items())}
+
+
+def identities(snapshot):
+    """What each number a piece of open work is shown by names now: the
+    piece's identity (board.identity), so a marker that names a claim's
+    pull request, as the markers written before F2's fix do, is read as
+    naming the claim."""
+    return {work.number: board.identity(work) for work in board.open_work(snapshot)}
+
+
+def told_places(snapshot, identity):
+    """The other places a piece of open work has been told on, beside its
+    identity: the claim's own open pull requests, where the coordinator
+    told a claim's work before F2's fix and whose markers count as the
+    issue's (spec, Overlaps), so the upgrade tells nothing again; none for
+    a pull request that is no claim's, which is told on itself."""
+    return [work.number for work in board.open_work(snapshot) if work.issue == identity and work.is_pull]
+
+
+def claims_made(snapshot):
+    """When the push that made each claim's branch came, by the claim's
+    issue, for the claims among the open work GitHub dates (snapshot
+    began): an issue's number names each claim on it in turn, so a marker
+    tells a claim's work, or tells of it, only when it came no earlier than
+    that push; a claim GitHub does not date takes every marker."""
+    snap = board.as_snapshot(snapshot)
+    made = {}
+    for work in board.open_work(snap):
+        if work.issue is None or not work.branch:
+            continue
+        when = board.began_at(snap.began.get(work.branch, ""))
+        if when != board.UNDATED:
+            made[work.issue] = when
+    return made
 
 
 def told_numbers(comments, trusted=None):
@@ -265,6 +301,54 @@ def told_numbers(comments, trusted=None):
     return told
 
 
+def told_times(comments, trusted=None):
+    """For each number the overlap markers among these name, when the latest
+    of them came, as GitHub writes the time: each comment is read alone by
+    told_numbers, so a marker counts by the same rules, and its time is
+    the comment's created_at, "" when it has none."""
+    times = {}
+    for comment in comments:
+        for number in told_numbers([comment], trusted):
+            times[number] = latest(times.get(number), (comment or {}).get("created_at") or "")
+    return times
+
+
+def latest(first, second):
+    """The later of two times GitHub wrote, a time that does not read as one
+    counting as the latest of all (board.began_at), so a marker GitHub
+    dates oddly still counts, and None for no time yet."""
+    if first is None:
+        return second
+    return first if board.began_at(first) >= board.began_at(second) else second
+
+
+def merged_times(first, second):
+    """Two readings of told_times as one, each number at its latest marker."""
+    times = dict(first)
+    for number, at in second.items():
+        times[number] = latest(times.get(number), at)
+    return times
+
+
+def heard_of(markers, named, made, identity):
+    """The identities a piece has been told of, from the markers on it:
+    markers maps each number they name to when the latest of them came
+    (told_times), or is a set of numbers, which carries no times; each
+    number is read as the identity of the work shown by it now (named),
+    and counts only when its marker came no earlier than the push that
+    made the claim branch of the piece and of the work named, where GitHub
+    dates that push (claims_made): a claim released and claimed anew is
+    new work, told and told of again."""
+    times = markers if isinstance(markers, dict) else dict.fromkeys(markers, "")
+    heard = set()
+    for number, at in times.items():
+        other = named.get(number, number)
+        when = board.began_at(at)
+        if all(when >= made[i] for i in (identity, other) if i in made):
+            heard.add(other)
+    return heard
+
+
 def describe(work):
     """A piece of work in a few words, for an overlap comment."""
     if not work.is_pull:
@@ -276,13 +360,25 @@ def describe(work):
     return kind + (", for a blocker" if work.blocker else "")
 
 
-def overlap_text(work, others):
-    """The comment that tells a piece of open work about the other work it
-    meets: each other piece with the files they share, and the order the
-    whole group should land in."""
-    order = sorted([work] + [other for other, _ in others], key=board.landing_key)
-    this = "pull request" if work.is_pull else "claim"
-    lines = [f"overlap: other open work changes the same files as this {this}:"]
+def this_work(works):
+    """What the comment calls the piece it is posted on: the claim, its pull
+    request or its pull requests, or the pull request that is no claim's."""
+    pulls = [f"#{work.number}" for work in works if work.is_pull]
+    if not pulls:
+        return "claim"
+    if works[0].issue is None:
+        return "pull request"
+    if len(pulls) == 1:
+        return f"claim's pull request {pulls[0]}"
+    return f"claim's pull requests {', '.join(pulls[:-1])} and {pulls[-1]}"
+
+
+def overlap_text(works, others):
+    """The comment that tells a piece of open work, shown by works, about the
+    other work it meets: each other piece with the files they share, and
+    the order the whole group should land in."""
+    order = sorted(list(works) + [other for other, _ in others], key=board.landing_key)
+    lines = [f"overlap: other open work changes the same files as this {this_work(works)}:"]
     lines += [f"- #{other.number}, {describe(other)}: {named_files(list(paths))}" for other, paths in others]
     lines += ["", f"Land them in this order: {', '.join(f'#{w.number}' for w in order)}: a blocker first, then "
                   f"work marked ready, then the oldest. Each one after the first brings the default branch in "
@@ -292,18 +388,26 @@ def overlap_text(work, others):
 
 
 def overlap_comments_due(snapshot, told):
-    """The overlap comments to post, as board.DueComment: one for each piece
-    of open work that meets work it has not been told of, told maps a
-    work's number to the numbers its earlier overlap comments named. The
-    comment names all the work it meets, told before or not, so it reads
-    whole on its own."""
+    """The overlap comments to post, as board.DueComment, each on the
+    piece's identity, the issue for a claim's work (board.identity): one
+    for each piece of open work that meets work it has not been told of.
+    told maps a piece's identity to what the overlap markers on it name,
+    read by heard_of: each number as the identity of the piece it names
+    now (identities), since a marker written before F2's fix named a
+    claim's pull request, and only from a marker that came no earlier than
+    the claims it speaks of (claims_made). The marker names the identities
+    of the work met, each once, and the comment names all of it, told
+    before or not, so it reads whole on its own."""
     snap = board.as_snapshot(snapshot)
-    works = {work.number: work for work in board.open_work(snap)}
+    works = {}
+    for work in board.open_work(snap):
+        works.setdefault(board.identity(work), []).append(work)
+    named, made = identities(snap), claims_made(snap)
     due = []
-    for number, others in meeting(snap).items():
-        numbers = sorted(other.number for other, _ in others)
-        if set(numbers) <= told.get(number, set()):
+    for identity, others in meeting(snap).items():
+        met = sorted({board.identity(other) for other, _ in others})
+        if set(met) <= heard_of(told.get(identity, set()), named, made, identity):
             continue
-        marker = OVERLAP_MARKER.format(numbers=" ".join(str(n) for n in numbers))
-        due.append(board.DueComment(number, marker, overlap_text(works[number], others)))
+        marker = OVERLAP_MARKER.format(numbers=" ".join(str(n) for n in met))
+        due.append(board.DueComment(identity, marker, overlap_text(works[identity], others)))
     return due

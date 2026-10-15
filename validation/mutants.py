@@ -110,6 +110,7 @@ ORIGINAL_COMMENTS_DUE = board.comments_due
 ORIGINAL_OVERLAPS_DUE = coordinator.overlap_comments_due
 ORIGINAL_REFUSAL = guard.refusal
 ORIGINAL_TOLD = coordinator.told_numbers
+ORIGINAL_CLAIMS_MADE = coordinator.claims_made
 ORIGINAL_PUT_BACK = github.put_back
 ORIGINAL_AFTER_RELEASE = coordinator.after_release
 ORIGINAL_IS_CANDIDATE = coordinator.is_candidate
@@ -510,14 +511,15 @@ def open_work_by_name(snapshot):
         files = board.own_files(pull.files) or (
             board.own_files(claims.claim_files(snap.claims.get(key) or "")) if key else ())
         work.append(board.Work(pull.number, files, not pull.draft, bool(key) and board.is_blocker(snap, key), True,
-                               "" if pull.fork else pull.branch, board.pull_began(snap, pull)))
+                               "" if pull.fork else pull.branch, board.pull_began(snap, pull),
+                               claims.number_of(pull.branch) if key else None))
     for branch in board.claim_branches(snap.branches):
         key, number = claims.key_of(branch), claims.number_of(branch)
         if branch in pulls or key in released or number is None:
             continue
         files = board.own_files(claims.claim_files(snap.claims.get(key) or ""))
         work.append(board.Work(number, files, False, board.is_blocker(snap, key), False, branch,
-                               snap.began.get(branch, "")))
+                               snap.began.get(branch, ""), number))
     return sorted(work, key=lambda w: w.number)
 
 
@@ -624,14 +626,15 @@ def open_work_but_strangers(snapshot):
         files = board.own_files(pull.files) or (
             board.own_files(claims.claim_files(snap.claims.get(key) or "")) if key else ())
         work.append(board.Work(pull.number, files, not pull.draft, bool(key) and board.is_blocker(snap, key), True,
-                               "" if pull.fork else pull.branch, board.pull_began(snap, pull)))
+                               "" if pull.fork else pull.branch, board.pull_began(snap, pull),
+                               claims.number_of(pull.branch) if key else None))
     for branch in board.claim_branches(snap.branches):
         key, number = claims.key_of(branch), claims.number_of(branch)
         if branch in pulls or key in released or number is None:
             continue
         files = board.own_files(claims.claim_files(snap.claims.get(key) or ""))
         work.append(board.Work(number, files, False, board.is_blocker(snap, key), False, branch,
-                               snap.began.get(branch, "")))
+                               snap.began.get(branch, ""), number))
     return sorted(work, key=lambda w: w.number)
 
 
@@ -673,6 +676,42 @@ def holder_by_labels(snap, issue):
     by holders(issue) == {worker}, so where two workers' labels named the
     issue it carried the claim for neither."""
     return labels.worker_of(issue)
+
+
+def named_by_the_number_shown(work):
+    """board.identity as before F2's fix: a piece of open work named by the
+    number the board shows it by, the pull request's as soon as it has
+    one, so a claim that opens its pull request is a new piece to the
+    coordinator and is told again."""
+    return work.number
+
+
+def no_place_but_the_identity(snapshot, identity):
+    """coordinator.told_places as F2's fix first built it: a piece read on
+    its identity alone, so a claim the coordinator told on its pull
+    request before the fix is told again on its issue at the upgrade."""
+    return []
+
+
+def no_claim_dated(snapshot):
+    """coordinator.claims_made as F2's fix first built it: no claim dated, so
+    every marker counts whenever it came, and a claim on an issue released
+    and claimed anew is taken as told by the markers that spoke of the
+    claim before it, and never told, nor told of."""
+    return {}
+
+
+def undated_claims_take_no_marker(snapshot):
+    """coordinator.claims_made dating a claim GitHub does not date as the
+    newest of all, so no marker counts for it and it is told on every run
+    GitHub will not date it, where the spec has it take every marker (F2's
+    second review)."""
+    snap = board.as_snapshot(snapshot)
+    made = ORIGINAL_CLAIMS_MADE(snap)
+    for work in board.open_work(snap):
+        if work.issue is not None and work.branch and work.issue not in made:
+            made[work.issue] = board.UNDATED
+    return made
 
 
 def blank_names_a_worker(text):
@@ -1026,6 +1065,25 @@ MUTANTS = {
         team, "deal_moves", run_dealt_alone,
         "G14", "a run that starts some of the team is dealt in the team's order, so a worker outside it keeps its "
                "share (F18's review)"),
+    "a piece of work named by the number it is shown by": Mutant(
+        board, "identity", named_by_the_number_shown,
+        "G7", "a claim and the pull request from its branch are one piece, named by the issue while the claim "
+              "lives and told on it, so opening the pull request tells nothing again; named by the pull "
+              "request's number as soon as it has one, as before the fix, the claim is told again of the work it "
+              "was told of, and that work of it (F2)"),
+    "the markers on a claim's own pull request never read": Mutant(
+        coordinator, "told_places", no_place_but_the_identity,
+        "G7", "a marker on a claim's own pull request counts as one on the issue, so a claim told there before "
+              "F2's fix is told nothing again at the upgrade (F2's review)"),
+    "a marker counted whenever it came": Mutant(
+        coordinator, "claims_made", no_claim_dated,
+        "G7", "an issue's number names each claim on it in turn, so a marker counts for a claim only from the "
+              "push that made its branch, and a claim on an issue released and claimed anew is told, and told of, "
+              "again (F2's review)"),
+    "an undated claim taking no marker": Mutant(
+        coordinator, "claims_made", undated_claims_take_no_marker,
+        "G7", "a claim whose push GitHub does not date takes every marker, so a run that cannot read the activity "
+              "tells nothing again (F2's second review)"),
 }
 
 

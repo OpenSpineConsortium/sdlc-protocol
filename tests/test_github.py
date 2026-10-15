@@ -1632,50 +1632,119 @@ class Coordinate(unittest.TestCase):
                                      ["docs/agents/README.md"], False))
         return snap
 
-    def test_overlapping_work_is_told_once_and_again_only_of_new_work(self):
+    def test_overlapping_work_is_told_once_on_its_issue_and_again_only_of_new_work(self):
+        """F2: #40 is claim 12's and #41 claim 13's, so each is read and
+        told on its issue, the marker names the issues, and issue 13's
+        marker from before the fix, which names #40, is read as naming
+        claim 12; issue 12 leaves claim 12 something to tell, so its pull
+        request #40 is read too before it is told, and #41 is never
+        read."""
         answers = {
-            "/repos/o/r/issues/40/comments?per_page=100": FakeAnswer([]),
-            "/repos/o/r/issues/41/comments?per_page=100": FakeAnswer(
+            "/repos/o/r/issues/12/comments?per_page=100": FakeAnswer([]),
+            "/repos/o/r/issues/13/comments?per_page=100": FakeAnswer(
                 [{"body": "<!-- sdlc-coordinator: overlap 40 -->\noverlap: told before",
                   "author_association": "NONE", "user": {"login": "github-actions[bot]"}}]),
-            "POST /repos/o/r/issues/40/comments": FakeAnswer({}),
+            "/repos/o/r/issues/40/comments?per_page=100": FakeAnswer([]),
+            "POST /repos/o/r/issues/12/comments": FakeAnswer({}),
         }
         api, opener = client(answers)
-        self.assertEqual(github.coordinate(api, self.overlapping(), NOW), ["#40: overlap comment posted"])
+        self.assertEqual(github.coordinate(api, self.overlapping(), NOW), ["#12: overlap comment posted"])
         body = opener.sent("POST")[0]["body"]
-        self.assertTrue(body.startswith("<!-- sdlc-coordinator: overlap 41 -->\noverlap: other open work"), body)
+        self.assertTrue(body.startswith("<!-- sdlc-coordinator: overlap 13 -->\noverlap: other open work changes the "
+                                        "same files as this claim's pull request #40:"), body)
         self.assertIn("- #41, a pull request marked ready: `docs/agents/README.md`", body)
+        asked = [c.full_url.replace(github.API, "") for c in opener.calls]
+        self.assertIn("/repos/o/r/issues/40/comments?per_page=100", asked)
+        self.assertNotIn("/repos/o/r/issues/41/comments?per_page=100", asked)
+
+    def test_a_claim_told_on_its_pull_request_before_the_fix_is_told_nothing_at_the_upgrade(self):
+        """F2's review: before the fix the coordinator told a claim's work on
+        its pull request once it had one, so the markers sit on #40 and
+        #41; each issue leaves its claim something to tell, so its pull
+        request is read too, and the marker there counts as the issue's:
+        nothing is posted."""
+        bot = {"author_association": "NONE", "user": {"login": "github-actions[bot]"}}
+        answers = {
+            "/repos/o/r/issues/12/comments?per_page=100": FakeAnswer([]),
+            "/repos/o/r/issues/13/comments?per_page=100": FakeAnswer([]),
+            "/repos/o/r/issues/40/comments?per_page=100": FakeAnswer(
+                [dict(bot, body="<!-- sdlc-coordinator: overlap 41 -->\noverlap: told before")]),
+            "/repos/o/r/issues/41/comments?per_page=100": FakeAnswer(
+                [dict(bot, body="<!-- sdlc-coordinator: overlap 40 -->\noverlap: told before")]),
+        }
+        api, opener = client(answers)
+        self.assertEqual(github.coordinate(api, self.overlapping(), NOW), [])
+        self.assertEqual(opener.sent("POST"), [])
+
+    def test_a_pull_request_whose_comments_github_will_not_give_leaves_its_claim_told_nothing(self):
+        answers = {
+            "/repos/o/r/issues/12/comments?per_page=100": FakeAnswer([]),
+            "/repos/o/r/issues/13/comments?per_page=100": FakeAnswer(
+                [{"body": "<!-- sdlc-coordinator: overlap 12 -->", "author_association": "NONE",
+                  "user": {"login": "github-actions[bot]"}}]),
+            "/repos/o/r/issues/40/comments?per_page=100": Refusal(502),
+        }
+        api, opener = client(answers)
+        self.assertEqual(github.coordinate(api, self.overlapping(), NOW), [
+            "#12: overlaps not told, the comments of its pull request #40 were not read: "
+            "GET /repos/o/r/issues/40/comments: HTTP 502"])
+        self.assertEqual(opener.sent("POST"), [])
+
+    def test_a_claim_on_an_issue_released_and_claimed_anew_is_told_again_and_told_of_again(self):
+        """F2's review: claude/12 was made anew at 10:00, so the markers from
+        09:00, issue 12's naming 13 and issue 13's naming 12, spoke of the
+        claim released before it, and both are told again."""
+        bot = {"author_association": "NONE", "user": {"login": "github-actions[bot]"},
+               "created_at": "2026-09-20T09:00:00Z"}
+        answers = {
+            "/repos/o/r/issues/12/comments?per_page=100": FakeAnswer(
+                [dict(bot, body="<!-- sdlc-coordinator: overlap 13 -->")]),
+            "/repos/o/r/issues/13/comments?per_page=100": FakeAnswer(
+                [dict(bot, body="<!-- sdlc-coordinator: overlap 12 -->")]),
+            "/repos/o/r/issues/40/comments?per_page=100": FakeAnswer([]),
+            "/repos/o/r/issues/41/comments?per_page=100": FakeAnswer([]),
+            "POST /repos/o/r/issues/12/comments": FakeAnswer({}),
+            "POST /repos/o/r/issues/13/comments": FakeAnswer({}),
+        }
+        snap = self.overlapping()
+        snap.began = {"claude/12": "2026-09-20T10:00:00Z"}
+        api, opener = client(answers)
+        self.assertEqual(github.coordinate(api, snap, NOW),
+                         ["#12: overlap comment posted", "#13: overlap comment posted"])
 
     def test_a_strangers_marker_neither_silences_the_work_nor_stops_the_run(self):
         # The permission GitHub gives for the stranger is asked once, and
         # says no; a marker of 4,301 digits raised in int() before.
         answers = {
-            "/repos/o/r/issues/40/comments?per_page=100": FakeAnswer([
-                {"body": "<!-- sdlc-coordinator: overlap 41 -->", "author_association": "NONE",
+            "/repos/o/r/issues/12/comments?per_page=100": FakeAnswer([
+                {"body": "<!-- sdlc-coordinator: overlap 13 -->", "author_association": "NONE",
                  "user": {"login": "stranger"}},
                 {"body": "<!-- sdlc-coordinator: overlap " + "4" * 4301 + " -->", "author_association": "NONE",
                  "user": {"login": "stranger"}}]),
+            "/repos/o/r/issues/13/comments?per_page=100": FakeAnswer([]),
+            "/repos/o/r/issues/40/comments?per_page=100": FakeAnswer([]),
             "/repos/o/r/issues/41/comments?per_page=100": FakeAnswer([]),
             "/repos/o/r/collaborators/stranger/permission": FakeAnswer({"permission": "read"}),
-            "POST /repos/o/r/issues/40/comments": FakeAnswer({}),
-            "POST /repos/o/r/issues/41/comments": FakeAnswer({}),
+            "POST /repos/o/r/issues/12/comments": FakeAnswer({}),
+            "POST /repos/o/r/issues/13/comments": FakeAnswer({}),
         }
         api, opener = client(answers)
         self.assertEqual(github.coordinate(api, self.overlapping(), NOW),
-                         ["#40: overlap comment posted", "#41: overlap comment posted"])
+                         ["#12: overlap comment posted", "#13: overlap comment posted"])
         asked = [c.full_url.replace(github.API, "") for c in opener.calls]
         self.assertEqual(asked.count("/repos/o/r/collaborators/stranger/permission"), 1)
 
     def test_work_whose_comments_github_will_not_give_is_told_nothing(self):
         answers = {
-            "/repos/o/r/issues/40/comments?per_page=100": Refusal(502),
+            "/repos/o/r/issues/12/comments?per_page=100": Refusal(502),
+            "/repos/o/r/issues/13/comments?per_page=100": FakeAnswer([]),
             "/repos/o/r/issues/41/comments?per_page=100": FakeAnswer([]),
-            "POST /repos/o/r/issues/41/comments": Refusal(403, {"message": "Locked"}),
+            "POST /repos/o/r/issues/13/comments": Refusal(403, {"message": "Locked"}),
         }
         api, opener = client(answers)
         self.assertEqual(github.coordinate(api, self.overlapping(), NOW), [
-            "#40: overlaps not told, its comments were not read: GET /repos/o/r/issues/40/comments: HTTP 502",
-            "#41: overlap comment failed: POST /repos/o/r/issues/41/comments: HTTP 403: Locked"])
+            "#12: overlaps not told, its comments were not read: GET /repos/o/r/issues/12/comments: HTTP 502",
+            "#13: overlap comment failed: POST /repos/o/r/issues/13/comments: HTTP 403: Locked"])
         self.assertEqual(len(opener.sent("POST")), 1)
 
     def test_nothing_due_asks_nothing(self):
@@ -1705,16 +1774,17 @@ class Coordinate(unittest.TestCase):
         asked = [c.full_url.replace(github.API, "") for c in opener.calls]
         self.assertEqual(asked.count(permission), 1)
         answers = {
-            "/repos/o/r/issues/40/comments?per_page=100": FakeAnswer([
-                {"body": "<!-- sdlc-coordinator: overlap 41 -->", "author_association": "NONE",
+            "/repos/o/r/issues/12/comments?per_page=100": FakeAnswer([
+                {"body": "<!-- sdlc-coordinator: overlap 13 -->", "author_association": "NONE",
                  "user": {"login": "sam"}}]),
+            "/repos/o/r/issues/13/comments?per_page=100": FakeAnswer([]),
             "/repos/o/r/issues/41/comments?per_page=100": FakeAnswer([]),
             permission: FakeAnswer({"permission": "write", "role_name": "write"}),
-            "POST /repos/o/r/issues/41/comments": FakeAnswer({}),
+            "POST /repos/o/r/issues/13/comments": FakeAnswer({}),
         }
         api, opener = client(answers)
         self.assertTrue(api.asked("sam"))
-        self.assertEqual(github.coordinate(api, self.overlapping(), NOW), ["#41: overlap comment posted"])
+        self.assertEqual(github.coordinate(api, self.overlapping(), NOW), ["#13: overlap comment posted"])
         asked = [c.full_url.replace(github.API, "") for c in opener.calls]
         self.assertEqual(asked.count(permission), 1)
 

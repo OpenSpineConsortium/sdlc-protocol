@@ -1,7 +1,8 @@
 """The harness's guarantees (validation/invariants.py) on hand-written
 traces: an honest release and reclaim breaks none; the 0.4.1 fixes hold;
-a run in two halves is judged by the states its halves read; the open
-finding F2 shows as soon as the oracle reads the spec; F7's careless
+a run in two halves is judged by the states its halves read; F2's claim
+that opens its pull request is told nothing again, and is under the
+mutant that names a piece by the number it is shown by; F7's careless
 lease is refused, F9's draft misses "main moved" under the mutant that
 takes GitHub's opaque word alone, and is told it while level with main
 under the one that reads the comparison's other count, and F12's lost run
@@ -244,13 +245,14 @@ class ARunInTwoHalves(unittest.TestCase):
         self.assertEqual(violations(steps, self.SPLIT), [])
 
     def test_a_second_run_s_quiet_is_asked_only_when_nothing_changed_between_the_halves(self):
-        """A draft opened between the halves makes the next run owe the
-        overlap comments the first half could not know of; with nothing
-        between the halves, a second run that writes again is red as a
-        whole one is."""
+        """A pull request from a fork opened between the halves makes the
+        next run owe the overlap comments the first half could not know
+        of (a draft the holder opens owes none since F2's fix, the claim
+        and its pull request being one piece); with nothing between the
+        halves, a second run that writes again is red as a whole one is."""
         steps = [Verb("claim", "a", (1,)), Verb("claim", "b", (2,)), Verb("board-start", "board", (cycle.SCHEDULE, "")),
-                 Verb("open-draft", "a", (1,)), Verb("board-finish", "board")]
-        scope = SHARED._replace(split_board=True)
+                 Verb("fork-pull", verbs.SAM, (1, True)), Verb("board-finish", "board")]
+        scope = SHARED._replace(split_board=True, forks=True)
         self.assertEqual(violations(steps, scope, issues=None), [])
         checks = invariants.cycle_checks
 
@@ -297,12 +299,19 @@ class ARunInTwoHalves(unittest.TestCase):
 
 
 class TheOpenFindingsShow(unittest.TestCase):
-    """With its switch off the oracle reads the spec, and the finding is red."""
+    """Each fixed finding is green, and red under the mutant that undoes its
+    fix; none is read as built since F2's fix (known.json's as_built)."""
 
-    def test_f2_overlapping_work_told_again_once_a_claim_opens_its_pull_request(self):
+    def test_f2_a_claim_that_opens_its_pull_request_is_told_nothing_again(self):
+        """Fixed after 0.4.1: the issue names the claim's work in the
+        markers and is where it is told, for the whole claim; named by its
+        pull request's number as soon as it has one, the claim is told
+        again of #2 and #2 of it."""
         steps = [Verb("claim", "a", (1,)), Verb("claim", "b", (2,)), BOARD, Verb("open-draft", "a", (1,)), BOARD]
         self.assertEqual(violations(steps, SHARED, issues=None), [])
-        self.assertEqual(guarantees(violations(steps, SHARED, oracle.AS_BUILT - {"F2"}, issues=None)), ["G7"])
+        self.assertEqual(oracle.AS_BUILT, frozenset())
+        with mutants.switched_on(mutants.MUTANTS["a piece of work named by the number it is shown by"]):
+            self.assertEqual(guarantees(violations(steps, SHARED, issues=None)), ["G7"])
 
     def test_f9_a_draft_behind_main_hears_main_moved_once_its_standing_is_read(self):
         """Fixed after 0.4.1: with the model's opaque_pulls on GitHub's word

@@ -999,18 +999,34 @@ def landed_release(api, key, release):
 
 
 def tell_overlaps(api, snap):
-    """Post each overlap comment that is due, reading only the comments of
-    the work that meets other work, and counting only the markers of
-    authors the repository trusts (coordinator.told_numbers); work whose
-    comments GitHub would not give is told nothing this run, so it is never
-    told twice. The lines say what was posted."""
+    """Post each overlap comment that is due, on the piece's identity, the
+    issue for a claim's work and the pull request itself for one that is
+    no claim's (board.identity), for the work that meets other work,
+    counting only the markers of authors the repository trusts
+    (coordinator.told_numbers) and only those that came no earlier than
+    the claims they speak of (coordinator.heard_of). The markers on the
+    identity are read first; a claim's work that they leave something to
+    tell is read on its own open pull requests too
+    (coordinator.told_places), where the coordinator told it before F2's
+    fix, so the upgrade tells nothing again; the extra read is paid only
+    where the issue's markers alone would have a comment go out, which for
+    a claim told on its pull request before the fix, and never on its
+    issue since, is every run until its overlap ends. Work whose comments
+    GitHub would not give is told nothing this run, so it is never told
+    twice. The lines say what was posted."""
     lines, told, trusted = [], {}, may_write(api)
     for number in coordinator.meeting(snap):
-        try:
-            comments = api.get_all(f"/repos/{api.repo}/issues/{number}/comments")
-            told[number] = coordinator.told_numbers(comments, trusted)
-        except GitHubError as problem:
-            lines.append(f"#{number}: overlaps not told, its comments were not read: {problem}{github_words(problem)}")
+        markers = markers_on(api, number, trusted, lines, f"#{number}: overlaps not told, its comments were not read")
+        if markers is not None:
+            told[number] = markers
+    for number, _, _ in coordinator.overlap_comments_due(snap, told):
+        for place in coordinator.told_places(snap, number) if number in told else ():
+            failed = f"#{number}: overlaps not told, the comments of its pull request #{place} were not read"
+            markers = markers_on(api, place, trusted, lines, failed)
+            if markers is None:
+                told.pop(number)
+                break
+            told[number] = coordinator.merged_times(told[number], markers)
     for number, marker, text in coordinator.overlap_comments_due(snap, told):
         if number not in told:
             continue
@@ -1021,6 +1037,17 @@ def tell_overlaps(api, snap):
             continue
         lines.append(f"#{number}: overlap comment posted")
     return lines
+
+
+def markers_on(api, number, trusted, lines, failed):
+    """When the latest trusted overlap marker on an issue or a pull request
+    named each number (coordinator.told_times), or None, with a line
+    saying why, when GitHub would not give its comments."""
+    try:
+        return coordinator.told_times(api.get_all(f"/repos/{api.repo}/issues/{number}/comments"), trusted)
+    except GitHubError as problem:
+        lines.append(f"{failed}: {problem}{github_words(problem)}")
+        return None
 
 
 def branch_sha(api, branch):

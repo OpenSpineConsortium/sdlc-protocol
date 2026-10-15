@@ -58,7 +58,7 @@ class EveryScenario(unittest.TestCase):
         (tests/test_validation_traces.py), not on every scenario."""
         named = {(name, f) for name in scenarios.SCENARIOS for f in known.findings_named("scenario", name)
                  if f in known.AS_BUILT}
-        self.assertEqual({f for _, f in named}, {"F2"})
+        self.assertEqual({f for _, f in named}, set(), "no scenario names a finding since F2's fix")
         for name, finding in sorted(named):
             with self.subTest(scenario=name, finding=finding):
                 scenario = scenarios.SCENARIOS[name]
