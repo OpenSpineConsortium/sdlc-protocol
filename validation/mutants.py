@@ -593,7 +593,7 @@ def carrying_blocked_claims(snap, agent):
     holder waits on a peer or the coordinator."""
     for issue in snap.issues:
         number = issue["number"]
-        if number in snap.claimed and snap.holder(issue) == agent and snap.claim_needs_work(number):
+        if number in snap.claimed and snap.holds(issue, agent) and snap.claim_needs_work(number):
             return f"carry {number}"
     return None
 

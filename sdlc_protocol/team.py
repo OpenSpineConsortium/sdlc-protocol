@@ -17,9 +17,10 @@ ways, each run by a workflow step through the command line (cli.py's
   route  after an issue event, say what the coordinator does next:
          "plan <epic>", "integrate <epic>", "unblock <task>" or "none".
   next   for one worker, say what it does next: "carry <issue>" (its own
-         claim, the one whose claim file names it, needs work), "take
-         <issue>" (the task it was given, else its share of the unclaimed
-         blockers and todos that fit its area) or "none".
+         claim, one whose claim file names it or, where no file names a
+         worker, whose issue's label names it, needs work), "take <issue>"
+         (the task it was given, else its share of the unclaimed blockers
+         and todos that fit its area) or "none".
   deal   for every worker of a run, from one look at the repository, the
          same answer next gives each, as JSON by worker: the workers'
          workflow deals once, in its first job, and hands each leg its
@@ -236,7 +237,14 @@ def claim_needs_work(client, number):
     busy default branch can then take a worker in Actions round after
     round, each push starting the check again, up to its limit of rounds.
     integration_due reads the integration's claim the same way."""
-    pull = client.open_pull(f"{CLAIM_PREFIX}{number}")
+    return needs_work(client, client.open_pull(f"{CLAIM_PREFIX}{number}"))
+
+
+def needs_work(client, pull):
+    """claim_needs_work over the claim's open pull request already read, None
+    for a claim with none: the Snapshot reads each claim's pull request once
+    a look and shares it between this rule and Snapshot.released, where
+    until F18's second review a look read it twice."""
     if not pull:
         return True
     if pull.get("draft") or pull.get("mergeable_state") in NEEDS_REBASE:
@@ -256,39 +264,60 @@ class Snapshot:
         self.client = client
         self.issues = sorted(open_issues(client), key=lambda issue: issue["number"])
         self.claimed = claim_branches(client)
-        self.needs_work = {}
-        self.holders = {}
+        # What the look has read so far, by issue number, each read once
+        # the first time a member's answer asks for it.
+        self.needs_work, self.pulls, self.names, self.releases = {}, {}, {}, {}
+
+    def open_pull(self, number):
+        """The claim's open pull request, or None, read once a look and
+        shared by claim_needs_work and released, which until F18's second
+        review each read it for themselves, so one look paid twice for one
+        pull request."""
+        if number not in self.pulls:
+            self.pulls[number] = self.client.open_pull(f"{CLAIM_PREFIX}{number}")
+        return self.pulls[number]
 
     def claim_needs_work(self, number):
         if number not in self.needs_work:
-            self.needs_work[number] = claim_needs_work(self.client, number)
+            self.needs_work[number] = needs_work(self.client, self.open_pull(number))
         return self.needs_work[number]
+
+    def holds(self, issue, agent):
+        """Whether the member holds the claim on this issue: the claim names
+        the member (named) and does not count as released (released), which
+        is nobody's until the board renames its branch, as the board shows
+        its issue unclaimed again, though its claim file still names its
+        holder, so the clerk sends nobody back to a claim a release freed
+        (F18's review). The name is read first, so a peer's claim costs the
+        member's look one read of its claim file and nothing more, and
+        whether a claim is released, which costs its pull request and what
+        Client.released costs, is asked only of a claim that names the
+        member (F18's second review). Until F18's fix the clerk read the
+        labels alone, so a worker whose label an issue still carried was
+        told to carry the claim another worker had pushed and not yet
+        announced, and the claim's holder was told nothing."""
+        return self.named(issue) == agent and not self.released(issue)
 
     def holder(self, issue):
         """Whose the claim on this issue is (named), or None for a claim
-        that counts as released (released), which is nobody's until the
-        board renames its branch, as the board shows its issue unclaimed
-        again, though its claim file still names its holder: the clerk
-        sends nobody back to a claim a release freed (F18's review). Each
-        claim is read once a look, the first time it is asked for. Until
-        F18's fix the clerk read the labels alone, so a worker whose label
-        an issue still carried was told to carry the claim another worker
-        had pushed and not yet announced, and the claim's holder was told
-        nothing."""
-        number = issue["number"]
-        if number not in self.holders:
-            self.holders[number] = None if self.released(issue) else self.named(issue)
-        return self.holders[number]
+        that counts as released (released) or that names nobody; holds is
+        the question a member's answer asks, which costs a peer's claim
+        less."""
+        named = self.named(issue)
+        return None if named is None or self.released(issue) else named
 
     def named(self, issue):
         """The worker a claim names, as a release names whose it was
         (coordinator.holder): the one its claim file names, else, where the
         finishing pull request has deleted the file, no line names one or
         GitHub gave no text of it, the one the issue's label names; None
-        when neither does."""
-        text = self.client.claim_text(f"{CLAIM_PREFIX}{issue['number']}")
-        named = claim_worker(text) if text else UNNAMED
-        return named if named != UNNAMED else worker_of(issue)
+        when neither does. Each claim's file is read once a look."""
+        number = issue["number"]
+        if number not in self.names:
+            text = self.client.claim_text(f"{CLAIM_PREFIX}{number}")
+            named = claim_worker(text) if text else UNNAMED
+            self.names[number] = named if named != UNNAMED else worker_of(issue)
+        return self.names[number]
 
     def released(self, issue):
         """Whether the claim on this issue counts as released, by the
@@ -297,16 +326,22 @@ class Snapshot:
         draft, and a release comment that counts came after its branch had
         gone more than a day without a commit, with none since
         (Client.released). A claim whose issue is labelled claimed or
-        in-review costs no call, and any other one for its pull request
-        and what Client.released costs."""
+        in-review costs no call, and any other one its pull request, read
+        once a look (open_pull), and what Client.released costs; the answer
+        is kept for the look."""
+        number = issue["number"]
+        if number not in self.releases:
+            self.releases[number] = self.is_released(issue)
+        return self.releases[number]
+
+    def is_released(self, issue):
         names = label_names(issue)
         if CLAIMED_LABEL in names or IN_REVIEW_LABEL in names:
             return False
-        branch = f"{CLAIM_PREFIX}{issue['number']}"
-        pull = self.client.open_pull(branch)
+        pull = self.open_pull(issue["number"])
         if pull and not pull.get("draft"):
             return False
-        return self.client.released(branch)
+        return self.client.released(f"{CLAIM_PREFIX}{issue['number']}")
 
     def free(self, issue):
         """Whether an issue may be taken: no claim branch holds it, and it
@@ -324,13 +359,14 @@ class Snapshot:
 
     def carry(self, agent):
         """"carry <issue>" for the first claim of the member's own that needs
-        work, one whose holder is the member (holder), whatever the issue's
-        labels say, and that is not labelled blocked, which waits for help;
-        None when it has none."""
+        work, one the member holds (holds), whatever the issue's labels say,
+        and that is not labelled blocked, whose holder waits on a peer or the
+        coordinator and so has nothing else to do (spec/PROTOCOL.md,
+        Planning); None when it has none."""
         for issue in self.issues:
             number = issue["number"]
             if (number in self.claimed and BLOCKED_LABEL not in label_names(issue)
-                    and self.holder(issue) == agent and self.claim_needs_work(number)):
+                    and self.holds(issue, agent) and self.claim_needs_work(number)):
                 return f"carry {number}"
         return None
 
@@ -338,7 +374,7 @@ class Snapshot:
         """The first task the labels give the member, beside other workers
         or, with alone, to the member alone (is_mine), that is free and no
         epic, which the coordinator plans and nobody takes whole, and that
-        no member before it in the run took (taken), whether or not it also
+        no member before it in the team took (taken), whether or not it also
         carries todo, since the board shows it under Given to workers either
         way (F14) and the spec has the worker take it first; None when there
         is none."""
@@ -392,8 +428,9 @@ def deal(members, pool, areas=None):
 
 def deals(client, team, areas=None):
     """Every worker's next move, by name, from one look at the repository:
-    its own claims first, the ones whose claim files name it, then the task
-    it was given, one given to it alone before one that several workers'
+    its own claims first, the ones whose claim files name it or, where no
+    file names a worker, whose issues' labels name it, then the task it was
+    given, one given to it alone before one that several workers'
     labels give, which goes to the first of them in the order given with
     nothing else to do, then its share of the shared work, which is dealt
     out (deal) among the workers with no work of their own, in the order
@@ -443,8 +480,11 @@ def next_for(client, agent, team=None, areas=None):
     """The worker's next move, as deals gives it: the same answer the run's
     one look would give this worker, from the worker's own look. A move no
     peer's can change (Snapshot.own_move) is answered first, before any
-    peer's claim is read: deals gives a member such a move whatever the
-    others do, and each peer's pull request costs a call."""
+    peer's pull request is read: deals gives a member such a move whatever
+    the others do; a peer's claim costs the look one read of its claim
+    file (Snapshot.holds), and its pull request, its head and its comments
+    cost nothing, since whether a claim is released is asked only of one
+    that names the worker."""
     team = list(team or [agent])
     if agent not in team:
         team.append(agent)

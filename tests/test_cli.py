@@ -393,6 +393,21 @@ class TeamWithTheRegistry(unittest.TestCase):
                              (0, "take 5\n", ""))
         self.assertIn("worker:web", api.labels)
 
+    def test_next_answers_a_worker_the_registry_lists_outside_actions(self):
+        """A session or a routine the registry names asks with the workers
+        in Actions as its team and is dealt after them (team.next_for adds
+        it to the team), so the command answers in one line rather than
+        failing on a name the deal does not hold."""
+        api = FakeClient()
+        api.add_issue(4, ["todo"])
+        with tempfile.TemporaryDirectory() as folder:
+            where = registry(folder, {"name": "api", "runs": "actions"}, {"name": "alice", "runs": "session"})
+            self.assertEqual(self.through_the_adapter(["next", "--agent", "alice", "--registry", where], api),
+                             (0, "none\n", ""))
+            api.add_issue(5, ["todo"])
+            self.assertEqual(self.through_the_adapter(["next", "--agent", "alice", "--registry", where], api),
+                             (0, "take 5\n", ""))
+
     def test_deal_prints_every_run_workers_move_from_one_look(self):
         api = FakeClient()
         api.add_issue(4, ["todo"], body="### Files likely touched\n\nweb/a.js\n")

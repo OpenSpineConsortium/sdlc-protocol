@@ -31,8 +31,9 @@ worker's own answer are judged by the spec's Pick and Planning as the
 oracle reads them (picking_lane, below), and so is a regression trace's
 deal wherever no claim has a pull request yet (pick_problems). As built
 until the fix the clerk read whose a claim is, and whose a task is, from
-the labels alone, and the lane found twelve problems in 4,888 of its
-20,480 deals.
+the labels alone, and the lane found fifteen problems in 7,256 of its
+30,720 deals (twelve in 4,888 of 20,480 before F18's review added the
+nameless and the released claim; DESIGN.md's F18 entry has the figures).
 """
 
 import itertools

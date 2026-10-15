@@ -117,13 +117,17 @@ SPEC = {
                     "takes other work it does not stand in the way of (Pick)",
     "worker line": "the `- Worker:` line (or the older `- Account:`), whose name is the worker's label without the "
                    "`worker:` prefix",
-    "nameless": "a line with nothing after it but markup or a note in parentheses naming nobody",
+    "nameless": "a line with nothing after it but markup or a note in parentheses names nobody: the board shows such "
+                "a claim as unnamed, since the file is there to be corrected, while the clerk and a release, which "
+                "must name a worker, take the one the issue's label names",
     "own claim": "each takes its own claim that needs work, one whose claim file names it, whatever the issue's "
                  "labels say, or, where no claim file names a worker, one whose issue's label names it, a "
                  "worker:<name> label before the older spellings and the first by name among labels of one "
                  "spelling, as a release names whose the claim was",
-    "not released": "but never a claim that counts as released, which is nobody's from the release on, though its "
-                    "branch stands until the board renames it (Release)",
+    "not released": "but never a claim that counts as released, which no worker carries and none takes until the "
+                    "board has renamed its branch (Pick, Release)",
+    "not blocked": "nor a claim labelled blocked, whose holder waits on a peer or the coordinator (Labels) and so has "
+                   "nothing else to do",
     "given first": "else the task it was given, one given to it alone first, and a task the labels of several workers "
                    "give going to the first of them with nothing else to do",
     "team's order": "The order is the team's: every worker the deal is for, in the workers' workflow every registered "
@@ -222,9 +226,12 @@ def is_worker_label(name):
 def label_worker(labels):
     """The worker the issue's label names (spec, Labels: `worker:<name>`,
     with the older spellings read as the same label), worker: before the
-    older; None when no label names one. The oracle's own reading, so the
-    Worker cell is not judged by the library's labels.worker_of, which the
-    board renders it with."""
+    older and the first by name among the labels of one spelling; None
+    when no label names one. The oracle's own reading, so neither the
+    Worker cell nor the clerk's holder (claim_holder) is judged by the
+    library's labels.worker_of, which the board and the clerk use; one
+    function for both readers, so the two cannot drift apart (F18's second
+    review, which found a second copy of it)."""
     for prefix in WORKER_SPELLINGS:
         named = sorted(name[len(prefix):] for name in labels if name.startswith(prefix) and name[len(prefix):])
         if named:
@@ -670,36 +677,26 @@ def claim_file_worker(text):
     return None
 
 
-def label_holder(labels):
-    """The worker the labels name for a claim whose file names none
-    (SPEC["own claim"]): a worker:<name> label before the older spellings,
-    and the first by name among the labels of one spelling; None when no
-    label names a worker."""
-    for prefix in WORKER_SPELLINGS:
-        names = sorted(name[len(prefix):] for name in labels if name.startswith(prefix) and name[len(prefix):])
-        if names:
-            return names[0]
-    return None
-
-
 def claim_holder(model, number):
     """Whose the claim on the issue is (SPEC["own claim"]): the worker its
     claim file names, whatever the issue's labels say, or, where no claim
-    file names a worker, the one its label names (label_holder); None for
+    file names a worker, the one its label names (label_worker); None for
     an issue no claim branch holds, a claim that counts as released, which
     is nobody's though its branch stands (SPEC["not released"]), or a claim
     nothing names."""
     if number not in held_numbers(model) or number not in model.issues:
         return None
     named = claim_file_worker(claim_file_text(model, branch_of(number), number))
-    return named or label_holder(model.issues[number].labels)
+    return named or label_worker(model.issues[number].labels)
 
 
 def carries(model, worker):
     """The claims Planning has the worker carry before it takes anything
     (SPEC["own claim"]): its own, on an open issue, and not labelled
-    blocked, whose holder waits on a peer or the coordinator
-    (SPEC["blocked"]). The clerk carries a claim only when it needs work,
+    blocked, whose holder waits on a peer or the coordinator and so has
+    nothing else to do (SPEC["not blocked"], from F18's second review, which
+    found Planning silent on it, and SPEC["blocked"]). The clerk carries a
+    claim only when it needs work,
     which the spec does not define; a claim with no pull request yet has
     work, since Work in the open has its holder open the draft at once, and
     the lane that holds the clerk to this (dealing.picking_lane) makes no

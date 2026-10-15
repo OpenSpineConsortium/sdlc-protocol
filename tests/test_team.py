@@ -296,7 +296,7 @@ class NextTest(unittest.TestCase):
             self.api.claims["claude/2"] = text
             self.assertEqual(team.deals(self.api, ["a", "b"]), {"a": "carry 2", "b": "none"}, text)
 
-    def test_a_task_several_workers_labels_give_goes_to_the_first_of_them_in_the_run_s_order(self):
+    def test_a_task_several_workers_labels_give_goes_to_the_first_of_them_in_the_team_s_order(self):
         """F18: the board shows such a task to each of them under Given to
         workers, and Pick has each take it, so the clerk deals it to the
         first of them with nothing else to do, and the others take their
@@ -443,7 +443,8 @@ class CountingClient(FakeClient):
 
     def __init__(self):
         super().__init__()
-        self.reads = {"open_issues": 0, "branch_names": 0, "open_pull": 0}
+        self.reads = {"open_issues": 0, "branch_names": 0, "open_pull": 0, "claim_text": 0, "released": 0}
+        self.asked = []  # each read of one claim, in order: (what, branch)
         self.after_first_pull = None
 
     def open_issues(self):
@@ -456,12 +457,23 @@ class CountingClient(FakeClient):
 
     def open_pull(self, branch):
         self.reads["open_pull"] += 1
+        self.asked.append(("open_pull", branch))
         pull = super().open_pull(branch)
         pull = None if pull is None else dict(pull)
         if self.after_first_pull:
             self.after_first_pull()  # what GitHub answers after this read
             self.after_first_pull = None
         return pull
+
+    def claim_text(self, branch):
+        self.reads["claim_text"] += 1
+        self.asked.append(("claim_text", branch))
+        return super().claim_text(branch)
+
+    def released(self, branch):
+        self.reads["released"] += 1
+        self.asked.append(("released", branch))
+        return super().released(branch)
 
 
 class DealsTest(unittest.TestCase):
@@ -498,7 +510,58 @@ class DealsTest(unittest.TestCase):
     def test_the_run_reads_the_issues_the_branches_and_each_claim_once(self):
         api = self.held_ready_and_two_free()
         team.deals(api, ["a", "b", "c"])
-        self.assertEqual(api.reads, {"open_issues": 1, "branch_names": 1, "open_pull": 1})
+        self.assertEqual(api.reads, {"open_issues": 1, "branch_names": 1, "open_pull": 1, "claim_text": 1,
+                                     "released": 0})
+
+    def test_a_claim_not_yet_announced_has_its_pull_request_read_once_a_look(self):
+        """F18's second review: a claim whose issue is labelled neither
+        claimed nor in-review, as one pushed and not yet announced is, has
+        its pull request read for whether the claim counts as released and
+        again for whether it needs work; the look reads it once and shares
+        it, where until the review it paid twice, and could read a draft
+        marked ready between its two reads as both."""
+        api = CountingClient()
+        api.add_issue(5, ["todo", "worker:a"])
+        api.add_claim(5, "a")
+        api.add_pull(5, draft=True)
+        api.add_issue(6, ["todo"])
+        api.add_issue(7, ["todo"])
+        self.assertEqual(team.deals(api, ["a", "b", "c"]), {"a": "carry 5", "b": "take 6", "c": "take 7"})
+        self.assertEqual(api.reads, {"open_issues": 1, "branch_names": 1, "open_pull": 1, "claim_text": 1,
+                                     "released": 1})
+
+    def test_a_peer_s_claim_costs_a_worker_s_own_look_its_claim_file_alone(self):
+        """F18's second review: whether a claim is released, which costs its
+        pull request, its head, its commit and perhaps its comments, is
+        asked only of a claim that names the worker; a peer's claim, or one
+        outside the team, pushed and not yet announced and numbered before
+        the worker's own, costs the look one read of its claim file. Until
+        the review the look asked released first, and paid for every
+        unannounced claim in the repository before the worker's own move."""
+        api = CountingClient()
+        api.add_issue(4, ["todo"])
+        api.add_claim(4, "greg")
+        api.add_pull(4, draft=True)
+        api.add_issue(5, ["claimed", "worker:a"])
+        api.add_claim(5, "a")
+        api.add_pull(5, state="behind")
+        self.assertEqual(team.next_for(api, "a", ["a", "b"]), "carry 5")
+        self.assertEqual(api.asked, [("claim_text", "claude/4"), ("claim_text", "claude/5"), ("open_pull", "claude/5")])
+        self.assertEqual(team.deals(api, ["a", "b"]), {"a": "carry 5", "b": "none"})
+        self.assertEqual(api.reads["released"], 0)
+
+    def test_a_worker_outside_the_team_is_dealt_as_the_team_s_last_member(self):
+        """next_for for a worker the team does not list, a session or a
+        routine the registry names outside Actions asking with the workers
+        in Actions as its team: it is dealt after them, as deals gives the
+        team with that worker last, and the command answers rather than
+        failing on a name the deal does not hold."""
+        api = self.held_ready_and_two_free()
+        self.assertEqual(team.next_for(api, "z", ["a", "b"]), team.deals(api, ["a", "b", "z"])["z"])
+        self.assertEqual(team.next_for(api, "z", ["a", "b"]), "none")
+        api.add_issue(8, ["todo"])
+        self.assertEqual(team.next_for(api, "z", ["a", "b"]), "take 8")
+        self.assertEqual(team.deals(api, ["a", "b", "z"])["z"], "take 8")
 
     def test_one_issue_is_never_dealt_to_two_workers_of_one_run(self):
         """F4: a leg that looked while a's pull request was clean dealt a

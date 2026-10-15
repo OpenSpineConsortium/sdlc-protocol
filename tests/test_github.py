@@ -1786,6 +1786,28 @@ class TeamClient(unittest.TestCase):
         asked = [c.full_url.replace(github.API, "") for c in opener.calls]
         self.assertEqual(asked.count(path), 2)
 
+    def test_a_claim_file_github_refuses_stops_the_look_and_one_it_has_not_got_leaves_the_label_to_name(self):
+        """F18's second review: a read GitHub refuses stops the look, as
+        every other read of the look does, rather than guess whose a claim
+        is from the labels and send a worker to another's, the finding over
+        again; a 404, no file on the branch yet, is no refusal, and the
+        issue's label then names the holder."""
+        path = "/repos/o/r/contents/docs/agents/claims/7.md?ref=claude%2F7"
+        answers = {
+            "/repos/o/r/issues?state=open&per_page=100": FakeAnswer([
+                {"number": 7, "state": "open", "labels": [{"name": "todo"}, {"name": "worker:a"}]}]),
+            "/repos/o/r/branches?per_page=100": FakeAnswer([{"name": "main"}, {"name": "claude/7"}]),
+            PULL_LIST: FakeAnswer([]),
+        }
+        for code in (403, 500):
+            api, opener = client({**answers, path: Refusal(code)})
+            with self.assertRaises(github.GitHubError):
+                team.deals(api, ["a", "b"])
+            asked = [c.full_url.replace(github.API, "") for c in opener.calls]
+            self.assertEqual(asked[-1], path, f"nothing is read after the refusal ({code})")
+        api, _ = client({**answers, path: Refusal(404)})
+        self.assertEqual(team.deals(api, ["a", "b"]), {"a": "carry 7", "b": "none"})
+
 
 class ClaimReleased(unittest.TestCase):
     """github.claim_released, what the clerk asks of a claim whose labels and

@@ -21,7 +21,7 @@ sys.path.insert(0, str(ROOT))
 
 from sdlc_protocol.adapters import github  # noqa: E402
 from sdlc_protocol import board, guard  # noqa: E402
-from validation import cycle, invariants, model as M, mutants, oracle, verbs  # noqa: E402
+from validation import cycle, dealing, invariants, model as M, mutants, oracle, verbs  # noqa: E402
 from validation.fake_github import Call  # noqa: E402
 from validation.verbs import Scope, Verb  # noqa: E402
 
@@ -142,6 +142,37 @@ class TheWorkerCell(unittest.TestCase):
         self.assertEqual(oracle.label_worker(["todo", "account:main", "worker:e"]), "e")
         self.assertEqual(oracle.label_worker(["agent:w1", "todo"]), "w1")
         self.assertIsNone(oracle.label_worker(["todo", "worker:"]))
+
+    def test_a_worker_line_that_names_nobody_owes_the_cell_unnamed(self):
+        """F18's second review: the cell for a claim file that is there and
+        whose Worker line names nobody, or that has no such line, is the
+        library's documented word, unnamed, since the file is there to be
+        corrected, and not the pusher, whom the oracle expected, nor the
+        issue's label, which the clerk and a release fall back to; a board
+        that names the label's worker, or the pusher, for such a file is
+        seen. The picking lane's three file forms (dealing.CLAIM_STATES a,
+        nobody and blank) go through one board run green."""
+        for line in ("- Worker: (to be filled)", "- Worker: ", ""):
+            model = M.seeded((1,), writers=("a", "b", "e"), labels=("todo", "worker:e"))
+            tree = model.tree(model.refs[M.MAIN])
+            tree["docs/agents/claims/1.md"] = f"# Claim: #1\n\n{line}\n- Branch: claude/1\n"
+            model.push("b", "claude/1", model.commit((model.refs[M.MAIN],), "b", tree, "Claim #1"))
+            with self.subTest(line=line):
+                self.assertEqual(invariants.one_name_one_holder(model), [])
+                self.assertEqual(invariants.shown_worker(model, "claude/1", 1), "unnamed")
+                names_the_label = mock.patch.object(invariants.board, "claim_row",
+                                                    lambda key, branch, text, pull, issue: ["", branch, "e", "", ""])
+                with names_the_label:
+                    found = invariants.one_name_one_holder(model)
+                self.assertEqual([(v.guarantee, v.detail) for v in found],
+                                 [("G1", "the board names e for claude/1, whose holder is b and whose claim file "
+                                         "names nobody")])
+        for state in ("a", "nobody", "blank"):
+            model = dealing.case_model(dealing.Case({1: ("todo", "worker:b")}, 1, state, ("a", "b")))
+            before = model.clone()
+            run = verbs.Verb("board", "board", (cycle.SCHEDULE, "", ()))
+            outcome = verbs.apply(model, run)
+            self.assertEqual(invariants.step_checks(before, model, run, outcome), [], state)
 
 
 class TheProtocolCheckIsReadAsGitHubReadsABody(unittest.TestCase):
