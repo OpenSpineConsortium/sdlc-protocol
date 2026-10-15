@@ -996,11 +996,15 @@ class Releases(unittest.TestCase):
 
     def test_the_push_dates_the_head_only_when_the_newest_entry_names_that_head(self):
         """head_pushed_at reads the branch's newest entry of any kind: one
-        that set the head, or moved the branch off it, a push after the
-        board read the branch, dates it; one that names the head on neither
-        side, another branch's entry or no entry dates nothing; a 404 says
-        GitHub keeps no activity; and any other refusal raises."""
+        that set the head dates it; one that moved the branch off it dates
+        it only when it came after the run began, a push after the run read
+        the branch, and an older one, stale since a later push the activity
+        does not list yet brought the branch back, dates nothing, as with no
+        moment of the run given; one that names the head on neither side,
+        another branch's entry or no entry dates nothing; a 404 says GitHub
+        keeps no activity; and any other refusal raises."""
         path = pushes_path("claude/12")
+        began = datetime(2026, 9, 19, 12, 3, tzinfo=timezone.utc)
         moved_off = dict(pushed("claude/12", "2026-09-19T12:00:00Z", "bbbbbbb2222222"), before=HEAD_12)
         deleted = dict(pushed("claude/12", "2026-09-19T12:00:00Z", "0" * 40, "branch_deletion"), before=HEAD_12)
         cases = (
@@ -1020,8 +1024,13 @@ class Releases(unittest.TestCase):
         )
         for answer, expected in cases:
             api, opener = client({path: FakeAnswer(answer)})
-            self.assertEqual(github.head_pushed_at(api, "claude/12", HEAD_12), expected, answer)
+            self.assertEqual(github.head_pushed_at(api, "claude/12", HEAD_12, began), expected, answer)
             self.assertEqual([c.selector for c in opener.calls], [path])
+        stale = (began + github.PUSH_SINCE_SLACK + timedelta(seconds=1), None)
+        for answer in ([moved_off], [deleted]):
+            for now in stale:
+                api, _ = client({path: FakeAnswer(answer)})
+                self.assertEqual(github.head_pushed_at(api, "claude/12", HEAD_12, now), "", (answer, now))
         api, _ = client({})
         self.assertIsNone(github.head_pushed_at(api, "claude/12", HEAD_12))
         api, _ = client({path: Refusal(500)})
@@ -1042,8 +1051,17 @@ class Releases(unittest.TestCase):
         older = FakeAnswer([pushed("claude/12", "2026-09-17T12:00:00Z", "bbbbbbb2222222")])
         dated_commit = FakeAnswer({"committer": {"date": "2026-09-16T12:00:00Z"}})
         limited = {"message": "You have exceeded a secondary rate limit."}
+        # The branch moved off the head a day before the run, and a push the
+        # first read does not list brought it back; and one moved off it
+        # after the run began.
+        stale_off = FakeAnswer([dict(pushed("claude/12", "2026-09-18T12:00:00Z", "bbbbbbb2222222"), before=HEAD_12)])
+        fresh_off = FakeAnswer([dict(pushed("claude/12", "2026-09-19T12:01:00Z", "bbbbbbb2222222"), before=HEAD_12)])
+        began = datetime(2026, 9, 19, 12, 0, tzinfo=timezone.utc)
         cases = (
             (Turns(older, listed), ("2026-09-19T12:00:00Z", ""), 2, None),
+            (Turns(stale_off, listed), ("2026-09-19T12:00:00Z", ""), 2, None),
+            (Turns(stale_off, stale_off), ("", "2026-09-16T12:00:00Z"), 2, github.NO_PUSH_LISTED),
+            (fresh_off, ("2026-09-19T12:01:00Z", ""), 1, None),
             (Turns(FakeAnswer([]), listed), ("2026-09-19T12:00:00Z", ""), 2, None),
             (Turns(Refusal(502), listed), ("2026-09-19T12:00:00Z", ""), 2, None),
             (Turns(Refusal(429), listed), ("2026-09-19T12:00:00Z", ""), 2, None),
@@ -1062,7 +1080,7 @@ class Releases(unittest.TestCase):
             waits, refused = [], {}
             opener = InTurn(answers)
             api = github.GitHub("t", "o/r", opener=opener, sleep=waits.append)
-            self.assertEqual(github.head_since(api, "claude/12", HEAD_12, refused), expected, answer)
+            self.assertEqual(github.head_since(api, "claude/12", HEAD_12, refused, began), expected, answer)
             self.assertEqual(len([c for c in opener.calls if c.selector == path]), reads, answer)
             self.assertEqual(waits, [github.PUSH_RETRY_SECONDS] * (reads - 1), answer)
             if why is None:
@@ -2110,6 +2128,39 @@ class ReleaseAcrossRuns(unittest.TestCase):
             "POST /repos/o/r/issues/12/comments: HTTP 502, but the comment is there)",
             "#12: claim released; claude/12 renamed to released/12-aaaaaaa"])
         self.assert_released(repository, snap, page)
+
+    def test_an_earlier_release_of_a_kept_head_is_not_taken_for_a_comment_the_failed_post_wrote(self):
+        """F8's second review: a kept head whose release a person undid,
+        by putting the label claimed back, is released again once idle; a
+        post of that release GitHub refuses having written nothing finds
+        only the earlier release comment, which counts for a kept head
+        whenever it came, so it must not pass for this run's: the labels
+        go back and the board counts nothing released. A newer comment,
+        one GitHub wrote and lost its answer to, still makes the release
+        whole."""
+        snap = idle_snapshot()
+        snap.releases["12"] = board.Release(released_at="2026-09-17T09:00:00Z", sha=HEAD_12, committed_at="",
+                                            pushed_at="2026-09-18T12:00:00Z", kept=True)
+        self.assertEqual(coordinator.releases_due(snap, NOW), ["12"])
+        answers = release_answers()
+        answers["POST /repos/o/r/issues/12/comments"] = Refusal(502)
+        answers[COMMENTS_12] = FakeAnswer([dict(RELEASE_COMMENT, created_at="2026-09-17T09:00:00Z")])
+        answers[LABELS_12] = FakeAnswer([])
+        api, _ = client(answers)
+        lines = github.coordinate(api, snap, NOW)
+        self.assertEqual(len(lines), 1)
+        self.assertTrue(lines[0].startswith("#12: not released, the comment failed"), lines)
+        self.assertIn("claimed", snap.claim_issues["12"].labels)
+        self.assertEqual(board.released_keys(snap), set())
+        snap = idle_snapshot()
+        snap.releases["12"] = board.Release(released_at="2026-09-17T09:00:00Z", sha=HEAD_12, committed_at="",
+                                            pushed_at="2026-09-18T12:00:00Z", kept=True)
+        answers[COMMENTS_12] = FakeAnswer([dict(RELEASE_COMMENT, created_at="2026-09-17T09:00:00Z"),
+                                           dict(RELEASE_COMMENT, created_at="2026-09-20T12:00:03Z")])
+        api, _ = client(answers)
+        lines = github.coordinate(api, snap, NOW)
+        self.assertIn("but the comment is there", lines[0])
+        self.assertEqual(board.released_keys(snap), {"12"})
 
     def test_a_plan_longer_than_github_takes_in_a_comment_is_cut_and_the_claim_released(self):
         # Quoted whole, the plan made a comment GitHub refuses with 422, so

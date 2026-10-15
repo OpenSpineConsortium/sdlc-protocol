@@ -62,6 +62,8 @@ SPEC = {
             "it is finished",
     "last commit": "When a branch's last commit came, here and below, is when GitHub received the push that set its "
                    "head, as the repository's activity records that push, so no worker's clock decides it",
+    "moved off": "an entry that moved the branch off that head dates it too when it came after the run began, a push "
+                 "after the run read the branch, while an older one is stale and lists no push that set the head",
     "undated push": "the head's committer date stands in where the activity, read once more after a pause when the "
                     "first read lists no push that set the head or GitHub gives it no answer that holds, still lists "
                     "none, or where GitHub refuses to read it",
