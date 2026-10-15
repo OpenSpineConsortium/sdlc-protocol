@@ -86,10 +86,13 @@ class Space(NamedTuple):
 
 CLAIM = Verb("claim", "a", (1,))
 HELD = (CLAIM, Verb("label-on", "a", (1, "claimed")), Verb("label-on", "a", (1, "worker:a")))
-# The board reads the repository's activity only for the work in the
-# Overlaps (F13), which E-faults' one issue never has, so the faults on
-# that read never fired there; E-activity meets them from two claims on
-# one file. The two on posting an issue's labels, label-post-500 and
+# The board reads a branch's making from the repository's activity only
+# for the work in the Overlaps (F13), which E-faults' one issue never
+# has, so the two faults on that read never fire there; E-activity meets
+# them from two claims on one file. The third, pushes-500, refuses the
+# read of the push that set a claim's head, which the board makes for
+# every claim a release can be due on (F8), so both spaces meet it. The
+# two on posting an issue's labels, label-post-500 and
 # F15's label-post-lost, fire in no space here nor in the soak: the board
 # posts a label only to put todo on an issue that has none of todo, epic
 # and blocker, or to put back what a release whose next step failed took

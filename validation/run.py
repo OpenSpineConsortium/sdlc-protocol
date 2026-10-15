@@ -100,13 +100,19 @@ def released_order(model, number):
     return sorted(named, key=lambda r: (model.created.get(r, 0), model.made.get(r, 0), r))
 
 
+class Unresolved(ValueError):
+    """A step names a released branch that does not stand, as when a
+    mutant keeps the release a trace's later step builds on from
+    happening (F8's trace, played by the mutation lane)."""
+
+
 def released_ref(model, number, index=None):
     """The newest released/<number>-* branch, by when its claim was made,
     or, given an index, the one at that place in that order from the
     oldest, so a trace names one when several stand."""
     ordered = released_order(model, number)
     if not ordered:
-        raise ValueError(f"no released branch of #{number}")
+        raise Unresolved(f"no released branch of #{number}")
     return ordered[-1] if index is None else ordered[index]
 
 
@@ -256,7 +262,7 @@ def play_steps(model, scenario, steps, known, observe=None):
     records, pages, timeline, checks, seen = [], [], [], 0, []
     for step in steps:
         model.now = step.at * HOUR
-        ran, outcomes, violations = [], [], []
+        ran, outcomes, violations, unplayed = [], [], [], []
 
         def apply(verb):
             nonlocal checks
@@ -298,10 +304,19 @@ def play_steps(model, scenario, steps, known, observe=None):
             timeline.append(f"{step.at:>4} h  deal after {' then '.join(deal.order)}, looks at {deal.looks}: "
                             f"{deal.moves}" + (f"; {len(found)} red" if found else ""))
         elif step.verb != "look":
-            apply(Verb(step.verb, step.actor, resolve(model, step.args)))
+            try:
+                verb = Verb(step.verb, step.actor, resolve(model, step.args))
+            except Unresolved as problem:
+                unplayed.append(f"not played: {problem}")
+            else:
+                apply(verb)
         if not ran:
             timeline.append(f"{step.at:>4} h  {step.actor} {step.verb} {' '.join(str(a) for a in step.args)}")
-        wrong = mismatches(model, step.expect, outcomes, scenario, step)
+        # A step the run cannot play, its released branch never made, is a
+        # mismatch, so the trace fails where the library would; the lane
+        # reads only the violations, so a mutant that keeps the release
+        # from happening is judged by the steps that did play.
+        wrong = mismatches(model, step.expect, outcomes, scenario, step) + tuple(unplayed)
         timeline += [f"        mismatch, {m}" for m in wrong]
         records.append(StepRecord(step, tuple(ran), tuple(outcomes), tuple(violations), wrong))
         if observe is not None:

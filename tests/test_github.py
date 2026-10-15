@@ -526,6 +526,19 @@ def made(branch, timestamp, kind="branch_creation"):
             "actor": {"login": "a"}, "before": "0" * 40, "after": "f" * 40}
 
 
+def pushes_path(branch):
+    """The one activity call head_pushed_at makes for a branch: its newest
+    entry of any kind (F8)."""
+    return "/repos/o/r/activity?" + urllib.parse.urlencode(
+        {"ref": f"refs/heads/{branch}", "direction": "desc", "per_page": 1})
+
+
+def pushed(branch, timestamp, after, kind="push"):
+    """One entry of the repository's activity that set the branch's head to
+    after, in GitHub's shape."""
+    return dict(made(branch, timestamp, kind), after=after)
+
+
 def wide_answers(forks=()):
     """The wide fixture's answers, its branches by name as GitHub lists
     them, each pull request's head in this repository as GitHub's detail
@@ -920,6 +933,91 @@ class Releases(unittest.TestCase):
         api, _ = client(answers)
         self.assertEqual(github.collect(api, "abc", "main")["releases"],
                          {"12": {"released_at": "", "sha": HEAD_12, "committed_at": "2026-09-18T12:00:00Z"}})
+
+    def test_a_claim_is_dated_by_when_github_received_the_push_of_its_head(self):
+        """F8: the activity's time of the push that set the head decides
+        whether a release can be due, whatever the committer date says, and
+        the commit is not asked for; a release that kept the head counts
+        however soon after a push of it came."""
+        _, answers = released_answers()
+        answers[pushes_path("claude/12")] = FakeAnswer([pushed("claude/12", "2026-09-20T11:00:00Z", HEAD_12)])
+        api, opener = client(answers)
+        found = github.collect(api, "abc", "main", now=datetime(2026, 9, 20, 12, 0, tzinfo=timezone.utc))
+        self.assertEqual(found["releases"], {})
+        asked = [c.full_url.replace(github.API, "") for c in opener.calls]
+        self.assertNotIn(COMMENTS_12, asked)
+        self.assertNotIn(f"/repos/o/r/git/commits/{HEAD_12}", asked)
+        answers[pushes_path("claude/12")] = FakeAnswer([pushed("claude/12", "2026-09-18T12:00:00Z", HEAD_12)])
+        answers[f"/repos/o/r/git/commits/{HEAD_12}"] = FakeAnswer({"sha": HEAD_12,
+                                                                   "committer": {"date": "2026-09-25T12:00:00Z"}})
+        api, _ = client(answers)
+        found = github.collect(api, "abc", "main")
+        self.assertEqual(found["releases"], {"12": {"released_at": "2026-09-20T09:00:00Z", "sha": HEAD_12,
+                                                    "committed_at": "", "pushed_at": "2026-09-18T12:00:00Z"}})
+        self.assertEqual(board.released_keys(found), {"12"})
+        self.assertNotIn("pushed_refused", found)
+        answers["/repos/o/r/branches?per_page=100"] = FakeAnswer([
+            {"name": "main", "commit": {"sha": "0123abc"}},
+            {"name": "claude/12", "commit": {"sha": HEAD_12}},
+            {"name": "released/12-aaaaaaa", "commit": {"sha": HEAD_12}},
+        ])
+        answers[pushes_path("claude/12")] = FakeAnswer([pushed("claude/12", "2026-09-20T11:00:00Z", HEAD_12)])
+        api, _ = client(answers)
+        found = github.collect(api, "abc", "main", now=datetime(2026, 9, 20, 12, 0, tzinfo=timezone.utc))
+        self.assertEqual(found["releases"]["12"], {"released_at": "2026-09-20T09:00:00Z", "sha": HEAD_12,
+                                                   "committed_at": "", "pushed_at": "2026-09-20T11:00:00Z",
+                                                   "kept": True})
+        self.assertEqual(board.released_keys(found), {"12"})
+
+    def test_a_push_github_will_not_date_is_read_by_the_committer_date_and_said_in_the_log(self):
+        for answer in (Refusal(403, {"message": "Resource not accessible by integration"}), Refusal(500)):
+            _, answers = released_answers()
+            answers[pushes_path("claude/12")] = answer
+            api, _ = client(answers)
+            found = github.collect(api, "abc", "main")
+            self.assertEqual(found["releases"]["12"], {"released_at": "2026-09-20T09:00:00Z", "sha": HEAD_12,
+                                                       "committed_at": "2026-09-18T12:00:00Z"})
+            self.assertEqual(sorted(found["pushed_refused"]), ["claude/12"])
+            self.assertEqual(github.pushed_refused_lines(found), [
+                f"claude/12: GitHub refused to say when the push that set the branch's head came "
+                f"({found['pushed_refused']['claude/12']}), so its idleness is read from its committer date"])
+            self.assertEqual(github.pushed_refused_lines(board.Snapshot.from_json(
+                board.Snapshot.from_dict(found).to_json())), github.pushed_refused_lines(found))
+
+    def test_the_push_dates_the_head_only_when_the_newest_entry_set_that_head(self):
+        """head_pushed_at reads the branch's newest entry of any kind: a
+        later push, a deletion or another branch's entry dates nothing, nor
+        does no entry or a 404, and any other refusal raises."""
+        path = pushes_path("claude/12")
+        cases = (
+            ([pushed("claude/12", "2026-09-18T12:00:00Z", HEAD_12)], "2026-09-18T12:00:00Z"),
+            ([pushed("claude/12", "2026-09-18T12:00:00Z", HEAD_12, "force_push")], "2026-09-18T12:00:00Z"),
+            ([pushed("claude/12", "2026-09-18T12:00:00Z", HEAD_12, "branch_creation")], "2026-09-18T12:00:00Z"),
+            ([pushed("claude/12", "2026-09-18T12:00:00Z", "bbbbbbb2222222")], ""),
+            ([pushed("claude/12", "2026-09-18T12:00:00Z", "0" * 40, "branch_deletion")], ""),
+            ([pushed("claude/13", "2026-09-18T12:00:00Z", HEAD_12)], ""),
+            ([dict(pushed("claude/12", "", HEAD_12), timestamp=None)], ""),
+            ([], ""),
+            ({"message": "not a list"}, ""),
+            (["not an entry"], ""),
+        )
+        for answer, expected in cases:
+            api, opener = client({path: FakeAnswer(answer)})
+            self.assertEqual(github.head_pushed_at(api, "claude/12", HEAD_12), expected, answer)
+            self.assertEqual([c.selector for c in opener.calls], [path])
+        api, _ = client({})
+        self.assertEqual(github.head_pushed_at(api, "claude/12", HEAD_12), "")
+        api, _ = client({path: Refusal(500)})
+        with self.assertRaises(github.GitHubError):
+            github.head_pushed_at(api, "claude/12", HEAD_12)
+        refused = {}
+        api, opener = client({path: Refusal(500), f"/repos/o/r/git/commits/{HEAD_12}": FakeAnswer(
+            {"committer": {"date": "2026-09-18T12:00:00Z"}})})
+        self.assertEqual(github.head_since(api, "claude/12", HEAD_12, refused), ("", "2026-09-18T12:00:00Z"))
+        self.assertEqual(list(refused), ["claude/12"])
+        api, opener = client({path: FakeAnswer([pushed("claude/12", "2026-09-19T12:00:00Z", HEAD_12)])})
+        self.assertEqual(github.head_since(api, "claude/12", HEAD_12), ("2026-09-19T12:00:00Z", ""))
+        self.assertEqual(len(opener.calls), 1, "a dated push costs one call")
 
     def test_an_author_github_does_not_vouch_for_counts_with_write_permission(self):
         # GitHub may show a private member of the organization to the
@@ -2188,11 +2286,15 @@ class TeamClient(unittest.TestCase):
 class ClaimReleased(unittest.TestCase):
     """github.claim_released, what the clerk asks of a claim whose labels and
     pull request leave a release possible (team.Snapshot.released, F18's
-    review): the branch's head and its commit, and only once that commit is
-    more than a day old the issue's comments, with a permission asked per
-    author no association vouches for, as the board reads a release."""
+    review): the branch's head, the released branch that would keep it, when
+    the head was pushed, else its commit (F8), and only once that is more
+    than a day old, or the head is kept, the issue's comments, with a
+    permission asked per author no association vouches for, as the board
+    reads a release."""
 
     REF_12 = "/repos/o/r/git/ref/heads/claude/12"
+    KEPT_12 = "/repos/o/r/git/ref/heads/released/12-aaaaaaa"
+    PUSHES_12 = pushes_path("claude/12")
     COMMIT_12 = f"/repos/o/r/git/commits/{HEAD_12}"
     NOW = datetime(2026, 9, 20, 12, 0, tzinfo=timezone.utc)
 
@@ -2206,10 +2308,10 @@ class ClaimReleased(unittest.TestCase):
     def asked(self, opener):
         return [c.full_url.replace(github.API, "") for c in opener.calls]
 
-    def test_a_trusted_release_comment_after_a_day_idle_counts_and_costs_three_calls(self):
+    def test_a_trusted_release_comment_after_a_day_idle_counts_and_costs_five_calls(self):
         api, opener = client(self.answers([RELEASE_COMMENT]))
         self.assertTrue(github.claim_released(api, "claude/12", self.NOW))
-        self.assertEqual(self.asked(opener), [self.REF_12, self.COMMIT_12, COMMENTS_12])
+        self.assertEqual(self.asked(opener), [self.REF_12, self.KEPT_12, self.PUSHES_12, self.COMMIT_12, COMMENTS_12])
         # The Client's method, on the clock: the commit is long past.
         self.assertTrue(client(self.answers([RELEASE_COMMENT]))[0].released("claude/12"))
 
@@ -2221,7 +2323,32 @@ class ClaimReleased(unittest.TestCase):
     def test_a_commit_within_the_day_asks_no_comments(self):
         api, opener = client(self.answers([RELEASE_COMMENT], committed="2026-09-20T01:00:00Z"))
         self.assertFalse(github.claim_released(api, "claude/12", self.NOW))
-        self.assertEqual(self.asked(opener), [self.REF_12, self.COMMIT_12])
+        self.assertEqual(self.asked(opener), [self.REF_12, self.KEPT_12, self.PUSHES_12, self.COMMIT_12])
+
+    def test_the_push_of_the_head_dates_it_whatever_its_committer_date_says(self):
+        """F8: the activity's time of the push that set the head decides,
+        and the commit is not asked for."""
+        answers = self.answers([RELEASE_COMMENT], committed="2026-09-25T12:00:00Z")
+        answers[self.PUSHES_12] = FakeAnswer([pushed("claude/12", "2026-09-18T12:00:00Z", HEAD_12)])
+        api, opener = client(answers)
+        self.assertTrue(github.claim_released(api, "claude/12", self.NOW))
+        self.assertEqual(self.asked(opener), [self.REF_12, self.KEPT_12, self.PUSHES_12, COMMENTS_12])
+        answers = self.answers([RELEASE_COMMENT], committed="2026-09-10T12:00:00Z")
+        answers[self.PUSHES_12] = FakeAnswer([pushed("claude/12", "2026-09-20T01:00:00Z", HEAD_12)])
+        api, opener = client(answers)
+        self.assertFalse(github.claim_released(api, "claude/12", self.NOW))
+        self.assertNotIn(COMMENTS_12, self.asked(opener))
+
+    def test_a_head_a_release_kept_is_released_by_that_release_however_soon_it_was_pushed_again(self):
+        answers = self.answers([RELEASE_COMMENT])
+        answers[self.KEPT_12] = FakeAnswer({"object": {"sha": HEAD_12}})
+        answers[self.PUSHES_12] = FakeAnswer([pushed("claude/12", "2026-09-20T11:00:00Z", HEAD_12)])
+        api, opener = client(answers)
+        self.assertTrue(github.claim_released(api, "claude/12", self.NOW))
+        answers[self.KEPT_12] = FakeAnswer({"object": {"sha": "bbbbbbb2222222"}})
+        api, opener = client(answers)
+        self.assertFalse(github.claim_released(api, "claude/12", self.NOW), "a released branch at another head")
+        self.assertNotIn(COMMENTS_12, self.asked(opener))
 
     def test_a_comment_sooner_than_a_day_after_the_commit_or_before_it_releases_nothing(self):
         for created in ("2026-09-19T11:00:00Z", "2026-09-18T11:00:00Z"):

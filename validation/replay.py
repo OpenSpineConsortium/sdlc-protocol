@@ -13,16 +13,14 @@ mismatches and a timeline a person reads; scripts/validate.py replay
 <file> prints it.
 
 A trace of a fixed finding (F1, F3, F5, F6, F10 and F11 in 0.4.1; F2,
-F4, F7, F9, F12, F13, F14, F15, F17, F18 and F19 after it; F16 in the
-spec's words, which the library already kept) is green, and the mutant
+F4, F7, F8, F9, F12, F13, F14, F15, F17, F18 and F19 after it; F16 in
+the spec's words, which the library already kept) is green, and the mutant
 that undoes its fix turns it red at the step where the finding showed,
 for the guarantee the table names, which tests/test_validation_traces.py
 holds it to. A trace of an open finding is red where known.json records
 it, with the finding's switch off in the oracle for the ones the oracle
 reads as built; none is left since F2's fix, and none is red as built, as
 F4's was until its fix.
-F8's trace breaks nothing and records the assumption under which
-G2 and G3 hold, that idleness is the committer date the pusher sets.
 
 The file's steps are objects: "verb" (a verb of verbs.py, or "announce",
 the Announce verbs, claimed and the worker's label on, each other worker's

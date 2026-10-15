@@ -881,6 +881,28 @@ class Releases(unittest.TestCase):
             self.assertEqual(board.released_keys(snap), set(), name)
             self.assertIn("| #12 | claude/12 | main | #40 |", board.render(snap), name)
 
+    def test_the_last_commit_is_when_github_received_the_push_and_a_kept_head_counts_whenever(self):
+        """F8: where the activity dates the push of the head, that time
+        decides, whatever the committer date says; and a branch pushed
+        again at a head a release already kept is released by that
+        release however soon after the push it came."""
+        cases = (
+            ("dated after the release, pushed two days before it", {"committed_at": "2026-09-21T10:00:00Z",
+                                                                    "pushed_at": LAST_COMMIT}, {"12"}),
+            ("dated two days before, pushed within the day", {"pushed_at": "2026-09-19T11:00:00Z"}, set()),
+            ("dated two days before, pushed after the release", {"pushed_at": "2026-09-20T10:00:00Z"}, set()),
+            ("a kept head pushed again after the release", {"pushed_at": "2026-09-20T10:00:00Z", "kept": True},
+             {"12"}),
+            ("a kept head with no release comment", {"released_at": "", "kept": True}, set()),
+        )
+        for name, release, keys in cases:
+            snap = released_snapshot(**release)
+            self.assertEqual(board.released_keys(snap), keys, name)
+            self.assertEqual("| #12 | claude/12 |" in board.render(snap), not keys, name)
+        self.assertEqual(Release(pushed_at="b", committed_at="a").last_commit, "b")
+        self.assertEqual(Release(committed_at="a").last_commit, "a")
+        self.assertEqual(Release().last_commit, "")
+
     def test_the_wait_can_be_set(self):
         snap = released_snapshot(released_at="2026-09-18T14:00:00Z")
         self.assertEqual(board.released_keys(snap), set())
@@ -914,6 +936,24 @@ class Releases(unittest.TestCase):
         self.assertEqual(snap.releases, {"12": Release(RELEASED_AT, HEAD_12, LAST_COMMIT)})
         self.assertEqual(Snapshot.from_json(snap.to_json()), snap)
         self.assertEqual(Snapshot.from_dict({"releases": {12: None}}).releases, {"12": Release()})
+
+    def test_a_release_dated_by_its_push_round_trips_and_one_read_before_f8_is_written_as_it_was(self):
+        """pushed_at and kept are written only when set, so a snapshot
+        saved before F8's fix is written back unchanged; kept is read only
+        when it is true itself, never from a string that reads as true."""
+        dated = released_snapshot(pushed_at="2026-09-18T13:00:00Z", kept=True)
+        dated["pushed_refused"] = {"claude/13": "HTTP 500"}
+        snap = Snapshot.from_dict(dated)
+        self.assertEqual(snap.releases["12"], Release(RELEASED_AT, HEAD_12, LAST_COMMIT, "2026-09-18T13:00:00Z", True))
+        self.assertEqual(snap.pushed_refused, {"claude/13": "HTTP 500"})
+        self.assertEqual(Snapshot.from_json(snap.to_json()), snap)
+        self.assertEqual(snap.to_dict()["releases"]["12"]["kept"], True)
+        old = Snapshot.from_dict(released_snapshot())
+        self.assertEqual(old.to_dict()["releases"]["12"], {"released_at": RELEASED_AT, "sha": HEAD_12,
+                                                           "committed_at": LAST_COMMIT})
+        self.assertNotIn("pushed_refused", old.to_dict())
+        for loose in ("true", 1, "yes"):
+            self.assertFalse(Release.from_dict({"kept": loose}).kept, loose)
 
     def test_what_the_board_says_once_it_renamed_the_branch(self):
         self.assertEqual(board.RELEASED_MARKER.format(branch="released/12-aaaaaaa"),

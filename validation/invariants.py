@@ -308,17 +308,19 @@ def first_half_checks(before, after, half, known=oracle.AS_BUILT):
     if half.raised is not None:
         return [] if reads_failed(half.fake.calls) else [Violation("G15", f"the run's first half raised: {half.raised}")]
     actual = effects_of(half.fake.calls)
+    undated = undated_branches(half.fake.calls)
+    seen_before, seen_after = oracle.dated(before, undated), oracle.dated(after, undated)
     problems = []
     if not injected(half.fake.calls, but=WRITES_KEPT):
-        expected = oracle.expected_effects(before, half.event, half.ref_name, known,
+        expected = oracle.expected_effects(seen_before, half.event, half.ref_name, known,
                                            unsaid_branches(half.fake.calls))
         problems += differences([e for e in expected if of_first_half(e)], actual)
-        problems += [Violation("G3L", f"a release no rule completes: #{n}") for n in oracle.half_released(after)]
+        problems += [Violation("G3L", f"a release no rule completes: #{n}") for n in oracle.half_released(seen_after)]
     problems += release_order(actual)
-    problems += releases_only_due(before, actual)
+    problems += releases_only_due(seen_before, actual)
     problems += labels_put_back(before, after, half.fake.calls, actual)
     problems += labels_name_the_holder(after, actual)
-    problems += board_renders_the_state(after, half, known)
+    problems += board_renders_the_state(seen_after, half, known)
     return problems
 
 
@@ -338,11 +340,13 @@ def cycle_checks(before, after, record, known=oracle.AS_BUILT):
         return [Violation("G15", f"the run exited {record.exit_code}: {record.raised}")]
     start = record.started_from if split else before
     planned = record.planned if split else after
+    undated = undated_branches(record.calls)
+    seen_start, seen_planned = oracle.dated(start, undated), oracle.dated(planned, undated)
     problems = []
     if not injected(record.calls, but=WRITES_KEPT):
         unsaid = unsaid_branches(record.calls)
-        expected = kept_renames(oracle.expected_effects(start, record.event, record.ref_name, known, unsaid), start,
-                                before)
+        expected = kept_renames(oracle.expected_effects(seen_start, record.event, record.ref_name, known, unsaid),
+                                start, before)
         if split:
             # The second half's writes are the calls after the first half's,
             # whatever their kind, so a label or a release comment it wrote
@@ -351,17 +355,18 @@ def cycle_checks(before, after, record, known=oracle.AS_BUILT):
             expected = [e for e in expected if not of_first_half(e)]
         problems += differences(expected, effects_of(record.calls[record.first_calls:] if split else record.calls))
         if not split:
-            problems += [Violation("G3L", f"a release no rule completes: #{n}") for n in oracle.half_released(after)]
+            problems += [Violation("G3L", f"a release no rule completes: #{n}")
+                         for n in oracle.half_released(oracle.dated(after, undated))]
         if not injected(record.calls) and (not split or before.repository_key() == planned.repository_key()):
             problems += quiet_second_run(after, record)
     actual = effects_of(record.calls)
     problems += rename_refused_said(before, record, actual)
     if not split:
         problems += release_order(actual)
-        problems += releases_only_due(start, actual)
+        problems += releases_only_due(seen_start, actual)
         problems += labels_put_back(start, planned, record.calls, actual)
         problems += labels_name_the_holder(planned, actual)
-        problems += board_renders_the_state(planned, record, known)
+        problems += board_renders_the_state(seen_planned, record, known)
     problems += nothing_lost(start, planned, before, after, actual)
     if after.board_text != record.page:
         problems.append(Violation("G15", "the run exited 0 and its board did not reach the branch board"))
@@ -614,17 +619,32 @@ def claim_rows_name_their_own(after, shown):
 
 
 def unsaid_branches(calls):
-    """The branches whose own read of the repository's activity GitHub
-    refused in a run, whose work then began when nothing else says
-    (SPEC["oldest"]); a refused read of the newest creations of the whole
-    repository makes no branch unsaid, since each branch is then asked
-    about on its own."""
-    unsaid = set()
+    """The branches whose own read of their making in the repository's
+    activity GitHub refused in a run, whose work then began when nothing
+    else says (SPEC["oldest"]); a refused read of the newest creations of
+    the whole repository makes no branch unsaid, since each branch is then
+    asked about on its own."""
+    return refused_activity(calls, "branch_creation")
+
+
+def undated_branches(calls):
+    """The claim branches whose read of their head's push in the
+    repository's activity GitHub refused in a run, which the run then
+    dated by their committer dates (SPEC["undated push"], F8)."""
+    return refused_activity(calls, None)
+
+
+def refused_activity(calls, kind):
+    """The branches whose own read of the repository's activity, of the
+    kind asked for (None for no kind named), GitHub refused in a run."""
+    refused = set()
     for call in calls:
-        ref = dict(call.query).get("ref", "")
-        if call.method == "GET" and call.path == "/activity" and call.status != 200 and ref.startswith("refs/heads/"):
-            unsaid.add(ref[len("refs/heads/"):])
-    return frozenset(unsaid)
+        query = dict(call.query)
+        ref = query.get("ref", "")
+        if (call.method == "GET" and call.path == "/activity" and call.status != 200
+                and ref.startswith("refs/heads/") and query.get("activity_type") == kind):
+            refused.add(ref[len("refs/heads/"):])
+    return frozenset(refused)
 
 
 def quiet_second_run(after, record):

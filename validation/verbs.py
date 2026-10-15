@@ -78,10 +78,16 @@ FAULTS = {
     "ref-delete-422": Fault("DELETE", "/git/refs/heads/*", 422),
     "compare-404": Fault("GET", "/compare/*", 404),
     "comments-read-500": Fault("GET", "/issues/*/comments", 500),
-    "activity-500": Fault("GET", "/activity", 500),
-    # Every read of the activity in the run, the newest creations and each
-    # branch's own alike, as for a token that may not read it.
+    # The first read of the branches' making in the run (F13), the newest
+    # creations' or a branch's own.
+    "activity-500": Fault("GET", "/activity", 500, query=(("activity_type", "branch_creation"),)),
+    # Every read of the activity in the run, the newest creations, each
+    # branch's own and the pushes of the claims' heads alike, as for a
+    # token that may not read it.
     "activity-500-all": Fault("GET", "/activity", 500, times=100),
+    # The first read of a claim's head's push in the run (F8), which then
+    # dates the claim by its committer date.
+    "pushes-500": Fault("GET", "/activity", 500, query=(("activity_type", None),)),
 }
 
 
@@ -122,8 +128,9 @@ class Scope(NamedTuple):
     onto another's claim, a misnamed claim, and the owner's push of one by
     hand, which meets no guard), the files each issue's claim lists, by
     issue, the clock skews, in hours, a worker's commits may carry (F8: a
-    pusher whose clock is ahead or behind stamps its commits so, and the
-    committer date is what idleness is read from), whether a stranger
+    pusher whose clock is ahead or behind stamps its commits so, which
+    since F8's fix decides idleness only where GitHub will not date the
+    push of the head, as under the fault pushes-500), whether a stranger
     opens pull requests from a fork whose branch bears a claim's name
     (F17), and whether a stranger opens them from a claim's own branch
     here (F19)."""

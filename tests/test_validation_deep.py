@@ -583,10 +583,12 @@ class Conformance(unittest.TestCase):
     def test_a_trace_naming_one_of_two_released_branches_of_one_minute_plays_alike_in_both_worlds(self):
         """Two skewed claims of one issue in one minute, by a and b, and
         by a alone with main moving between them: each is released by the
-        next run, the rename-back of the first names it by its place, and
-        both worlds act on the same branch."""
-        space = deep.Space("tie", Scope(workers=("a", "b"), issues=(2,), skews=(-48,)), (), 6)
-        board = Verb("board", "board", (cycle.SCHEDULE, ""))
+        next run, which GitHub refuses to say when the claim's push came,
+        so the run reads the committer date dated two days back (F8), the
+        rename-back of the first names it by its place, and both worlds act
+        on the same branch."""
+        space = deep.Space("tie", Scope(workers=("a", "b"), issues=(2,), skews=(-48,), faults=("pushes-500",)), (), 6)
+        board = Verb("board", "board", (cycle.SCHEDULE, "", ("pushes-500",)))
         back = Verb("rename-back", M.OWNER, (2, ("released", 2, 0)))
         two_workers = (Verb("claim", "a", (2, -2880)), board, Verb("claim", "b", (2, -2880)), board, back)
         one_worker = (Verb("claim", "a", (2, -2880)), board, Verb("move-main", M.OWNER), board,
@@ -623,22 +625,24 @@ class KnownSearches(unittest.TestCase):
         self.assertEqual(known.search_differences("E-faults", []), [])
 
     def test_the_activity_faults_are_met_where_they_can_fire(self):
-        """The board reads the repository's activity only for the work in
+        """The board reads when the branches were made only for the work in
         the Overlaps (F13), which E-faults' one issue never has, so
         E-faults took the two faults on that read and never met them;
-        E-activity, from two claims on one file, meets both."""
+        E-activity, from two claims on one file, meets them, and the fault
+        on the read of a claim's head's push (F8), which every board run
+        with a claim makes."""
         met = {name: 0 for name in deep.ACTIVITY_FAULTS}
         fault_for = fake_github.FakeGitHub.fault_for
 
-        def counting(fake, call):
-            fault = fault_for(fake, call)
+        def counting(fake, call, query=None):
+            fault = fault_for(fake, call, query)
             for name in met:
                 met[name] += fault == verbs.FAULTS[name]
             return fault
 
         with mock.patch.object(fake_github.FakeGitHub, "fault_for", counting):
             found = deep.search_space(deep.SPACES["E-activity"], depth=2)
-        self.assertEqual(sorted(met), ["activity-500", "activity-500-all"])
+        self.assertEqual(sorted(met), ["activity-500", "activity-500-all", "pushes-500"])
         self.assertTrue(all(met.values()), met)
         self.assertEqual([(f.guarantee, f.detail) for f in found.found], [])
 

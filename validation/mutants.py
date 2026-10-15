@@ -409,25 +409,28 @@ def sort_key_with_int_after_isdigit(value):
     return (0, int(value), "") if str(value).isdigit() else (1, 0, str(value))
 
 
-def releases_skipping_finished(api, heads, found_issues, pulls, now=None, asked=None):
+def releases_skipping_finished(api, heads, found_issues, pulls, now=None, asked=None, every_head=None, refused=None):
     """github.releases leaving every finished draft out before it reads
     any release comment, as before 0.4.1 (F10), so a person's release of
     one is never seen; every other reading is release's own."""
     now = now or datetime.now(timezone.utc)
     ready, trusted = github.ready_branches(pulls), github.may_write(api, asked)
     drafts = {(p.get("head") or {}).get("ref"): p for p in pulls if p.get("draft") and github.is_claims(p)}
+    every_head = every_head or {}
     found = {}
     for branch, sha in sorted(heads.items()):
         key = claims.key_of(branch)
         if not sha or branch in ready or not github.may_be_due(found_issues.get(key)):
             continue
-        last_commit = github.committed_at(api, sha)
-        if not last_commit or not claims.is_idle(last_commit, now):
+        kept = every_head.get(claims.released_branch(key, sha)) == sha
+        pushed, committed = github.head_since(api, branch, sha, refused)
+        release = board.Release(sha=sha, committed_at=committed, pushed_at=pushed, kept=kept)
+        if not kept and (not release.last_commit or not claims.is_idle(release.last_commit, now)):
             continue
         if github.finished_draft(api, drafts.get(branch)):
             continue
-        released_at = claims.latest_release(api.get_all(f"/repos/{api.repo}/issues/{key}/comments"), trusted)
-        found[key] = {"released_at": released_at, "sha": sha, "committed_at": last_commit}
+        release.released_at = claims.latest_release(api.get_all(f"/repos/{api.repo}/issues/{key}/comments"), trusted)
+        found[key] = release.to_dict()
     return found
 
 
@@ -529,45 +532,55 @@ def ready_branches_by_name(pulls):
     return {(p.get("head") or {}).get("ref") for p in pulls if not p.get("draft")}
 
 
-def releases_reading_a_fork_s_draft(api, heads, found_issues, pulls, now=None, asked=None):
+def releases_reading_a_fork_s_draft(api, heads, found_issues, pulls, now=None, asked=None, every_head=None, refused=None):
     """github.releases taking a draft from a fork whose branch bears a
     claim's name for the claim's own, as before F17's fix, so its author's
     "finished; ready to mark" holds the claim; every other reading is
     release's own."""
     return releases_reading_drafts(api, heads, found_issues, pulls, now, asked,
-                                   lambda p: not board.from_stranger(p))
+                                   lambda p: not board.from_stranger(p), every_head, refused)
 
 
-def releases_reading_a_stranger_s_draft(api, heads, found_issues, pulls, now=None, asked=None):
+def releases_reading_a_stranger_s_draft(api, heads, found_issues, pulls, now=None, asked=None, every_head=None, refused=None):
     """github.releases taking a draft a stranger opened from a claim's own
     branch for the claim's, as before F19's fix, so its author's "finished;
     ready to mark" holds the claim; every other reading is release's
     own."""
     return releases_reading_drafts(api, heads, found_issues, pulls, now, asked,
-                                   lambda p: not board.from_fork(p))
+                                   lambda p: not board.from_fork(p), every_head, refused)
 
 
-def releases_reading_drafts(api, heads, found_issues, pulls, now, asked, counted):
+def release_counts_by_time_alone(release, idle_after=claims.IDLE_AFTER):
+    """board.release_counts reading every release by its time alone, a
+    head a release kept included, which F8's fix exempts: such a branch,
+    pushed again, is dated by that push and stands a day."""
+    return bool(release.released_at) and claims.was_released(release.released_at, release.last_commit, idle_after)
+
+
+def releases_reading_drafts(api, heads, found_issues, pulls, now, asked, counted, every_head=None, refused=None):
     """github.releases with the drafts it reads as claims' chosen by
     counted, where the library counts only the claim's own (github.is_claims)."""
     now = now or datetime.now(timezone.utc)
     ready, trusted = github.ready_branches(pulls), github.may_write(api, asked)
     drafts = {(p.get("head") or {}).get("ref"): p for p in pulls if p.get("draft") and counted(p)}
+    every_head = every_head or {}
     found = {}
     for branch, sha in sorted(heads.items()):
         key = claims.key_of(branch)
         if not sha or branch in ready or not github.may_be_due(found_issues.get(key)):
             continue
-        last_commit = github.committed_at(api, sha)
-        if not last_commit or not claims.is_idle(last_commit, now):
+        kept = every_head.get(claims.released_branch(key, sha)) == sha
+        pushed, committed = github.head_since(api, branch, sha, refused)
+        release = board.Release(sha=sha, committed_at=committed, pushed_at=pushed, kept=kept)
+        if not kept and (not release.last_commit or not claims.is_idle(release.last_commit, now)):
             continue
         finished = github.finished_draft(api, drafts.get(branch))
         if finished and labels.CLAIMED in found_issues[key]["labels"]:
             continue
-        released_at = claims.latest_release(api.get_all(f"/repos/{api.repo}/issues/{key}/comments"), trusted)
-        if finished and not claims.was_released(released_at, last_commit):
+        release.released_at = claims.latest_release(api.get_all(f"/repos/{api.repo}/issues/{key}/comments"), trusted)
+        if finished and not board.release_counts(release):
             continue
-        found[key] = {"released_at": released_at, "sha": sha, "committed_at": last_commit}
+        found[key] = release.to_dict()
     return found
 
 
@@ -1084,6 +1097,14 @@ MUTANTS = {
         coordinator, "claims_made", undated_claims_take_no_marker,
         "G7", "a claim whose push GitHub does not date takes every marker, so a run that cannot read the activity "
               "tells nothing again (F2's second review)"),
+    "idleness by the committer date": Mutant(
+        github, "head_pushed_at", lambda api, branch, sha: "",
+        "G3", "a claim's last commit is dated by when GitHub received the push of its head, so a head dated ahead "
+              "holds no claim past its day and one dated back has none released at once (F8)"),
+    "a kept head dated by its push": Mutant(
+        board, "release_counts", release_counts_by_time_alone,
+        "G5", "the release that kept a head counts for a branch pushed again at it, so the board deletes that "
+              "branch at once and the coordinator releases no work twice (F8)"),
 }
 
 

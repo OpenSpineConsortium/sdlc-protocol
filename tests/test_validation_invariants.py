@@ -414,6 +414,32 @@ class TheOpenFindingsShow(unittest.TestCase):
         self.assertEqual(invariants.unsaid_branches(calls), {"claude/1", "claude/3"})
         self.assertEqual(invariants.unsaid_branches(calls[:1]), set())
 
+    def test_f8_a_claim_is_released_by_its_push_and_by_its_committer_date_where_github_will_not_date_it(self):
+        """Fixed after 0.4.1: a's claim commit is dated 72 hours ahead, and
+        GitHub received it 25 hours before the run, which releases it; the
+        mutant that reads the committer date holds it. With the read of the
+        push refused, the run dates the head by its committer date and
+        holds it, which the oracle reads from the run's calls, so the run
+        is green there too."""
+        steps = [Verb("claim", "a", (1, 72 * M.HOUR)), Verb("label-on", "a", (1, "claimed")),
+                 Verb("label-on", "a", (1, "worker:a")), Verb("wait", "clock", (25,))]
+        self.assertEqual(violations(steps + [BOARD]), [])
+        self.assertEqual(violations(steps + [board_with("pushes-500")]), [])
+        with mutants.switched_on(mutants.MUTANTS["idleness by the committer date"]):
+            found = violations(steps + [BOARD])
+        self.assertIn(("G3", "owed and not made: ('comment', 1, 'claim-released')"),
+                      [(v.guarantee, v.detail) for v in found])
+
+    def test_undated_branches_are_those_whose_read_of_their_head_s_push_github_refused(self):
+        def read(status, ref, kind=None):
+            query = ((("activity_type", kind),) if kind else ()) + (("ref", ref),)
+            return Call("GET", "/activity", query, None, status, False, True)
+
+        calls = [read(500, "refs/heads/claude/1"), read(500, "refs/heads/claude/2", "branch_creation"),
+                 read(200, "refs/heads/claude/3")]
+        self.assertEqual(invariants.undated_branches(calls), {"claude/1"})
+        self.assertEqual(invariants.unsaid_branches(calls), {"claude/2"})
+
     def test_f14_an_issue_a_worker_s_label_names_is_shown_under_given_to_workers(self):
         """Found by this step, fixed after 0.4.1: an issue a worker's label
         names, with no todo, is shown under Given to workers as the spec

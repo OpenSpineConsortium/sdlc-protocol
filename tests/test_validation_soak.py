@@ -73,9 +73,11 @@ class TheSoak(unittest.TestCase):
         """The lane shortens a walk's violation before it writes it, and
         taking a wait out moves the clock a released branch's name is made
         from; each file names the detail a replay of it meets, sha and
-        all, not the one the walk met."""
+        all, not the one the walk met. The seed is one whose walk meets
+        such a detail; it was 9 until F8's fault pushes-500 joined the
+        kinds a walk draws from, which moved every walk."""
         with tempfile.TemporaryDirectory() as folder, mock.patch.object(claims, "is_idle", at_exactly_24_hours):
-            result = lanes.run_soak([9], 12, folder)
+            result = lanes.run_soak([22], 12, folder)
             self.assertTrue(any("released/" in v["detail"] for v in result["violations"]), result["violations"])
             for v in result["violations"]:
                 with self.subTest(file=Path(v["file"]).name):

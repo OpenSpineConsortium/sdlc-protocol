@@ -84,7 +84,10 @@ class Fault(NamedTuple):
     """Make the next times calls whose "METHOD path" (the path after
     /repos/OWNER/NAME, unquoted) matches "METHOD path", a glob in which *
     stands for any run of characters, fail with status. applied makes the
-    write and loses its answer."""
+    write and loses its answer. query, pairs of a parameter and its value,
+    narrows the calls to those whose query carries each, a value of None
+    to those whose query lacks the parameter, so one read of the activity
+    is told from another (F8)."""
 
     method: str
     path: str
@@ -93,6 +96,13 @@ class Fault(NamedTuple):
     message: str = "injected"
     retry_after: str | None = None
     applied: bool = False
+    query: tuple = ()
+
+    def matches(self, call, query):
+        """Whether the call, "METHOD path", and its query are this fault's."""
+        if not fnmatch.fnmatchcase(call, f"{self.method} {self.path}"):
+            return False
+        return all(query.get(name) == value for name, value in self.query)
 
 
 class Call(NamedTuple):
@@ -158,7 +168,7 @@ class FakeGitHub:
         query = dict(urllib.parse.parse_qsl(parts.query))
         body = json.loads(request.data) if request.data else None
         path = "/" + "/".join(segments)
-        fault = self.fault_for(f"{method} {path}")
+        fault = self.fault_for(f"{method} {path}", query)
         if fault is not None and not fault.applied:
             self.calls.append(Call(method, path, tuple(sorted(query.items())), body, fault.status, False, True))
             raise self.fault_answer(request.full_url, fault)
@@ -173,10 +183,10 @@ class FakeGitHub:
             raise self.fault_answer(request.full_url, fault)
         return Answer(found, headers)
 
-    def fault_for(self, call):
+    def fault_for(self, call, query=None):
         for entry in self.faults:
             fault, left = entry
-            if left > 0 and fnmatch.fnmatchcase(call, f"{fault.method} {fault.path}"):
+            if left > 0 and fault.matches(call, query or {}):
                 entry[1] = left - 1
                 return fault
         return None
@@ -345,22 +355,35 @@ class FakeGitHub:
     # --- branches, contents and commits -------------------------------------
 
     def activity(self, query):
-        """The repository's activity as far as the model records it: the
-        push that made each branch that stands, newest first unless asked
-        for the oldest first (direction asc), filtered as asked by ref
-        (refs/heads/<name> or the name) and by type; a filter the model
-        records nothing of, any type but branch_creation, answers an empty
-        list, as GitHub does for activity that never happened."""
+        """The repository's activity as far as the model records it, for
+        each branch that stands: the push that made it and the push that
+        last set its head, when that was a later one (model.pushed, F8),
+        newest first unless asked for the oldest first (direction asc), a
+        branch's last push after the push that made it in one minute,
+        filtered as asked by ref (refs/heads/<name> or the name) and by
+        type; a filter the model records nothing of, any other type,
+        answers an empty list, as GitHub does for activity that never
+        happened. The entry of a branch's making names its head now as the
+        head it set, which no reader of the making looks at."""
         model = self.model
         ref = query.get("ref", "")
         name = ref[len("refs/heads/"):] if ref.startswith("refs/heads/") else ref
-        if query.get("activity_type", "branch_creation") != "branch_creation":
-            return []
-        made = [(at, branch) for branch, at in model.created.items() if not ref or branch == name]
-        return [{"ref": f"refs/heads/{branch}", "timestamp": iso(at), "activity_type": "branch_creation",
-                 "actor": {"login": model.creators.get(branch, "")}, "before": "0" * 40,
-                 "after": model.refs.get(branch, "")}
-                for at, branch in sorted(made, reverse=query.get("direction", "desc") != "asc")]
+        kind = query.get("activity_type")
+        entries = []
+        for branch, at in model.created.items():
+            if ref and branch != name:
+                continue
+            entries.append(((at, 0), self.entry(branch, at, "branch_creation", model.refs.get(branch, ""))))
+            last = model.pushed.get(branch)
+            if last is not None and last[2] != "branch_creation":
+                entries.append(((last[0], 1), self.entry(branch, last[0], last[2], last[1])))
+        newest_first = query.get("direction", "desc") != "asc"
+        listed = [entry for _, entry in sorted(entries, key=lambda e: e[0], reverse=newest_first)]
+        return [entry for entry in listed if kind is None or entry["activity_type"] == kind]
+
+    def entry(self, branch, at, kind, after):
+        return {"ref": f"refs/heads/{branch}", "timestamp": iso(at), "activity_type": kind,
+                "actor": {"login": self.model.creators.get(branch, "")}, "before": "0" * 40, "after": after}
 
     def rename(self, old, new):
         if old not in self.model.refs:

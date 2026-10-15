@@ -41,6 +41,33 @@ class Terms(unittest.TestCase):
         self.assertFalse(oracle.due(claimed(Verb("wait", "clock", (24,))), 1))
         self.assertTrue(oracle.due(claimed(Verb("wait", "clock", (25,))), 1))
 
+    def test_a_claim_is_idle_by_when_its_head_was_pushed_whatever_its_committer_date(self):
+        """F8: SPEC["last commit"]; a view that could not read the push
+        dates the head by its committer date (SPEC["undated push"])."""
+        ahead = run(M.seeded((1,), writers=("a",)), Verb("claim", "a", (1, 72 * M.HOUR)),
+                    Verb("label-on", "a", (1, "claimed")), Verb("wait", "clock", (25,)))
+        self.assertEqual(oracle.head_time(ahead, "claude/1"), 0)
+        self.assertTrue(oracle.due(ahead, 1))
+        undated = oracle.dated(ahead, {"claude/1"})
+        self.assertEqual(oracle.head_time(undated, "claude/1"), 72 * M.HOUR)
+        self.assertFalse(oracle.due(undated, 1))
+        self.assertIs(oracle.dated(ahead, set()), ahead)
+        self.assertIn("claude/1", ahead.pushed, "the view leaves the model as it was")
+        back = run(claimed(Verb("wait", "clock", (2,))), Verb("commit", "a", (1, -48 * M.HOUR)))
+        self.assertFalse(oracle.due(back, 1))
+        self.assertTrue(oracle.due(oracle.dated(back, {"claude/1"}), 1))
+
+    def test_a_head_a_release_kept_is_released_by_any_release_comment_that_counts(self):
+        """F8: SPEC["pushed again"] and SPEC["kept deleted"]: pushed again
+        at once, the branch is released already and not due."""
+        model = claimed(Verb("wait", "clock", (25,)), Verb("board", "board", ("schedule",)))
+        old = next(r for r in model.refs if r.startswith("released/"))
+        run(model, Verb("push-old-head", "a", (1, old)), Verb("label-on", "a", (1, "claimed")))
+        self.assertTrue(oracle.kept(model, "claude/1"))
+        self.assertTrue(oracle.already_released(model, 1))
+        self.assertFalse(oracle.due(model, 1))
+        self.assertFalse(oracle.kept(model, "claude/9"))
+
     def test_a_finished_claim_is_never_due(self):
         for finish in ([Verb("label-on", "a", (1, "in-review"))],
                        [Verb("open-draft", "a", (1,)), Verb("mark-ready", "a", (100,))],

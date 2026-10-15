@@ -27,7 +27,14 @@ BUDGET_SECONDS = 10
 # A fixed finding, each mutant of validation/mutants.py that undoes a part
 # of its fix, the step the trace then goes red at (numbered as played, an
 # announce counting as three) and the guarantee DESIGN.md's table names;
-# F6's fix has two parts, the render's sort key and the quoted path. F9's
+# F6's fix has two parts, the render's sort key and the quoted path. F8's
+# trace goes red at its first board run, step 13, where a's claim, its
+# head dated 72 hours ahead, is a day idle by its push and b's, its head
+# dated 48 hours back, was pushed an hour before: a's is held and b's
+# released once idleness is read by the committer date; and at the run
+# after c pushes its released head again, step 15, where that branch
+# stands as a claim, not deleted, once the release that kept the head
+# counts by its time alone. F9's
 # trace goes red at its first board run, step 2, where the draft level
 # with main is told it moved once the adapter reads the comparison's
 # ahead_by for behind_by, and at its second, step 4, where the draft
@@ -84,6 +91,8 @@ UNDONE = {
     "F5": [("a claim number with leading zeros", 2, "G1")],
     "F6": [("a sort key that calls int after isdigit", 1, "G15"), ("a branch name sent unquoted", 3, "G15")],
     "F7": [("the guard passes a lease onto another's claim", 1, "G11a")],
+    "F8": [("idleness by the committer date", 13, "G2"), ("idleness by the committer date", 13, "G3"),
+           ("a kept head dated by its push", 15, "G5")],
     "F9": [("an opaque state read by GitHub's word alone", 4, "G10"), ("the comparison read by ahead_by", 2, "G10")],
     "F10": [("a finished draft's release by hand not seen", 9, "G5")],
     "F11": [("a refused comment stops the run", 6, "G15")],
@@ -111,12 +120,12 @@ UNDONE = {
             ("a stranger's pull request listed after its release", 7, "G9"),
             ("a stranger's pull request spoken to after its release", 7, "G10")],
 }
-# The seventeen settled findings: F1, F3, F5, F6, F10 and F11 fixed in
-# 0.4.1; F4, F7, F9, F12, F13, F14, F15, F17, F18 and F19 fixed on main
-# after it (known.json's fixed_after); and F16, fixed in the spec's words, which
-# the library as built already keeps, so known.json names no version for
-# it.
-FIXED = ("F1", "F2", "F3", "F4", "F5", "F6", "F7", "F9", "F10", "F11", "F12", "F13", "F14", "F15", "F16", "F17",
+# The nineteen findings, every one settled since F8's fix: F1, F3, F5,
+# F6, F10 and F11 fixed in 0.4.1; F2, F4, F7, F8, F9, F12, F13, F14, F15,
+# F17, F18 and F19 fixed on main after it (known.json's fixed_after); and
+# F16, fixed in the spec's words, which the library as built already
+# keeps, so known.json names no version for it.
+FIXED = ("F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12", "F13", "F14", "F15", "F16", "F17",
          "F18", "F19")
 # Findings red as built, which no rule of the library answers: none since
 # F4's fix; the test keeps the case for the next one.
@@ -164,8 +173,6 @@ class TheTraces(unittest.TestCase):
                 elif finding in RED_AS_BUILT:
                     self.assertTrue(entries and all(e.finding == finding for e in entries))
                     self.assertNotIn(finding, known.AS_BUILT)
-                elif finding == "F8":
-                    self.assertEqual((entries, trace.breaks), ([], ()))
                 else:
                     self.assertIn(finding, known.AS_BUILT)
                     self.assertTrue(entries and all(e.finding == finding for e in entries))
@@ -184,6 +191,17 @@ class TheTraces(unittest.TestCase):
                         record = replay.replay(trace)
                     self.assertIn((step, guarantee), replay.results(record), "\n".join(record.timeline))
                     self.assertIn(guarantee, trace.breaks)
+
+    def test_a_step_naming_a_released_branch_the_run_never_made_is_a_mismatch_and_not_played(self):
+        """The mutation lane plays every trace under every mutant: F8's
+        push of c's released head names a branch a mutant that skips the
+        rename never makes, so the step is a mismatch the record names and
+        the lane reads the violations of the steps that played."""
+        trace = self.traces["F8"]
+        with mutants.switched_on(mutants.MUTANTS["the rename skipped"]):
+            record = replay.replay(trace)
+        self.assertIn((14, "not played: no released branch of #3"), record.mismatches)
+        self.assertIn((13, "G3"), replay.results(record))
 
     def test_f4_s_trace_deals_from_the_run_s_one_look_and_twice_under_its_mutant(self):
         """The run looks before main moves, so c is dealt nothing; with
@@ -289,8 +307,9 @@ class KnownJson(unittest.TestCase):
         repository vendors, so a finding fixed on main is still known there
         at that version and before, and new from the next release on."""
         self.assertEqual(known.FIXED_AFTER,
-                         {"F2": "0.4.1", "F4": "0.4.1", "F7": "0.4.1", "F9": "0.4.1", "F12": "0.4.1", "F13": "0.4.1",
-                          "F14": "0.4.1", "F15": "0.4.1", "F17": "0.4.1", "F18": "0.4.1", "F19": "0.4.1"})
+                         {"F2": "0.4.1", "F4": "0.4.1", "F7": "0.4.1", "F8": "0.4.1", "F9": "0.4.1", "F12": "0.4.1",
+                          "F13": "0.4.1", "F14": "0.4.1", "F15": "0.4.1", "F17": "0.4.1", "F18": "0.4.1",
+                          "F19": "0.4.1"})
         current = known.version_key(sdlc_protocol.__version__)
         for finding, version in known.FIXED_AFTER.items():
             with self.subTest(finding=finding):
@@ -299,7 +318,7 @@ class KnownJson(unittest.TestCase):
                 self.assertIsNotNone(known.version_key(version))
                 self.assertLessEqual(known.version_key(version), current,
                                      "the last version with a finding is one main has stated, never a later one")
-        fixed_on_main = {"F2", "F4", "F7", "F9", "F12", "F13", "F14", "F15", "F17", "F18", "F19"}
+        fixed_on_main = {"F2", "F4", "F7", "F8", "F9", "F12", "F13", "F14", "F15", "F17", "F18", "F19"}
         self.assertEqual(known.as_built_for("0.4.1"), known.AS_BUILT | fixed_on_main)
         self.assertEqual(known.as_built_for("0.4.0"), known.AS_BUILT | fixed_on_main)
         self.assertEqual(known.as_built_for("0.4.2"), known.AS_BUILT, "the next release carries the fixes")

@@ -67,6 +67,21 @@ class Pushes(unittest.TestCase):
         later = self.model.commit((moved,), "b", {"x": "2\n"}, "more")
         self.assertEqual(self.model.push("b", "claude/1", later, lease=True), M.Push(False, "stale info"))
 
+    def test_each_push_that_moves_a_head_is_recorded_with_its_minute_and_kind(self):
+        """F8: what the activity lists of the push that last set a branch's
+        head; a push of the head the branch already has sends nothing."""
+        self.model.push("a", "claude/1", self.first)
+        self.assertEqual(self.model.pushed["claude/1"], (0, self.first, "branch_creation"))
+        self.model.now = 90
+        later = self.model.commit((self.first,), "a", {"x": "1\n"}, "work")
+        self.model.push("a", "claude/1", later)
+        self.assertEqual(self.model.pushed["claude/1"], (90, later, "push"))
+        self.model.now = 120
+        self.model.push("a", "claude/1", later)
+        self.assertEqual(self.model.pushed["claude/1"], (90, later, "push"))
+        self.model.push("b", "claude/1", claim_commit(self.model, "b"), force=True)
+        self.assertEqual(self.model.pushed["claude/1"][::2], (120, "force_push"))
+
 
 class CommitsInOrder(unittest.TestCase):
     def test_a_parent_comes_before_its_child_made_in_the_same_minute(self):
@@ -131,7 +146,6 @@ class Standing(unittest.TestCase):
         self.move_main({"README.md": "main\n"})
         self.assertEqual(self.model.standing("claude/1"), M.DIRTY)
 
-
 class Rename(unittest.TestCase):
     def test_closes_the_open_pull_request_and_keeps_the_holder(self):
         model = M.seeded()
@@ -141,6 +155,8 @@ class Rename(unittest.TestCase):
         self.assertEqual(model.pulls[100].state, "closed")
         self.assertNotIn("claude/1", model.refs)
         self.assertEqual(model.creators["released/1-abcdef0"], "a")
+        self.assertEqual(model.pushed["released/1-abcdef0"][2], "branch_creation")
+        self.assertNotIn("claude/1", model.pushed)
 
     def test_leaves_open_a_pull_request_from_a_fork_whose_branch_bears_the_name(self):
         model = M.seeded()
@@ -178,6 +194,7 @@ class Delete(unittest.TestCase):
         self.assertEqual(self.model.pulls[100].state, "closed")
         self.assertNotIn("claude/1", self.model.refs)
         self.assertNotIn("claude/1", self.model.creators)
+        self.assertNotIn("claude/1", self.model.pushed)
 
     def test_leaves_a_merged_pull_request_merged_and_a_fork_s_open(self):
         self.model.pulls[100] = M.PullRequest(100, "claude/1", "a", "Closes #1", state="merged")
@@ -230,6 +247,12 @@ class TheKey(unittest.TestCase):
         self.assertTrue(self.differs(lambda m: setattr(m, "unanswered", frozenset({"sam"}))))
         self.model.unanswered = frozenset({"sam"})
         self.assertEqual(self.model.clone().unanswered, frozenset({"sam"}))
+
+    def test_keeps_when_each_head_was_pushed(self):
+        """A release dates a claim by it (F8), so two states that differ
+        only in when a head was pushed are two states; a clone keeps it."""
+        self.assertTrue(self.differs(lambda m: m.pushed.update({"claude/1": (5, m.refs["claude/1"], "push")})))
+        self.assertEqual(self.model.clone().pushed, self.model.pushed)
 
     def test_keeps_the_label_events_every_head_and_the_tracking_refs(self):
         self.assertTrue(self.differs(lambda m: setattr(m, "label_events", m.label_events + (

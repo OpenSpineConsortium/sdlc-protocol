@@ -58,8 +58,12 @@ SPEC = {
     "todo": "An issue labelled todo and shown unclaimed on the board is free to take as Pick says.",
     "epic": "The board's Queue leaves an epic out, since nobody takes one whole.",
     "blockers": "The board lists every open issue labelled blocker under Blockers, claimed or not",
-    "idle": "A claim whose branch has had no commit for more than 24 hours, by the committer date of its head, is "
-            "released by the coordinator, unless it is finished",
+    "idle": "A claim whose branch has had no commit for more than 24 hours is released by the coordinator, unless "
+            "it is finished",
+    "last commit": "When a branch's last commit came, here and below, is when GitHub received the push that set its "
+                   "head, as the repository's activity records that push, so no worker's clock decides it",
+    "undated push": "the head's committer date stands in where the activity records no push that set the head, or "
+                    "GitHub refuses to read it.",
     "finished": "an issue labelled in-review, a pull request marked ready, or a draft whose author's latest comment "
                 "on it starts with \"finished; ready to mark\" waits for review however long it takes.",
     "order": "The coordinator first takes the label claimed and every worker's label off the issue, a label "
@@ -79,8 +83,12 @@ SPEC = {
                "workflow someone who may write put there can write as), or by anyone else who may write to the "
                "repository.",
     "rename": "renames the branch to `released/<issue>-<short sha of its head>`",
-    "pushed again": "A branch pushed again at the head a release already kept is deleted instead, since its work "
-                    "is already kept.",
+    "pushed again": "A branch pushed again at the head a release already kept, one a branch "
+                    "`released/<issue>-<short sha>` stands at, brings nothing new: its latest release comment counts "
+                    "for it however soon after that push it came",
+    "kept deleted": "so the board deletes it instead of renaming it, since its work is already kept, and the "
+                    "coordinator releases it only where no release comment counts, once it has gone a day without a "
+                    "commit.",
     "overlap": "the coordinator tells each piece of open work about the work it meets, once, in a comment whose "
                "first line is `<!-- sdlc-coordinator: overlap <numbers> -->` naming every piece it told of",
     "told again": "tells it again only when work it has not been told of starts to meet it",
@@ -276,7 +284,34 @@ def trusted(model, comment):
 
 
 def head_time(model, ref):
-    return model.commits[model.refs[ref]].committed_at
+    """SPEC["last commit"]: the minute GitHub received the push that set
+    the branch's head (model.pushed, F8); its committer date where the
+    model holds no push that set it, or for a branch whose push the run
+    could not read, which a view of the model leaves out (dated,
+    SPEC["undated push"])."""
+    head, pushed = model.refs[ref], model.pushed.get(ref)
+    if pushed is not None and pushed[1] == head:
+        return pushed[0]
+    return model.commits[head].committed_at
+
+
+def dated(model, undated):
+    """The model as a run that could not read when the heads of the
+    undated branches were pushed saw it: those branches dated by their
+    committer dates (SPEC["undated push"]); the model itself when there
+    are none."""
+    if not undated:
+        return model
+    view = model.clone()
+    view.pushed = {ref: push for ref, push in view.pushed.items() if ref not in undated}
+    return view
+
+
+def kept(model, ref):
+    """SPEC["pushed again"]: a released branch of the claim's issue stands
+    at the claim branch's head."""
+    number, head = claim_number(ref), model.refs.get(ref)
+    return number is not None and head is not None and model.refs.get(released_name(number, head)) == head
 
 
 def idle(since, now):
@@ -298,9 +333,11 @@ def latest_release(model, number):
 
 def already_released(model, number):
     """SPEC["candidates"]: the latest release comment came more than 24
-    hours after the branch's last commit."""
-    latest = latest_release(model, number)
-    return latest is not None and idle(head_time(model, branch_of(number)), latest)
+    hours after the branch's last commit; or, for a head a release already
+    kept, any release comment that counts (SPEC["pushed again"],
+    SPEC["kept deleted"])."""
+    latest, ref = latest_release(model, number), branch_of(number)
+    return latest is not None and (kept(model, ref) or idle(head_time(model, ref), latest))
 
 
 def finished(model, number):

@@ -153,6 +153,8 @@ TRACES = {
     "the markers on a claim's own pull request never read": "the regression traces",
     "a marker counted whenever it came": "the regression traces",
     "an undated claim taking no marker": "the regression traces",
+    "idleness by the committer date": "the regression traces",
+    "a kept head dated by its push": "the regression traces",
     "a stranger's pull request named on a claim's row": "the regression traces",
     "a stranger's pull request taken for a claim's work": "the regression traces",
     "a stranger's pull request listed after its release": "the regression traces",
@@ -204,9 +206,11 @@ class TheLane(unittest.TestCase):
         branch for the claim's and one for the adapter's marking, and its
         review two that read a permission answer GitHub refused the other
         way, and F2's fix one, a piece of work named by the number it is
-        shown by, so the bound is widened to 100 and the count noted."""
+        shown by, with three from its two reviews, and F8's fix two,
+        idleness by the committer date and a kept head dated by its push,
+        so the bound is widened to 100 and the count noted."""
         self.assertTrue(10 <= len(mutants.MUTANTS) <= 100)
-        self.assertEqual(len(mutants.MUTANTS), 93)
+        self.assertEqual(len(mutants.MUTANTS), 95)
         self.assertEqual(sorted(TRACES), sorted(mutants.MUTANTS))
 
     def test_every_mutant_names_a_rule_the_library_still_has(self):

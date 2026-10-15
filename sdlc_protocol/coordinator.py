@@ -26,6 +26,7 @@ release over. Like the board, this module only decides and words;
 adapters/github.py makes the calls.
 """
 
+import dataclasses
 import re
 from typing import NamedTuple
 
@@ -60,9 +61,9 @@ def is_candidate(snap, key):
     exists, its issue is open and not labelled in-review, no pull request
     from its branch is marked ready, one from a fork whose branch bears the
     same name being no claim's (board.of_claim), and its head commit and
-    when it was committed are known."""
+    when its last commit came (board.Release.last_commit) are known."""
     issue, release = snap.claim_issues.get(key), snap.releases.get(key)
-    if issue is None or release is None or not release.sha or not release.committed_at:
+    if issue is None or release is None or not release.sha or not release.last_commit:
         return False
     if claims.branch_of(key) not in snap.branches or issue.state != "open" or labels.IN_REVIEW in issue.labels:
         return False
@@ -77,10 +78,19 @@ def releases_due(snapshot, now, idle_after=claims.IDLE_AFTER):
     only once a person's release of it counts (adapters.github.releases),
     so it is never released here."""
     snap = board.as_snapshot(snapshot)
-    keys = [key for key in snap.releases if is_candidate(snap, key)]
-    last_commits = {key: snap.releases[key].committed_at for key in keys}
+    keys = [key for key in snap.releases if is_candidate(snap, key) and not kept_released(snap.releases[key])]
+    last_commits = {key: snap.releases[key].last_commit for key in keys}
     released = {key: snap.releases[key].released_at for key in keys}
     return claims.release_due(last_commits, now, idle_after, released)
+
+
+def kept_released(release):
+    """Whether a release already counts for a claim whose head a release
+    kept (board.release_counts): such a branch was pushed again with
+    nothing new, and the board deletes it, so a release of it would be a
+    second one for the same work; with no release comment that counts, it
+    is released as any idle claim is, its push dating it."""
+    return release.kept and board.release_counts(release)
 
 
 class Holding(NamedTuple):
@@ -149,7 +159,7 @@ def release_text(snapshot, key, holding, idle_after=claims.IDLE_AFTER):
     return "\n".join([
         claims.RELEASE_MARKER,
         f"released: the claim on this issue, held by {cut(holder(snap, key), NAME_QUOTED)}, has had no commit on "
-        f"{old} since {release.committed_at}, more than {hours} hours, and {pull_clause}, so the coordinator "
+        f"{old} since {release.last_commit}, more than {hours} hours, and {pull_clause}, so the coordinator "
         f"released it. The board renames the branch to {new}, which keeps the work, and the issue goes back to "
         f"the queue.",
         "",
@@ -211,8 +221,7 @@ def after_release(snapshot, key, released_at, taken_off, put_on=()):
     run renders the release and renames the branch without asking GitHub
     again. A Snapshot given is changed in place, and returned."""
     snap = board.as_snapshot(snapshot)
-    release = snap.releases[key]
-    snap.releases[key] = board.Release(released_at, release.sha, release.committed_at)
+    snap.releases[key] = dataclasses.replace(snap.releases[key], released_at=released_at)
     issue = snap.claim_issues[key]
     issue.labels = relabelled(issue.labels, taken_off, put_on)
     for listed in snap.issues:

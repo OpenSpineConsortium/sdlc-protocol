@@ -24,6 +24,42 @@ def claimed(worker="a", number=1, text=None):
     return model
 
 
+class TheActivity(unittest.TestCase):
+    """F8: the activity lists each branch's making and the push that last
+    set its head, which the release rule dates a claim by, and a fault's
+    query tells that read from the reads of a branch's making (F13)."""
+
+    def setUp(self):
+        self.model = claimed()
+        self.made = self.model.refs["claude/1"]
+        self.model.now = 3 * M.HOUR
+        tree = self.model.tree(self.made) | {"src/x.py": "1\n"}
+        self.later = self.model.commit((self.made,), "a", tree, "Work")
+        self.model.push("a", "claude/1", self.later)
+
+    def test_the_newest_entry_is_the_push_that_set_the_head(self):
+        api, _ = cycle.api_for(self.model)
+        listed = api.get(f"/repos/{M.REPO}/activity", {"ref": "refs/heads/claude/1", "direction": "desc"})
+        self.assertEqual([(e["activity_type"], e["after"]) for e in listed],
+                         [("push", self.later), ("branch_creation", self.later)])
+        oldest = api.get(f"/repos/{M.REPO}/activity", {"ref": "refs/heads/claude/1", "direction": "asc"})
+        self.assertEqual([e["activity_type"] for e in oldest], ["branch_creation", "push"])
+        self.assertEqual(github.head_pushed_at(api, "claude/1", self.later), M.iso(3 * M.HOUR))
+        self.assertEqual(github.head_pushed_at(api, "claude/1", self.made), "")
+        self.assertEqual(github.branch_made_at(api, "claude/1"), M.iso(0))
+
+    def test_a_fault_with_a_query_fires_on_that_read_alone(self):
+        pushes = Fault("GET", "/activity", 500, query=(("activity_type", None),))
+        api, fake = cycle.api_for(self.model, (pushes,))
+        self.assertEqual(github.branch_made_at(api, "claude/1"), M.iso(0))
+        with self.assertRaises(github.GitHubError):
+            github.head_pushed_at(api, "claude/1", self.later)
+        self.assertEqual([c.status for c in fake.calls], [200, 500])
+        made = Fault("GET", "/activity", 500, query=(("activity_type", "branch_creation"),))
+        api, _ = cycle.api_for(self.model, (made,))
+        self.assertEqual(github.head_pushed_at(api, "claude/1", self.later), M.iso(3 * M.HOUR))
+
+
 class TheAdapterReadsTheModel(unittest.TestCase):
     def test_a_snapshot_holds_the_claim_and_leaves_pull_requests_out_of_the_issues(self):
         model = claimed()
