@@ -106,7 +106,13 @@ class Fault(NamedTuple):
     run's minute, which answers every later read of that branch in the
     run as GitHub would, listing that push still (FakeGitHub.moved_since),
     and which the model does not take, so the next run reads the branch as
-    the model holds it."""
+    the model holds it; MOVED_TWICE, as MOVED with a second push after it
+    in the same minute, so the newest entry names the head the run read on
+    neither side (F8's fix check). then is the fault that takes the calls
+    this one matches once its times are spent, so one fault can refuse a
+    read and answer the next in place of the model, or the other way about
+    (F8's fix check: a read refused and the next listing a push after the
+    run read the branch, and a read a push behind and the next refused)."""
 
     method: str
     path: str
@@ -117,6 +123,15 @@ class Fault(NamedTuple):
     applied: bool = False
     query: tuple = ()
     answer: str = ""
+    then: object = None
+
+    def chain(self):
+        """This fault and each that takes its calls after it (then), in
+        the order they fire."""
+        fault = self
+        while fault is not None:
+            yield fault
+            fault = fault.then
 
     def matches(self, call, query):
         """Whether the call, "METHOD path", and its query are this fault's."""
@@ -126,7 +141,10 @@ class Fault(NamedTuple):
 
 
 # How a fault answers a read of the activity in place of the model (Fault.answer).
-LAGGING, MOVED = "lagging", "moved"
+LAGGING, MOVED, MOVED_TWICE = "lagging", "moved", "moved twice"
+# The answers that list a push after the run read the branch, which GitHub
+# goes on listing at every later read of the branch in the run.
+PUSHED_SINCE = (MOVED, MOVED_TWICE)
 # The sha GitHub's activity names as the head before the push that made a branch.
 NO_SHA = "0" * 40
 
@@ -186,10 +204,11 @@ class Refused(Exception):
 class FakeGitHub:
     def __init__(self, model, faults=()):
         self.model = model
-        self.faults = [[fault, fault.times] for fault in faults]
+        self.faults = [[link, link.times] for fault in faults for link in fault.chain()]
         self.calls = []
         self.computed = set()
-        # The MOVED fault each branch's activity met in the run, by the ref
+        # The fault listing a push after the run read the branch (MOVED or
+        # MOVED_TWICE) each branch's activity met in the run, by the ref
         # its read named (moved_since).
         self.moved = {}
 
@@ -206,7 +225,7 @@ class FakeGitHub:
         body = json.loads(request.data) if request.data else None
         path = "/" + "/".join(segments)
         fault = self.fault_for(f"{method} {path}", query) or self.moved_since(method, path, query)
-        if fault is not None and fault.answer == MOVED:
+        if fault is not None and fault.answer in PUSHED_SINCE:
             self.moved.setdefault(query.get("ref", ""), fault)
         asked = tuple(sorted(query.items()))
         if fault is not None and fault.answer:
@@ -237,10 +256,10 @@ class FakeGitHub:
 
     def moved_since(self, method, path, query):
         """The fault that answered a read of this branch's activity with a
-        push after the run read the branch (MOVED), for every later read
-        of that branch in the run, which GitHub would answer listing that
-        push still; None for any other call, a read of another kind
-        among them."""
+        push after the run read the branch (MOVED, MOVED_TWICE), for every
+        later read of that branch in the run, which GitHub would answer
+        listing that push still; None for any other call, a read of
+        another kind among them."""
         fault = self.moved.get(query.get("ref", "")) if path == "/activity" else None
         return fault if fault is not None and fault.matches(f"{method} {path}", query) else None
 
@@ -443,9 +462,12 @@ class FakeGitHub:
         is newest, as GitHub's would be a push behind (F8's second
         review); with MOVED one more comes after them, a push at the
         clock's minute from the branch's head to a commit nobody made, as a
-        push after the run read the branch. A branch a test made by hand,
-        with no making's head recorded, names its head now for the head its
-        making set."""
+        push after the run read the branch; with MOVED_TWICE that push and
+        a second in the same minute from its commit to another nobody made,
+        as after two pushes since the run read the branch, so the newest
+        names the head on neither side (F8's fix check). A branch a test
+        made by hand, with no making's head recorded, names its head now
+        for the head its making set."""
         model = self.model
         made = model.created[branch]
         head = model.refs.get(branch, "")
@@ -461,9 +483,12 @@ class FakeGitHub:
         found.sort(key=lambda item: item[0])
         if as_fault == LAGGING:
             return found[:-1]
-        if as_fault == MOVED:
+        if as_fault in PUSHED_SINCE:
             unseen = hashlib.sha1(f"pushed after the run read {branch} at {model.now}".encode("ascii")).hexdigest()
             found.append(((model.now, 4), self.entry(branch, model.now, "push", unseen, head)))
+        if as_fault == MOVED_TWICE:
+            again = hashlib.sha1(f"pushed again after the run read {branch} at {model.now}".encode("ascii")).hexdigest()
+            found.append(((model.now, 5), self.entry(branch, model.now, "push", again, unseen)))
         return found
 
     def entry(self, branch, at, kind, after, before=NO_SHA):

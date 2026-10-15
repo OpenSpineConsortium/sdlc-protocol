@@ -632,8 +632,8 @@ class KnownSearches(unittest.TestCase):
         on the read of a claim's head's push (F8), which every board run
         with a claim makes, so E-faults meets those, and activity-500-all
         on that read, too."""
-        pushes = ["activity-500-all", "pushes-403", "pushes-500", "pushes-lagging", "pushes-lagging-twice",
-                  "pushes-moved"]
+        pushes = ["activity-500-all", "pushes-403", "pushes-500", "pushes-500-then-moved", "pushes-lagging",
+                  "pushes-lagging-then-500", "pushes-lagging-twice", "pushes-moved", "pushes-moved-twice"]
         self.assertEqual(sorted(deep.ACTIVITY_FAULTS), ["activity-500"] + pushes)
         for space, depth, wanted in (("E-activity", 2, ["activity-500"] + pushes), ("E-faults", 1, pushes)):
             with self.subTest(space=space):

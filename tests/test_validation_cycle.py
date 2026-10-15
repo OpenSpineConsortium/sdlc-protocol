@@ -154,10 +154,11 @@ class TheRunInTwoHalves(unittest.TestCase):
         """The now the library is handed, by the board's run and by the
         clerk's look alike, is when that run or look began, on the model's
         clock, and stays so though the clock moves before the run ends: an
-        entry that moved the branch off the head dates it only when it came
-        after that (SPEC["moved off"], F8's second review), so the wall
-        clock in its place would leave the before side dating nothing in
-        the harness, and a later now would date a stale one."""
+        entry that names another head dates it only when it came after
+        that (SPEC["moved off"], F8's second review and its fix check),
+        so the wall clock in its place would leave a push after the run
+        read the branch dating nothing in the harness, and a later now
+        would date a stale one."""
         model = M.seeded()
         for verb in (Verb("claim", "a", (1,)), Verb("label-on", "a", (1, "claimed")), Verb("wait", "clock", (25,))):
             verbs.apply(model, verb)

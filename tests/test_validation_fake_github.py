@@ -13,7 +13,7 @@ sys.path.insert(0, str(ROOT))
 from sdlc_protocol import board  # noqa: E402
 from sdlc_protocol.adapters import github  # noqa: E402
 from validation import cycle, model as M  # noqa: E402
-from validation.fake_github import LAGGING, MOVED, NO_SHA, Fault, FakeGitHub, Unserved  # noqa: E402
+from validation.fake_github import LAGGING, MOVED, MOVED_TWICE, NO_SHA, Fault, FakeGitHub, Unserved  # noqa: E402
 
 
 def claimed(worker="a", number=1, text=None):
@@ -140,6 +140,56 @@ class TheActivity(unittest.TestCase):
         self.assertEqual((newest["activity_type"], newest["before"], newest["after"], newest["timestamp"]),
                          ("branch_deletion", made, NO_SHA, M.iso(26 * M.HOUR)))
         self.assertEqual(github.head_pushed_at(api, ref, made, began), M.iso(51 * M.HOUR))
+
+    def test_a_moved_twice_answer_names_the_head_on_neither_side(self):
+        """The fault pushes-moved-twice (F8's fix check): two pushes at the
+        clock's minute after the run read the branch, the first from the
+        head the run read and the second from the first's commit, so the
+        newest names the head on neither side; it came after the run
+        began, so it dates the head, and every later read of the branch in
+        the run lists it still."""
+        self.model.now = 30 * M.HOUR
+        began = M.moment(self.model.now)
+        twice = Fault("GET", "/activity", 200, query=(("activity_type", None),), answer=MOVED_TWICE)
+        api, fake = cycle.api_for(self.model, (twice,))
+        self.assertEqual(github.head_pushed_at(api, "claude/1", self.later, began), M.iso(30 * M.HOUR))
+        newest = fake.calls[0].answered[0]
+        self.assertEqual(FakeGitHub(self.model).activity({"ref": "refs/heads/claude/1"}, MOVED_TWICE)[0], newest)
+        first = FakeGitHub(self.model).activity({"ref": "refs/heads/claude/1"}, MOVED_TWICE)[1]
+        self.assertEqual(newest["before"], first["after"])
+        self.assertEqual(first["before"], self.later)
+        self.assertNotIn(self.later, (newest["before"], newest["after"]))
+        self.assertNotIn(newest["after"], self.model.commits)
+        self.assertEqual((newest["timestamp"], first["timestamp"]), (M.iso(30 * M.HOUR), M.iso(30 * M.HOUR)))
+        self.assertEqual(github.head_pushed_at(api, "claude/1", self.later), "", "dated by no moment of a run")
+        self.assertEqual(fake.calls[1].answered[0], newest)
+
+    def test_a_fault_then_another_fires_each_in_turn(self):
+        """Fault.then (F8's fix check): pushes-500-then-moved refuses the
+        first read of a claim's push and answers the next with a push after
+        the run read the branch, which later reads list still;
+        pushes-lagging-then-500 answers the first a push behind and refuses
+        the next; once both are spent the model answers."""
+        self.model.now = 30 * M.HOUR
+        began = M.moment(self.model.now)
+        pushes = (("activity_type", None),)
+        refused_then_moved = Fault("GET", "/activity", 500, query=pushes,
+                                   then=Fault("GET", "/activity", 200, query=pushes, answer=MOVED))
+        self.assertEqual([f.status for f in refused_then_moved.chain()], [500, 200])
+        api, fake = cycle.api_for(self.model, (refused_then_moved,))
+        with self.assertRaises(github.GitHubError):
+            github.head_pushed_at(api, "claude/1", self.later, began)
+        self.assertEqual(github.head_pushed_at(api, "claude/1", self.later, began), M.iso(30 * M.HOUR))
+        self.assertEqual(github.head_pushed_at(api, "claude/1", self.later, began), M.iso(30 * M.HOUR))
+        self.assertEqual([(c.status, c.injected) for c in fake.calls], [(500, True), (200, True), (200, True)])
+        lagging_then_refused = Fault("GET", "/activity", 200, query=pushes, answer=LAGGING,
+                                     then=Fault("GET", "/activity", 500, query=pushes))
+        api, fake = cycle.api_for(self.model, (lagging_then_refused,))
+        self.assertEqual(github.head_pushed_at(api, "claude/1", self.later, began), "")
+        with self.assertRaises(github.GitHubError):
+            github.head_pushed_at(api, "claude/1", self.later, began)
+        self.assertEqual(github.head_pushed_at(api, "claude/1", self.later, began), M.iso(3 * M.HOUR))
+        self.assertEqual([(c.status, c.injected) for c in fake.calls], [(200, True), (500, True), (200, False)])
 
 
 class TheAdapterReadsTheModel(unittest.TestCase):

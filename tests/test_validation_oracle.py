@@ -57,6 +57,25 @@ class Terms(unittest.TestCase):
         self.assertFalse(oracle.due(back, 1))
         self.assertTrue(oracle.due(oracle.dated(back, {"claude/1"}), 1))
 
+    def test_an_entry_dates_the_head_it_set_and_any_after_the_run_began(self):
+        """SPEC["last commit"] and SPEC["moved off"], as F8's fix check reads
+        them: an entry that set the head dates it however old; any other,
+        whatever heads it names, only when it came after the run began, the
+        slack before allowed; and SPEC["floor"]: where no read dates a
+        push, the newest entry listed dates the claim only when it is later
+        than the head's committer date, the same minute being no later."""
+        began = 25 * M.HOUR
+        self.assertEqual(oracle.entry_dates(True, M.HOUR, began), M.HOUR)
+        self.assertEqual(oracle.entry_dates(False, began, began), began)
+        self.assertEqual(oracle.entry_dates(False, began - oracle.MOVED_SLACK_MINUTES, began),
+                         began - oracle.MOVED_SLACK_MINUTES)
+        self.assertIsNone(oracle.entry_dates(False, began - oracle.MOVED_SLACK_MINUTES - 1, began))
+        self.assertIsNone(oracle.entry_dates(False, M.HOUR, began))
+        self.assertEqual(oracle.floor_dates(M.HOUR, 0), M.HOUR)
+        self.assertIsNone(oracle.floor_dates(M.HOUR, M.HOUR))
+        self.assertIsNone(oracle.floor_dates(M.HOUR, 2 * M.HOUR))
+        self.assertIsNone(oracle.floor_dates(None, 0))
+
     def test_a_head_a_release_kept_is_released_by_any_release_comment_that_counts(self):
         """F8: SPEC["pushed again"] and SPEC["kept deleted"]: pushed again
         at once, the branch is released already and not due."""

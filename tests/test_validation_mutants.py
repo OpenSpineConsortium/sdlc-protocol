@@ -15,12 +15,13 @@ import sys
 import textwrap
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from sdlc_protocol.adapters import github  # noqa: E402
-from validation import cycle, dealing, invariants, model as M, mutants, oracle, verbs  # noqa: E402
+from validation import cycle, dealing, invariants, model as M, mutants, oracle, replay, verbs  # noqa: E402
 from validation.verbs import DANA, SAM, Scope, Verb  # noqa: E402
 
 BOARD = Verb("board", "board", (cycle.SCHEDULE, ""))
@@ -163,6 +164,14 @@ TRACES = {
     "a kept release undone holds for good": "the regression traces",
     "the push read once": "the regression traces",
     "the before side ignored": "the regression traces",
+    # F8's fix check: c's commits dated back, read with both reads a push
+    # behind, a second refused, a second listing a push after the run read
+    # the branch, and two such pushes, at the end of F8's trace.
+    "a fresh entry dating only off the head": "the regression traces",
+    "the floor dropped": "the regression traces",
+    "the floor of the last read alone": "the regression traces",
+    "the second read judged with no moment of the run": "the regression traces",
+    "a floor at the committer date taken for later": "the regression traces",
     # F8's second review: a's claim commit, dated two days ahead, pushed
     # back with a lease a day after a commit moved the branch off it, the
     # activity a push behind; and a kept head pushed again, its release
@@ -247,10 +256,14 @@ class TheLane(unittest.TestCase):
         push read once, the before side ignored, and the clerk dating by
         the committer date or ignoring a kept head, and its second review
         two: a stale entry off the head dating it, and a kept head's old
-        release taken for the comment a failed post would have written, so
-        the bound is widened to 120 and the count noted."""
+        release taken for the comment a failed post would have written, and
+        its fix check five: a fresh entry dating only where it moved the
+        branch off the head, the floor dropped, the floor of the last read
+        alone, the second read judged with no moment of the run, and a
+        floor at the committer date taken for later, so the bound is
+        widened to 120 and the count noted."""
         self.assertTrue(10 <= len(mutants.MUTANTS) <= 120)
-        self.assertEqual(len(mutants.MUTANTS), 104)
+        self.assertEqual(len(mutants.MUTANTS), 109)
         self.assertEqual(sorted(TRACES), sorted(mutants.MUTANTS))
 
     def test_every_mutant_names_a_rule_the_library_still_has(self):
@@ -288,6 +301,34 @@ class TheLane(unittest.TestCase):
                 lines = [line.replace("github.", "") for line in body_lines(copy)]
                 self.assertEqual([line for line in lines if line not in library], changed)
                 self.assertEqual([line for line in library if line not in lines], dropped)
+
+    def test_the_copy_of_head_since_follows_the_library_but_for_the_rules_it_takes(self):
+        """The mutants of head_since since F8's fix check change one rule
+        each of one copy (mutants.head_since_copy), which would test an
+        older library once the rest fell behind; so each line of its body,
+        the module's name taken off, is one of the library's but for the
+        four lines that take the rules as arguments, and the library's
+        lines it lacks are those four as the library writes them. With
+        every argument left as it is, the copy plays F8's trace green, as
+        the library does."""
+        lines = [line.replace("github.", "") for line in body_lines(mutants.head_since_copy)]
+        library = body_lines(github.head_since)
+        self.assertEqual([line for line in lines if line not in library],
+                         ["if first.again and again:",
+                          "read = read_push(api, branch, sha, now if now_again else None)",
+                          "floor, why = floor_of(read, first), read.why or first.why",
+                          "if floor and later(floor, committed):"])
+        self.assertEqual([line for line in library if line not in lines],
+                         ["if first.again:", "read = read_push(api, branch, sha, now)",
+                          "floor, why = latest(read.floor, first.floor), read.why or first.why",
+                          "if floor and latest(committed, floor) != committed:"])
+
+        def as_built(api, branch, sha, refused=None, now=None):
+            return mutants.head_since_copy(api, branch, sha, refused, now)
+
+        with mock.patch.object(github, "head_since", as_built):
+            record = replay.replay(replay.traces()["F8"])
+        self.assertEqual(replay.results(record), set(), "\n".join(record.timeline))
 
     def test_every_replacement_takes_what_its_target_is_called_with(self):
         """A replacement that no longer takes its target's arguments is

@@ -1,7 +1,7 @@
 {
   "finding": "F8",
   "title": "idleness is the pusher's clock",
-  "status": "fixed after 0.4.1: a claim's last commit is dated by when GitHub received the push of its head, read once more where the first read may tell more, and a claim on a head a release kept is released only where the board counts no release of it (github.head_since, coordinator.kept_released; DESIGN.md, 13)",
+  "status": "fixed after 0.4.1: a claim's last commit is dated by when GitHub received the push of its head, read once more where the first read may tell more, an entry after the run began dating it whatever heads it names, and never earlier than the newest entry either read listed, and a claim on a head a release kept is released only where the board counts no release of it (github.head_since, coordinator.kept_released; DESIGN.md, 13)",
   "breaks": ["G2", "G3", "G3L", "G5"],
   "world": "memory",
   "issues": {"1": ["todo"], "2": ["todo"], "3": ["todo"]},
@@ -57,6 +57,20 @@
     {"at": 127, "verb": "drop-commits", "actor": "c", "args": [3], "expect": {"taken": true, "refs": {"claude/3": true}},
      "note": "a day later c drops that commit and pushes claude/3 back to its claim commit with a lease, a head the branch had before"},
     {"verb": "board", "faults": ["pushes-lagging"], "expect": {"labels": {"3": ["claimed", "todo", "worker:c"]}, "comments": {"3": {"claim-released": 1, "released": 1}}, "refs": {"claude/3": true}},
-     "note": "the first read of c's push is answered before the activity lists it, c's push of 102 newest, which moved the branch off the head the run read a day before the run began: stale, so the run reads once more, which lists the forced push, and holds the claim; dated by the stale entry, it was released in the run its own push started (F8's second review)"}
+     "note": "the first read of c's push is answered before the activity lists it, c's push of 102 newest, which moved the branch off the head the run read a day before the run began: stale, so the run reads once more, which lists the forced push, and holds the claim; dated by the stale entry, it was released in the run its own push started (F8's second review)"},
+    {"at": 128, "verb": "commit", "actor": "c", "args": [3], "skew": -1, "expect": {"taken": true},
+     "note": "c pushes a commit dated an hour back, at the minute of its forced push of 127"},
+    {"verb": "board", "faults": ["pushes-lagging-twice"], "expect": {"labels": {"3": ["claimed", "todo", "worker:c"]}, "comments": {"3": {"claim-released": 1, "released": 1}}, "refs": {"claude/3": true}},
+     "note": "both reads of c's push are answered a push behind, the forced push of 127 newest, stale: the floor is that entry's time, the same minute as the commit's date, which is no later, so the committer date stands in, an hour back, the claim is held, and the log says the claim was read from its committer date; one that took such a floor for later says it was read from the floor (F8's fix check)"},
+    {"at": 129, "verb": "commit", "actor": "c", "args": [3], "skew": -48, "expect": {"taken": true},
+     "note": "c pushes a commit dated 48 hours back"},
+    {"verb": "board", "faults": ["pushes-lagging-twice"], "expect": {"labels": {"3": ["claimed", "todo", "worker:c"]}, "comments": {"3": {"claim-released": 1, "released": 1}}, "refs": {"claude/3": true}},
+     "note": "both reads of c's push are answered a push behind, c's push of 128 newest, stale: the floor, 128, later than the commit's date of 81, dates the claim, an hour idle, so it is held and the log says it was read from the floor; with the committer date standing in, two days back, the claim was released in the run its own push started, as before F8's fix check"},
+    {"verb": "board", "faults": ["pushes-lagging-then-500"], "expect": {"labels": {"3": ["claimed", "todo", "worker:c"]}, "comments": {"3": {"claim-released": 1, "released": 1}}, "refs": {"claude/3": true}},
+     "note": "the first read is answered a push behind, c's push of 128 newest, and GitHub refuses the one more with a 500: the floor is the newest entry either read listed, the first's, so the claim is held; taken from the last read alone, which listed none, the committer date stood in and released it"},
+    {"verb": "board", "faults": ["pushes-500-then-moved"], "expect": {"labels": {"3": ["claimed", "todo", "worker:c"]}, "comments": {"3": {"claim-released": 1, "released": 1}}, "refs": {"claude/3": true}},
+     "note": "GitHub refuses the first read with a 500 and the one more lists a push after the run read the branch, from c's head to another: it came after the run began, so it dates the claim and the log says nothing of it; a second read judged with no moment of the run dates nothing by it, and its log says the claim was read from the floor at the same minute (F8's fix check)"},
+    {"verb": "board", "faults": ["pushes-moved-twice"], "expect": {"labels": {"3": ["claimed", "todo", "worker:c"]}, "comments": {"3": {"claim-released": 1, "released": 1}}, "refs": {"claude/3": true}},
+     "note": "the first read lists two pushes after the run read the branch, the newest naming c's head on neither side: it came after the run began, so it dates the claim and the run reads no more; one dating a fresh entry only where it moved the branch off the head reads again (F8's fix check)"}
   ]
 }

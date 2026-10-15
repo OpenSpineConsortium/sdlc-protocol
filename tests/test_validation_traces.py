@@ -54,7 +54,19 @@ BUDGET_SECONDS = 10
 # kept head, its release undone, is released again by a run whose
 # comment GitHub refuses, and the labels stay off once the earlier
 # release of the head is taken for the comment the post would have
-# written. F9's
+# written; and, since F8's fix check, at the five runs after c's two
+# commits dated back: at step 39, where both reads are a push behind and
+# the floor is the commit's own minute, the log says the claim is read
+# from its floor once a floor at the committer date is taken for later;
+# at step 41, where the floor is later than a commit dated two days
+# back, c's claim is released in the run its push started once the floor
+# is dropped; at step 42, where the second read is refused, likewise once
+# the floor is the last read's alone; at step 43, where the second read
+# lists a push after the run read the branch, the log says the claim is
+# read from its floor once that read is judged with no moment of the
+# run; and at step 44, where the newest of two such pushes names the head
+# on neither side, the run reads again once a fresh entry dates only
+# where it moved the branch off the head. F9's
 # trace goes red at its first board run, step 2, where the draft level
 # with main is told it moved once the adapter reads the comparison's
 # ahead_by for behind_by, and at its second, step 4, where the draft
@@ -116,7 +128,11 @@ UNDONE = {
            ("a kept head dated by its push", 23, "G5"), ("kept counts only at or after the push", 23, "G5"),
            ("a kept release undone holds for good", 25, "G3"), ("a kept head released again", 25, "G2"),
            ("a stale entry off the head dates it", 28, "G2"), ("a stale entry off the head dates it", 37, "G2"),
-           ("a kept head's old release taken for the lost comment", 29, "G3L")],
+           ("a kept head's old release taken for the lost comment", 29, "G3L"),
+           ("a floor at the committer date taken for later", 39, "G2"), ("the floor dropped", 41, "G3"),
+           ("the floor of the last read alone", 42, "G3"),
+           ("the second read judged with no moment of the run", 43, "G2"),
+           ("a fresh entry dating only off the head", 44, "G2")],
     "F9": [("an opaque state read by GitHub's word alone", 4, "G10"), ("the comparison read by ahead_by", 2, "G10")],
     "F10": [("a finished draft's release by hand not seen", 9, "G5")],
     "F11": [("a refused comment stops the run", 6, "G15")],

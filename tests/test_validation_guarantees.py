@@ -19,7 +19,8 @@ sys.path.insert(0, str(ROOT))
 
 from sdlc_protocol import board, claims, coordinator, labels  # noqa: E402
 from sdlc_protocol.adapters import github  # noqa: E402
-from validation import invariants, oracle  # noqa: E402
+from validation import cycle, invariants, model as M, oracle, verbs  # noqa: E402
+from validation.verbs import Verb  # noqa: E402
 
 SPEC = (ROOT / "spec" / "PROTOCOL.md").read_text(encoding="utf-8")
 GUARANTEES = (ROOT / "validation" / "GUARANTEES.md").read_text(encoding="utf-8")
@@ -132,6 +133,33 @@ class TheOracleSpeaksTheSpec(unittest.TestCase):
         # runner's clock a few minutes ahead of GitHub's, and the oracle as
         # much (SPEC["moved off"], F8's second review).
         self.assertEqual(oracle.MOVED_SLACK_MINUTES * 60, github.PUSH_SINCE_SLACK.total_seconds())
+
+    def test_the_run_s_own_words_in_its_log_are_github_py_s(self):
+        """oracle.LOG_WORDS, which the spec does not spell, are the lines a
+        board run writes for a claim no read dated by its push (F8's fix
+        check): b's commit, dated two days back, pushed an hour after its
+        claim, read from the floor, its claim's making, where both reads
+        are a push behind, and from its committer date where GitHub
+        refuses every read for good, its answer in parentheses."""
+        model = M.seeded((1,), writers=("b",))
+        verbs.apply(model, Verb("claim", "b", (1,)))
+        model.now = M.HOUR
+        verbs.apply(model, Verb("commit", "b", (1, -48 * M.HOUR)))
+        self.assertEqual(oracle.LOG_WORDS["listed none"], github.NO_PUSH_LISTED)
+        self.assertTrue(oracle.LOG_WORDS["committer date"].startswith(oracle.LOG_WORDS["read from"]))
+        self.assertTrue(oracle.LOG_WORDS["floor"].startswith(oracle.LOG_WORDS["read from"]))
+
+        def said(fault):
+            record = cycle.board_run(model.clone(), faults=(verbs.FAULTS[fault],))
+            return [line for line in record.lines if oracle.LOG_WORDS["read from"] in line]
+
+        floor = oracle.LOG_WORDS["floor"].format(floor=M.iso(0))
+        self.assertEqual(said("pushes-lagging-twice"), ["claude/1: " + oracle.LOG_WORDS["listed none"] + floor])
+        refused = said("pushes-403")
+        self.assertEqual(len(refused), 1)
+        self.assertTrue(refused[0].startswith("claude/1: " + oracle.LOG_WORDS["refused"]), refused[0])
+        self.assertTrue(refused[0].endswith("Resource not accessible by integration)"
+                                            + oracle.LOG_WORDS["committer date"]), refused[0])
 
     def test_the_board_s_own_markers_are_board_py_s(self):
         self.assertEqual(oracle.BOARD_MARKERS, {

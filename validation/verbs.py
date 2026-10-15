@@ -53,7 +53,7 @@ from typing import NamedTuple
 from sdlc_protocol import guard
 
 from . import cycle, model as M, oracle
-from .fake_github import LAGGING, MOVED, Fault
+from .fake_github import LAGGING, MOVED, MOVED_TWICE, Fault
 from .model import CLAIM_PREFIX, HOUR, MAIN, OWNER, RELEASED_PREFIX, Comment, PullRequest, claim_text
 
 CLOCK, BOARD = "clock", "board"
@@ -63,7 +63,7 @@ WORKER_ASSOCIATION = "COLLABORATOR"
 CLAIM_DIR = "docs/agents/claims"
 
 # A read of the activity with no type named: the read of the push that set
-# a claim's head (github.head_pushed_at), told from the reads of a
+# a claim's head (github.read_push), told from the reads of a
 # branch's making, which name branch_creation (F13).
 PUSHES = (("activity_type", None),)
 # The faults a board run can meet, by name (DESIGN.md, 3.2).
@@ -105,13 +105,41 @@ FAULTS = {
     "pushes-lagging": Fault("GET", "/activity", 200, query=PUSHES, answer=LAGGING),
     # The first two such reads, a claim's first and the one more it takes,
     # both answered before the activity lists the push that set the head,
-    # so the claim's committer date stands in (github.NO_PUSH_LISTED).
+    # each a push behind: the entry before that push is newest, the push
+    # before it or the branch's making, and stale, so neither dates the
+    # push, and the claim is dated by that entry, the floor, where it came
+    # later than the head's committer date, as for a commit dated back,
+    # and by its committer date where not, each said in the run's log
+    # (github.NO_PUSH_LISTED, SPEC["floor"]); until F8's fix check the
+    # committer date stood in whatever the reads listed. A branch whose
+    # making is its only entry is listed with none, so its committer date
+    # stands in.
     "pushes-lagging-twice": Fault("GET", "/activity", 200, times=2, query=PUSHES, answer=LAGGING),
     # The first read of a claim's head's push listing a push that came
     # after the run read the branch, from the head it read to another: the
-    # branch had a commit then, which dates the claim (the before side of
-    # github.head_pushed_at).
+    # branch had a commit then, which dates the claim (SPEC["moved off"]).
     "pushes-moved": Fault("GET", "/activity", 200, query=PUSHES, answer=MOVED),
+    # The first such read listing two pushes since the run read the
+    # branch, the newest naming the head the run read on neither side: it
+    # came after the run began, so it dates the claim, and the run reads no
+    # more (SPEC["moved off"]: an entry that set the branch to another
+    # head; F8's fix check, which found the library dating nothing by it).
+    "pushes-moved-twice": Fault("GET", "/activity", 200, query=PUSHES, answer=MOVED_TWICE),
+    # The first such read refused with a 500, which GitHub may answer
+    # later, and the one more it takes listing a push after the run read
+    # the branch: the run dates the claim by that push, judging the second
+    # read by when the run began as it judged the first; one that reads it
+    # with no such moment dates nothing by it and says so in its log, the
+    # floor dating the claim at the same minute (F8's fix check).
+    "pushes-500-then-moved": Fault("GET", "/activity", 500, query=PUSHES,
+                                   then=Fault("GET", "/activity", 200, query=PUSHES, answer=MOVED)),
+    # The first such read a push behind, its newest entry stale, and the
+    # one more it takes refused with a 500: the second lists nothing, so
+    # the floor is the first read's, which dates the claim where it came
+    # later than the head's committer date (SPEC["floor"]: the newest
+    # entry either read listed; F8's fix check).
+    "pushes-lagging-then-500": Fault("GET", "/activity", 200, query=PUSHES, answer=LAGGING,
+                                     then=Fault("GET", "/activity", 500, query=PUSHES)),
 }
 
 
@@ -154,8 +182,12 @@ class Scope(NamedTuple):
     issue, the clock skews, in hours, a worker's commits may carry (F8: a
     pusher whose clock is ahead or behind stamps its commits so, which
     since F8's fix decides idleness only where GitHub will not date the
-    push of the head, as under the faults pushes-403, pushes-lagging-twice
-    and activity-500-all), whether a stranger
+    push of the head and lists no entry of the branch later than the
+    commit's date, as under the faults pushes-403 and activity-500-all,
+    and pushes-lagging-twice for a commit dated ahead or a branch whose
+    making is its only entry; a commit dated back under
+    pushes-lagging-twice or pushes-lagging-then-500 is dated by the floor,
+    the newest entry listed, since F8's fix check), whether a stranger
     opens pull requests from a fork whose branch bears a claim's name
     (F17), and whether a stranger opens them from a claim's own branch
     here (F19)."""

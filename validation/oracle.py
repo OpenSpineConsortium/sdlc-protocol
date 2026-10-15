@@ -217,6 +217,24 @@ BOARD_MARKERS = {
     "rename-refused": "<!-- sdlc-board: rename-refused {branch} -->",
 }
 
+# The run's own words in its log for a claim whose head no read dated by
+# the push that set it (SPEC["undated push"], SPEC["floor"]), which the
+# spec does not spell: why, the activity read twice listing no push of the
+# head or GitHub refusing the read (its answer follows in parentheses), and
+# what the run read the claim's idleness from in its place, the committer
+# date or the floor, the newest entry's time as GitHub wrote it. Each line
+# is the branch's name, ": ", the why and the clause. They are the
+# library's interface, as the board's markers are, and
+# tests/test_validation_guarantees.py pins them to github.py's lines;
+# which clause a line owes is the oracle's (floor_dates).
+LOG_WORDS = {
+    "listed none": "the repository's activity, read twice, lists no push that set the branch's head",
+    "refused": "GitHub refused to say when the push that set the branch's head came (",
+    "read from": ", so its idleness is read from ",
+    "committer date": ", so its idleness is read from its committer date",
+    "floor": ", so its idleness is read from its newest entry's time, {floor}, later than its committer date",
+}
+
 # The answers GitHub gives a rename it refuses for good (DESIGN.md, G10): a
 # rule on the branch, or a token without the right; held to the library's
 # own list by tests/test_validation_guarantees.py.
@@ -301,45 +319,69 @@ def head_time(model, ref):
     """SPEC["last commit"]: the minute GitHub received the push that set
     the branch's head (model.pushed, F8); its committer date where the
     model holds no push that set it, or for a branch whose push the run
-    could not date, which a view of the model leaves out (dated,
-    SPEC["undated push"])."""
+    could not date and whose floor is no later, which a view of the model
+    leaves out (dated, SPEC["undated push"], SPEC["floor"])."""
     head, pushed = model.refs[ref], model.pushed.get(ref)
     if pushed is not None and pushed[1] == head:
         return pushed[0]
     return model.commits[head].committed_at
 
 
-def entry_dates(sets_head, moves_off, minute, began):
+def entry_dates(sets_head, minute, began):
     """The minute one entry of a branch's activity, the newest a read
     lists, dates the push of the head the run read at, or None: an entry
     that set that head dates it (SPEC["last commit"]: "when GitHub
-    received the push that set its head"), and so does one that moved the
-    branch off it when it came after the run began, a push after the run
-    read the branch (SPEC["moved off"]), MOVED_SLACK_MINUTES before
-    allowed; an older one is stale, a later push the activity does not
-    list yet having brought the branch back, and, as any other entry,
-    "lists no push that set the head", which owes a second read and, read
-    so last, leaves the committer date to stand in (SPEC["undated
-    push"])."""
-    if sets_head or (moves_off and minute >= began - MOVED_SLACK_MINUTES):
+    received the push that set its head"), and so does every other entry
+    of the branch, one that set the branch to another head or deleted it,
+    whatever heads it names, when it came after the run began, a push
+    after the run read the branch (SPEC["moved off"]), MOVED_SLACK_MINUTES
+    before allowed: one that moved the branch off the head, and one that
+    names that head on neither side, as the second of two pushes since the
+    run read the branch does (F8's fix check, which found the library
+    dating nothing by it). An older one is stale, a later push the
+    activity does not list yet having set the head the run read, and, as
+    any other entry, "lists no push that set the head", which owes a
+    second read and, read so last, leaves the committer date to stand in,
+    no earlier than the floor (SPEC["undated push"], floor_dates)."""
+    if sets_head or minute >= began - MOVED_SLACK_MINUTES:
         return minute
     return None
+
+
+def floor_dates(floor, committed):
+    """The minute a claim's last commit came at where the run's last read
+    of its push dates none, by the floor (SPEC["floor"]: "never earlier
+    than the newest entry either read listed for the branch, which the push
+    that set the head came no sooner than"): floor, the minute of the later
+    of the newest entries the run's reads listed for the branch (None where
+    neither listed one), where it is later than committed, the head's
+    committer date; None where it is not, so the committer date stands in
+    (SPEC["undated push"]), a floor at the committer date's own minute
+    among them, which is no later and so dates nothing the committer date
+    does not. Until F8's fix check the committer date stood in whatever the
+    reads listed, so where both lagged a commit dated back had its claim
+    released in the run its own push started."""
+    return floor if floor is not None and floor > committed else None
 
 
 def dated(model, undated, pushed_at=None):
     """The model as a run saw it that read when the claims' heads were
     pushed so: the undated branches, whose push no read the run made last
-    dates, GitHub refusing it or listing no push of the head, a stale
-    entry off the head among them, dated by their committer dates
-    (SPEC["undated push"]); each branch pushed_at names dated by the
-    minute it gives, the push the run read where the model holds another,
-    as an entry after the run began that moved the branch from its head
-    to a commit the model never took, a push after the run read the
-    branch, says the branch had a commit then (SPEC["moved off"]; the
-    fault pushes-moved); the model itself when nothing differs. A first
-    read answered by the second dates the branch by its push, so it is in
-    neither (invariants.push_dates, which reads each entry by
-    entry_dates)."""
+    dates and whose floor is no later than the head's committer date,
+    GitHub refusing the read or listing no push of the head, a stale entry
+    among them, dated by their committer dates (SPEC["undated push"]);
+    each branch pushed_at names dated by the minute it gives, the push the
+    run read where the model holds another, as an entry after the run
+    began that set the branch to a commit the model never took, a push
+    after the run read the branch, says the branch had a commit then
+    (SPEC["moved off"]; the faults pushes-moved, pushes-moved-twice and
+    pushes-500-then-moved), or the floor where no read dated a push and
+    the newest entry listed came later than the head's committer date
+    (SPEC["floor"], floor_dates; the faults pushes-lagging-twice and
+    pushes-lagging-then-500); the model itself when nothing differs. A
+    first read answered by the second dates the branch by its push, so it
+    is in neither (invariants.push_dates, which reads each entry by
+    entry_dates and each floor by floor_dates)."""
     moved = {ref: minute for ref, minute in (pushed_at or {}).items()
              if ref in model.refs and ref not in undated and head_time(model, ref) != minute}
     gone = [ref for ref in undated if ref in model.pushed]

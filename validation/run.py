@@ -103,7 +103,24 @@ def released_order(model, number):
 class Unresolved(ValueError):
     """A step names a released branch that does not stand, as when a
     mutant keeps the release a trace's later step builds on from
-    happening (F8's trace, played by the mutation lane)."""
+    happening, or works on a claim branch that does not stand, as when a
+    mutant releases the claim sooner (F8's trace, played by the mutation
+    lane)."""
+
+
+# The verbs that work on the holder's own claim branch, which a trace's
+# later step names: under a mutant that releases the claim sooner the
+# branch stands nowhere, as c's claude/3 under those that read F8's
+# floor or the push of its head otherwise, so such a step is not played.
+ON_THE_CLAIM = ("commit", "drop-commits")
+
+
+def stands(model, verb):
+    """The verb, where the claim branch it works on stands; Unresolved
+    where it does not."""
+    if verb.name in ON_THE_CLAIM and oracle.branch_of(verb.args[0]) not in model.refs:
+        raise Unresolved(f"no branch {oracle.branch_of(verb.args[0])}")
+    return verb
 
 
 def released_ref(model, number, index=None):
@@ -305,15 +322,16 @@ def play_steps(model, scenario, steps, known, observe=None):
                             f"{deal.moves}" + (f"; {len(found)} red" if found else ""))
         elif step.verb != "look":
             try:
-                verb = Verb(step.verb, step.actor, resolve(model, step.args))
+                verb = stands(model, Verb(step.verb, step.actor, resolve(model, step.args)))
             except Unresolved as problem:
                 unplayed.append(f"not played: {problem}")
             else:
                 apply(verb)
         if not ran:
             timeline.append(f"{step.at:>4} h  {step.actor} {step.verb} {' '.join(str(a) for a in step.args)}")
-        # A step the run cannot play, its released branch never made, is a
-        # mismatch, so the trace fails where the library would; the lane
+        # A step the run cannot play, its released branch never made or its
+        # claim branch gone, is a mismatch, so the trace fails where the
+        # library would; the lane
         # reads only the violations, so a mutant that keeps the release
         # from happening is judged by the steps that did play.
         wrong = mismatches(model, step.expect, outcomes, scenario, step) + tuple(unplayed)
