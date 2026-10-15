@@ -129,7 +129,7 @@ class TheOracleSpeaksTheSpec(unittest.TestCase):
             self.assertEqual(claims.claim_worker(f"{line} a\n"), "a", line)
         self.assertEqual(oracle.REFUSED_FOR_GOOD, frozenset(github.REFUSED_FOR_GOOD))
         # The spec says "came after the run began"; the library allows a
-        # runner's clock a few minutes behind GitHub's, and the oracle as
+        # runner's clock a few minutes ahead of GitHub's, and the oracle as
         # much (SPEC["moved off"], F8's second review).
         self.assertEqual(oracle.MOVED_SLACK_MINUTES * 60, github.PUSH_SINCE_SLACK.total_seconds())
 

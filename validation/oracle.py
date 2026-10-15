@@ -62,11 +62,14 @@ SPEC = {
             "it is finished",
     "last commit": "When a branch's last commit came, here and below, is when GitHub received the push that set its "
                    "head, as the repository's activity records that push, so no worker's clock decides it",
-    "moved off": "an entry that moved the branch off that head dates it too when it came after the run began, a push "
-                 "after the run read the branch, while an older one is stale and lists no push that set the head",
+    "moved off": "an entry that set the branch to another head, or deleted it, dates it too when it came after the "
+                 "run began, a push after the run read the branch, while an older one is stale and lists no push "
+                 "that set the head",
     "undated push": "the head's committer date stands in where the activity, read once more after a pause when the "
                     "first read lists no push that set the head or GitHub gives it no answer that holds, still lists "
                     "none, or where GitHub refuses to read it",
+    "floor": "but never earlier than the newest entry either read listed for the branch, which the push that set the "
+             "head came no sooner than.",
     "finished": "an issue labelled in-review, a pull request marked ready, or a draft whose author's latest comment "
                 "on it starts with \"finished; ready to mark\" waits for review however long it takes.",
     "order": "The coordinator first takes the label claimed and every worker's label off the issue, a label "
@@ -180,9 +183,9 @@ WORKER_SPELLINGS = ("worker:", "account:", "agent:")
 WORKER_LINES = ("- Worker:", "- Account:")
 NOTE = re.compile(r"\([^()]*\)\s*$")
 IDLE_MINUTES = 24 * HOUR
-# How long before a run began an entry that moved a branch off its head
+# How long before a run began an entry that set a branch to another head
 # may come and still count as having come after (SPEC["moved off"]), in
-# minutes: the allowance the library makes for a runner's clock behind
+# minutes: the allowance the library makes for a runner's clock ahead of
 # GitHub's, which the spec does not spell and
 # tests/test_validation_guarantees.py pins to github.PUSH_SINCE_SLACK. The
 # model's pushes come at whole hours, so only an entry at the run's own
