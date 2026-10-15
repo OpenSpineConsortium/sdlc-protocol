@@ -149,6 +149,7 @@ TRACES = {
         HELD + [WAIT, Verb("marker", DANA, (1,)), Verb("label-off", M.OWNER, (1, "claimed")), BOARD],
         Scope(people=(M.OWNER, DANA)), (DANA,)),
     "a stranger's ready pull request keeps a release from counting": "the regression traces",
+    "a piece of work named by the number it is shown by": "the regression traces",
     "a stranger's pull request named on a claim's row": "the regression traces",
     "a stranger's pull request taken for a claim's work": "the regression traces",
     "a stranger's pull request listed after its release": "the regression traces",
@@ -199,9 +200,10 @@ class TheLane(unittest.TestCase):
         for each reading that took a pull request from a claim's own
         branch for the claim's and one for the adapter's marking, and its
         review two that read a permission answer GitHub refused the other
-        way, so the bound is widened to 100 and the count noted."""
+        way, and F2's fix one, a piece of work named by the number it is
+        shown by, so the bound is widened to 100 and the count noted."""
         self.assertTrue(10 <= len(mutants.MUTANTS) <= 100)
-        self.assertEqual(len(mutants.MUTANTS), 89)
+        self.assertEqual(len(mutants.MUTANTS), 90)
         self.assertEqual(sorted(TRACES), sorted(mutants.MUTANTS))
 
     def test_every_mutant_names_a_rule_the_library_still_has(self):

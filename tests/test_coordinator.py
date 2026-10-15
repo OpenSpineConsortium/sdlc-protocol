@@ -276,28 +276,54 @@ def meeting_work():
 
 
 class Overlaps(unittest.TestCase):
+    """A piece of open work is named by its identity, the issue for a
+    claim's work and the pull request's number for one that is no claim's
+    (board.identity): #40 is claim 12's, #42 claim 16's, and claim 17 has
+    no pull request yet (F2)."""
+
     def test_each_piece_of_work_meets_the_others_with_their_shared_files_in_landing_order(self):
         found = coordinator.meeting(meeting_work())
-        self.assertEqual({number: [(other.number, files) for other, files in others]
-                          for number, others in found.items()},
-                         {17: [(42, ("b.md",))], 40: [(42, ("a.md",))], 42: [(40, ("a.md",)), (17, ("b.md",))]})
+        self.assertEqual({identity: [(other.number, files) for other, files in others]
+                          for identity, others in found.items()},
+                         {12: [(42, ("a.md",))], 16: [(40, ("a.md",)), (17, ("b.md",))], 17: [(42, ("b.md",))]})
 
-    def test_each_piece_is_told_once_and_again_only_of_work_it_was_not_told_of(self):
+    def test_each_piece_is_told_once_on_its_identity_and_again_only_of_work_it_was_not_told_of(self):
+        """F2: the marker names the identities of the work met, the comment
+        goes on the piece's identity, and a claim that opens its pull
+        request is told nothing again."""
         due = coordinator.overlap_comments_due(meeting_work(), {})
         self.assertEqual([(c.number, c.marker) for c in due], [
-            (17, "<!-- sdlc-coordinator: overlap 42 -->"),
-            (40, "<!-- sdlc-coordinator: overlap 42 -->"),
-            (42, "<!-- sdlc-coordinator: overlap 17 40 -->"),
+            (12, "<!-- sdlc-coordinator: overlap 16 -->"),
+            (16, "<!-- sdlc-coordinator: overlap 12 17 -->"),
+            (17, "<!-- sdlc-coordinator: overlap 16 -->"),
         ])
-        told = {17: {42}, 40: {42}, 42: {40}}
-        self.assertEqual([c.number for c in coordinator.overlap_comments_due(meeting_work(), told)], [42])
-        told[42] = {17, 40, 99}
+        told = {12: {16}, 16: {12}, 17: {16}}
+        self.assertEqual([c.number for c in coordinator.overlap_comments_due(meeting_work(), told)], [16])
+        told[16] = {12, 17, 99}
         self.assertEqual(coordinator.overlap_comments_due(meeting_work(), told), [])
+
+    def test_a_marker_that_names_a_claim_s_pull_request_names_the_claim(self):
+        """The markers written before F2's fix named a claim's work by its
+        pull request's number once it had one: #40 read as claim 12 and
+        #42 as claim 16, so nothing is told again at the fix."""
+        told = {12: {42}, 16: {40, 17}, 17: {42}}
+        self.assertEqual(coordinator.overlap_comments_due(meeting_work(), told), [])
+        self.assertEqual(coordinator.identities(meeting_work()), {17: 17, 40: 12, 41: 41, 42: 16})
+
+    def test_a_pull_request_that_is_no_claim_s_is_a_piece_of_its_own_told_on_itself(self):
+        snap = meeting_work()
+        snap.pulls[1].files = ["a.md"]
+        due = {c.number: c for c in coordinator.overlap_comments_due(snap, {})}
+        self.assertEqual(sorted(due), [12, 16, 17, 41])
+        self.assertEqual(due[41].marker, "<!-- sdlc-coordinator: overlap 12 16 -->")
+        self.assertTrue(due[41].text.startswith("overlap: other open work changes the same files as this pull "
+                                                "request:\n"))
+        self.assertEqual(due[12].marker, "<!-- sdlc-coordinator: overlap 16 41 -->")
 
     def test_the_comment_names_the_other_work_its_files_and_the_order(self):
         due = {c.number: c for c in coordinator.overlap_comments_due(meeting_work(), {})}
-        self.assertEqual(due[42].text, (
-            "overlap: other open work changes the same files as this pull request:\n"
+        self.assertEqual(due[16].text, (
+            "overlap: other open work changes the same files as this claim's pull request #42:\n"
             "- #40, a pull request marked ready: `a.md`\n"
             "- #17, a claim with no pull request yet: `b.md`\n"
             "\n"
@@ -313,15 +339,15 @@ class Overlaps(unittest.TestCase):
         snap = meeting_work()
         snap.began = {"claude/16": "2026-09-20T08:00:00Z", "claude/17": "2026-09-20T09:00:00Z"}
         due = {c.number: c for c in coordinator.overlap_comments_due(snap, {})}
-        self.assertIn("Land them in this order: #40, #42, #17:", due[42].text)
-        self.assertEqual([other.number for other, _ in coordinator.meeting(snap)[42]], [40, 17])
+        self.assertIn("Land them in this order: #40, #42, #17:", due[16].text)
+        self.assertEqual([other.number for other, _ in coordinator.meeting(snap)[16]], [40, 17])
 
     def test_a_blocker_is_said_and_lands_first(self):
         snap = meeting_work()
         snap.claim_issues["17"] = board.ClaimIssue("open", ["blocker", "claimed"])
         due = {c.number: c for c in coordinator.overlap_comments_due(snap, {})}
-        self.assertIn("- #17, a claim with no pull request yet, for a blocker: `b.md`", due[42].text)
-        self.assertIn("Land them in this order: #17, #40, #42:", due[42].text)
+        self.assertIn("- #17, a claim with no pull request yet, for a blocker: `b.md`", due[16].text)
+        self.assertIn("Land them in this order: #17, #40, #42:", due[16].text)
 
     def test_told_numbers_read_every_overlap_marker_and_nothing_else(self):
         comments = [dict(BOT, body="<!-- sdlc-coordinator: overlap 17 40 -->\noverlap: ..."),

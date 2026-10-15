@@ -510,14 +510,15 @@ def open_work_by_name(snapshot):
         files = board.own_files(pull.files) or (
             board.own_files(claims.claim_files(snap.claims.get(key) or "")) if key else ())
         work.append(board.Work(pull.number, files, not pull.draft, bool(key) and board.is_blocker(snap, key), True,
-                               "" if pull.fork else pull.branch, board.pull_began(snap, pull)))
+                               "" if pull.fork else pull.branch, board.pull_began(snap, pull),
+                               claims.number_of(pull.branch) if key else None))
     for branch in board.claim_branches(snap.branches):
         key, number = claims.key_of(branch), claims.number_of(branch)
         if branch in pulls or key in released or number is None:
             continue
         files = board.own_files(claims.claim_files(snap.claims.get(key) or ""))
         work.append(board.Work(number, files, False, board.is_blocker(snap, key), False, branch,
-                               snap.began.get(branch, "")))
+                               snap.began.get(branch, ""), number))
     return sorted(work, key=lambda w: w.number)
 
 
@@ -624,14 +625,15 @@ def open_work_but_strangers(snapshot):
         files = board.own_files(pull.files) or (
             board.own_files(claims.claim_files(snap.claims.get(key) or "")) if key else ())
         work.append(board.Work(pull.number, files, not pull.draft, bool(key) and board.is_blocker(snap, key), True,
-                               "" if pull.fork else pull.branch, board.pull_began(snap, pull)))
+                               "" if pull.fork else pull.branch, board.pull_began(snap, pull),
+                               claims.number_of(pull.branch) if key else None))
     for branch in board.claim_branches(snap.branches):
         key, number = claims.key_of(branch), claims.number_of(branch)
         if branch in pulls or key in released or number is None:
             continue
         files = board.own_files(claims.claim_files(snap.claims.get(key) or ""))
         work.append(board.Work(number, files, False, board.is_blocker(snap, key), False, branch,
-                               snap.began.get(branch, "")))
+                               snap.began.get(branch, ""), number))
     return sorted(work, key=lambda w: w.number)
 
 
@@ -673,6 +675,14 @@ def holder_by_labels(snap, issue):
     by holders(issue) == {worker}, so where two workers' labels named the
     issue it carried the claim for neither."""
     return labels.worker_of(issue)
+
+
+def named_by_the_number_shown(work):
+    """board.identity as before F2's fix: a piece of open work named by the
+    number the board shows it by, the pull request's as soon as it has
+    one, so a claim that opens its pull request is a new piece to the
+    coordinator and is told again."""
+    return work.number
 
 
 def blank_names_a_worker(text):
@@ -1026,6 +1036,12 @@ MUTANTS = {
         team, "deal_moves", run_dealt_alone,
         "G14", "a run that starts some of the team is dealt in the team's order, so a worker outside it keeps its "
                "share (F18's review)"),
+    "a piece of work named by the number it is shown by": Mutant(
+        board, "identity", named_by_the_number_shown,
+        "G7", "a claim and the pull request from its branch are one piece, named by the issue for as long as the "
+              "claim lives and told on it, so opening the pull request tells nothing again; named by the pull "
+              "request's number as soon as it has one, as before the fix, the claim is told again of the work it "
+              "was told of, and that work of it (F2)"),
 }
 
 

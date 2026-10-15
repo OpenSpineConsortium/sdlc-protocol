@@ -761,8 +761,9 @@ class Work(NamedTuple):
     files it changes or, before it changes any, the files its claim says it
     will touch; whether it is marked ready and whether its issue is a
     blocker; whether it is a pull request at all; its branch, "" for a
-    pull request from a fork; and when it began, as GitHub writes a time,
-    "" when nothing says (open_work)."""
+    pull request from a fork; when it began, as GitHub writes a time, ""
+    when nothing says (open_work); and the issue it is a claim's work for,
+    None for a pull request that is no claim's (identity)."""
 
     number: int
     files: tuple
@@ -771,6 +772,21 @@ class Work(NamedTuple):
     is_pull: bool = True
     branch: str = ""
     began: str = ""
+    issue: int | None = None
+
+
+def identity(work):
+    """The number that names a piece of open work for as long as it is
+    open, in the overlap markers and as the place it is told: the issue,
+    for a claim and the pull request later opened from its branch, which
+    are one piece, so opening the pull request tells nothing again; the
+    pull request's own number for one that is no claim's, from a fork,
+    from a branch that is no claim or opened by someone who may not write
+    (spec, Overlaps; F2: until the fix the work was named by its pull
+    request's number as soon as it had one, and told on it, so a claim
+    that opened its pull request was told again of the work it was told
+    of, and that work told again of it)."""
+    return work.number if work.issue is None else work.issue
 
 
 # Where work whose beginning nothing says stands in the landing order: with
@@ -829,7 +845,8 @@ def open_work(snapshot):
     repository's, and is a piece of its own, whatever its branch is called,
     since it is no claim's (claim_of), as is a stranger's pull request from
     a claim's branch here, which a release's rename closes with the claim's
-    own (closed_by_release)."""
+    own (closed_by_release). A claim's own pull request carries the issue
+    it is for, which names the piece (identity)."""
     snap = as_snapshot(snapshot)
     released = released_keys(snap)
     renamed = released_branches(snap)
@@ -841,13 +858,15 @@ def open_work(snapshot):
             continue
         files = own_files(pull.files) or (own_files(claim_files(snap.claims.get(key) or "")) if key else ())
         work.append(Work(pull.number, files, not pull.draft, bool(key) and is_blocker(snap, key), True,
-                         "" if pull.fork else pull.branch, pull_began(snap, pull)))
+                         "" if pull.fork else pull.branch, pull_began(snap, pull),
+                         number_of(pull.branch) if key else None))
     for branch in claim_branches(snap.branches):
         key, number = key_of(branch), number_of(branch)
         if branch in pulls or key in released or number is None:
             continue
         files = own_files(claim_files(snap.claims.get(key) or ""))
-        work.append(Work(number, files, False, is_blocker(snap, key), False, branch, snap.began.get(branch, "")))
+        work.append(Work(number, files, False, is_blocker(snap, key), False, branch, snap.began.get(branch, ""),
+                         number))
     return sorted(work, key=lambda w: w.number)
 
 

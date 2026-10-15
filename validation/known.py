@@ -25,7 +25,7 @@ known, not new; the oracle and the lanes run main and read nothing of
 "fixed_after". A fix adds its finding to "fixed_after", and takes it out of
 "as_built" when it was there: F12's fix did both, and F4's and F7's,
 whose entries were red as built with no switch, only the first, all
-after 0.4.1. The entry stays, since it is true of every copy at that
+after 0.4.1; F2's fix, the last, left "as_built" empty. The entry stays, since it is true of every copy at that
 version for as long as one exists.
 
 The suite passes when every result is what the file records

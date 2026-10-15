@@ -1,7 +1,7 @@
 {
   "finding": "F2",
   "title": "overlapping work is told again when a claim opens its pull request",
-  "status": "open; the owner's choice of fix (DESIGN.md, 14)",
+  "status": "fixed after 0.4.1: a claim and the pull request from its branch are one piece, named by the issue in the overlap markers and told on it for as long as the claim lives (board.identity; DESIGN.md, 13)",
   "breaks": ["G7"],
   "world": "memory",
   "issues": {"1": ["todo"], "2": ["todo"]},
@@ -12,8 +12,9 @@
     {"verb": "claim", "actor": "b", "args": [2]},
     {"verb": "board", "expect": {"overlaps": {"src/shared.py": [1, 2]}, "told": {"1": [2], "2": [1]}}},
     {"at": 1, "verb": "open-draft", "actor": "a", "args": [1], "expect": {"pulls": [100]}},
-    {"verb": "board", "event": "pull_request", "shows": "F2",
-     "expect": {"overlaps": {"src/shared.py": [2, 100]}, "comments": {"100": {"overlap": 1}, "2": {"overlap": 2}}},
-     "note": "as built the work is numbered by its pull request now and told again, and #2 hears of #100 as if it were new work; reading the spec, both were told already (the order shown, the lower number first, is a tie by age broken by number, which the spec reads the same way)"}
+    {"verb": "board", "event": "pull_request",
+     "expect": {"overlaps": {"src/shared.py": [2, 100]}, "comments": {"1": {"overlap": 1}, "2": {"overlap": 1}, "100": {}},
+                "told": {"1": [2], "2": [1], "100": []}},
+     "note": "the board shows the work by its pull request now, and nothing is told again: the two pieces are named by their issues, #1 and #2, and were told on them at step 2; until the fix the work was named by #100 and told on it, and #2 heard of #100 as if it were new work (the order shown, the lower number first, is a tie by age broken by number, which the spec reads the same way)"}
   ]
 }

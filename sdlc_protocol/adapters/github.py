@@ -999,11 +999,13 @@ def landed_release(api, key, release):
 
 
 def tell_overlaps(api, snap):
-    """Post each overlap comment that is due, reading only the comments of
-    the work that meets other work, and counting only the markers of
-    authors the repository trusts (coordinator.told_numbers); work whose
-    comments GitHub would not give is told nothing this run, so it is never
-    told twice. The lines say what was posted."""
+    """Post each overlap comment that is due, on the piece's identity, the
+    issue for a claim's work and the pull request itself for one that is
+    no claim's (board.identity), reading only the comments there, for the
+    work that meets other work, and counting only the markers of authors
+    the repository trusts (coordinator.told_numbers); work whose comments
+    GitHub would not give is told nothing this run, so it is never told
+    twice. The lines say what was posted."""
     lines, told, trusted = [], {}, may_write(api)
     for number in coordinator.meeting(snap):
         try:

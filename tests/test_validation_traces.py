@@ -74,6 +74,7 @@ BUDGET_SECONDS = 10
 # leaving it open.
 UNDONE = {
     "F1": [("the comment before the labels", 5, "G3L")],
+    "F2": [("a piece of work named by the number it is shown by", 4, "G7")],
     "F3": [("the guard passes --force", 1, "G11a")],
     "F4": [("each leg dealt from its own look", 9, "G14")],
     "F14": [("given to workers needing the label todo", 0, "G9")],
@@ -112,8 +113,8 @@ UNDONE = {
 # after it (known.json's fixed_after); and F16, fixed in the spec's words, which
 # the library as built already keeps, so known.json names no version for
 # it.
-FIXED = ("F1", "F3", "F4", "F5", "F6", "F7", "F9", "F10", "F11", "F12", "F13", "F14", "F15", "F16", "F17", "F18",
-         "F19")
+FIXED = ("F1", "F2", "F3", "F4", "F5", "F6", "F7", "F9", "F10", "F11", "F12", "F13", "F14", "F15", "F16", "F17",
+         "F18", "F19")
 # Findings red as built, which no rule of the library answers: none since
 # F4's fix; the test keeps the case for the next one.
 RED_AS_BUILT = ()
@@ -244,7 +245,7 @@ class TheTraces(unittest.TestCase):
 class KnownJson(unittest.TestCase):
     def test_the_oracle_s_switches_are_the_file_s(self):
         self.assertEqual(oracle.AS_BUILT, known.AS_BUILT)
-        self.assertEqual(known.AS_BUILT, frozenset({"F2"}))
+        self.assertEqual(known.AS_BUILT, frozenset(), "no finding is read as built since F2's fix")
 
     def test_every_entry_names_a_step_of_a_trace_or_scenario_a_guarantee_and_a_finding(self):
         traces = replay.traces()
@@ -272,11 +273,11 @@ class KnownJson(unittest.TestCase):
         self.assertEqual(known.expected("trace", "F4"), set())
         self.assertEqual(known.expected("trace", "F7"), set())
         self.assertEqual(known.expected("trace", "F2"), set())
-        self.assertEqual(known.expected("trace", "F2", "F2"), {(4, "G7")})
-        self.assertEqual(known.expected("scenario", "S05q", "F2"), {(12, "G7")})
+        self.assertEqual(known.expected("trace", "F2", "F2"), set(), "F2's entries went with its fix")
+        self.assertEqual(known.expected("scenario", "S05q", "F2"), set())
         self.assertEqual(known.expected("scenario", "S05q", "F12"), set())
-        self.assertEqual(known.differences("trace", "F2", set(), "F2"),
-                         ["trace F2 with F2 read from the spec: recorded red and green: step 4, G7"])
+        self.assertEqual(known.differences("trace", "F2", {(4, "G7")}, "F2"),
+                         ["trace F2 with F2 read from the spec: red and not recorded: step 4, G7"])
         self.assertEqual(known.differences("trace", "F1", {(0, "G3")}),
                          ["trace F1 as built: red and not recorded: step 0, G3"])
 
@@ -285,8 +286,8 @@ class KnownJson(unittest.TestCase):
         repository vendors, so a finding fixed on main is still known there
         at that version and before, and new from the next release on."""
         self.assertEqual(known.FIXED_AFTER,
-                         {"F4": "0.4.1", "F7": "0.4.1", "F9": "0.4.1", "F12": "0.4.1", "F13": "0.4.1", "F14": "0.4.1",
-                          "F15": "0.4.1", "F17": "0.4.1", "F18": "0.4.1", "F19": "0.4.1"})
+                         {"F2": "0.4.1", "F4": "0.4.1", "F7": "0.4.1", "F9": "0.4.1", "F12": "0.4.1", "F13": "0.4.1",
+                          "F14": "0.4.1", "F15": "0.4.1", "F17": "0.4.1", "F18": "0.4.1", "F19": "0.4.1"})
         current = known.version_key(sdlc_protocol.__version__)
         for finding, version in known.FIXED_AFTER.items():
             with self.subTest(finding=finding):
@@ -295,7 +296,7 @@ class KnownJson(unittest.TestCase):
                 self.assertIsNotNone(known.version_key(version))
                 self.assertLessEqual(known.version_key(version), current,
                                      "the last version with a finding is one main has stated, never a later one")
-        fixed_on_main = {"F4", "F7", "F9", "F12", "F13", "F14", "F15", "F17", "F18", "F19"}
+        fixed_on_main = {"F2", "F4", "F7", "F9", "F12", "F13", "F14", "F15", "F17", "F18", "F19"}
         self.assertEqual(known.as_built_for("0.4.1"), known.AS_BUILT | fixed_on_main)
         self.assertEqual(known.as_built_for("0.4.0"), known.AS_BUILT | fixed_on_main)
         self.assertEqual(known.as_built_for("0.4.2"), known.AS_BUILT, "the next release carries the fixes")

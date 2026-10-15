@@ -232,17 +232,26 @@ def relabelled(names, taken_off, put_on):
 
 def meeting(snapshot):
     """For each piece of open work that meets other work in a file, by its
-    number: the work it meets with the files they share, in landing order.
-    """
+    identity (board.identity: the issue for a claim's work, the pull
+    request's number for one that is no claim's): the work it meets with
+    the files they share, in landing order."""
     found = {}
     for path, works in board.overlaps(snapshot).items():
         for work in works:
             for other in works:
-                if other.number != work.number:
-                    found.setdefault(work.number, {}).setdefault(other, []).append(path)
-    return {number: sorted(((other, tuple(sorted(paths))) for other, paths in others.items()),
-                           key=lambda pair: board.landing_key(pair[0]))
-            for number, others in sorted(found.items())}
+                if board.identity(other) != board.identity(work):
+                    found.setdefault(board.identity(work), {}).setdefault(other, []).append(path)
+    return {identity: sorted(((other, tuple(sorted(paths))) for other, paths in others.items()),
+                             key=lambda pair: board.landing_key(pair[0]))
+            for identity, others in sorted(found.items())}
+
+
+def identities(snapshot):
+    """What each number a piece of open work is shown by names now: the
+    piece's identity (board.identity), so a marker that names a claim's
+    pull request, as the markers written before F2's fix do, is read as
+    naming the claim."""
+    return {work.number: board.identity(work) for work in board.open_work(snapshot)}
 
 
 def told_numbers(comments, trusted=None):
@@ -281,7 +290,12 @@ def overlap_text(work, others):
     meets: each other piece with the files they share, and the order the
     whole group should land in."""
     order = sorted([work] + [other for other, _ in others], key=board.landing_key)
-    this = "pull request" if work.is_pull else "claim"
+    if not work.is_pull:
+        this = "claim"
+    elif work.issue is not None:
+        this = f"claim's pull request #{work.number}"
+    else:
+        this = "pull request"
     lines = [f"overlap: other open work changes the same files as this {this}:"]
     lines += [f"- #{other.number}, {describe(other)}: {named_files(list(paths))}" for other, paths in others]
     lines += ["", f"Land them in this order: {', '.join(f'#{w.number}' for w in order)}: a blocker first, then "
@@ -292,18 +306,23 @@ def overlap_text(work, others):
 
 
 def overlap_comments_due(snapshot, told):
-    """The overlap comments to post, as board.DueComment: one for each piece
-    of open work that meets work it has not been told of, told maps a
-    work's number to the numbers its earlier overlap comments named. The
-    comment names all the work it meets, told before or not, so it reads
-    whole on its own."""
+    """The overlap comments to post, as board.DueComment, each on the
+    piece's identity, the issue for a claim's work (board.identity): one
+    for each piece of open work that meets work it has not been told of.
+    told maps a piece's identity to the numbers the overlap markers on it
+    name, each read as the identity of the piece it names now
+    (identities), since a marker written before F2's fix named a claim's
+    pull request. The marker names the identities of the work met, and
+    the comment names all of it, told before or not, so it reads whole on
+    its own."""
     snap = board.as_snapshot(snapshot)
-    works = {work.number: work for work in board.open_work(snap)}
+    works = {board.identity(work): work for work in board.open_work(snap)}
+    named = identities(snap)
     due = []
-    for number, others in meeting(snap).items():
-        numbers = sorted(other.number for other, _ in others)
-        if set(numbers) <= told.get(number, set()):
+    for identity, others in meeting(snap).items():
+        met = sorted(board.identity(other) for other, _ in others)
+        if set(met) <= {named.get(n, n) for n in told.get(identity, set())}:
             continue
-        marker = OVERLAP_MARKER.format(numbers=" ".join(str(n) for n in numbers))
-        due.append(board.DueComment(number, marker, overlap_text(works[number], others)))
+        marker = OVERLAP_MARKER.format(numbers=" ".join(str(n) for n in met))
+        due.append(board.DueComment(identity, marker, overlap_text(works[identity], others)))
     return due

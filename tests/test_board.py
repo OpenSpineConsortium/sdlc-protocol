@@ -346,7 +346,7 @@ class Overlaps(unittest.TestCase):
                 # second review: a list stopped the run there).
                 snap = self.drafts_snapshot({"claude/17": "2026-09-22T09:00:00Z"}, opened=opened)
                 told = {n: [w.number for w, _ in others] for n, others in coordinator.meeting(snap).items()}
-                self.assertEqual((told[17], told[42]), ([42], [17]))
+                self.assertEqual((told[17], told[16]), ([42], [17]))
                 self.assertEqual(sorted(due.number for due in coordinator.overlap_comments_due(snap, {})),
                                  sorted(told))
 

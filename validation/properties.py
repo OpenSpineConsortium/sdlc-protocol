@@ -221,7 +221,9 @@ def overlaps_list_only_meeting_work_in_landing_order(drafts: tuple, blockers: tu
                                                                        second.number)
     expected = {f for f in itertools.chain(*files) if sum(f in touched for touched in files) > 1}
     assert set(found) == expected
-    told = {101: {102}}
+    # Each piece is a claim's, #101 claim 1's and so on, so it is named
+    # by its issue and told on it (F2): claim 1 has been told of claim 2.
+    told = {1: {2}}
     for due in coordinator.overlap_comments_due(snapshot, told):
         named = {int(n) for n in coordinator.OVERLAP_LINE.fullmatch(due.marker).group(1).split()}
         assert not named <= told.get(due.number, set())
