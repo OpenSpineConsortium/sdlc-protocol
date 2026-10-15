@@ -87,6 +87,39 @@ class Pushes(unittest.TestCase):
         self.assertEqual(self.model.pushed["claude/1"][3], later)
         self.assertEqual(self.model.made_heads, {"claude/1": self.first})
 
+    def test_the_entry_before_the_last_push_is_kept_and_a_delete_until_the_branch_is_made_again(self):
+        """F8's second review: an activity a push behind shows the entry
+        before the last push newest, so the model keeps it: none after the
+        making, the push before after a later one, and, for a claim branch
+        a push makes again, the delete that took it away, with the head it
+        had; a rename keeps the old name's, and a clone and the key keep
+        both."""
+        self.model.push("a", "claude/1", self.first)
+        self.assertEqual(self.model.earlier, {})
+        self.model.now = 60
+        later = self.model.commit((self.first,), "a", {"x": "1\n"}, "work")
+        self.model.push("a", "claude/1", later)
+        self.assertEqual(self.model.earlier, {})
+        self.model.now = 120
+        self.model.fetch("a")
+        self.model.push("a", "claude/1", self.first, lease=True)
+        self.assertEqual(self.model.earlier, {"claude/1": (60, "push", later, self.first)})
+        self.assertEqual(self.model.clone().earlier, self.model.earlier)
+        key = self.model.repository_key()
+        self.model.earlier = {}
+        self.assertNotEqual(self.model.repository_key(), key)
+        self.model.delete_ref("claude/1")
+        self.assertEqual((self.model.earlier, self.model.deleted), ({}, {"claude/1": (120, self.first)}))
+        self.assertEqual(self.model.clone().deleted, self.model.deleted)
+        self.model.now = 180
+        self.model.push("a", "claude/1", self.first)
+        self.assertEqual((self.model.earlier, self.model.deleted),
+                         ({"claude/1": (120, "branch_deletion", None, self.first)}, {}))
+        self.model.rename_ref("claude/1", "released/1-abcdef0")
+        self.assertEqual(self.model.earlier, {"released/1-abcdef0": (120, "branch_deletion", None, self.first)})
+        self.model.delete_ref("released/1-abcdef0")
+        self.assertEqual((self.model.earlier, self.model.deleted), ({}, {}))
+
     def test_the_head_a_making_set_follows_a_rename_and_goes_with_a_deletion(self):
         self.model.push("a", "claude/1", self.first)
         key = self.model.repository_key()

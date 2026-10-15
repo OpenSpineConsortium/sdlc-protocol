@@ -455,6 +455,46 @@ class TheOpenFindingsShow(unittest.TestCase):
         self.assertIn(("G2", "the run read the push of claude/1's head 2 times, where its first read owes 1"),
                       [(v.guarantee, v.detail) for v in found])
 
+    def test_f8_a_stale_entry_off_the_head_owes_a_second_read_and_dates_nothing(self):
+        """F8's second review: an entry that moved the branch off the head
+        dates it only when it came after the run began (SPEC["moved off"]):
+        an older one lists no push that set the head, so the first read
+        owes a second, and read so last it leaves the committer date to
+        stand in. a's claim commit, dated two days ahead, is pushed back a
+        day after a commit moved the branch off it, and the activity a push
+        behind lists that commit's push newest: the run reads once more and
+        holds the claim, and the mutant that dates the head by the stale
+        entry reads once and releases it in the run its own push started,
+        where even the committer date, which a run that read once must
+        fall back to, holds it."""
+        model = M.seeded()
+        ref = "claude/1"
+        model.set_ref(ref, model.refs[M.MAIN])
+        head, model.now = model.refs[ref], 25 * M.HOUR
+
+        def read(minute):
+            answered = [{"ref": f"refs/heads/{ref}", "timestamp": M.iso(minute), "after": "f" * 40, "before": head}]
+            return Call("GET", "/activity", (("ref", f"refs/heads/{ref}"),), None, 200, False, True, None, answered)
+
+        for minute, dates in ((M.HOUR, None), (model.now - 6, None), (model.now - 5, model.now - 5),
+                              (model.now, model.now)):
+            with self.subTest(minute=minute):
+                self.assertEqual(invariants.read_dates(read(minute), ref, head, model.now), dates)
+                self.assertEqual(invariants.may_tell_more(read(minute), ref, head, model.now), dates is None)
+        self.assertEqual(invariants.push_dates([read(M.HOUR), read(M.HOUR)], model), {ref: None})
+        self.assertEqual(invariants.pushes_read_again([read(M.HOUR)], model)[0].detail,
+                         "the run read the push of claude/1's head 1 times, where its first read owes 2")
+        self.assertEqual(invariants.pushes_read_again([read(model.now)], model), [])
+        steps = [Verb("claim", "a", (1, 48 * M.HOUR)), Verb("label-on", "a", (1, "claimed")),
+                 Verb("wait", "clock", (1,)), Verb("commit", "a", (1,)), Verb("wait", "clock", (25,)),
+                 Verb("drop-commits", "a", (1,)),
+                 board_with("pushes-lagging")]
+        self.assertEqual(violations(steps), [])
+        with mutants.switched_on(mutants.MUTANTS["a stale entry off the head dates it"]):
+            found = [(v.guarantee, v.detail) for v in violations(steps)]
+        self.assertIn(("G2", "the run read the push of claude/1's head 1 times, where its first read owes 2"), found)
+        self.assertIn(("G3", "made and not owed: ('comment', 1, 'claim-released')"), found)
+
     def test_undated_branches_are_those_whose_last_read_of_their_head_s_push_dates_none(self):
         """A first read refused and the second answered dates the branch by
         its push; a branch whose last read GitHub refused, or answered with

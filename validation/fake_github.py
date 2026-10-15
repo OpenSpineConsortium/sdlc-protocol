@@ -59,9 +59,12 @@ with pushes and comments; and the repository's activity lists the push
 that made each branch at GitHub's own time, newest first (F13), with the
 head that push set, and the push that last set each branch's head, with
 the head it set and the head it moved the branch from (F8; canary C5
-read a forced push's before and after on 2026-10-15), a renamed branch
-keeping both, which the model's rename does and no canary check reads
-yet.
+read a forced push's before and after on 2026-10-15), with the push
+before it, or, for a branch a push made again, the delete before that
+push, at that delete's own time with the head it took away as the head
+before, assumed, as GitHub's branch_deletion entry (F8's second review), a
+renamed branch keeping them, which the model's rename does and no canary
+check reads yet.
 """
 
 import base64
@@ -97,10 +100,13 @@ class Fault(NamedTuple):
     call answered with status, 200, and a list the model's own answer is
     changed into, in place of a refusal (FakeGitHub.activity): LAGGING, the
     activity as it stood before each branch's last push, as a read GitHub
-    answers before it lists that push; MOVED, the activity with a push
-    after the run read the branch, from the head the run read to one it
-    never saw, which the model does not take, so the next run reads the
-    branch as the model holds it."""
+    answers before it lists that push, the push before it newest (F8's
+    second review); MOVED, the activity with a push after the run read
+    the branch, from the head the run read to one it never saw, at the
+    run's minute, which answers every later read of that branch in the
+    run as GitHub would, listing that push still (FakeGitHub.moved_since),
+    and which the model does not take, so the next run reads the branch as
+    the model holds it."""
 
     method: str
     path: str
@@ -183,6 +189,9 @@ class FakeGitHub:
         self.faults = [[fault, fault.times] for fault in faults]
         self.calls = []
         self.computed = set()
+        # The MOVED fault each branch's activity met in the run, by the ref
+        # its read named (moved_since).
+        self.moved = {}
 
     # --- the opener ---------------------------------------------------------
 
@@ -196,7 +205,9 @@ class FakeGitHub:
         query = dict(urllib.parse.parse_qsl(parts.query))
         body = json.loads(request.data) if request.data else None
         path = "/" + "/".join(segments)
-        fault = self.fault_for(f"{method} {path}", query)
+        fault = self.fault_for(f"{method} {path}", query) or self.moved_since(method, path, query)
+        if fault is not None and fault.answer == MOVED:
+            self.moved.setdefault(query.get("ref", ""), fault)
         asked = tuple(sorted(query.items()))
         if fault is not None and fault.answer:
             found, headers = self.answer(method, segments, query, body, request.full_url, fault.answer)
@@ -223,6 +234,15 @@ class FakeGitHub:
                 entry[1] = left - 1
                 return fault
         return None
+
+    def moved_since(self, method, path, query):
+        """The fault that answered a read of this branch's activity with a
+        push after the run read the branch (MOVED), for every later read
+        of that branch in the run, which GitHub would answer listing that
+        push still; None for any other call, a read of another kind
+        among them."""
+        fault = self.moved.get(query.get("ref", "")) if path == "/activity" else None
+        return fault if fault is not None and fault.matches(f"{method} {path}", query) else None
 
     @staticmethod
     def fault_answer(url, fault):
@@ -411,28 +431,39 @@ class FakeGitHub:
 
     def branch_entries(self, branch, as_fault=""):
         """One branch's entries, oldest first, each keyed by its place in
-        the order: the push that made it, naming the head that push set
-        (model.made_heads), and the push that last set its head, when that
+        the order: the delete that took it away before a push made it
+        again, naming the head it had as the head before (model.earlier);
+        the push that made it, naming the head that push set
+        (model.made_heads); the push before the last, when that was a later
+        one (model.earlier); and the push that last set its head, when that
         was a later one, naming the head it set and the head it moved the
-        branch from (model.pushed, F8), a minute's two in that order. With
-        as_fault LAGGING the newest is left out, as an activity that does
-        not list the latest push yet answers; with MOVED one more comes
-        after them, a push at the clock's minute from the branch's head to
-        a commit nobody made, as a push after the run read the branch. A
-        branch a test made by hand, with no making's head recorded, names
-        its head now for the head its making set."""
+        branch from (model.pushed, F8), a minute's entries in that order.
+        With as_fault LAGGING the newest is left out, as an activity that
+        does not list the latest push yet answers, so the entry before it
+        is newest, as GitHub's would be a push behind (F8's second
+        review); with MOVED one more comes after them, a push at the
+        clock's minute from the branch's head to a commit nobody made, as a
+        push after the run read the branch. A branch a test made by hand,
+        with no making's head recorded, names its head now for the head its
+        making set."""
         model = self.model
         made = model.created[branch]
         head = model.refs.get(branch, "")
-        found = [((made, 0), self.entry(branch, made, "branch_creation", model.made_heads.get(branch, head)))]
+        found = [((made, 1), self.entry(branch, made, "branch_creation", model.made_heads.get(branch, head)))]
+        earlier = model.earlier.get(branch)
+        if earlier is not None:
+            at, kind, after, before = earlier
+            place = 0 if kind == "branch_deletion" else 2
+            found.append(((at, place), self.entry(branch, at, kind, after or NO_SHA, before or NO_SHA)))
         last = model.pushed.get(branch)
         if last is not None and last[2] != "branch_creation":
-            found.append(((last[0], 1), self.entry(branch, last[0], last[2], last[1], last[3] or NO_SHA)))
+            found.append(((last[0], 3), self.entry(branch, last[0], last[2], last[1], last[3] or NO_SHA)))
+        found.sort(key=lambda item: item[0])
         if as_fault == LAGGING:
             return found[:-1]
         if as_fault == MOVED:
             unseen = hashlib.sha1(f"pushed after the run read {branch} at {model.now}".encode("ascii")).hexdigest()
-            found.append(((model.now, 2), self.entry(branch, model.now, "push", unseen, head)))
+            found.append(((model.now, 4), self.entry(branch, model.now, "push", unseen, head)))
         return found
 
     def entry(self, branch, at, kind, after, before=NO_SHA):

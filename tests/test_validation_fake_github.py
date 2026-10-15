@@ -26,8 +26,10 @@ def claimed(worker="a", number=1, text=None):
 
 class TheActivity(unittest.TestCase):
     """F8: the activity lists each branch's making and the push that last
-    set its head, which the release rule dates a claim by, and a fault's
-    query tells that read from the reads of a branch's making (F13)."""
+    set its head, which the release rule dates a claim by, with the entry
+    before that push, which an activity a push behind shows newest, and a
+    fault's query tells that read from the reads of a branch's making
+    (F13)."""
 
     def setUp(self):
         self.model = claimed()
@@ -46,8 +48,12 @@ class TheActivity(unittest.TestCase):
         self.assertEqual([e["activity_type"] for e in oldest], ["branch_creation", "push"])
         self.assertEqual(github.head_pushed_at(api, "claude/1", self.later), M.iso(3 * M.HOUR))
         # The head the push moved the branch from is dated by that push
-        # too, as a run that read the branch before it would read it.
-        self.assertEqual(github.head_pushed_at(api, "claude/1", self.made), M.iso(3 * M.HOUR))
+        # too, by a run that read the branch before it, one that began no
+        # later; one that began a day later finds it stale (F8's second
+        # review), as does a reader that gives no moment of its own.
+        self.assertEqual(github.head_pushed_at(api, "claude/1", self.made, M.moment(3 * M.HOUR)), M.iso(3 * M.HOUR))
+        self.assertEqual(github.head_pushed_at(api, "claude/1", self.made, M.moment(27 * M.HOUR)), "")
+        self.assertEqual(github.head_pushed_at(api, "claude/1", self.made), "")
         self.assertEqual(github.head_pushed_at(api, "claude/1", "f" * 40), "")
         self.assertEqual(github.branch_made_at(api, "claude/1"), M.iso(0))
 
@@ -80,15 +86,60 @@ class TheActivity(unittest.TestCase):
         """The fault pushes-moved: the newest entry is a push at the clock's
         minute from the head the run read to a commit nobody made, which
         dates the head by its before side, as a push after the run read
-        the branch."""
+        the branch, a run that began at that minute reading it; and every
+        later read of the branch in the run lists it still, as GitHub
+        would, while a read of the branch's making is answered from the
+        model, and so is the next run's (F8's second review)."""
         self.model.now = 30 * M.HOUR
+        began = M.moment(self.model.now)
         moved = Fault("GET", "/activity", 200, query=(("activity_type", None),), answer=MOVED)
         api, fake = cycle.api_for(self.model, (moved,))
-        self.assertEqual(github.head_pushed_at(api, "claude/1", self.later), M.iso(30 * M.HOUR))
+        self.assertEqual(github.head_pushed_at(api, "claude/1", self.later, began), M.iso(30 * M.HOUR))
         newest = fake.calls[0].answered[0]
         self.assertEqual(newest["before"], self.later)
         self.assertNotIn(newest["after"], self.model.commits)
-        self.assertEqual(github.head_pushed_at(api, "claude/1", self.later), M.iso(3 * M.HOUR))
+        self.assertEqual(github.head_pushed_at(api, "claude/1", self.later, began), M.iso(30 * M.HOUR))
+        self.assertEqual(fake.calls[1].answered[0], newest)
+        self.assertTrue(fake.calls[1].injected)
+        self.assertEqual(github.branch_made_at(api, "claude/1"), M.iso(0))
+        self.assertFalse(fake.calls[2].injected)
+        next_run, _ = cycle.api_for(self.model)
+        self.assertEqual(github.head_pushed_at(next_run, "claude/1", self.later, began), M.iso(3 * M.HOUR))
+
+    def test_a_lagging_answer_is_a_push_behind_the_branch_s_last(self):
+        """F8's second review: GitHub's activity a push behind lists the
+        push before the last newest, so a branch moved off its head and
+        pushed back to it shows the push that moved it off, older than the
+        run, and a branch made again after a delete shows that delete,
+        which names the head it took away as the head before; each is a
+        stale entry, which dates nothing, and the next read lists the
+        push."""
+        model, ref = claimed(), "claude/1"
+        made = model.refs[ref]
+        model.now = M.HOUR
+        moved_off = model.commit((made,), "a", model.tree(made) | {"src/x.py": "1\n"}, "Work")
+        model.push("a", ref, moved_off)
+        model.now = 26 * M.HOUR
+        model.fetch("a")
+        self.assertTrue(model.push("a", ref, made, lease=True).taken)
+        lagging = Fault("GET", "/activity", 200, query=(("activity_type", None),), answer=LAGGING)
+        api, fake = cycle.api_for(model, (lagging,))
+        began = M.moment(model.now)
+        self.assertEqual(github.head_pushed_at(api, ref, made, began), "")
+        newest = fake.calls[0].answered[0]
+        self.assertEqual((newest["activity_type"], newest["before"], newest["after"]), ("push", made, moved_off))
+        self.assertEqual(github.head_pushed_at(api, ref, made, began), M.iso(26 * M.HOUR))
+        self.assertEqual(fake.calls[1].answered[0]["activity_type"], "force_push")
+        model.delete_ref(ref)
+        model.now = 51 * M.HOUR
+        model.push("a", ref, made)
+        api, fake = cycle.api_for(model, (lagging,))
+        began = M.moment(model.now)
+        self.assertEqual(github.head_pushed_at(api, ref, made, began), "")
+        newest = fake.calls[0].answered[0]
+        self.assertEqual((newest["activity_type"], newest["before"], newest["after"], newest["timestamp"]),
+                         ("branch_deletion", made, NO_SHA, M.iso(26 * M.HOUR)))
+        self.assertEqual(github.head_pushed_at(api, ref, made, began), M.iso(51 * M.HOUR))
 
 
 class TheAdapterReadsTheModel(unittest.TestCase):

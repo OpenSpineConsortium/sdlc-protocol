@@ -668,26 +668,31 @@ def activity_reads(calls, kind):
 def push_dates(calls, model):
     """What a run read of when GitHub received the push that set each
     claim branch's head, by branch name, from the heads the run read in
-    the model: the minute the last of its reads dates that push at, or
-    None where that read dates none, so the run dates the branch by its
-    committer date (SPEC["undated push"])."""
-    return {branch: read_dates(reads[-1], branch, model.refs.get(branch))
+    the model and the minute it began, the model's clock, which the run
+    is handed as its now (cycle.start_run, clerk.ModelClient.released):
+    the minute the last of its reads dates that push at, or None where
+    that read dates none, so the run dates the branch by its committer
+    date (SPEC["undated push"])."""
+    return {branch: read_dates(reads[-1], branch, model.refs.get(branch), model.now)
             for branch, reads in activity_reads(calls, None).items()}
 
 
-def read_dates(call, branch, head):
-    """The minute one read of the activity dates the push of the head at
-    (SPEC["last commit"]): the newest entry's, when it is the branch's and
-    it set that head, or moved the branch from it, a push after the run
-    read the branch, which says the branch had a commit then (as
-    github.head_pushed_at reads it); None for a read GitHub refused, or
-    one whose newest entry is not such a push, as a list that does not
-    show the latest push yet."""
+def read_dates(call, branch, head, began):
+    """The minute one read of the activity, by a run that began at the
+    minute began, dates the push of the head at: by its newest entry, the
+    branch's, as oracle.entry_dates reads one from the spec's words, an
+    entry that set the head, or one that moved the branch off it after
+    the run began (SPEC["last commit"], SPEC["moved off"]); None for a
+    read GitHub refused, one whose newest entry is another branch's or
+    names the head on neither side, as a list that does not show the
+    latest push yet, and one whose newest entry moved the branch off the
+    head before the run began, a stale one, which lists no push that set
+    the head (SPEC["undated push"])."""
     newest = call.answered[0] if call.status == 200 and call.answered else None
-    if (not isinstance(newest, dict) or newest.get("ref") != f"refs/heads/{branch}"
-            or head not in (newest.get("after"), newest.get("before"))):
+    if not isinstance(newest, dict) or newest.get("ref") != f"refs/heads/{branch}" or head is None:
         return None
-    return minute_of(newest["timestamp"])
+    return oracle.entry_dates(newest.get("after") == head, newest.get("before") == head,
+                              minute_of(newest["timestamp"]), began)
 
 
 def minute_of(stamp):
@@ -695,14 +700,16 @@ def minute_of(stamp):
     return int((datetime.fromisoformat(stamp.replace("Z", "+00:00")) - T0).total_seconds()) // 60
 
 
-def may_tell_more(call, branch, head):
-    """Whether a second read may tell more than this first one
-    (SPEC["undated push"]): GitHub gave no answer that holds, a 5xx, a 429
-    or a 403 saying a rate limit was reached, or answered a list that
-    dates no push of the head; a 404, a repository GitHub keeps no
-    activity of, and any other refusal are its answer for good."""
+def may_tell_more(call, branch, head, began):
+    """Whether a second read may tell more than this first one, of a run
+    that began at the minute began (SPEC["undated push"]): GitHub gave no
+    answer that holds, a 5xx, a 429 or a 403 saying a rate limit was
+    reached, or answered a list that "lists no push that set the head",
+    a stale entry off the head among them (read_dates, SPEC["moved
+    off"]); a 404, a repository GitHub keeps no activity of, and any other
+    refusal are its answer for good."""
     if call.status == 200:
-        return read_dates(call, branch, head) is None
+        return read_dates(call, branch, head, began) is None
     said = (call.fault.message if call.fault is not None else "") or ""
     return call.status >= 500 or call.status == 429 or (call.status == 403 and "rate limit" in said.lower())
 
@@ -715,7 +722,7 @@ def pushes_read_again(calls, model):
     (SPEC["undated push"])."""
     problems = []
     for branch, reads in activity_reads(calls, None).items():
-        owed = 2 if may_tell_more(reads[0], branch, model.refs.get(branch)) else 1
+        owed = 2 if may_tell_more(reads[0], branch, model.refs.get(branch), model.now) else 1
         if len(reads) != owed:
             problems.append(Violation("G2", f"the run read the push of {branch}'s head {len(reads)} times, "
                                             f"where its first read owes {owed}"))

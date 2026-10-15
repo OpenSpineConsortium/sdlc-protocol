@@ -44,7 +44,17 @@ BUDGET_SECONDS = 10
 # branch, whose release the label claimed undid, has gone a day without
 # a push and is not released once a release comment holds a kept head
 # whatever the labels say, and b's, the board counting its kept release,
-# is released twice once no head is read as kept. F9's
+# is released twice once no head is read as kept; and, since F8's second
+# review, at step 28, where a's kept head, pushed again a day after the
+# board deleted it, meets an activity a push behind whose newest entry is
+# that delete, and at step 37, where c's claim commit, pushed back a day
+# after a commit moved claude/3 off it, meets one whose newest entry is
+# that commit's push, each claim released in the run its push started
+# once a stale entry off the head dates it; and at step 29, where a's
+# kept head, its release undone, is released again by a run whose
+# comment GitHub refuses, and the labels stay off once the earlier
+# release of the head is taken for the comment the post would have
+# written. F9's
 # trace goes red at its first board run, step 2, where the draft level
 # with main is told it moved once the adapter reads the comparison's
 # ahead_by for behind_by, and at its second, step 4, where the draft
@@ -104,7 +114,9 @@ UNDONE = {
     "F8": [("idleness by the committer date", 13, "G2"), ("idleness by the committer date", 14, "G3"),
            ("the before side ignored", 13, "G2"), ("the push read once", 15, "G2"),
            ("a kept head dated by its push", 23, "G5"), ("kept counts only at or after the push", 23, "G5"),
-           ("a kept release undone holds for good", 25, "G3"), ("a kept head released again", 25, "G2")],
+           ("a kept release undone holds for good", 25, "G3"), ("a kept head released again", 25, "G2"),
+           ("a stale entry off the head dates it", 28, "G2"), ("a stale entry off the head dates it", 37, "G2"),
+           ("a kept head's old release taken for the lost comment", 29, "G3L")],
     "F9": [("an opaque state read by GitHub's word alone", 4, "G10"), ("the comparison read by ahead_by", 2, "G10")],
     "F10": [("a finished draft's release by hand not seen", 9, "G5")],
     "F11": [("a refused comment stops the run", 6, "G15")],

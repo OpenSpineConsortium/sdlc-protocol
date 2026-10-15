@@ -454,8 +454,9 @@ def observe(model, outcomes):
     each branch, which a release dates a claim by (F8): its minute, its
     kind, whether the head it set is the branch's head and whether it made
     the branch, and whether the push that made the branch set the head
-    the branch has now. The shas themselves differ between the worlds, so
-    none is compared."""
+    the branch has now, and the entry the activity lists before that push
+    by its minute and kind (model.earlier, F8's second review). The shas
+    themselves differ between the worlds, so none is compared."""
     shown = model.board_text
     named = {}
     for ref in sorted(model.refs):
@@ -469,6 +470,7 @@ def observe(model, outcomes):
         "taken": [(o.taken, o.refused_by_guard is not None) for o in outcomes],
         "refs": named,
         "pushed": pushed,
+        "earlier": sorted((shown_name(ref), at, kind) for ref, (at, kind, _, _) in model.earlier.items()),
         "trees": trees,
         "standing": {ref: model.standing(ref) for ref in sorted(model.refs) if ref.startswith(oracle.CLAIM_PREFIX)},
         "files": {ref: tuple(model.files_changed(ref)) for ref in sorted(model.refs) if ref.startswith(oracle.CLAIM_PREFIX)},

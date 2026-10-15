@@ -151,9 +151,9 @@ class TheClerkAgainstPick(unittest.TestCase):
         released by a comment 25 hours after its push, and a released head
         pushed again is released by the release that kept it, though that
         came before the push; the clerk counts both released, as the board
-        does, where the label claimed is off, and carries neither where it
-        is on. Read by the committer date, or with no head kept, it carries
-        the first or the second."""
+        does, where the label claimed is off, and counts neither released
+        where it is on, so a carries each. Read by the committer date, or
+        with no head kept, it carries the first or the second."""
         for state, mutant in (("released-ahead", "the clerk dating by the committer date"),
                               ("kept", "the clerk ignoring a kept head")):
             with self.subTest(state=state):

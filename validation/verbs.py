@@ -379,6 +379,30 @@ def lease_onto(model, worker, number, files):
     return pushed(model, worker, ref, sha, f"git push --force-with-lease origin {ref}", lease=True, allowed=False)
 
 
+def claim_commit(model, number):
+    """The claim commit of the branch claude/<number>: the first of the
+    branch's own commits, those main does not hold, oldest first."""
+    ref = claim_ref(number)
+    own = model.in_order(model.ancestors(model.refs[ref]) - model.ancestors(model.refs[MAIN]))
+    return own[0] if own else model.refs[ref]
+
+
+def drop_commits(model, worker, number):
+    """The holder drops every commit after its claim commit and pushes the
+    branch back to it with a lease (git reset --hard, then git push
+    --force-with-lease), the one forced push the protocol allows, onto its
+    own claim: a push of a head the branch had before, which the activity
+    lists as a forced push of it, and which an activity a push behind
+    answers with the push that moved the branch off that head (F8's
+    second review). No search offers it; F8's trace plays it."""
+    model.fetch(worker)
+    ref, sha = claim_ref(number), claim_commit(model, number)
+    if sha == model.refs[ref]:
+        return Outcome(True, "nothing to drop")
+    return touch_pull(model, ref, pushed(model, worker, ref, sha, f"git push --force-with-lease origin {ref}",
+                                         lease=True))
+
+
 def push_old_head(model, worker, number, released_ref):
     """After a release, push the released head again as claude/<n>."""
     ref = claim_ref(number)
@@ -632,6 +656,8 @@ def act(model, verb, scope):
         return lease_onto(model, actor, number, scope.files_of(number))
     if name == "push-old-head":
         return push_old_head(model, actor, number, args[1])
+    if name == "drop-commits":
+        return drop_commits(model, actor, number)
     if name == "label-on":
         if args[1] in model.issues[number].labels:
             return Outcome(True, "labelled already")

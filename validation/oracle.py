@@ -180,6 +180,14 @@ WORKER_SPELLINGS = ("worker:", "account:", "agent:")
 WORKER_LINES = ("- Worker:", "- Account:")
 NOTE = re.compile(r"\([^()]*\)\s*$")
 IDLE_MINUTES = 24 * HOUR
+# How long before a run began an entry that moved a branch off its head
+# may come and still count as having come after (SPEC["moved off"]), in
+# minutes: the allowance the library makes for a runner's clock behind
+# GitHub's, which the spec does not spell and
+# tests/test_validation_guarantees.py pins to github.PUSH_SINCE_SLACK. The
+# model's pushes come at whole hours, so only an entry at the run's own
+# minute is let in by it.
+MOVED_SLACK_MINUTES = 5
 # Where work whose beginning nothing says stands, as the newest
 # (SPEC["oldest"]): after every minute the model counts.
 NOTHING_SAYS = float("inf")
@@ -298,18 +306,37 @@ def head_time(model, ref):
     return model.commits[head].committed_at
 
 
+def entry_dates(sets_head, moves_off, minute, began):
+    """The minute one entry of a branch's activity, the newest a read
+    lists, dates the push of the head the run read at, or None: an entry
+    that set that head dates it (SPEC["last commit"]: "when GitHub
+    received the push that set its head"), and so does one that moved the
+    branch off it when it came after the run began, a push after the run
+    read the branch (SPEC["moved off"]), MOVED_SLACK_MINUTES before
+    allowed; an older one is stale, a later push the activity does not
+    list yet having brought the branch back, and, as any other entry,
+    "lists no push that set the head", which owes a second read and, read
+    so last, leaves the committer date to stand in (SPEC["undated
+    push"])."""
+    if sets_head or (moves_off and minute >= began - MOVED_SLACK_MINUTES):
+        return minute
+    return None
+
+
 def dated(model, undated, pushed_at=None):
     """The model as a run saw it that read when the claims' heads were
     pushed so: the undated branches, whose push no read the run made last
-    dates, GitHub refusing it or listing no push of the head, dated by
-    their committer dates (SPEC["undated push"]); each branch pushed_at
-    names dated by the minute it gives, the push the run read where the
-    model holds another, as a push after the run read the branch, from
-    its head to a commit the model never took, says the branch had a
-    commit then (github.head_pushed_at's before side; the fault
-    pushes-moved); the model itself when nothing differs. A first read
-    answered by the second dates the branch by its push, so it is in
-    neither (invariants.push_dates)."""
+    dates, GitHub refusing it or listing no push of the head, a stale
+    entry off the head among them, dated by their committer dates
+    (SPEC["undated push"]); each branch pushed_at names dated by the
+    minute it gives, the push the run read where the model holds another,
+    as an entry after the run began that moved the branch from its head
+    to a commit the model never took, a push after the run read the
+    branch, says the branch had a commit then (SPEC["moved off"]; the
+    fault pushes-moved); the model itself when nothing differs. A first
+    read answered by the second dates the branch by its push, so it is in
+    neither (invariants.push_dates, which reads each entry by
+    entry_dates)."""
     moved = {ref: minute for ref, minute in (pushed_at or {}).items()
              if ref in model.refs and ref not in undated and head_time(model, ref) != minute}
     gone = [ref for ref in undated if ref in model.pushed]

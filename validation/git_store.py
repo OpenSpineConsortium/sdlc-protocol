@@ -77,7 +77,8 @@ SETTINGS = (("commit.gpgsign", "false"), ("init.defaultBranch", MAIN), ("gc.auto
 # alone, or reaches the store through the model's own methods (a rename,
 # a delete, a fetch).
 GIT_VERBS = frozenset({"claim", "claim-misnamed", "push-by-hand", "commit", "drop-claim-file", "merge-main",
-                       "rebase-main", "lease-onto", "push-old-head", "carry-on", "merge", "move-main"})
+                       "rebase-main", "lease-onto", "push-old-head", "drop-commits", "carry-on", "merge",
+                       "move-main"})
 EPOCH = int(T0.timestamp())
 # How many conflicts a rebase may stop at before the store calls it stuck.
 MOST_CONFLICTS = 50
@@ -347,6 +348,8 @@ class GitStore:
             return self.lease_onto(model, actor, number, scope.files_of(number), when)
         if name == "push-old-head":
             return self.push_old_head(model, actor, number, args[1])
+        if name == "drop-commits":
+            return self.drop_commits(model, actor, number)
         if name == "carry-on":
             return self.carry_on(model, actor, number, args[1], when)
         if name == "merge":
@@ -475,6 +478,18 @@ class GitStore:
         git(clone, "add", "-A", CLAIM_DIR, actor=worker)
         git(clone, "commit", "-q", "-m", f"Claim #{number}", actor=worker, when=when)
         return self.pushed(model, worker, ref, f"git push --force-with-lease origin {ref}", lease=True, allowed=False)
+
+    def drop_commits(self, model, worker, number):
+        """Fetch, reset the clone to the claim commit, which the model read
+        from the repository (verbs.claim_commit), and push with a lease."""
+        model.fetch(worker)
+        ref, sha = verbs.claim_ref(number), verbs.claim_commit(model, number)
+        if sha == model.refs[ref]:
+            return Outcome(True, "nothing to drop")
+        clone = self.start_from(worker, ref, f"origin/{ref}")
+        git(clone, "reset", "-q", "--hard", sha, actor=worker)
+        command = f"git push --force-with-lease origin {ref}"
+        return verbs.touch_pull(model, ref, self.pushed(model, worker, ref, command, lease=True))
 
     def push_old_head(self, model, worker, number, released_ref):
         ref = verbs.claim_ref(number)

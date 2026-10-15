@@ -128,6 +128,10 @@ class TheOracleSpeaksTheSpec(unittest.TestCase):
         for line in oracle.WORKER_LINES:
             self.assertEqual(claims.claim_worker(f"{line} a\n"), "a", line)
         self.assertEqual(oracle.REFUSED_FOR_GOOD, frozenset(github.REFUSED_FOR_GOOD))
+        # The spec says "came after the run began"; the library allows a
+        # runner's clock a few minutes behind GitHub's, and the oracle as
+        # much (SPEC["moved off"], F8's second review).
+        self.assertEqual(oracle.MOVED_SLACK_MINUTES * 60, github.PUSH_SINCE_SLACK.total_seconds())
 
     def test_the_board_s_own_markers_are_board_py_s(self):
         self.assertEqual(oracle.BOARD_MARKERS, {

@@ -163,6 +163,19 @@ TRACES = {
     "a kept release undone holds for good": "the regression traces",
     "the push read once": "the regression traces",
     "the before side ignored": "the regression traces",
+    # F8's second review: a's claim commit, dated two days ahead, pushed
+    # back with a lease a day after a commit moved the branch off it, the
+    # activity a push behind; and a kept head pushed again, its release
+    # undone by the label claimed, released once idle by a run whose
+    # comment GitHub refuses. No search reaches either: none offers the
+    # drop of commits, and the kept head needs a release, a push and a
+    # day; F8's trace plays both.
+    "a stale entry off the head dates it": ([Verb("claim", "a", (1, 48 * M.HOUR)), CLAIMED, Verb("wait", "clock", (1,)),
+                                             Verb("commit", "a", (1,)), WAIT, Verb("drop-commits", "a", (1,)),
+                                             board_with("pushes-lagging")], Scope()),
+    "a kept head's old release taken for the lost comment": (
+        HELD + [WAIT, BOARD, Verb("push-old-head", "a", (1, "released/1-6d6ae03")), CLAIMED, WAIT,
+                board_with("comment-500")], Scope()),
     "a stranger's pull request named on a claim's row": "the regression traces",
     "a stranger's pull request taken for a claim's work": "the regression traces",
     "a stranger's pull request listed after its release": "the regression traces",
@@ -232,10 +245,12 @@ class TheLane(unittest.TestCase):
         and its review seven: a kept head released again, a kept release
         undone holding for good, kept counting only from the push on, the
         push read once, the before side ignored, and the clerk dating by
-        the committer date or ignoring a kept head, so the bound is
-        widened to 120 and the count noted."""
+        the committer date or ignoring a kept head, and its second review
+        two: a stale entry off the head dating it, and a kept head's old
+        release taken for the comment a failed post would have written, so
+        the bound is widened to 120 and the count noted."""
         self.assertTrue(10 <= len(mutants.MUTANTS) <= 120)
-        self.assertEqual(len(mutants.MUTANTS), 102)
+        self.assertEqual(len(mutants.MUTANTS), 104)
         self.assertEqual(sorted(TRACES), sorted(mutants.MUTANTS))
 
     def test_every_mutant_names_a_rule_the_library_still_has(self):

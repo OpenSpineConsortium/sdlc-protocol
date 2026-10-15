@@ -1,10 +1,11 @@
 """The harness's board run (validation/cycle.py): the library's own two
 halves, cli.plan_board and cli.act_on_board, making the same calls in the
 same order as cli.board_live_run against the same fake (DESIGN.md, 3.3);
-the halves apart, with the holder coming back between them; the board
-branch written only when the run exits 0; and a board run that neither a
-refused comment nor a hand-made branch name stops (G15, F6 and F11, fixed
-in 0.4.1)."""
+the halves apart, with the holder coming back between them; the model's
+clock when a run began the now its reads of a claim's push are dated by
+(F8's second review); the board branch written only when the run exits
+0; and a board run that neither a refused comment nor a hand-made branch
+name stops (G15, F6 and F11, fixed in 0.4.1)."""
 
 import contextlib
 import io
@@ -19,7 +20,7 @@ sys.path.insert(0, str(ROOT))
 
 from sdlc_protocol import board, cli  # noqa: E402
 from sdlc_protocol.adapters import github  # noqa: E402
-from validation import cycle, model as M, verbs  # noqa: E402
+from validation import clerk, cycle, model as M, verbs  # noqa: E402
 from validation.fake_github import FakeGitHub  # noqa: E402
 from validation.verbs import Scope, Verb  # noqa: E402
 
@@ -148,6 +149,33 @@ class TheRunInTwoHalves(unittest.TestCase):
         self.assertIn("claude/1: no longer at", " ".join(record.lines))
         self.assertEqual(sorted(model.refs), ["claude/1", "main"])
         self.assertEqual([c.path for c in record.calls if c.method == "POST" and "rename" in c.path], [])
+
+    def test_every_read_of_a_claim_s_push_is_dated_by_the_model_s_clock_when_it_began(self):
+        """The now the library is handed, by the board's run and by the
+        clerk's look alike, is when that run or look began, on the model's
+        clock, and stays so though the clock moves before the run ends: an
+        entry that moved the branch off the head dates it only when it came
+        after that (SPEC["moved off"], F8's second review), so the wall
+        clock in its place would leave the before side dating nothing in
+        the harness, and a later now would date a stale one."""
+        model = M.seeded()
+        for verb in (Verb("claim", "a", (1,)), Verb("label-on", "a", (1, "claimed")), Verb("wait", "clock", (25,))):
+            verbs.apply(model, verb)
+        began, seen, real = model.now, [], github.head_since
+        looked = model.clone()
+        verbs.apply(looked, Verb("wait", "clock", (3,)))
+
+        def reading(api, branch, sha, refused=None, now=None):
+            seen.append(now)
+            return real(api, branch, sha, refused, now)
+
+        with mock.patch.object(github, "head_since", reading):
+            cycle.start_run(model)
+            verbs.apply(model, Verb("wait", "clock", (2,)))
+            cycle.finish_run(model)
+            self.assertEqual(seen, [M.moment(began)], "the board's run reads a's push once, at its start")
+            clerk.ModelClient(looked).released("claude/1")
+        self.assertEqual(seen[1:], [M.moment(looked.now)], "the clerk reads it at its own look's start")
 
     def test_a_first_half_that_raises_leaves_the_second_undone(self):
         model = M.seeded()
