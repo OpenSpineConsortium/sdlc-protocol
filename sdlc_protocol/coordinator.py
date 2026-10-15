@@ -210,9 +210,20 @@ def after_release(snapshot, key, released_at, taken_off, put_on=()):
     issue and put on it in both places the board reads them, so the same
     run renders the release and renames the branch without asking GitHub
     again. A Snapshot given is changed in place, and returned."""
-    snap = board.as_snapshot(snapshot)
+    snap = after_labels(snapshot, key, taken_off, put_on)
     release = snap.releases[key]
     snap.releases[key] = board.Release(released_at, release.sha, release.committed_at)
+    return snap
+
+
+def after_labels(snapshot, key, taken_off, put_on=()):
+    """The snapshot as GitHub knows it once a release has taken taken_off
+    off the issue with this key and put put_on on it, in both places the
+    board reads them, with no release comment known: after_release's
+    labels, and all of an unsettled release (adapters.github.unsettled),
+    whose comment the run cannot tell stands. A Snapshot given is changed
+    in place, and returned."""
+    snap = board.as_snapshot(snapshot)
     issue = snap.claim_issues[key]
     issue.labels = relabelled(issue.labels, taken_off, put_on)
     for listed in snap.issues:
