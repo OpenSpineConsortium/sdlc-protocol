@@ -120,6 +120,7 @@ ORIGINAL_POOL = team.Snapshot.pool
 ORIGINAL_CLAIM_ROWS = board.claim_rows
 ORIGINAL_OPEN_WORK = board.open_work
 ORIGINAL_DEAL_MOVES = team.deal_moves
+ORIGINAL_CLAIM_RELEASED = github.claim_released
 
 
 def comment_then_labels(api, snap, key, now):
@@ -555,6 +556,89 @@ def release_counts_by_time_alone(release, idle_after=claims.IDLE_AFTER):
     head a release kept included, which F8's fix exempts: such a branch,
     pushed again, is dated by that push and stands a day."""
     return bool(release.released_at) and claims.was_released(release.released_at, release.last_commit, idle_after)
+
+
+def release_counts_kept_after_push(release, idle_after=claims.IDLE_AFTER):
+    """board.release_counts counting the release of a kept head only when
+    it came at or after the push of that head, where the spec counts it
+    whenever it came, before that push or after (SPEC["pushed again"]), so
+    a branch pushed again at a head its release kept stands as a claim
+    for a day."""
+    if not release.released_at:
+        return False
+    if release.kept and claims.parse_time(release.released_at) >= claims.parse_time(release.last_commit):
+        return True
+    return claims.was_released(release.released_at, release.last_commit, idle_after)
+
+
+def kept_released_by_the_comment(snap, key):
+    """coordinator.kept_released as F8's fix first built it: a kept head
+    counted released by its release comment alone (board.release_counts),
+    the labels unread, so a release the label claimed undid holds the
+    claim for good, where the board reads that claim as held and the
+    coordinator owes it a release once it goes a day without a commit."""
+    release = snap.releases[key]
+    return release.kept and board.release_counts(release)
+
+
+def head_since_reading_once(api, branch, sha, refused=None):
+    """github.head_since as F8's fix first built it: one read of the push,
+    the committer date standing in for any answer that does not date it,
+    so a first read GitHub would answer after a pause, or one made before
+    the activity lists the push that set the head, dates the claim by the
+    clock its pusher set."""
+    pushed, why, _ = github.read_push(api, branch, sha)
+    if pushed:
+        return pushed, ""
+    if why and refused is not None:
+        refused[branch] = why
+    return "", github.committed_at(api, sha)
+
+
+def head_pushed_at_by_after_alone(api, branch, sha):
+    """github.head_pushed_at reading only the head an entry set, as F8's fix
+    first built it, so a push after the run read the branch, from the
+    head it read, dates nothing: the run reads the activity again, and
+    then a push the model never took, or the committer date, for a branch
+    that had a commit then."""
+    listed = api.get(f"/repos/{api.repo}/activity", {"ref": f"refs/heads/{branch}", "direction": "desc",
+                                                     "per_page": 1}, missing_ok=True)
+    if listed is None:
+        return None
+    newest = listed[0] if isinstance(listed, list) and listed else None
+    if isinstance(newest, dict) and newest.get("ref") == f"refs/heads/{branch}" and newest.get("after") == sha:
+        return newest.get("timestamp") or ""
+    return ""
+
+
+def claim_released_by_committer_date(api, branch, now=None):
+    """github.claim_released dating the branch's last commit by its head's
+    committer date alone, as before F8's fix, where the board dates it by
+    when GitHub received the push (head_since), so the clerk holds a claim
+    whose commit is dated ahead that the board counts released."""
+    def committer_date(api, branch, sha, refused=None):
+        return "", github.committed_at(api, sha)
+
+    with mock.patch.object(github, "head_since", committer_date):
+        return ORIGINAL_CLAIM_RELEASED(api, branch, now)
+
+
+def claim_released_ignoring_kept(api, branch, now=None):
+    """github.claim_released reading no head as kept, as before F8's fix, so
+    the clerk holds a branch pushed again at a head a release kept, dated
+    by that push, where the board counts it released; every other reading
+    is claim_released's own."""
+    name = board.branch_name(branch)
+    sha = github.branch_sha(api, name)
+    if not sha:
+        return False
+    pushed, committed = github.head_since(api, name, sha)
+    release = board.Release(sha=sha, committed_at=committed, pushed_at=pushed)
+    if not release.last_commit or not claims.is_idle(release.last_commit, now or datetime.now(timezone.utc)):
+        return False
+    comments = api.get_all(f"/repos/{api.repo}/issues/{github.quoted(claims.key_of(name))}/comments")
+    release.released_at = claims.latest_release(comments, github.may_write(api))
+    return board.release_counts(release)
 
 
 def releases_reading_drafts(api, heads, found_issues, pulls, now, asked, counted, every_head=None, refused=None):
@@ -1105,6 +1189,35 @@ MUTANTS = {
         board, "release_counts", release_counts_by_time_alone,
         "G5", "the release that kept a head counts for a branch pushed again at it, so the board deletes that "
               "branch at once and the coordinator releases no work twice (F8)"),
+    "kept counts only at or after the push": Mutant(
+        board, "release_counts", release_counts_kept_after_push,
+        "G5", "the release that kept a head counts for a branch pushed again at it whenever it came, before that "
+              "push or after, so the board deletes the branch at once (F8's review)"),
+    "a kept head released again": Mutant(
+        coordinator, "kept_released", lambda snap, key: False,
+        "G2", "a branch pushed again at a head a release kept, which the board counts released, is owed no "
+              "release, so the coordinator never releases the same work twice (F8)"),
+    "a kept release undone holds for good": Mutant(
+        coordinator, "kept_released", kept_released_by_the_comment,
+        "G3", "a kept head whose release the label claimed undid is released again once its branch goes a day "
+              "without a commit, so a person's undoing never holds a claim for good (F8's review)"),
+    "the push read once": Mutant(
+        github, "head_since", head_since_reading_once,
+        "G2", "a first read of a push that GitHub may answer later, or that does not list the push yet, is made "
+              "once more before the committer date stands in, so the push a run was started by dates its claim "
+              "(F8's review)"),
+    "the before side ignored": Mutant(
+        github, "head_pushed_at", head_pushed_at_by_after_alone,
+        "G2", "an entry that moved the branch from the head the run read says the branch had a commit then, so "
+              "the run dates the claim by it and reads no more (F8's review)"),
+    "the clerk dating by the committer date": Mutant(
+        github, "claim_released", claim_released_by_committer_date,
+        "G14", "the clerk dates a claim's last commit as the board does, by when GitHub received its push, so a "
+               "claim the board counts released is dealt as released (F8)"),
+    "the clerk ignoring a kept head": Mutant(
+        github, "claim_released", claim_released_ignoring_kept,
+        "G14", "the clerk counts a release that kept a head for a branch pushed again at it, as the board does, "
+               "so the claim is dealt as released (F8)"),
 }
 
 

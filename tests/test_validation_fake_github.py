@@ -13,7 +13,7 @@ sys.path.insert(0, str(ROOT))
 from sdlc_protocol import board  # noqa: E402
 from sdlc_protocol.adapters import github  # noqa: E402
 from validation import cycle, model as M  # noqa: E402
-from validation.fake_github import Fault, FakeGitHub, Unserved  # noqa: E402
+from validation.fake_github import LAGGING, MOVED, NO_SHA, Fault, FakeGitHub, Unserved  # noqa: E402
 
 
 def claimed(worker="a", number=1, text=None):
@@ -40,12 +40,15 @@ class TheActivity(unittest.TestCase):
     def test_the_newest_entry_is_the_push_that_set_the_head(self):
         api, _ = cycle.api_for(self.model)
         listed = api.get(f"/repos/{M.REPO}/activity", {"ref": "refs/heads/claude/1", "direction": "desc"})
-        self.assertEqual([(e["activity_type"], e["after"]) for e in listed],
-                         [("push", self.later), ("branch_creation", self.later)])
+        self.assertEqual([(e["activity_type"], e["before"], e["after"]) for e in listed],
+                         [("push", self.made, self.later), ("branch_creation", NO_SHA, self.made)])
         oldest = api.get(f"/repos/{M.REPO}/activity", {"ref": "refs/heads/claude/1", "direction": "asc"})
         self.assertEqual([e["activity_type"] for e in oldest], ["branch_creation", "push"])
         self.assertEqual(github.head_pushed_at(api, "claude/1", self.later), M.iso(3 * M.HOUR))
-        self.assertEqual(github.head_pushed_at(api, "claude/1", self.made), "")
+        # The head the push moved the branch from is dated by that push
+        # too, as a run that read the branch before it would read it.
+        self.assertEqual(github.head_pushed_at(api, "claude/1", self.made), M.iso(3 * M.HOUR))
+        self.assertEqual(github.head_pushed_at(api, "claude/1", "f" * 40), "")
         self.assertEqual(github.branch_made_at(api, "claude/1"), M.iso(0))
 
     def test_a_fault_with_a_query_fires_on_that_read_alone(self):
@@ -57,6 +60,34 @@ class TheActivity(unittest.TestCase):
         self.assertEqual([c.status for c in fake.calls], [200, 500])
         made = Fault("GET", "/activity", 500, query=(("activity_type", "branch_creation"),))
         api, _ = cycle.api_for(self.model, (made,))
+        self.assertEqual(github.head_pushed_at(api, "claude/1", self.later), M.iso(3 * M.HOUR))
+
+    def test_a_lagging_answer_leaves_the_latest_push_out_and_records_what_it_answered(self):
+        """The faults pushes-lagging: the read is answered, 200, before the
+        activity lists the push that set the head, so the making is the
+        newest entry and dates no push of the head; the next read lists
+        it."""
+        lagging = Fault("GET", "/activity", 200, query=(("activity_type", None),), answer=LAGGING)
+        api, fake = cycle.api_for(self.model, (lagging,))
+        self.assertEqual(github.head_pushed_at(api, "claude/1", self.later), "")
+        self.assertEqual(github.head_pushed_at(api, "claude/1", self.later), M.iso(3 * M.HOUR))
+        self.assertEqual([(c.status, c.injected, c.fault is lagging) for c in fake.calls],
+                         [(200, True, True), (200, False, False)])
+        self.assertEqual([e["activity_type"] for e in fake.calls[0].answered], ["branch_creation"])
+        self.assertEqual(fake.calls[1].answered[0]["after"], self.later)
+
+    def test_a_moved_answer_lists_a_push_from_the_head_after_the_read(self):
+        """The fault pushes-moved: the newest entry is a push at the clock's
+        minute from the head the run read to a commit nobody made, which
+        dates the head by its before side, as a push after the run read
+        the branch."""
+        self.model.now = 30 * M.HOUR
+        moved = Fault("GET", "/activity", 200, query=(("activity_type", None),), answer=MOVED)
+        api, fake = cycle.api_for(self.model, (moved,))
+        self.assertEqual(github.head_pushed_at(api, "claude/1", self.later), M.iso(30 * M.HOUR))
+        newest = fake.calls[0].answered[0]
+        self.assertEqual(newest["before"], self.later)
+        self.assertNotIn(newest["after"], self.model.commits)
         self.assertEqual(github.head_pushed_at(api, "claude/1", self.later), M.iso(3 * M.HOUR))
 
 

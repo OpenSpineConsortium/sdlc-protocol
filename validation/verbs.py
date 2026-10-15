@@ -53,7 +53,7 @@ from typing import NamedTuple
 from sdlc_protocol import guard
 
 from . import cycle, model as M, oracle
-from .fake_github import Fault
+from .fake_github import LAGGING, MOVED, Fault
 from .model import CLAIM_PREFIX, HOUR, MAIN, OWNER, RELEASED_PREFIX, Comment, PullRequest, claim_text
 
 CLOCK, BOARD = "clock", "board"
@@ -62,6 +62,10 @@ ASSOCIATIONS = {OWNER: "OWNER", CAROL: "COLLABORATOR", DANA: "CONTRIBUTOR", SAM:
 WORKER_ASSOCIATION = "COLLABORATOR"
 CLAIM_DIR = "docs/agents/claims"
 
+# A read of the activity with no type named: the read of the push that set
+# a claim's head (github.head_pushed_at), told from the reads of a
+# branch's making, which name branch_creation (F13).
+PUSHES = (("activity_type", None),)
 # The faults a board run can meet, by name (DESIGN.md, 3.2).
 FAULTS = {
     "comment-500": Fault("POST", "/issues/*/comments", 500),
@@ -83,11 +87,31 @@ FAULTS = {
     "activity-500": Fault("GET", "/activity", 500, query=(("activity_type", "branch_creation"),)),
     # Every read of the activity in the run, the newest creations, each
     # branch's own and the pushes of the claims' heads alike, as for a
-    # token that may not read it.
+    # token that may not read it: a claim's push is read twice, since a 500
+    # may be answered later, and dated by its committer date.
     "activity-500-all": Fault("GET", "/activity", 500, times=100),
-    # The first read of a claim's head's push in the run (F8), which then
-    # dates the claim by its committer date.
-    "pushes-500": Fault("GET", "/activity", 500, query=(("activity_type", None),)),
+    # The first read of a claim's head's push in the run (F8), which GitHub
+    # may answer later: the run reads it once more, which is answered, and
+    # dates the claim by its push.
+    "pushes-500": Fault("GET", "/activity", 500, query=PUSHES),
+    # Every read of a claim's head's push refused for good, as for a token
+    # that may not read the activity: each claim's read once and dated by
+    # its committer date, which the run's log says.
+    "pushes-403": Fault("GET", "/activity", 403, times=100, message="Resource not accessible by integration",
+                        query=PUSHES),
+    # The first read of a claim's head's push answered before the activity
+    # lists the push that set the head: the run reads it once more, which
+    # lists it, and dates the claim by its push.
+    "pushes-lagging": Fault("GET", "/activity", 200, query=PUSHES, answer=LAGGING),
+    # The first two such reads, a claim's first and the one more it takes,
+    # both answered before the activity lists the push that set the head,
+    # so the claim's committer date stands in (github.NO_PUSH_LISTED).
+    "pushes-lagging-twice": Fault("GET", "/activity", 200, times=2, query=PUSHES, answer=LAGGING),
+    # The first read of a claim's head's push listing a push that came
+    # after the run read the branch, from the head it read to another: the
+    # branch had a commit then, which dates the claim (the before side of
+    # github.head_pushed_at).
+    "pushes-moved": Fault("GET", "/activity", 200, query=PUSHES, answer=MOVED),
 }
 
 
@@ -130,7 +154,8 @@ class Scope(NamedTuple):
     issue, the clock skews, in hours, a worker's commits may carry (F8: a
     pusher whose clock is ahead or behind stamps its commits so, which
     since F8's fix decides idleness only where GitHub will not date the
-    push of the head, as under the fault pushes-500), whether a stranger
+    push of the head, as under the faults pushes-403, pushes-lagging-twice
+    and activity-500-all), whether a stranger
     opens pull requests from a fork whose branch bears a claim's name
     (F17), and whether a stranger opens them from a claim's own branch
     here (F19)."""

@@ -288,7 +288,7 @@ def head_time(model, ref):
     """SPEC["last commit"]: the minute GitHub received the push that set
     the branch's head (model.pushed, F8); its committer date where the
     model holds no push that set it, or for a branch whose push the run
-    could not read, which a view of the model leaves out (dated,
+    could not date, which a view of the model leaves out (dated,
     SPEC["undated push"])."""
     head, pushed = model.refs[ref], model.pushed.get(ref)
     if pushed is not None and pushed[1] == head:
@@ -296,15 +296,27 @@ def head_time(model, ref):
     return model.commits[head].committed_at
 
 
-def dated(model, undated):
-    """The model as a run that could not read when the heads of the
-    undated branches were pushed saw it: those branches dated by their
-    committer dates (SPEC["undated push"]); the model itself when there
-    are none."""
-    if not undated:
+def dated(model, undated, pushed_at=None):
+    """The model as a run saw it that read when the claims' heads were
+    pushed so: the undated branches, whose push no read the run made last
+    dates, GitHub refusing it or listing no push of the head, dated by
+    their committer dates (SPEC["undated push"]); each branch pushed_at
+    names dated by the minute it gives, the push the run read where the
+    model holds another, as a push after the run read the branch, from
+    its head to a commit the model never took, says the branch had a
+    commit then (github.head_pushed_at's before side; the fault
+    pushes-moved); the model itself when nothing differs. A first read
+    answered by the second dates the branch by its push, so it is in
+    neither (invariants.push_dates)."""
+    moved = {ref: minute for ref, minute in (pushed_at or {}).items()
+             if ref in model.refs and ref not in undated and head_time(model, ref) != minute}
+    gone = [ref for ref in undated if ref in model.pushed]
+    if not moved and not gone:
         return model
     view = model.clone()
     view.pushed = {ref: push for ref, push in view.pushed.items() if ref not in undated}
+    for ref, minute in moved.items():
+        view.pushed[ref] = (minute, view.refs[ref], "push", view.refs[ref])
     return view
 
 
@@ -356,12 +368,22 @@ def finished(model, number):
 
 def due(model, number, now=None):
     """Whether the coordinator owes this claim a release now (SPEC["idle"],
-    SPEC["candidates"])."""
+    SPEC["candidates"]): its branch has gone a day without a commit and no
+    release comment came more than a day after its last commit; and, for
+    a head a release kept, the board counts no release of it, no release
+    comment counting or the label claimed put back (SPEC["kept deleted"]),
+    so a kept head is not released twice for the same work and a release
+    the label undid is made again once the branch has gone a day without
+    a commit, where until F8's review any release comment that counts
+    held such a claim for good."""
     now = model.now if now is None else now
     ref, issue = branch_of(number), model.issues.get(number)
     if ref not in model.refs or issue is None or issue.state != "open" or finished(model, number):
         return False
-    return idle(head_time(model, ref), now) and not already_released(model, number)
+    if kept(model, ref) and released(model, number):
+        return False
+    last, latest = head_time(model, ref), latest_release(model, number)
+    return idle(last, now) and not (latest is not None and idle(last, latest))
 
 
 def released(model, number):

@@ -31,9 +31,11 @@ worker's own answer are judged by the spec's Pick and Planning as the
 oracle reads them (picking_lane, below), and so is a regression trace's
 deal wherever no claim has a pull request yet (pick_problems). As built
 until the fix the clerk read whose a claim is, and whose a task is, from
-the labels alone, and the lane found fifteen problems in 7,256 of its
-30,720 deals (twelve in 4,888 of 20,480 before F18's review added the
-nameless and the released claim; DESIGN.md's F18 entry has the figures).
+the labels alone, and the lane found fifteen problems in 7,256 of the
+30,720 deals it then had (twelve in 4,888 of 20,480 before F18's review
+added the nameless and the released claim; DESIGN.md's F18 entry has the
+figures); F8's review added a claim committed ahead of its push and a
+kept head pushed again, 40,960 deals.
 """
 
 import itertools
@@ -189,16 +191,24 @@ def report(lane):
 # several. The issue of each mix is held, in turn, by no claim, by a's
 # claim or b's, each claim file naming its worker, by a claim whose file
 # has no Worker line, or one whose Worker line names nobody, where the
-# issue's labels say whose it is, and by a's claim released a day after
-# its last commit, by the coordinator's comment, whose branch the board
-# has not yet renamed: released where the mix leaves the label claimed
-# off, as the board counts it, and a's held claim where it does not. No
-# claim has a pull request yet, so each has work for its holder
-# (oracle.carries). In the first setting a run that starts one of the
-# two is dealt too, and held to the team's deal (SPEC["team's order"]).
+# issue's labels say whose it is, by a's claim released a day after its
+# last commit, by the coordinator's comment, whose branch the board has
+# not yet renamed, by the same claim with its commit dated 72 hours ahead
+# of its push, which GitHub dates it by (F8), and by a's released head
+# pushed again as the claim's branch, which the board has not yet
+# deleted, its release counting before that push (SPEC["pushed again"]):
+# each released where the mix leaves the label claimed off, as the board
+# counts it, and a's held claim where it does not. No claim has a pull
+# request yet, so each has work for its holder (oracle.carries). In the
+# first setting a run that starts one of the two is dealt too, and held
+# to the team's deal (SPEC["team's order"]).
 
 TEAMS = (("a", "b"), ("b", "a"))
-CLAIM_STATES = ("none", "a", "b", "nobody", "blank", "released")
+CLAIM_STATES = ("none", "a", "b", "nobody", "blank", "released", "released-ahead", "kept")
+# How far ahead of the clock the commit of the claim released-ahead is
+# dated, in minutes: past the day a release waits, so read by its
+# committer date the claim has had no day without a commit.
+AHEAD = 72 * M.HOUR
 # What a hand writes on a claim file's Worker line that names nobody.
 BLANK_LINE = "- Worker: (to be named)"
 
@@ -215,7 +225,11 @@ class Case(NamedTuple):
         claim = {"none": "no claim",
                  "nobody": f"a claim on #{self.held} with no Worker line",
                  "blank": f"a claim on #{self.held} whose Worker line names nobody",
-                 "released": f"a's claim on #{self.held} released, its branch not yet renamed"
+                 "released": f"a's claim on #{self.held} released, its branch not yet renamed",
+                 "released-ahead": f"a's claim on #{self.held} committed {AHEAD // M.HOUR} hours ahead, released "
+                                   f"25 hours after its push, its branch not yet renamed",
+                 "kept": f"a's claim on #{self.held} released, renamed and its head pushed again as its branch, "
+                         f"not yet deleted"
                  }.get(self.state, f"{self.state}'s claim on #{self.held}")
         return f"{issues}; {claim}; dealt to {', '.join(self.team)}"
 
@@ -237,17 +251,35 @@ def picking_cases():
                 yield Case({1: tuple(names), 2: ("todo", "worker:a")}, 1, state, order), False
 
 
-def push_claim(model, worker, number, line=None):
-    """worker's claim on the issue, its claim file naming the worker or,
-    with line given, with that in place of its Worker line, as a file a
-    hand wrote: "" leaves the line out."""
-    verbs.claim(model, worker, number, ())
+def push_claim(model, worker, number, line=None, skew=0):
+    """worker's claim on the issue, its commit dated skew minutes off the
+    clock, its claim file naming the worker or, with line given, with
+    that in place of its Worker line, as a file a hand wrote: "" leaves
+    the line out. The commit that changes the line is pushed as any
+    other, so the model records that push (model.pushed_now), which a
+    release dates the claim by (F8); unrecorded, the claim was dated by
+    its committer date where the board dates it by its push."""
+    verbs.claim(model, worker, number, (), skew)
     if line is not None:
         ref, path = oracle.branch_of(number), f"{oracle.CLAIM_DIR}{number}.md"
-        tree = model.tree(model.refs[ref])
+        before = model.refs[ref]
+        tree = model.tree(before)
         tree[path] = "".join(line + "\n" if old.startswith("- Worker:") and line else old
                              for old in tree[path].splitlines(True) if line or not old.startswith("- Worker:"))
-        model.refs[ref] = model.commit((model.refs[ref],), worker, tree, f"Name nobody on #{number}")
+        model.set_ref(ref, model.commit((before,), worker, tree, f"Name nobody on #{number}"))
+        model.pushed_now(ref, before)
+
+
+def push_kept_head(model, number):
+    """The board's rename of the released claim's branch, then a's push of
+    its head again as the claim's branch an hour later, which the board
+    deletes in its next run, since a release already kept that head
+    (SPEC["kept deleted"])."""
+    ref = oracle.branch_of(number)
+    head = model.refs[ref]
+    model.rename_ref(ref, oracle.released_name(number, head))
+    model.now += M.HOUR
+    model.push("a", ref, head)
 
 
 def release(model, number):
@@ -266,9 +298,11 @@ def case_model(case):
         push_claim(model, case.state, case.held)
     elif case.state in ("nobody", "blank"):
         push_claim(model, "a", case.held, "" if case.state == "nobody" else BLANK_LINE)
-    elif case.state == "released":
-        push_claim(model, "a", case.held)
+    elif case.state in ("released", "released-ahead", "kept"):
+        push_claim(model, "a", case.held, skew=AHEAD if case.state == "released-ahead" else 0)
         release(model, case.held)
+        if case.state == "kept":
+            push_kept_head(model, case.held)
     return model
 
 

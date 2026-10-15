@@ -417,28 +417,69 @@ class TheOpenFindingsShow(unittest.TestCase):
     def test_f8_a_claim_is_released_by_its_push_and_by_its_committer_date_where_github_will_not_date_it(self):
         """Fixed after 0.4.1: a's claim commit is dated 72 hours ahead, and
         GitHub received it 25 hours before the run, which releases it; the
-        mutant that reads the committer date holds it. With the read of the
-        push refused, the run dates the head by its committer date and
-        holds it, which the oracle reads from the run's calls, so the run
-        is green there too."""
+        mutant that reads the committer date holds it. A first read GitHub
+        gives no answer that holds, or answers before it lists the push,
+        is answered by the second, so the run releases the claim by its
+        push there too; with every read refused for good, or both reads
+        answered before the activity lists the push, the run dates the
+        head by its committer date and holds it, which the oracle reads
+        from the run's calls, so the run is green there too."""
         steps = [Verb("claim", "a", (1, 72 * M.HOUR)), Verb("label-on", "a", (1, "claimed")),
                  Verb("label-on", "a", (1, "worker:a")), Verb("wait", "clock", (25,))]
-        self.assertEqual(violations(steps + [BOARD]), [])
-        self.assertEqual(violations(steps + [board_with("pushes-500")]), [])
+        for faults in ((), ("pushes-500",), ("pushes-lagging",), ("pushes-403",), ("pushes-lagging-twice",),
+                       ("activity-500-all",)):
+            with self.subTest(faults=faults):
+                self.assertEqual(violations(steps + [board_with(*faults)]), [])
         with mutants.switched_on(mutants.MUTANTS["idleness by the committer date"]):
             found = violations(steps + [BOARD])
         self.assertIn(("G3", "owed and not made: ('comment', 1, 'claim-released')"),
                       [(v.guarantee, v.detail) for v in found])
 
-    def test_undated_branches_are_those_whose_read_of_their_head_s_push_github_refused(self):
-        def read(status, ref, kind=None):
-            query = ((("activity_type", kind),) if kind else ()) + (("ref", ref),)
-            return Call("GET", "/activity", query, None, status, False, True)
+    def test_f8_a_first_read_that_may_tell_more_is_made_again_and_only_then(self):
+        """F8's review: the run reads the push once more where its first
+        read may tell more, a 500 or a list that does not show the push
+        yet, and once where it dates the push or GitHub refuses for good;
+        the mutant that reads once breaks G2 under the first, and the one
+        that reads only the after side of an entry under a push after the
+        run read the branch."""
+        steps = [Verb("claim", "a", (1,)), Verb("label-on", "a", (1, "claimed")), Verb("wait", "clock", (2,))]
+        for faults in ((), ("pushes-500",), ("pushes-lagging",), ("pushes-403",), ("pushes-moved",)):
+            with self.subTest(faults=faults):
+                self.assertEqual(violations(steps + [board_with(*faults)]), [])
+        with mutants.switched_on(mutants.MUTANTS["the push read once"]):
+            found = violations(steps + [board_with("pushes-500")])
+        self.assertIn(("G2", "the run read the push of claude/1's head 1 times, where its first read owes 2"),
+                      [(v.guarantee, v.detail) for v in found])
+        with mutants.switched_on(mutants.MUTANTS["the before side ignored"]):
+            found = violations(steps + [board_with("pushes-moved")])
+        self.assertIn(("G2", "the run read the push of claude/1's head 2 times, where its first read owes 1"),
+                      [(v.guarantee, v.detail) for v in found])
 
-        calls = [read(500, "refs/heads/claude/1"), read(500, "refs/heads/claude/2", "branch_creation"),
-                 read(200, "refs/heads/claude/3")]
-        self.assertEqual(invariants.undated_branches(calls), {"claude/1"})
+    def test_undated_branches_are_those_whose_last_read_of_their_head_s_push_dates_none(self):
+        """A first read refused and the second answered dates the branch by
+        its push; a branch whose last read GitHub refused, or answered with
+        no push of its head, is dated by its committer date; a read of a
+        branch's making says nothing of its push."""
+        model = M.seeded((1, 2, 3, 4))
+        heads = {}
+        for number in (1, 2, 3, 4):
+            ref = f"claude/{number}"
+            model.set_ref(ref, model.refs[M.MAIN])
+            heads[ref] = model.refs[ref]
+
+        def read(status, ref, kind=None, after=None):
+            query = ((("activity_type", kind),) if kind else ()) + (("ref", f"refs/heads/{ref}"),)
+            answered = [{"ref": f"refs/heads/{ref}", "timestamp": M.iso(60), "after": after,
+                         "before": "0" * 40}] if after else []
+            return Call("GET", "/activity", query, None, status, False, True, None, answered)
+
+        calls = [read(500, "claude/1"), read(500, "claude/2", "branch_creation"),
+                 read(200, "claude/2", after=heads["claude/2"]), read(200, "claude/3", after="f" * 40),
+                 read(500, "claude/4"), read(200, "claude/4", after=heads["claude/4"])]
+        self.assertEqual(invariants.undated_branches(calls, model), {"claude/1", "claude/3"})
         self.assertEqual(invariants.unsaid_branches(calls), {"claude/2"})
+        self.assertEqual(invariants.push_dates(calls, model),
+                         {"claude/1": None, "claude/2": 60, "claude/3": None, "claude/4": 60})
 
     def test_f14_an_issue_a_worker_s_label_names_is_shown_under_given_to_workers(self):
         """Found by this step, fixed after 0.4.1: an issue a worker's label

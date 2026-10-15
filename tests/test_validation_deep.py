@@ -583,12 +583,12 @@ class Conformance(unittest.TestCase):
     def test_a_trace_naming_one_of_two_released_branches_of_one_minute_plays_alike_in_both_worlds(self):
         """Two skewed claims of one issue in one minute, by a and b, and
         by a alone with main moving between them: each is released by the
-        next run, which GitHub refuses to say when the claim's push came,
-        so the run reads the committer date dated two days back (F8), the
-        rename-back of the first names it by its place, and both worlds act
-        on the same branch."""
-        space = deep.Space("tie", Scope(workers=("a", "b"), issues=(2,), skews=(-48,), faults=("pushes-500",)), (), 6)
-        board = Verb("board", "board", (cycle.SCHEDULE, "", ("pushes-500",)))
+        next run, which GitHub refuses for good to say when the claim's
+        push came, so the run reads the committer date dated two days back
+        (F8), the rename-back of the first names it by its place, and both
+        worlds act on the same branch."""
+        space = deep.Space("tie", Scope(workers=("a", "b"), issues=(2,), skews=(-48,), faults=("pushes-403",)), (), 6)
+        board = Verb("board", "board", (cycle.SCHEDULE, "", ("pushes-403",)))
         back = Verb("rename-back", M.OWNER, (2, ("released", 2, 0)))
         two_workers = (Verb("claim", "a", (2, -2880)), board, Verb("claim", "b", (2, -2880)), board, back)
         one_worker = (Verb("claim", "a", (2, -2880)), board, Verb("move-main", M.OWNER), board,
@@ -627,10 +627,20 @@ class KnownSearches(unittest.TestCase):
     def test_the_activity_faults_are_met_where_they_can_fire(self):
         """The board reads when the branches were made only for the work in
         the Overlaps (F13), which E-faults' one issue never has, so
-        E-faults took the two faults on that read and never met them;
-        E-activity, from two claims on one file, meets them, and the fault
+        E-faults never meets activity-500, the fault on that read alone;
+        E-activity, from two claims on one file, meets it, and every fault
         on the read of a claim's head's push (F8), which every board run
-        with a claim makes."""
+        with a claim makes, so E-faults meets those, and activity-500-all
+        on that read, too."""
+        pushes = ["activity-500-all", "pushes-403", "pushes-500", "pushes-lagging", "pushes-lagging-twice",
+                  "pushes-moved"]
+        self.assertEqual(sorted(deep.ACTIVITY_FAULTS), ["activity-500"] + pushes)
+        for space, depth, wanted in (("E-activity", 2, ["activity-500"] + pushes), ("E-faults", 1, pushes)):
+            with self.subTest(space=space):
+                met = self.faults_met(space, depth)
+                self.assertEqual(sorted(name for name, count in met.items() if count), wanted, met)
+
+    def faults_met(self, space, depth):
         met = {name: 0 for name in deep.ACTIVITY_FAULTS}
         fault_for = fake_github.FakeGitHub.fault_for
 
@@ -641,10 +651,9 @@ class KnownSearches(unittest.TestCase):
             return fault
 
         with mock.patch.object(fake_github.FakeGitHub, "fault_for", counting):
-            found = deep.search_space(deep.SPACES["E-activity"], depth=2)
-        self.assertEqual(sorted(met), ["activity-500", "activity-500-all", "pushes-500"])
-        self.assertTrue(all(met.values()), met)
+            found = deep.search_space(deep.SPACES[space], depth=depth)
         self.assertEqual([(f.guarantee, f.detail) for f in found.found], [])
+        return met
 
     def test_an_entry_names_the_violation_it_matches_and_is_owed_when_none_does(self):
         entry = known.SearchEntry("E-faults", "G1", "the board names * for claude/*, whose holder is *", "F7")

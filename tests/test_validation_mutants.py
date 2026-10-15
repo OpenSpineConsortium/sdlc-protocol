@@ -9,14 +9,17 @@ catching a mutant fails here too, naming the rule. A mutant of a rule no
 search runs names the cheap lane that catches it instead (step 4), and
 the test runs that lane."""
 
+import ast
 import inspect
 import sys
+import textwrap
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from sdlc_protocol.adapters import github  # noqa: E402
 from validation import cycle, dealing, invariants, model as M, mutants, oracle, verbs  # noqa: E402
 from validation.verbs import DANA, SAM, Scope, Verb  # noqa: E402
 
@@ -155,6 +158,11 @@ TRACES = {
     "an undated claim taking no marker": "the regression traces",
     "idleness by the committer date": "the regression traces",
     "a kept head dated by its push": "the regression traces",
+    "kept counts only at or after the push": "the regression traces",
+    "a kept head released again": "the regression traces",
+    "a kept release undone holds for good": "the regression traces",
+    "the push read once": "the regression traces",
+    "the before side ignored": "the regression traces",
     "a stranger's pull request named on a claim's row": "the regression traces",
     "a stranger's pull request taken for a claim's work": "the regression traces",
     "a stranger's pull request listed after its release": "the regression traces",
@@ -177,8 +185,21 @@ TRACES = {
     "a Worker line naming nobody taken for a name": dealing.Case({1: ("worker:b",)}, 1, "blank", ("a", "b")),
     "a run dealt as though it were the whole team": dealing.Case({1: ("todo", "worker:a", "worker:b")}, 1, "none",
                                                                  ("a", "b")),
+    # F8's review: the clerk reads a release as the board does, a claim
+    # dated by its push though its commit is dated ahead, and a head a
+    # release kept counted released whenever its comment came.
+    "the clerk dating by the committer date": dealing.Case({1: ("todo",)}, 1, "released-ahead", ("a", "b")),
+    "the clerk ignoring a kept head": dealing.Case({1: ("todo",)}, 1, "kept", ("a", "b")),
 }
 LANES = {lane.name: lane for lane in mutants.LANES}
+
+
+def body_lines(function):
+    """The function's body after its docstring, a line each, stripped."""
+    source = textwrap.dedent(inspect.getsource(function))
+    statements = ast.parse(source).body[0].body
+    first = statements[1] if isinstance(statements[0], ast.Expr) else statements[0]
+    return [line.strip() for line in source.splitlines()[first.lineno - 1:] if line.strip()]
 
 
 def violations(steps, scope, unanswered=()):
@@ -208,9 +229,13 @@ class TheLane(unittest.TestCase):
         way, and F2's fix one, a piece of work named by the number it is
         shown by, with three from its two reviews, and F8's fix two,
         idleness by the committer date and a kept head dated by its push,
-        so the bound is widened to 100 and the count noted."""
-        self.assertTrue(10 <= len(mutants.MUTANTS) <= 100)
-        self.assertEqual(len(mutants.MUTANTS), 95)
+        and its review seven: a kept head released again, a kept release
+        undone holding for good, kept counting only from the push on, the
+        push read once, the before side ignored, and the clerk dating by
+        the committer date or ignoring a kept head, so the bound is
+        widened to 120 and the count noted."""
+        self.assertTrue(10 <= len(mutants.MUTANTS) <= 120)
+        self.assertEqual(len(mutants.MUTANTS), 102)
         self.assertEqual(sorted(TRACES), sorted(mutants.MUTANTS))
 
     def test_every_mutant_names_a_rule_the_library_still_has(self):
@@ -225,6 +250,29 @@ class TheLane(unittest.TestCase):
                 else:
                     self.assertIs(type(target), type(mutant.replacement))
                 self.assertIn(mutant.guarantee, invariants.GUARANTEES)
+
+    def test_the_copies_of_releases_follow_the_library_but_for_the_rule_each_changes(self):
+        """A mutant that copies github.releases to change one rule tests an
+        older library once the rest of the copy falls behind, as F8's
+        review checked of the copies' dating of a head (head_since, from
+        3c0ee51 on). Each line of a copy's body, the module's name taken
+        off, is a line of the library's, but for the lines the mutant
+        changes; and the library's lines the copy lacks are the ones it
+        leaves out on purpose."""
+        library = body_lines(github.releases)
+        for copy, changed, dropped in (
+                (mutants.releases_reading_drafts,
+                 ['drafts = {(p.get("head") or {}).get("ref"): p for p in pulls if p.get("draft") and counted(p)}'],
+                 ['drafts = {(p.get("head") or {}).get("ref"): p for p in pulls if p.get("draft") and is_claims(p)}']),
+                (mutants.releases_skipping_finished,
+                 ["if finished_draft(api, drafts.get(branch)):"],
+                 ["finished = finished_draft(api, drafts.get(branch))",
+                  "if finished and labels.CLAIMED in found_issues[key][\"labels\"]:",
+                  "if finished and not board.release_counts(release):"])):
+            with self.subTest(copy=copy.__name__):
+                lines = [line.replace("github.", "") for line in body_lines(copy)]
+                self.assertEqual([line for line in lines if line not in library], changed)
+                self.assertEqual([line for line in library if line not in lines], dropped)
 
     def test_every_replacement_takes_what_its_target_is_called_with(self):
         """A replacement that no longer takes its target's arguments is

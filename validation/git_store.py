@@ -378,7 +378,7 @@ class GitStore:
         if created:
             model.made_by(ref, worker)
         if before != sha:
-            model.pushed_now(ref, created, before is None or model.is_ancestor(before, sha))
+            model.pushed_now(ref, before, before is None or model.is_ancestor(before, sha))
         model.tracking.setdefault(worker, {})[ref] = sha
         events = ((cycle.PUSH, ref),) + (((cycle.CREATE, ref),) if created else ())
         return Outcome(True, "taken", command, allowed_shape=allowed, guarded=guarded, events=events)

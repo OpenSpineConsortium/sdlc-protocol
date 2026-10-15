@@ -36,13 +36,14 @@ halves.
 
 import re
 from collections import Counter
+from datetime import datetime
 from typing import NamedTuple
 
 from sdlc_protocol import board, claims, protocol_check, team
 
 from . import cycle, oracle, page
 from .fake_github import head_repo
-from .model import BOT, REPO
+from .model import BOT, REPO, T0
 
 GUARANTEES = {
     "G1": "state", "G2": "cycle", "G3": "cycle", "G3L": "cycle", "G4": "cycle", "G5": "cycle", "G6": "cycle",
@@ -291,11 +292,14 @@ def injected(calls, but=()):
     on the paths but names; the writes are compared with the oracle's, and
     a half release or a noisy second run counted, only for a run no fault
     touched, while the release order, the rename refused and the rest hold
-    under faults too. A fault on the activity (WRITES_KEPT) changes nothing
-    the run writes but which work it tells of an overlap, which the oracle
-    reads with the branches the run could not date (unsaid_branches), so
-    the writes of a run it alone touched are compared too (F2's second
-    review); its second run is not, since that one dates them."""
+    under faults too. A fault on the activity (WRITES_KEPT) changes only
+    what the run reads of when work began and when each claim's head was
+    pushed: which work it tells of an overlap, which the oracle reads with
+    the branches whose making the run could not read (unsaid_branches),
+    and which claims are due and released, which the oracle reads from
+    the pushes as the run read them (push_dates, oracle.dated), so the
+    writes of a run it alone touched are compared too (F2's second review,
+    F8); its second run is not, since that one reads the activity whole."""
     return any(c.injected and c.path not in but for c in calls)
 
 
@@ -303,14 +307,16 @@ def first_half_checks(before, after, half, known=oracle.AS_BUILT):
     """The guarantees a run's first half answers by itself, given the state
     it started from and the state it left: its writes are the
     coordinator's share of what the oracle owes, each release due and in
-    the spec's order, the labels put back where a release failed, no label
-    left on a released claim, and the page the state's."""
+    the spec's order, each claim's push read as often as the spec says
+    (pushes_read_again), the labels put back where a release failed, no
+    label left on a released claim, and the page the state's, every claim
+    dated as the run read its push (push_dates)."""
     if half.raised is not None:
         return [] if reads_failed(half.fake.calls) else [Violation("G15", f"the run's first half raised: {half.raised}")]
     actual = effects_of(half.fake.calls)
-    undated = undated_branches(half.fake.calls)
-    seen_before, seen_after = oracle.dated(before, undated), oracle.dated(after, undated)
-    problems = []
+    dates = push_dates(half.fake.calls, before)
+    seen_before, seen_after = seen(before, dates), seen(after, dates)
+    problems = pushes_read_again(half.fake.calls, before)
     if not injected(half.fake.calls, but=WRITES_KEPT):
         expected = oracle.expected_effects(seen_before, half.event, half.ref_name, known,
                                            unsaid_branches(half.fake.calls))
@@ -340,9 +346,9 @@ def cycle_checks(before, after, record, known=oracle.AS_BUILT):
         return [Violation("G15", f"the run exited {record.exit_code}: {record.raised}")]
     start = record.started_from if split else before
     planned = record.planned if split else after
-    undated = undated_branches(record.calls)
-    seen_start, seen_planned = oracle.dated(start, undated), oracle.dated(planned, undated)
-    problems = []
+    dates = push_dates(record.calls, start)
+    seen_start, seen_planned = seen(start, dates), seen(planned, dates)
+    problems = [] if split else pushes_read_again(record.calls, start)
     if not injected(record.calls, but=WRITES_KEPT):
         unsaid = unsaid_branches(record.calls)
         expected = kept_renames(oracle.expected_effects(seen_start, record.event, record.ref_name, known, unsaid),
@@ -356,7 +362,7 @@ def cycle_checks(before, after, record, known=oracle.AS_BUILT):
         problems += differences(expected, effects_of(record.calls[record.first_calls:] if split else record.calls))
         if not split:
             problems += [Violation("G3L", f"a release no rule completes: #{n}")
-                         for n in oracle.half_released(oracle.dated(after, undated))]
+                         for n in oracle.half_released(seen(after, dates))]
         if not injected(record.calls) and (not split or before.repository_key() == planned.repository_key()):
             problems += quiet_second_run(after, record)
     actual = effects_of(record.calls)
@@ -627,24 +633,101 @@ def unsaid_branches(calls):
     return refused_activity(calls, "branch_creation")
 
 
-def undated_branches(calls):
-    """The claim branches whose read of their head's push in the
-    repository's activity GitHub refused in a run, which the run then
-    dated by their committer dates (SPEC["undated push"], F8)."""
-    return refused_activity(calls, None)
+def undated_branches(calls, model):
+    """The claim branches whose push of their head a run could not date,
+    which it then dated by their committer dates (SPEC["undated push"],
+    F8): those whose last read in the run GitHub refused or answered with
+    a list that names no push of the head the run read from the model, a
+    first read answered by the second leaving the branch dated by its
+    push."""
+    return frozenset(branch for branch, minute in push_dates(calls, model).items() if minute is None)
 
 
 def refused_activity(calls, kind):
     """The branches whose own read of the repository's activity, of the
     kind asked for (None for no kind named), GitHub refused in a run."""
-    refused = set()
+    return frozenset(branch for branch, reads in activity_reads(calls, kind).items()
+                     if any(read.status != 200 for read in reads))
+
+
+def activity_reads(calls, kind):
+    """Each branch's own reads of the repository's activity in a run, of
+    the kind asked for (None for no kind named, a read of the push that
+    set a claim's head, github.head_pushed_at), in the order made, by
+    branch name."""
+    found = {}
     for call in calls:
         query = dict(call.query)
         ref = query.get("ref", "")
-        if (call.method == "GET" and call.path == "/activity" and call.status != 200
-                and ref.startswith("refs/heads/") and query.get("activity_type") == kind):
-            refused.add(ref[len("refs/heads/"):])
-    return frozenset(refused)
+        if (call.method == "GET" and call.path == "/activity" and ref.startswith("refs/heads/")
+                and query.get("activity_type") == kind):
+            found.setdefault(ref[len("refs/heads/"):], []).append(call)
+    return found
+
+
+def push_dates(calls, model):
+    """What a run read of when GitHub received the push that set each
+    claim branch's head, by branch name, from the heads the run read in
+    the model: the minute the last of its reads dates that push at, or
+    None where that read dates none, so the run dates the branch by its
+    committer date (SPEC["undated push"])."""
+    return {branch: read_dates(reads[-1], branch, model.refs.get(branch))
+            for branch, reads in activity_reads(calls, None).items()}
+
+
+def read_dates(call, branch, head):
+    """The minute one read of the activity dates the push of the head at
+    (SPEC["last commit"]): the newest entry's, when it is the branch's and
+    it set that head, or moved the branch from it, a push after the run
+    read the branch, which says the branch had a commit then (as
+    github.head_pushed_at reads it); None for a read GitHub refused, or
+    one whose newest entry is not such a push, as a list that does not
+    show the latest push yet."""
+    newest = call.answered[0] if call.status == 200 and call.answered else None
+    if (not isinstance(newest, dict) or newest.get("ref") != f"refs/heads/{branch}"
+            or head not in (newest.get("after"), newest.get("before"))):
+        return None
+    return minute_of(newest["timestamp"])
+
+
+def minute_of(stamp):
+    """A time as GitHub writes one, as a model minute (model.iso)."""
+    return int((datetime.fromisoformat(stamp.replace("Z", "+00:00")) - T0).total_seconds()) // 60
+
+
+def may_tell_more(call, branch, head):
+    """Whether a second read may tell more than this first one
+    (SPEC["undated push"]): GitHub gave no answer that holds, a 5xx, a 429
+    or a 403 saying a rate limit was reached, or answered a list that
+    dates no push of the head; a 404, a repository GitHub keeps no
+    activity of, and any other refusal are its answer for good."""
+    if call.status == 200:
+        return read_dates(call, branch, head) is None
+    said = (call.fault.message if call.fault is not None else "") or ""
+    return call.status >= 500 or call.status == 429 or (call.status == 403 and "rate limit" in said.lower())
+
+
+def pushes_read_again(calls, model):
+    """G2's dating: a run reads the push of a claim's head once more, after
+    a pause, exactly where its first read may tell more (may_tell_more),
+    and otherwise once, so a first read GitHub answers later still dates
+    the claim by its push and no answer that holds costs a second call
+    (SPEC["undated push"])."""
+    problems = []
+    for branch, reads in activity_reads(calls, None).items():
+        owed = 2 if may_tell_more(reads[0], branch, model.refs.get(branch)) else 1
+        if len(reads) != owed:
+            problems.append(Violation("G2", f"the run read the push of {branch}'s head {len(reads)} times, "
+                                            f"where its first read owes {owed}"))
+    return problems
+
+
+def seen(model, dates):
+    """The model as a run saw it that read the pushes of the claims' heads
+    as dates says (push_dates, from the state the run started from):
+    oracle.dated, with the branches it dated by no push undated."""
+    undated = frozenset(branch for branch, minute in dates.items() if minute is None)
+    return oracle.dated(model, undated, {branch: m for branch, m in dates.items() if m is not None})
 
 
 def quiet_second_run(after, record):

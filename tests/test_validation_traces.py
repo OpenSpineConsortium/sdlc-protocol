@@ -28,13 +28,23 @@ BUDGET_SECONDS = 10
 # of its fix, the step the trace then goes red at (numbered as played, an
 # announce counting as three) and the guarantee DESIGN.md's table names;
 # F6's fix has two parts, the render's sort key and the quoted path. F8's
-# trace goes red at its first board run, step 13, where a's claim, its
-# head dated 72 hours ahead, is a day idle by its push and b's, its head
-# dated 48 hours back, was pushed an hour before: a's is held and b's
-# released once idleness is read by the committer date; and at the run
-# after c pushes its released head again, step 15, where that branch
-# stands as a claim, not deleted, once the release that kept the head
-# counts by its time alone. F9's
+# trace goes red at its first board run, step 13, where b's claim, its
+# head dated 48 hours back, was pushed an hour before and is released
+# once idleness is read by the committer date, and where the activity
+# lists a push from a's head after the run read the branch, which the
+# run reads the activity again for once the before side of an entry is
+# ignored; at its second, step 14, where a's claim, its head dated 72
+# hours ahead, a day idle by its push, is held once idleness is read by
+# the committer date; at its third, step 15, where GitHub answers the
+# first read of b's push with a 500 and the run reads it no more once the
+# push is read once; at the run after c pushes its released head again,
+# step 23, where that branch stands as a claim, not deleted, once the
+# release that kept the head counts by its time alone, or only from the
+# push on, since it came before; and at the last, step 25, where a's
+# branch, whose release the label claimed undid, has gone a day without
+# a push and is not released once a release comment holds a kept head
+# whatever the labels say, and b's, the board counting its kept release,
+# is released twice once no head is read as kept. F9's
 # trace goes red at its first board run, step 2, where the draft level
 # with main is told it moved once the adapter reads the comparison's
 # ahead_by for behind_by, and at its second, step 4, where the draft
@@ -91,8 +101,10 @@ UNDONE = {
     "F5": [("a claim number with leading zeros", 2, "G1")],
     "F6": [("a sort key that calls int after isdigit", 1, "G15"), ("a branch name sent unquoted", 3, "G15")],
     "F7": [("the guard passes a lease onto another's claim", 1, "G11a")],
-    "F8": [("idleness by the committer date", 13, "G2"), ("idleness by the committer date", 13, "G3"),
-           ("a kept head dated by its push", 15, "G5")],
+    "F8": [("idleness by the committer date", 13, "G2"), ("idleness by the committer date", 14, "G3"),
+           ("the before side ignored", 13, "G2"), ("the push read once", 15, "G2"),
+           ("a kept head dated by its push", 23, "G5"), ("kept counts only at or after the push", 23, "G5"),
+           ("a kept release undone holds for good", 25, "G3"), ("a kept head released again", 25, "G2")],
     "F9": [("an opaque state read by GitHub's word alone", 4, "G10"), ("the comparison read by ahead_by", 2, "G10")],
     "F10": [("a finished draft's release by hand not seen", 9, "G5")],
     "F11": [("a refused comment stops the run", 6, "G15")],
@@ -200,7 +212,7 @@ class TheTraces(unittest.TestCase):
         trace = self.traces["F8"]
         with mutants.switched_on(mutants.MUTANTS["the rename skipped"]):
             record = replay.replay(trace)
-        self.assertIn((14, "not played: no released branch of #3"), record.mismatches)
+        self.assertIn((18, "not played: no released branch of #3"), record.mismatches)
         self.assertIn((13, "G3"), replay.results(record))
 
     def test_f4_s_trace_deals_from_the_run_s_one_look_and_twice_under_its_mutant(self):

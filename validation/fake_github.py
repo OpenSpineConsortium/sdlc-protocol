@@ -22,7 +22,9 @@ fake was not:
 
 Fault makes chosen calls fail: an HTTP status, GitHub's message and, for a
 secondary rate limit, a retry-after header; with applied, the write is
-made and its answer lost, as a 502 after GitHub wrote the comment.
+made and its answer lost, as a 502 after GitHub wrote the comment; with
+answer, a read of the activity is answered with a list other than the
+model's, one that lags a push or lists one the run did not see (F8).
 
 What the fake assumes of GitHub, each settled by the documentation or by a
 canary check (DESIGN.md, 3.2 and 11) unless said: the issues list holds
@@ -54,13 +56,17 @@ rename onto a
 name that stands answers 422; the board posts as github-actions[bot]
 with the author_association NONE; a pull request's updated_at moves
 with pushes and comments; and the repository's activity lists the push
-that made each branch at GitHub's own time, newest first (F13), a
-renamed branch keeping the time it was made, which the model's rename
-does and no canary check reads yet.
+that made each branch at GitHub's own time, newest first (F13), with the
+head that push set, and the push that last set each branch's head, with
+the head it set and the head it moved the branch from (F8; canary C5
+read a forced push's before and after on 2026-10-15), a renamed branch
+keeping both, which the model's rename does and no canary check reads
+yet.
 """
 
 import base64
 import fnmatch
+import hashlib
 import io
 import json
 import urllib.error
@@ -87,7 +93,14 @@ class Fault(NamedTuple):
     write and loses its answer. query, pairs of a parameter and its value,
     narrows the calls to those whose query carries each, a value of None
     to those whose query lacks the parameter, so one read of the activity
-    is told from another (F8)."""
+    is told from another (F8). answer, for a read of the activity, has the
+    call answered with status, 200, and a list the model's own answer is
+    changed into, in place of a refusal (FakeGitHub.activity): LAGGING, the
+    activity as it stood before each branch's last push, as a read GitHub
+    answers before it lists that push; MOVED, the activity with a push
+    after the run read the branch, from the head the run read to one it
+    never saw, which the model does not take, so the next run reads the
+    branch as the model holds it."""
 
     method: str
     path: str
@@ -97,12 +110,19 @@ class Fault(NamedTuple):
     retry_after: str | None = None
     applied: bool = False
     query: tuple = ()
+    answer: str = ""
 
     def matches(self, call, query):
         """Whether the call, "METHOD path", and its query are this fault's."""
         if not fnmatch.fnmatchcase(call, f"{self.method} {self.path}"):
             return False
         return all(query.get(name) == value for name, value in self.query)
+
+
+# How a fault answers a read of the activity in place of the model (Fault.answer).
+LAGGING, MOVED = "lagging", "moved"
+# The sha GitHub's activity names as the head before the push that made a branch.
+NO_SHA = "0" * 40
 
 
 class Call(NamedTuple):
@@ -117,6 +137,14 @@ class Call(NamedTuple):
     applied: bool
     # Whether a Fault made the answer, as against a refusal the model gives.
     injected: bool = False
+    # The Fault that made the answer, None where the model gave it, so a
+    # check can read what the fault said: GitHub's message for a refusal,
+    # and how a fault answered in place of the model (Fault.answer).
+    fault: object = None
+    # The list a read of the repository's activity was answered with, as
+    # its reader got it, so a check can read what a run was told of each
+    # push (invariants.push_dates); None for every other call.
+    answered: object = None
 
 
 class Answer:
@@ -169,16 +197,21 @@ class FakeGitHub:
         body = json.loads(request.data) if request.data else None
         path = "/" + "/".join(segments)
         fault = self.fault_for(f"{method} {path}", query)
+        asked = tuple(sorted(query.items()))
+        if fault is not None and fault.answer:
+            found, headers = self.answer(method, segments, query, body, request.full_url, fault.answer)
+            self.calls.append(Call(method, path, asked, body, fault.status, False, True, fault, found))
+            return Answer(found, headers)
         if fault is not None and not fault.applied:
-            self.calls.append(Call(method, path, tuple(sorted(query.items())), body, fault.status, False, True))
+            self.calls.append(Call(method, path, asked, body, fault.status, False, True, fault))
             raise self.fault_answer(request.full_url, fault)
         try:
             found, headers = self.answer(method, segments, query, body, request.full_url)
         except Refused as refused:
-            self.calls.append(Call(method, path, tuple(sorted(query.items())), body, refused.status, False))
+            self.calls.append(Call(method, path, asked, body, refused.status, False))
             raise refusal(request.full_url, refused.status) from None
-        self.calls.append(Call(method, path, tuple(sorted(query.items())), body,
-                              fault.status if fault else 200, method != "GET", fault is not None))
+        self.calls.append(Call(method, path, asked, body, fault.status if fault else 200, method != "GET",
+                               fault is not None, fault, found if path == "/activity" else None))
         if fault is not None:
             raise self.fault_answer(request.full_url, fault)
         return Answer(found, headers)
@@ -198,8 +231,10 @@ class FakeGitHub:
 
     # --- dispatch -----------------------------------------------------------
 
-    def answer(self, method, s, query, body, url):
-        """The body and the headers GitHub would answer, or Refused."""
+    def answer(self, method, s, query, body, url, as_fault=""):
+        """The body and the headers GitHub would answer, or Refused; as_fault
+        is how a fault changes a read of the activity (Fault.answer), the
+        one read whose answer a fault changes."""
         route = (method, s[0] if s else "")
         if route == ("GET", "issues") and len(s) == 1:
             return self.page(self.open_issue_list(), query, url)
@@ -231,7 +266,7 @@ class FakeGitHub:
         if route == ("GET", "commits") and s[-1] == "check-runs":
             return {"total_count": 0, "check_runs": []}, {}
         if route == ("GET", "activity") and len(s) == 1:
-            return self.page(self.activity(query), query, url)
+            return self.page(self.activity(query, as_fault), query, url)
         raise Unserved(f"{method} /{'/'.join(s)}")
 
     def page(self, items, query, url):
@@ -354,36 +389,55 @@ class FakeGitHub:
 
     # --- branches, contents and commits -------------------------------------
 
-    def activity(self, query):
+    def activity(self, query, as_fault=""):
         """The repository's activity as far as the model records it, for
-        each branch that stands: the push that made it and the push that
-        last set its head, when that was a later one (model.pushed, F8),
-        newest first unless asked for the oldest first (direction asc), a
-        branch's last push after the push that made it in one minute,
-        filtered as asked by ref (refs/heads/<name> or the name) and by
-        type; a filter the model records nothing of, any other type,
-        answers an empty list, as GitHub does for activity that never
-        happened. The entry of a branch's making names its head now as the
-        head it set, which no reader of the making looks at."""
+        each branch that stands (branch_entries), newest first unless asked
+        for the oldest first (direction asc), filtered as asked by ref
+        (refs/heads/<name> or the name) and by type; a filter the model
+        records nothing of, any other type, answers an empty list, as
+        GitHub does for activity that never happened. as_fault changes each
+        branch's entries as a fault answers (Fault.answer)."""
         model = self.model
         ref = query.get("ref", "")
         name = ref[len("refs/heads/"):] if ref.startswith("refs/heads/") else ref
         kind = query.get("activity_type")
         entries = []
-        for branch, at in model.created.items():
-            if ref and branch != name:
-                continue
-            entries.append(((at, 0), self.entry(branch, at, "branch_creation", model.refs.get(branch, ""))))
-            last = model.pushed.get(branch)
-            if last is not None and last[2] != "branch_creation":
-                entries.append(((last[0], 1), self.entry(branch, last[0], last[2], last[1])))
+        for branch in model.created:
+            if not ref or branch == name:
+                entries += self.branch_entries(branch, as_fault)
         newest_first = query.get("direction", "desc") != "asc"
         listed = [entry for _, entry in sorted(entries, key=lambda e: e[0], reverse=newest_first)]
         return [entry for entry in listed if kind is None or entry["activity_type"] == kind]
 
-    def entry(self, branch, at, kind, after):
+    def branch_entries(self, branch, as_fault=""):
+        """One branch's entries, oldest first, each keyed by its place in
+        the order: the push that made it, naming the head that push set
+        (model.made_heads), and the push that last set its head, when that
+        was a later one, naming the head it set and the head it moved the
+        branch from (model.pushed, F8), a minute's two in that order. With
+        as_fault LAGGING the newest is left out, as an activity that does
+        not list the latest push yet answers; with MOVED one more comes
+        after them, a push at the clock's minute from the branch's head to
+        a commit nobody made, as a push after the run read the branch. A
+        branch a test made by hand, with no making's head recorded, names
+        its head now for the head its making set."""
+        model = self.model
+        made = model.created[branch]
+        head = model.refs.get(branch, "")
+        found = [((made, 0), self.entry(branch, made, "branch_creation", model.made_heads.get(branch, head)))]
+        last = model.pushed.get(branch)
+        if last is not None and last[2] != "branch_creation":
+            found.append(((last[0], 1), self.entry(branch, last[0], last[2], last[1], last[3] or NO_SHA)))
+        if as_fault == LAGGING:
+            return found[:-1]
+        if as_fault == MOVED:
+            unseen = hashlib.sha1(f"pushed after the run read {branch} at {model.now}".encode("ascii")).hexdigest()
+            found.append(((model.now, 2), self.entry(branch, model.now, "push", unseen, head)))
+        return found
+
+    def entry(self, branch, at, kind, after, before=NO_SHA):
         return {"ref": f"refs/heads/{branch}", "timestamp": iso(at), "activity_type": kind,
-                "actor": {"login": self.model.creators.get(branch, "")}, "before": "0" * 40, "after": after}
+                "actor": {"login": self.model.creators.get(branch, "")}, "before": before, "after": after}
 
     def rename(self, old, new):
         if old not in self.model.refs:

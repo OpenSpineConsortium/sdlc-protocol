@@ -164,12 +164,20 @@ class RepoModel:
     made: dict = field(default_factory=dict)
     made_count: int = 0
     # The push that last set each branch that stands, by branch name: the
-    # minute GitHub received it, the head it set and its kind as the
-    # activity names it (branch_creation, push or force_push), which the
-    # repository's activity lists and a release dates a claim by (F8). A
-    # rename keeps the old name's, as GitHub's activity is assumed to; no
-    # canary check reads that yet. Part of the key.
+    # minute GitHub received it, the head it set, its kind as the activity
+    # names it (branch_creation, push or force_push) and the head it moved
+    # the branch from, None for the push that made the branch; the
+    # repository's activity lists it and a release dates a claim by it
+    # (F8). A rename keeps the old name's, as GitHub's activity is assumed
+    # to; no canary check reads that yet. Part of the key.
     pushed: dict = field(default_factory=dict)
+    # The head the push that made each branch that stands set, by branch
+    # name, which the activity's entry of that making names as the head it
+    # set whatever was pushed since (fake_github.FakeGitHub.activity): an
+    # activity that does not list the latest push yet shows that entry
+    # newest (the faults pushes-lagging, F8). A rename keeps the old
+    # name's. Part of the key, since the fake's answers turn on it.
+    made_heads: dict = field(default_factory=dict)
     # Each worker's remote-tracking refs, as its last fetch or push left them.
     tracking: dict = field(default_factory=dict)
     # Whether GitHub's word for an open pull request that is not in conflict
@@ -291,22 +299,28 @@ class RepoModel:
             self.made_by(ref, worker)
         self.set_ref(ref, sha)
         if current != sha:
-            self.pushed_now(ref, current is None, fast_forward)
+            self.pushed_now(ref, current, fast_forward)
         mine[ref] = sha
         return Push(True)
 
-    def pushed_now(self, ref, made, fast_forward=True):
-        """GitHub received a push that set the ref's head now: the minute,
-        the head and the kind of push, as the activity records it (F8); the
-        git world's push (git_store.pushed) records the same. A push of the
-        head the ref already has sends git nothing, so it records none."""
-        kind = "branch_creation" if made else "push" if fast_forward else "force_push"
-        self.pushed[ref] = (self.now, self.refs[ref], kind)
+    def pushed_now(self, ref, before=None, fast_forward=True):
+        """GitHub received a push that set the ref's head now, moving the
+        branch from the head before, None for the push that made it: the
+        minute, the head, the kind of push and the head before, as the
+        activity records it (F8), and, for the push that made the branch,
+        the head it set (made_heads); the git world's push
+        (GitStore.pushed) records the same. A push of the head the ref
+        already has sends git nothing, so it records none."""
+        head = self.refs[ref]
+        kind = "branch_creation" if before is None else "push" if fast_forward else "force_push"
+        self.pushed[ref] = (self.now, head, kind, before)
+        if before is None:
+            self.made_heads[ref] = head
 
     def made_by(self, ref, worker):
         """A branch the worker's push makes now: who made it, the minute,
         and its place in the order the branches were made in; the git
-        world's push (git_store.pushed) records the same."""
+        world's push (GitStore.pushed) records the same."""
         self.creators[ref] = worker
         self.created[ref] = self.now
         self.made_count += 1
@@ -335,6 +349,7 @@ class RepoModel:
         self.created.pop(ref, None)
         self.made.pop(ref, None)
         self.pushed.pop(ref, None)
+        self.made_heads.pop(ref, None)
         for pull in self.pulls.values():
             if pull.head == ref and pull.state == "open" and not pull.fork:
                 pull.state = "closed"
@@ -354,6 +369,8 @@ class RepoModel:
             self.made[new] = self.made.pop(old)
         if old in self.pushed:
             self.pushed[new] = self.pushed.pop(old)
+        if old in self.made_heads:
+            self.made_heads[new] = self.made_heads.pop(old)
         for pull in self.pulls.values():
             if pull.head == old and pull.state == "open" and not pull.fork:
                 pull.state = "closed"
@@ -538,6 +555,7 @@ class RepoModel:
             tuple(sorted(self.creators.items())),
             tuple(sorted(self.created.items())),
             tuple(sorted(self.pushed.items())),
+            tuple(sorted(self.made_heads.items())),
             tuple(sorted((w, tuple(sorted(refs.items()))) for w, refs in self.tracking.items())),
             self.board_text,
             self.opaque_pulls,
@@ -586,6 +604,7 @@ class RepoModel:
             next_pull=self.next_pull, writers=self.writers, ever_heads=self.ever_heads,
             label_events=self.label_events, creators=dict(self.creators), created=dict(self.created),
             made=dict(self.made), made_count=self.made_count, pushed=dict(self.pushed),
+            made_heads=dict(self.made_heads),
             tracking={w: dict(refs) for w, refs in self.tracking.items()}, board_text=self.board_text,
             queued=self.queued, pending=self.pending, running=None, opaque_pulls=self.opaque_pulls,
             lenient_rules=self.lenient_rules, unanswered=self.unanswered, standings=self.standings,

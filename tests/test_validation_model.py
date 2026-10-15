@@ -69,18 +69,33 @@ class Pushes(unittest.TestCase):
 
     def test_each_push_that_moves_a_head_is_recorded_with_its_minute_and_kind(self):
         """F8: what the activity lists of the push that last set a branch's
-        head; a push of the head the branch already has sends nothing."""
+        head, with the head it moved the branch from; a push of the head
+        the branch already has sends nothing. The head the making set is
+        kept apart, since the activity's entry of the making names it
+        whatever was pushed since."""
         self.model.push("a", "claude/1", self.first)
-        self.assertEqual(self.model.pushed["claude/1"], (0, self.first, "branch_creation"))
+        self.assertEqual(self.model.pushed["claude/1"], (0, self.first, "branch_creation", None))
         self.model.now = 90
         later = self.model.commit((self.first,), "a", {"x": "1\n"}, "work")
         self.model.push("a", "claude/1", later)
-        self.assertEqual(self.model.pushed["claude/1"], (90, later, "push"))
+        self.assertEqual(self.model.pushed["claude/1"], (90, later, "push", self.first))
         self.model.now = 120
         self.model.push("a", "claude/1", later)
-        self.assertEqual(self.model.pushed["claude/1"], (90, later, "push"))
+        self.assertEqual(self.model.pushed["claude/1"], (90, later, "push", self.first))
         self.model.push("b", "claude/1", claim_commit(self.model, "b"), force=True)
         self.assertEqual(self.model.pushed["claude/1"][::2], (120, "force_push"))
+        self.assertEqual(self.model.pushed["claude/1"][3], later)
+        self.assertEqual(self.model.made_heads, {"claude/1": self.first})
+
+    def test_the_head_a_making_set_follows_a_rename_and_goes_with_a_deletion(self):
+        self.model.push("a", "claude/1", self.first)
+        key = self.model.repository_key()
+        self.model.rename_ref("claude/1", "released/1-abcdef0")
+        self.assertEqual(self.model.made_heads, {"released/1-abcdef0": self.first})
+        self.assertNotEqual(self.model.repository_key(), key)
+        self.assertEqual(self.model.clone().made_heads, self.model.made_heads)
+        self.model.delete_ref("released/1-abcdef0")
+        self.assertEqual(self.model.made_heads, {})
 
 
 class CommitsInOrder(unittest.TestCase):
