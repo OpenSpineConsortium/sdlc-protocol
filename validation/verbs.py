@@ -22,7 +22,10 @@ Actors: the workers of the scope, each a person's session that may write
 a writer GitHub shows as a contributor, whom only the permission API
 vouches for; sam, a stranger with no write access; the clock; the board.
 Where the scope's forks is on, sam opens pull requests from a fork, from
-a branch named there as a claim's, which is no claim's (F17).
+a branch named there as a claim's, which is no claim's (F17); where its
+strangers is on, sam opens them from a claim's own branch here, which are
+no claim's either, and the claim's holder may close one to open its own
+(F19).
 
 Two comments a person can write that look like the coordinator's, offered
 where the scope has more than one issue: a worker's comment that quotes
@@ -120,9 +123,10 @@ class Scope(NamedTuple):
     hand, which meets no guard), the files each issue's claim lists, by
     issue, the clock skews, in hours, a worker's commits may carry (F8: a
     pusher whose clock is ahead or behind stamps its commits so, and the
-    committer date is what idleness is read from), and whether a stranger
+    committer date is what idleness is read from), whether a stranger
     opens pull requests from a fork whose branch bears a claim's name
-    (F17)."""
+    (F17), and whether a stranger opens them from a claim's own branch
+    here (F19)."""
 
     workers: tuple = ("a", "b")
     issues: tuple = (1,)
@@ -135,6 +139,7 @@ class Scope(NamedTuple):
     split_board: bool = False
     skews: tuple = ()
     forks: bool = False
+    strangers: bool = False
 
     def files_of(self, number):
         return dict(self.files).get(number, (f"src/{number}.py",))
@@ -397,8 +402,14 @@ def comment(model, author, number, body):
 
 
 def open_draft(model, worker, number):
+    """The worker opens its draft from its claim branch to main, which
+    GitHub refuses while a pull request between the two is open, as a
+    stranger's may be (F19)."""
+    if model.open_pull_from(claim_ref(number)) is not None:
+        return Outcome(False, f"a pull request already exists for {claim_ref(number)}")
     pull = PullRequest(model.next_pull, claim_ref(number), worker, f"Closes #{number}", f"Work on #{number}",
-                       opened_at=model.now, updated_at=model.now)
+                       opened_at=model.now, updated_at=model.now,
+                       association=ASSOCIATIONS.get(worker, WORKER_ASSOCIATION))
     model.pulls[pull.number] = pull
     model.next_pull += 1
     return Outcome(True, f"opened #{pull.number}", events=((cycle.PULL_REQUEST, ""),))
@@ -414,10 +425,36 @@ def fork_pull(model, number, files, ready):
     main = model.refs[MAIN]
     sha = model.commit((main,), SAM, edited(model, main, SAM, files), f"Fix #{number}")
     pull = PullRequest(model.next_pull, claim_ref(number), SAM, f"Closes #{number}", f"Fix #{number}",
-                       draft=not ready, opened_at=model.now, updated_at=model.now, fork=True, sha=sha)
+                       draft=not ready, opened_at=model.now, updated_at=model.now, fork=True, sha=sha,
+                       association=ASSOCIATIONS[SAM])
     model.pulls[pull.number] = pull
     model.next_pull += 1
     return Outcome(True, f"opened #{pull.number} from a fork", events=((cycle.PULL_REQUEST, M.FORK_RUN),))
+
+
+def stranger_pull(model, number, ready):
+    """sam, a stranger, opens a pull request from the claim's own branch
+    here, as GitHub's documentation says anyone who may read the repository
+    can (creating-a-pull-request.md:4): at the branch's head as it stands,
+    a draft or ready, its body closing the issue as a claim's would (F19).
+    GitHub opens one pull request at a time between two branches, so it is
+    offered only while none from the branch is open. GitHub runs board.yml
+    for it as for any pull request from a branch here."""
+    pull = PullRequest(model.next_pull, claim_ref(number), SAM, f"Closes #{number}", f"Fix #{number}",
+                       draft=not ready, opened_at=model.now, updated_at=model.now, association=ASSOCIATIONS[SAM])
+    model.pulls[pull.number] = pull
+    model.next_pull += 1
+    return Outcome(True, f"opened #{pull.number} from {claim_ref(number)}", events=((cycle.PULL_REQUEST, ""),))
+
+
+def close_pull(model, number):
+    """The claim's holder closes a stranger's pull request from its branch,
+    as anyone who may write can, to open its own (spec, Work in the open;
+    F19); GitHub tells the board workflow (pull_request closed)."""
+    pull = model.pulls[number]
+    pull.state = "closed"
+    apply_pull_change(model, pull)
+    return Outcome(True, "closed", events=((cycle.PULL_REQUEST, ""),))
 
 
 def open_fork_pull(model, number):
@@ -587,6 +624,10 @@ def act(model, verb, scope):
         return open_draft(model, actor, number)
     if name == "fork-pull":
         return fork_pull(model, number, scope.files_of(number), args[1])
+    if name == "stranger-pull":
+        return stranger_pull(model, number, args[1])
+    if name == "close-pull":
+        return close_pull(model, number)
     if name == "mark-ready":
         return mark_ready(model, number)
     if name == "merge":
@@ -655,6 +696,8 @@ def issue_verbs(model, scope, number):
                 found.append(Verb("overlap-marker", person, (number, others(scope, number))))
     if scope.forks and issue.state == "open":
         found += fork_verbs(model, number)
+    if scope.strangers and issue.state == "open":
+        found += stranger_verbs(model, number, pull)
     if OWNER in scope.people:
         found += owner_verbs(model, number, pull)
         misnamed = f"{CLAIM_PREFIX}0{number}"
@@ -699,6 +742,8 @@ def worker_verbs(model, scope, number, worker, pull):
         found.append(Verb("overlap-quote", worker, (number, others(scope, number))))
     if pull is None:
         found.append(Verb("open-draft", worker, (number,)))
+    elif not oracle.opened_by_writer(model, pull):
+        found.append(Verb("close-pull", worker, (pull.number,)))
     elif pull.author == worker and pull.draft:
         found += [Verb("mark-ready", worker, (pull.number,)), Verb("finished", worker, (pull.number,))]
     return found
@@ -712,6 +757,17 @@ def fork_verbs(model, number):
     if fork is None:
         return [Verb("fork-pull", SAM, (number, False)), Verb("fork-pull", SAM, (number, True))]
     return [Verb("finished", SAM, (fork.number,))] if fork.draft else []
+
+
+def stranger_verbs(model, number, pull):
+    """sam's acts on a pull request from the claim's own branch here: open
+    one, as a draft or ready, while the branch stands and none from it is
+    open, and say such a draft finished, as a claim's author would (F19)."""
+    if claim_ref(number) not in model.refs:
+        return []
+    if pull is None:
+        return [Verb("stranger-pull", SAM, (number, False)), Verb("stranger-pull", SAM, (number, True))]
+    return [Verb("finished", SAM, (pull.number,))] if pull.author == SAM and pull.draft else []
 
 
 def others(scope, number):

@@ -96,8 +96,10 @@ HELD = (CLAIM, Verb("label-on", "a", (1, "claimed")), Verb("label-on", "a", (1, 
 # off, and every issue here starts with todo, which no verb takes off,
 # while a board run meets one fault, which the failed step spends; the
 # fast lane meets them from a due claim on a task given by a label alone.
-# No space has a pull request from a fork (F17) or lenient rules (F16),
-# which the mutation lane's searches and the traces of F16 and F17 meet.
+# No space has a pull request from a fork (F17), lenient rules (F16), a
+# stranger's pull request from a claim's own branch or a login GitHub will
+# not answer for (F19), which the mutation lane's searches and the traces
+# of F16, F17 and F19 meet.
 ACTIVITY_FAULTS = tuple(name for name, fault in verbs.FAULTS.items() if fault.path == "/activity")
 BOTH_CLAIMED = (CLAIM, Verb("claim", "b", (2,)))
 SPACES = {

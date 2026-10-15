@@ -102,6 +102,16 @@ SPEC = {
             "claim's, whatever its branch is called: the board lists it as a pull request of its own and tells it "
             "what it tells any other, it finishes no claim, marked ready or said finished, and a release's rename, "
             "which closes the claim's own pull request, leaves it open",
+    "stranger": "A claim's pull request is opened by the repository's owner, a member of its organization, a "
+                "collaborator or anyone else who may write to the repository, or by a GitHub App, which opens one "
+                "only where it is installed, as the workers in Actions open theirs; a pull request anyone else opens "
+                "from a claim's branch, as GitHub's documentation says anyone who may read the repository can, is no "
+                "claim's either: the board lists it as a pull request of its own and tells it what it tells any "
+                "other, it finishes no claim, marked ready or said finished, and a release's rename closes it with "
+                "the claim's own, since GitHub closes each open pull request whose branch it renames.",
+    "unanswered": "Where GitHub will not answer whether someone may write, a pull request they opened stays the "
+                  "claim's, and a release comment or an overlap marker they wrote counts for nothing, so a lost "
+                  "answer never frees a finished claim and never keeps work from being told",
     "pick": "Take an issue the Given to workers section gives you first. Else take a blocker, with or without todo, "
             "that the Blockers section lists, that nobody has claimed and that no worker's label gives to another, "
             "since a blocker comes before the Queue. Else take an open issue labelled todo that the Queue section "
@@ -162,6 +172,8 @@ RELEASED_PREFIX = "released/"
 # collaborator: the API's spelling of the spec's "owner, a member of its
 # organization or a collaborator".
 TRUSTED_ASSOCIATIONS = ("OWNER", "MEMBER", "COLLABORATOR")
+# How a GitHub App's bot login ends (SPEC["stranger"]: "a GitHub App").
+APP_SUFFIX = "[bot]"
 
 # The board's own words, which the spec does not spell: the markers of the
 # comments the board posts on pull requests and issues. They are the
@@ -249,9 +261,10 @@ def workers_named(labels):
 
 
 def trusted(model, comment):
-    """SPEC["trusted"]."""
+    """SPEC["trusted"]; a writer GitHub will not answer for, whom no
+    association vouches for, counts for nothing (SPEC["unanswered"])."""
     return (comment.association in TRUSTED_ASSOCIATIONS or comment.author == BOT
-            or comment.author in model.writers)
+            or (comment.author in model.writers and comment.author not in model.unanswered))
 
 
 def head_time(model, ref):
@@ -283,8 +296,8 @@ def already_released(model, number):
 
 
 def finished(model, number):
-    """SPEC["finished"]."""
-    issue, pull = model.issues.get(number), model.open_pull_from(branch_of(number))
+    """SPEC["finished"], by the claim's own pull request (own_pull)."""
+    issue, pull = model.issues.get(number), own_pull(model, branch_of(number))
     if issue is not None and IN_REVIEW in issue.labels:
         return True
     if pull is None:
@@ -312,7 +325,7 @@ def released(model, number):
         return False
     if CLAIMED in issue.labels or IN_REVIEW in issue.labels:
         return False
-    pull = model.open_pull_from(ref)
+    pull = own_pull(model, ref)
     if pull is not None and not pull.draft:
         return False
     return already_released(model, number)
@@ -419,11 +432,41 @@ def claim_file_text(model, ref, number):
     return model.tree(model.refs.get(ref, "")).get(f"{CLAIM_DIR}{number}.md")
 
 
-def claim_of(pull):
+def claim_of(model, pull):
     """The issue whose claim the pull request is: its branch's number here,
     and never one from a fork, whose branch is another whatever it is
-    called (SPEC["fork"])."""
-    return None if pull.fork else claim_number(pull.head)
+    called (SPEC["fork"]), nor one that someone who may not write opened
+    from the claim's own branch (SPEC["stranger"])."""
+    if pull.fork or not opened_by_writer(model, pull):
+        return None
+    return claim_number(pull.head)
+
+
+def opened_by_writer(model, pull):
+    """SPEC["stranger"]: the owner, a member of the organization or a
+    collaborator, by GitHub's author_association, anyone else who may
+    write, or a GitHub App; and anyone GitHub will not answer for, whose
+    pull request stays the claim's (SPEC["unanswered"])."""
+    return (pull.association in TRUSTED_ASSOCIATIONS or pull.author.endswith(APP_SUFFIX)
+            or pull.author in model.writers or pull.author in model.unanswered)
+
+
+def own_pull(model, ref):
+    """The claim's own open pull request from the branch of this name here:
+    the open one, since GitHub opens one at a time between two branches and
+    every pull request of the model's is to main, when someone who may
+    write opened it (SPEC["stranger"]); never one from a fork (SPEC["fork"])."""
+    pull = model.open_pull_from(ref)
+    return pull if pull is not None and opened_by_writer(model, pull) else None
+
+
+def closed_by_release(model, pull):
+    """Whether a release's rename closes the pull request, or, where GitHub
+    refused the rename, would have: every one from a released claim's branch
+    here, the claim's own and a stranger's alike (SPEC["stranger"]), never
+    one from a fork (SPEC["fork"])."""
+    number = None if pull.fork else claim_number(pull.head)
+    return number is not None and released(model, number)
 
 
 def open_work(model, known=AS_BUILT, unsaid=frozenset()):
@@ -432,19 +475,19 @@ def open_work(model, known=AS_BUILT, unsaid=frozenset()):
     keeps the issue's number as its identity; with F2 known, the identity
     is the number it is shown by, as the library reads it. A pull request
     from a fork is a piece of its own, whatever its branch is called, and
-    began when it was opened (SPEC["fork"], SPEC["oldest"]). unsaid names
+    began when it was opened (SPEC["fork"], SPEC["oldest"]); so is a
+    stranger's from a claim's branch here, which began when that branch was
+    made, as any pull request from a branch here (SPEC["stranger"]). unsaid names
     the branches GitHub refused to date in the run, whose work then began
     when nothing else says (SPEC["oldest"]): a pull request's at its
     opening, and a claim's never."""
     pieces = []
     pulled = set()
     for pull in sorted(model.pulls.values(), key=lambda p: p.number):
-        if pull.state != "open":
+        if pull.state != "open" or closed_by_release(model, pull):
             continue
-        number = claim_of(pull)
-        if number is not None and released(model, number):
-            continue
-        if not pull.fork:
+        number = claim_of(model, pull)
+        if number is not None:
             pulled.add(pull.head)
         listed = listed_files(claim_file_text(model, pull.head, number)) if number is not None else []
         files = own(model.pull_files(pull)) or own(listed)
@@ -494,7 +537,7 @@ def told_of(model, piece, by_number, known=AS_BUILT):
     known, on its current number alone, numbers as written."""
     places = {piece.number}
     if "F2" not in known:
-        places |= {piece.identity} | {p.number for p in model.pulls.values() if claim_of(p) == piece.identity}
+        places |= {piece.identity} | {p.number for p in model.pulls.values() if claim_of(model, p) == piece.identity}
     told = set()
     for place in places:
         for comment in model.comments_on(place):
@@ -509,8 +552,8 @@ def overlap_effects(model, known=AS_BUILT):
     by_number = {p.number: p.identity for p in pieces}
     if "F2" not in known:
         for pull in model.pulls.values():
-            if claim_of(pull) is not None:
-                by_number.setdefault(pull.number, claim_of(pull))
+            if claim_of(model, pull) is not None:
+                by_number.setdefault(pull.number, claim_of(model, pull))
     effects = []
     for piece in sorted(pieces, key=lambda p: p.number):
         meets = {other.identity for other in pieces if other.identity != piece.identity
@@ -568,11 +611,11 @@ def idle_effects(model):
 
 
 def pulls_spoken_to(model):
-    """The open pull requests the board speaks to: all but a released
-    claim's, which the rename closes, one from a fork being no claim's
-    (SPEC["fork"])."""
+    """The open pull requests the board speaks to: all but those from a
+    released claim's branch, which the rename closes, a stranger's among
+    them, and one from a fork staying (closed_by_release)."""
     return [p for p in sorted(model.pulls.values(), key=lambda p: p.number) if p.state == "open"
-            and not ((n := claim_of(p)) is not None and released(model, n))]
+            and not closed_by_release(model, p)]
 
 
 # --- what a board run must do -------------------------------------------------

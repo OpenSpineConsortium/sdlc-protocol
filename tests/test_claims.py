@@ -328,6 +328,54 @@ class ReleaseComments(unittest.TestCase):
         self.assertEqual(claims.latest_release([comment(self.RELEASE, created_at=None)]), "")
 
 
+class OpenedByWriter(unittest.TestCase):
+    """Whose pull request may be a claim's own (F19): one opened by someone
+    who may write, by GitHub's author_association or by the permission the
+    adapter asks for, or by a GitHub App; anyone else's, from the claim's
+    own branch, is a stranger's (board.claim_of)."""
+
+    def pull(self, association, login="sam"):
+        return {"author_association": association, "user": {"login": login}}
+
+    def never(self, login):
+        self.fail(f"asked about {login}")
+
+    def test_an_association_that_vouches_needs_no_asking(self):
+        for association in ("OWNER", "MEMBER", "COLLABORATOR"):
+            self.assertTrue(claims.opened_by_writer(self.pull(association), self.never), association)
+
+    def test_anyone_else_is_asked_and_counts_only_when_they_may_write(self):
+        # A private member of the organization reads as a contributor to a
+        # workflow's token, as a release comment's author does; without an
+        # adapter to ask, nobody vouches for them.
+        asked = []
+
+        def trusted(login):
+            asked.append(login)
+            return login == "private-member"
+
+        for association in ("CONTRIBUTOR", "FIRST_TIME_CONTRIBUTOR", "FIRST_TIMER", "NONE", None):
+            with self.subTest(association=association):
+                self.assertFalse(claims.opened_by_writer(self.pull(association)))
+                self.assertTrue(claims.opened_by_writer(self.pull(association, "private-member"), trusted))
+                self.assertFalse(claims.opened_by_writer(self.pull(association, "passer-by"), trusted))
+        self.assertEqual(asked, ["private-member", "passer-by"] * 5)
+
+    def test_an_app_opens_a_claim_s_pull_request_where_it_is_installed(self):
+        # The workers in Actions open theirs as the repository's own bot, and
+        # another App opens one only where the repository installed it.
+        self.assertEqual(claims.APP_LOGIN_SUFFIX, "[bot]")
+        for login in ("github-actions[bot]", "some-app[bot]"):
+            self.assertTrue(claims.opened_by_writer(self.pull("NONE", login), self.never), login)
+
+    def test_a_pull_request_that_names_no_author_counts_as_a_writer_s(self):
+        # A fixture written by hand, or an answer cut short: a missing name
+        # never takes a claim's own pull request for a stranger's, which
+        # would free a finished claim.
+        for pull in ({}, None, {"user": None}, {"user": {"login": ""}}, {"user": {"login": 7}}):
+            self.assertTrue(claims.opened_by_writer(pull, self.never), pull)
+
+
 class Released(unittest.TestCase):
     LAST_COMMIT = "2026-09-20T10:00:00Z"
 

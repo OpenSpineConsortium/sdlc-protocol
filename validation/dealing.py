@@ -120,7 +120,7 @@ def pick_problems(look, workers, moves):
     holder, which is all the spec says of a claim that needs work
     (oracle.carries). A deal elsewhere, as F4's trace's, is held to G14's
     doubles alone."""
-    if any(look.open_pull_from(oracle.branch_of(number)) for number in oracle.held_numbers(look)):
+    if any(oracle.own_pull(look, oracle.branch_of(number)) for number in oracle.held_numbers(look)):
         return []
     return oracle.deal_problems(look, tuple(workers), moves)
 

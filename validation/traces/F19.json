@@ -1,0 +1,25 @@
+{
+  "finding": "F19",
+  "title": "a stranger's ready pull request from a claim's own branch keeps that claim from ever being released",
+  "status": "fixed after 0.4.1: a pull request someone who may not write opens from a claim's branch is no claim's (board.claim_of; DESIGN.md, 13)",
+  "breaks": ["G3", "G5", "G7", "G9", "G10"],
+  "world": "memory",
+  "issues": {"1": ["todo"]},
+  "workers": ["a"],
+  "people": ["owner", "sam"],
+  "steps": [
+    {"verb": "claim", "actor": "a", "args": [1], "expect": {"holders": {"1": "a"}}},
+    {"verb": "announce", "actor": "a", "args": [1], "expect": {"labels": {"1": ["claimed", "todo", "worker:a"]}}},
+    {"verb": "commit", "actor": "a", "args": [1]},
+    {"verb": "stranger-pull", "actor": "sam", "args": [1, true], "expect": {"pulls": [100]},
+     "note": "sam, who may not write, opens a pull request marked ready from claude/1 itself, as GitHub's documentation says anyone who may read the repository can, before a has opened its draft, which GitHub would now refuse"},
+    {"verb": "board",
+     "expect": {"claims": {"claude/1": "a"}, "pulls": [100], "overlaps": {"src/1.py": [100, 1]},
+                "told": {"1": [100], "100": [1]}, "comments": {"1": {"overlap": 1}, "100": {"overlap": 1}}, "queue": []},
+     "note": "the board lists a's claim with no pull request of its own and sam's as one of its own, which meets the claim on src/1.py, the file a changed, and, marked ready, lands first"},
+    {"at": 25, "verb": "board",
+     "expect": {"labels": {"1": ["todo"]}, "comments": {"1": {"overlap": 1, "claim-released": 1, "released": 1}, "100": {"overlap": 1}},
+                "refs": {"claude/1": false}, "released": {"1": 1}, "pulls": [], "queue": [1], "claims": {}},
+     "note": "a's claim has had no commit for 25 hours and has no pull request of its own, so the coordinator releases it and the board renames the branch, which closes sam's pull request too, as GitHub closes each open pull request from a branch it renames, so it hears nothing more. Until the fix sam's ready pull request, read as the claim's, kept the claim from ever being released (G3), and each part of the fix has a mutant that breaks it here or in the search \"a stranger's pull request from a due claim's own branch\""}
+  ]
+}

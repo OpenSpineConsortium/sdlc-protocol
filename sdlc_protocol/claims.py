@@ -40,6 +40,13 @@ RELEASERS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
 # counts like theirs. No person's login can end in "[bot]", which GitHub
 # keeps for its Apps.
 RELEASING_BOTS = frozenset({"github-actions[bot]"})
+# How every GitHub App's bot login ends, and no person's can, since a login
+# is letters, digits and hyphens. An App opens a pull request only in a
+# repository it is installed on, which only someone who administers the
+# repository or its organization does, so a pull request one opened is one
+# the repository asked for, as the workers in Actions open theirs through
+# the Claude App or the repository's own workflows (opened_by_writer).
+APP_LOGIN_SUFFIX = "[bot]"
 # Where a released claim's branch goes: out of the claude/ names, so the
 # issue can be claimed again, and under a name of its own, so the work it
 # holds stays for whoever carries it on.
@@ -293,6 +300,28 @@ def is_trusted_author(comment, trusted=None):
     if login in RELEASING_BOTS:
         return True
     return bool(trusted and login and trusted(login))
+
+
+def opened_by_writer(pull, trusted=None):
+    """Whether someone who may write to the repository opened a pull
+    request, as the API gives it, so that it may be a claim's own
+    (board.claim_of): by GitHub's author_association (RELEASERS), as a
+    GitHub App (APP_LOGIN_SUFFIX), or, for an author neither vouches for, by
+    trusted, a callable given the author's login that an adapter answers
+    from the author's permission on the repository. GitHub's documentation
+    says anyone who may read a repository may open a pull request in it,
+    from one of its own branches as from a fork, so a stranger's pull
+    request from a claim's branch is no claim's (F19). A pull request whose
+    author the API does not name, as a fixture written by hand, counts as
+    a writer's, as one does whose author's permission GitHub will not say
+    (adapters.github.may_open), so a missing answer never frees a finished
+    claim."""
+    if (pull or {}).get("author_association") in RELEASERS:
+        return True
+    login = ((pull or {}).get("user") or {}).get("login")
+    if not isinstance(login, str) or not login or login.endswith(APP_LOGIN_SUFFIX):
+        return True
+    return bool(trusted and trusted(login))
 
 
 def said_finished(comments, author):

@@ -32,6 +32,11 @@ BLOCKER = Verb("label-on", M.OWNER, (1, "blocker"))
 # sam's draft from a fork whose branch is named claude/1 there (F17).
 FORK_DRAFT = Verb("fork-pull", SAM, (1, False))
 FORKS = Scope(forks=True)
+# sam's draft from the claim's own branch here, to which sam may not
+# write (F19).
+STRANGER_DRAFT = Verb("stranger-pull", SAM, (1, False))
+STRANGER_READY = Verb("stranger-pull", SAM, (1, True))
+STRANGERS = Scope(strangers=True)
 # b's claim on #2 beside a's on #1, both listing one file, #2 then
 # labelled a blocker (F15's fifth review).
 LATER_BLOCKER = [CLAIM, Verb("claim", "b", (2,)), Verb("label-on", M.OWNER, (2, "blocker"))]
@@ -128,6 +133,26 @@ TRACES = {
     "a fork's pull request named on a claim's row": (HELD + [FORK_DRAFT, BOARD], FORKS),
     "a fork's pull request taken for a claim's work": (HELD + [FORK_DRAFT, BOARD], FORKS),
     "a fork's pull request never told main moved": "the regression traces",
+    "no pull request taken for a stranger's": "the regression traces",
+    "a stranger's ready pull request finishes a claim": "the regression traces",
+    "a stranger's ready pull request skipped as a claim's": "the regression traces",
+    "a stranger's finished draft holds a claim": (HELD + [WAIT, STRANGER_DRAFT, Verb("finished", SAM, (100,)),
+                                                         BOARD], STRANGERS),
+    # GitHub will not say whether sam, then dana, may write (the third
+    # element seeds the model's unanswered): sam's ready pull request from
+    # the claim's branch stays the claim's, which is finished, and dana's
+    # release marker counts for nothing, so the coordinator releases the
+    # idle claim itself (F19's review).
+    "a refused permission answer taken as no for a pull request": (HELD + [STRANGER_READY, WAIT, BOARD], STRANGERS,
+                                                                   (SAM,)),
+    "a refused permission answer taken as yes for a release comment": (
+        HELD + [WAIT, Verb("marker", DANA, (1,)), Verb("label-off", M.OWNER, (1, "claimed")), BOARD],
+        Scope(people=(M.OWNER, DANA)), (DANA,)),
+    "a stranger's ready pull request keeps a release from counting": "the regression traces",
+    "a stranger's pull request named on a claim's row": "the regression traces",
+    "a stranger's pull request taken for a claim's work": "the regression traces",
+    "a stranger's pull request listed after its release": "the regression traces",
+    "a stranger's pull request spoken to after its release": "the regression traces",
     "the clerk carrying by labels alone": "the regression traces",
     "a shared task dealt to none": "the regression traces",
     "a shared task before one given alone": "the regression traces",
@@ -150,8 +175,9 @@ TRACES = {
 LANES = {lane.name: lane for lane in mutants.LANES}
 
 
-def violations(steps, scope):
+def violations(steps, scope, unanswered=()):
     model = M.seeded(scope.issues, writers=("a", "b", "c", verbs.CAROL, DANA))
+    model.unanswered = frozenset(unanswered)
     cycle.board_run(model)
     found = []
     for step in steps:
@@ -162,17 +188,20 @@ def violations(steps, scope):
 
 
 class TheLane(unittest.TestCase):
-    def test_it_holds_10_to_80_mutants_each_with_a_trace(self):
+    def test_it_holds_10_to_100_mutants_each_with_a_trace(self):
         """Section 7 asks for 10 to 20; step 4 added five for the rules its
         lanes judge, step 5 four that undo fixes of 0.4.1, and each fix
         since at least one that undoes it (F7's first), and the reviews of
         F13's and F15's fixes more, and F17's fix one for each place that
         read a claim's pull request by its branch's name it has a check for
-        and its review one more, and F18's fix four, with three for the
-        rules F15's fifth review found no catcher of, so the bound is
-        widened to 80 and the count noted."""
-        self.assertTrue(10 <= len(mutants.MUTANTS) <= 80)
-        self.assertEqual(len(mutants.MUTANTS), 78)
+        and its review one more, F18's fix four, with three for the rules
+        F15's fifth review found no catcher of, and F19's fix nine, one
+        for each reading that took a pull request from a claim's own
+        branch for the claim's and one for the adapter's marking, and its
+        review two that read a permission answer GitHub refused the other
+        way, so the bound is widened to 100 and the count noted."""
+        self.assertTrue(10 <= len(mutants.MUTANTS) <= 100)
+        self.assertEqual(len(mutants.MUTANTS), 89)
         self.assertEqual(sorted(TRACES), sorted(mutants.MUTANTS))
 
     def test_every_mutant_names_a_rule_the_library_still_has(self):
@@ -212,7 +241,10 @@ class TheLane(unittest.TestCase):
 
     def test_the_lanes_come_first_then_the_searches_cheapest_first_then_the_two_widest_lanes(self):
         self.assertEqual([c.name for c in mutants.CATCHERS[:len(LANES)]], list(LANES))
-        self.assertEqual(mutants.SEARCHES[-3].name, "a stranger's pull request from a fork on a due claim")
+        self.assertEqual(mutants.SEARCHES[-5].name, "a stranger's pull request from a fork on a due claim")
+        self.assertEqual(mutants.SEARCHES[-4].name, "a stranger's pull request from a due claim's own branch")
+        self.assertEqual(mutants.SEARCHES[-3].name, "a stranger's pull request from a due claim's own branch, GitHub "
+                                                    "refusing to say who may write")
         self.assertEqual(mutants.SEARCHES[-2].name, "the holder back between the halves of a run")
         self.assertEqual(mutants.SEARCHES[-1].name, "a stranger's marker on overlapping claims")
         self.assertEqual(mutants.CATCHERS[len(LANES):-2], mutants.SEARCHES)
@@ -239,10 +271,10 @@ class EachMutantIsCaught(unittest.TestCase):
                     with mutants.switched_on(mutants.MUTANTS[name]):
                         self.assertNotEqual(dealing.judge_case(trace, runs=True)[1], [])
                     continue
-                steps, scope = trace
-                self.assertEqual(violations(steps, scope), [], "the library itself passes the trace")
+                steps, scope, *unanswered = trace
+                self.assertEqual(violations(steps, scope, *unanswered), [], "the library itself passes the trace")
                 with mutants.switched_on(mutants.MUTANTS[name]):
-                    found = violations(steps, scope)
+                    found = violations(steps, scope, *unanswered)
                 self.assertNotEqual(found, [])
 
 
@@ -291,6 +323,45 @@ class TheSearchesCatchWhatTheyWereAddedFor(unittest.TestCase):
                 continue
             with self.subTest(mutant=name), mutants.switched_on(mutant):
                 self.assertIn(mutant.guarantee, {g for g, _ in mutants.violations(search)})
+
+    def test_a_stranger_s_pull_request_from_a_due_claim_s_own_branch_catches_every_mutant_of_f19_s_fix(self):
+        """The lane credits eight of F19's nine mutants to the regression
+        traces, so the search added with F19's fix is held here to all
+        nine: it finds nothing on the library, and the violation each
+        mutant names, which it can only while sam, who may not write, may
+        open a pull request from the claim's own branch here."""
+        search = next(s for s in mutants.SEARCHES
+                      if s.name == "a stranger's pull request from a due claim's own branch")
+        self.assertTrue(search.scope.strangers)
+        self.assertIn(M.OWNER, search.scope.people)
+        self.assertEqual(mutants.violations(search), {})
+        for name, mutant in mutants.MUTANTS.items():
+            if "(F19)" not in mutant.why:
+                continue
+            with self.subTest(mutant=name), mutants.switched_on(mutant):
+                self.assertIn(mutant.guarantee, {g for g, _ in mutants.violations(search)})
+
+    def test_github_refusing_to_say_who_may_write_catches_the_two_readings_of_a_refusal(self):
+        """F19's review: the spec's sentence on an answer GitHub will not
+        give had no state in the harness. The search added with the review
+        seeds sam and dana as logins GitHub answers 403 for; it finds
+        nothing on the library, and catches the mutant that reads the
+        refusal as no for a pull request, which frees a finished claim,
+        and the one that reads it as yes for a release comment, which the
+        first search, where GitHub answers, cannot tell from the library."""
+        search = next(s for s in mutants.SEARCHES if s.name.endswith("GitHub refusing to say who may write"))
+        plain = next(s for s in mutants.SEARCHES if s.name == "a stranger's pull request from a due claim's own branch")
+        self.assertEqual(search.unanswered, (SAM, DANA))
+        self.assertTrue(search.scope.strangers)
+        self.assertIn(DANA, search.scope.people)
+        self.assertEqual(mutants.violations(search), {})
+        for name in ("a refused permission answer taken as no for a pull request",
+                     "a refused permission answer taken as yes for a release comment"):
+            mutant = mutants.MUTANTS[name]
+            self.assertIn("(F19's review)", mutant.why)
+            with self.subTest(mutant=name), mutants.switched_on(mutant):
+                self.assertIn(mutant.guarantee, {g for g, _ in mutants.violations(search)})
+                self.assertEqual(mutants.violations(plain), {}, "told from the library only where GitHub refuses")
 
     def test_two_claims_on_one_file_the_later_a_blocker_catches_the_landing_order_without_blockers(self):
         """The search added with F18's fix for a rule F15's fifth review

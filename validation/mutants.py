@@ -83,8 +83,10 @@ class Search(NamedTuple):
     to meet in it; opaque_pulls has GitHub call every pull request not in
     conflict blocked, as a rule that holds it does (model.RepoModel),
     lenient_rules has it call a branch that is behind clean, as a rule that
-    does not require an up-to-date branch does, and labels are what the
-    seeded issues carry."""
+    does not require an up-to-date branch does, labels are what the
+    seeded issues carry, and unanswered names the logins GitHub will not
+    say whether they may write, as for a token without the right (F19's
+    review)."""
 
     name: str
     prefix: tuple
@@ -95,6 +97,7 @@ class Search(NamedTuple):
     opaque_pulls: bool = False
     labels: tuple = ("todo",)
     lenient_rules: bool = False
+    unanswered: tuple = ()
 
 
 # --- the replacements ---------------------------------------------------------
@@ -113,6 +116,8 @@ ORIGINAL_IS_CANDIDATE = coordinator.is_candidate
 ORIGINAL_PULL_ROWS = board.pull_rows
 ORIGINAL_PULLS_BEHIND_MAIN = board.pulls_behind_main
 ORIGINAL_POOL = team.Snapshot.pool
+ORIGINAL_CLAIM_ROWS = board.claim_rows
+ORIGINAL_OPEN_WORK = board.open_work
 ORIGINAL_DEAL_MOVES = team.deal_moves
 
 
@@ -255,7 +260,7 @@ def any_line_is_a_marker(comment):
     return bool(((comment or {}).get("body") or "").strip())
 
 
-def nobody_vouched_for(api):
+def nobody_vouched_for(api, asked=None):
     """github.may_write as if GitHub refused every permission asked."""
     return lambda login: False
 
@@ -403,13 +408,13 @@ def sort_key_with_int_after_isdigit(value):
     return (0, int(value), "") if str(value).isdigit() else (1, 0, str(value))
 
 
-def releases_skipping_finished(api, heads, found_issues, pulls, now=None):
+def releases_skipping_finished(api, heads, found_issues, pulls, now=None, asked=None):
     """github.releases leaving every finished draft out before it reads
     any release comment, as before 0.4.1 (F10), so a person's release of
     one is never seen; every other reading is release's own."""
     now = now or datetime.now(timezone.utc)
-    ready, trusted = github.ready_branches(pulls), github.may_write(api)
-    drafts = {(p.get("head") or {}).get("ref"): p for p in pulls if p.get("draft")}
+    ready, trusted = github.ready_branches(pulls), github.may_write(api, asked)
+    drafts = {(p.get("head") or {}).get("ref"): p for p in pulls if p.get("draft") and github.is_claims(p)}
     found = {}
     for branch, sha in sorted(heads.items()):
         key = claims.key_of(branch)
@@ -522,14 +527,30 @@ def ready_branches_by_name(pulls):
     return {(p.get("head") or {}).get("ref") for p in pulls if not p.get("draft")}
 
 
-def releases_reading_a_fork_s_draft(api, heads, found_issues, pulls, now=None):
+def releases_reading_a_fork_s_draft(api, heads, found_issues, pulls, now=None, asked=None):
     """github.releases taking a draft from a fork whose branch bears a
     claim's name for the claim's own, as before F17's fix, so its author's
     "finished; ready to mark" holds the claim; every other reading is
     release's own."""
+    return releases_reading_drafts(api, heads, found_issues, pulls, now, asked,
+                                   lambda p: not board.from_stranger(p))
+
+
+def releases_reading_a_stranger_s_draft(api, heads, found_issues, pulls, now=None, asked=None):
+    """github.releases taking a draft a stranger opened from a claim's own
+    branch for the claim's, as before F19's fix, so its author's "finished;
+    ready to mark" holds the claim; every other reading is release's
+    own."""
+    return releases_reading_drafts(api, heads, found_issues, pulls, now, asked,
+                                   lambda p: not board.from_fork(p))
+
+
+def releases_reading_drafts(api, heads, found_issues, pulls, now, asked, counted):
+    """github.releases with the drafts it reads as claims' chosen by
+    counted, where the library counts only the claim's own (github.is_claims)."""
     now = now or datetime.now(timezone.utc)
-    ready, trusted = github.ready_branches(pulls), github.may_write(api)
-    drafts = {(p.get("head") or {}).get("ref"): p for p in pulls if p.get("draft")}
+    ready, trusted = github.ready_branches(pulls), github.may_write(api, asked)
+    drafts = {(p.get("head") or {}).get("ref"): p for p in pulls if p.get("draft") and counted(p)}
     found = {}
     for branch, sha in sorted(heads.items()):
         key = claims.key_of(branch)
@@ -546,6 +567,93 @@ def releases_reading_a_fork_s_draft(api, heads, found_issues, pulls, now=None):
             continue
         found[key] = {"released_at": released_at, "sha": sha, "committed_at": last_commit}
     return found
+
+
+def claim_of_but_strangers(pull):
+    """board.claim_of as F17's fix built it: a pull request from a fork is
+    no claim's, but one a stranger opened from the claim's own branch here
+    is taken for the claim's, as before F19's fix."""
+    return None if pull.fork else claims.key_of(pull.branch)
+
+
+def of_claim_but_strangers(pull, key):
+    """board.of_claim through claim_of_but_strangers."""
+    return claim_of_but_strangers(pull) == key
+
+
+def closed_by_release_as_f17(pull, released):
+    """board.closed_by_release as F17's fix built it: a release's rename
+    closes the claim's own pull request alone, so a stranger's from the
+    released branch, which GitHub closes with it, is taken to stay open, as
+    before F19's fix."""
+    return board.claim_of(pull) is not None and pull.branch in released
+
+
+def claim_rows_but_strangers(snap):
+    """board.claim_rows reading whose a pull request is as F17's fix left
+    it, a stranger's from the claim's own branch taken for the claim's, as
+    before F19's fix, and nothing else: its releases are the library's,
+    where a reading swapped for the whole call reached board.is_released
+    through released_keys too (the fix's review)."""
+    pulls_by_branch = {p.branch: p for p in snap.pulls if claim_of_but_strangers(p) is not None}
+    released = board.released_keys(snap)
+    rows = []
+    for branch in sorted(board.claim_branches(snap.branches), key=lambda b: claims.by_number(claims.key_of(b))):
+        key = claims.key_of(branch)
+        if key in released:
+            continue
+        rows.append(board.claim_row(key, branch, snap.claims.get(key), pulls_by_branch.get(branch),
+                                    snap.claim_issues.get(key)))
+    return rows
+
+
+def open_work_but_strangers(snapshot):
+    """board.open_work reading whose a pull request is as F17's fix left
+    it, a stranger's from the claim's own branch taken for the claim's
+    work, as before F19's fix, and nothing else (claim_rows_but_strangers
+    says why)."""
+    snap = board.as_snapshot(snapshot)
+    released = board.released_keys(snap)
+    renamed = board.released_branches(snap)
+    pulls = {p.branch: p for p in snap.pulls if claim_of_but_strangers(p) is not None}
+    work = []
+    for pull in snap.pulls:
+        key = claim_of_but_strangers(pull)
+        if board.closed_by_release(pull, renamed):
+            continue
+        files = board.own_files(pull.files) or (
+            board.own_files(claims.claim_files(snap.claims.get(key) or "")) if key else ())
+        work.append(board.Work(pull.number, files, not pull.draft, bool(key) and board.is_blocker(snap, key), True,
+                               "" if pull.fork else pull.branch, board.pull_began(snap, pull)))
+    for branch in board.claim_branches(snap.branches):
+        key, number = claims.key_of(branch), claims.number_of(branch)
+        if branch in pulls or key in released or number is None:
+            continue
+        files = board.own_files(claims.claim_files(snap.claims.get(key) or ""))
+        work.append(board.Work(number, files, False, board.is_blocker(snap, key), False, branch,
+                               snap.began.get(branch, "")))
+    return sorted(work, key=lambda w: w.number)
+
+
+def may_open_doubting_a_refusal(asked):
+    """github.may_open reading a permission call GitHub refused as no, so a
+    pull request whose author GitHub will not answer for is taken for a
+    stranger's, which frees a finished claim (F19's review)."""
+    return lambda login: asked(login) is True
+
+
+def may_write_trusting_a_refusal(api, asked=None):
+    """github.may_write reading a permission call GitHub refused as yes, so
+    a release comment or an overlap marker by an author GitHub will not
+    answer for counts (F19's review)."""
+    asked = asked or getattr(api, "asked", None) or github.permissions(api)
+    return lambda login: asked(login) is not False
+
+
+def ready_branches_but_strangers(pulls):
+    """github.ready_branches counting a ready pull request a stranger opened
+    from a claim's own branch as the claim's, as before F19's fix."""
+    return {(p.get("head") or {}).get("ref") for p in pulls if not p.get("draft") and not board.from_fork(p)}
 
 
 def behind_main_but_forks(pulls):
@@ -839,6 +947,47 @@ MUTANTS = {
     "a fork's pull request never told main moved": Mutant(
         board, "pulls_behind_main", behind_main_but_forks,
         "G10", "a pull request from a fork hears \"main moved\" as any other does (F17)"),
+    "no pull request taken for a stranger's": Mutant(
+        github, "mark_strangers", lambda pulls, asked: pulls,
+        "G3", "the adapter marks a pull request someone who may not write opened from a claim's branch, so no "
+              "reading takes it for the claim's (F19)"),
+    "a stranger's ready pull request finishes a claim": Mutant(
+        coordinator, "is_candidate", reading(ORIGINAL_IS_CANDIDATE, "of_claim", of_claim_but_strangers),
+        "G3", "a pull request a stranger opens from a claim's branch is no claim's, so marked ready it keeps no "
+              "claim from its release (F19)"),
+    "a stranger's ready pull request skipped as a claim's": Mutant(
+        github, "ready_branches", ready_branches_but_strangers,
+        "G3", "a claim a stranger's ready pull request from its branch stands beside is still read for its "
+              "release (F19)"),
+    "a stranger's finished draft holds a claim": Mutant(
+        github, "releases", releases_reading_a_stranger_s_draft,
+        "G3", "only the claim's own draft, said finished by its author, waits for review; a stranger's draft from "
+              "the claim's branch finishes no claim (F19)"),
+    "a stranger's ready pull request keeps a release from counting": Mutant(
+        board, "is_released", reading(ORIGINAL_IS_RELEASED, "of_claim", of_claim_but_strangers),
+        "G3", "a released claim counts as released whatever a stranger's pull request from its branch is (F19)"),
+    "a stranger's pull request named on a claim's row": Mutant(
+        board, "claim_rows", claim_rows_but_strangers,
+        "G9", "a claim's row names the claim's own pull request, never a stranger's from its branch (F19)"),
+    "a stranger's pull request taken for a claim's work": Mutant(
+        board, "open_work", open_work_but_strangers,
+        "G7", "a stranger's pull request from a claim's branch is a piece of open work of its own, which meets "
+              "the claim (F19)"),
+    "a stranger's pull request listed after its release": Mutant(
+        board, "pull_rows", reading(ORIGINAL_PULL_ROWS, "closed_by_release", closed_by_release_as_f17),
+        "G9", "a release's rename closes a stranger's pull request from the claim's branch with the claim's own, "
+              "so the board lists it no more (F19)"),
+    "a stranger's pull request spoken to after its release": Mutant(
+        board, "comments_due", reading(ORIGINAL_COMMENTS_DUE, "closed_by_release", closed_by_release_as_f17),
+        "G10", "a stranger's pull request that a release's rename closed hears nothing more (F19)"),
+    "a refused permission answer taken as no for a pull request": Mutant(
+        github, "may_open", may_open_doubting_a_refusal,
+        "G6", "a pull request whose author GitHub will not say may write stays the claim's, so a lost answer never "
+              "frees a finished claim (F19's review)"),
+    "a refused permission answer taken as yes for a release comment": Mutant(
+        github, "may_write", may_write_trusting_a_refusal,
+        "G3", "a release comment or an overlap marker whose author GitHub will not say may write counts for "
+              "nothing, so a lost answer frees no claim and keeps no work from being told (F19's review)"),
     "the clerk carrying by labels alone": Mutant(
         team.Snapshot, "named", holder_by_labels,
         "G14", "a worker carries the claims whose claim files name it, whatever the issue's labels say, and no "
@@ -998,6 +1147,13 @@ SEARCHES = (
            Scope(workers=("a",), people=(M.OWNER,), waits=(25,)), 3, lenient_rules=True),
     Search("a stranger's pull request from a fork on a due claim", DUE,
            Scope(workers=("a",), people=(M.OWNER,), waits=(25,), forks=True), 3),
+    Search("a stranger's pull request from a due claim's own branch", DUE,
+           Scope(workers=("a",), people=(M.OWNER,), waits=(25,), strangers=True), 3),
+    # GitHub will not say whether sam or dana may write: sam's pull request
+    # from the claim's branch stays the claim's and dana's release marker
+    # counts for nothing (SPEC["unanswered"]; F19's review).
+    Search("a stranger's pull request from a due claim's own branch, GitHub refusing to say who may write", DUE,
+           Scope(workers=("a",), people=(M.OWNER, DANA), waits=(25,), strangers=True), 3, unanswered=(SAM, DANA)),
     Search("the holder back between the halves of a run", (CLAIM, CLAIMED, WORKER, Verb("wait", "clock", (25,))),
            Scope(workers=("a",), people=(), waits=(25,), split_board=True), 3),
     Search("a stranger's marker on overlapping claims", (CLAIM, Verb("claim", "b", (2,))),
@@ -1014,6 +1170,7 @@ def start(search):
     model = M.seeded(search.issues, writers=("a", "b", "c", CAROL, DANA), labels=search.labels)
     model.opaque_pulls = search.opaque_pulls
     model.lenient_rules = search.lenient_rules
+    model.unanswered = frozenset(search.unanswered)
     cycle.board_run(model)
     found = []
     for step in search.prefix:
