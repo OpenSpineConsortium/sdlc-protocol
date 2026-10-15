@@ -19,14 +19,17 @@ short prefix: a few verbs that put the repository where a family of rules
 applies (a held claim, a draft, two claims on one file), then every
 interleaving of the scope's verbs to a small depth. A prefix holds no
 board run of its own, so it reaches the same state with or without a
-mutant, and every step after it is searched, not chosen. One lane comes
-after the searches, every label mix on one issue (labels_lane): a board
-run and a due claim's release on an issue carrying each mix of labels
-the domain gives, the widest and the slowest catcher, which a mutant
-reaches only past every search. The hand-written
-traces in tests/test_validation_mutants.py are each mutant's shortest
-example, kept so a failure names the rule that broke; the lane is what
-shows the searches bite.
+mutant, and every step after it is searched, not chosen. Two lanes come
+after the searches, each wider and slower than any search, so a mutant
+reaches them only past every search: the clerk's deal against Pick
+(dealing.picking_lane), from one look at every state a person can label
+an issue into, held to the spec's Pick and Planning as the oracle reads
+them (F18), and, last, every label mix on one issue (labels_lane): a
+board run and a due claim's release on an issue carrying each mix of
+labels the domain gives, the widest and the slowest catcher. The
+hand-written traces in tests/test_validation_mutants.py are each
+mutant's shortest example, kept so a failure names the rule that broke;
+the lane is what shows the searches bite.
 
 `python3 -m validation.mutants` runs the lane and prints, for each
 mutant, the search that caught it with the shortest violation it met and
@@ -109,6 +112,8 @@ ORIGINAL_AFTER_RELEASE = coordinator.after_release
 ORIGINAL_IS_CANDIDATE = coordinator.is_candidate
 ORIGINAL_PULL_ROWS = board.pull_rows
 ORIGINAL_PULLS_BEHIND_MAIN = board.pulls_behind_main
+ORIGINAL_POOL = team.Snapshot.pool
+ORIGINAL_DEAL_MOVES = team.deal_moves
 
 
 def comment_then_labels(api, snap, key, now):
@@ -551,6 +556,62 @@ def behind_main_but_forks(pulls):
     return [p for p in ORIGINAL_PULLS_BEHIND_MAIN(pulls) if not board.as_pull(p).fork]
 
 
+def holder_by_labels(snap, issue):
+    """team.Snapshot.named reading whose a claim is from the issue's labels
+    alone, the worker its label names (labels.worker_of), never from the
+    claim file, so a worker whose label the issue carries is told to carry
+    a claim another worker pushed, and the claim's holder is told nothing.
+    The clerk as built until F18's fix read the labels alone too, though
+    by holders(issue) == {worker}, so where two workers' labels named the
+    issue it carried the claim for neither."""
+    return labels.worker_of(issue)
+
+
+def blank_names_a_worker(text):
+    """claims.claim_worker, as the clerk reads it (team.claim_worker), as
+    it read a Worker line until F18's review: a name that is empty once
+    the note and the markup are gone is still a name, so the clerk takes
+    "" for the holder and carries the claim for nobody."""
+    for line in text.splitlines():
+        match = claims.WORKER_LINE.match(line)
+        if match:
+            return claims.TRAILING_NOTE.sub("", match.group(1)).strip("`*_ ")
+    return claims.UNNAMED
+
+
+def run_dealt_alone(client, team_names, areas=None, worker_labels=None, run=None):
+    """team.deal_moves dealing a run that starts some of the team as though
+    they were the whole team, so a worker outside the run loses its share,
+    a task several workers' labels give among them, to one inside it, and
+    two runs that look at one state can deal one issue to two workers
+    (F18's review)."""
+    return ORIGINAL_DEAL_MOVES(client, team_names if run is None else run, areas, worker_labels)
+
+
+def carrying_blocked_claims(snap, agent):
+    """team.Snapshot.carry carrying a claim labelled blocked too, whose
+    holder waits on a peer or the coordinator."""
+    for issue in snap.issues:
+        number = issue["number"]
+        if number in snap.claimed and snap.holds(issue, agent) and snap.claim_needs_work(number):
+            return f"carry {number}"
+    return None
+
+
+def pool_by_number(snap):
+    """team.Snapshot.pool in number order, a blocker no sooner than the
+    todos before it, where Pick takes a blocker before the Queue since a
+    blocker stops everyone (F15's fifth review)."""
+    return sorted(ORIGINAL_POOL(snap), key=lambda issue: issue["number"])
+
+
+def free_though_blocked(snap, issue):
+    """team.Snapshot.free leaving the label blocked out, so the clerk deals
+    an issue that waits on a peer or the coordinator, which Pick never has
+    anyone take (F15's fifth review)."""
+    return issue["number"] not in snap.claimed and labels.CLAIMED not in labels.label_names(issue)
+
+
 MUTANTS = {
     "idle at exactly 24 hours": Mutant(
         claims, "is_idle", lambda last, now, idle_after=claims.IDLE_AFTER: now - claims.parse_time(last) >= idle_after,
@@ -778,6 +839,44 @@ MUTANTS = {
     "a fork's pull request never told main moved": Mutant(
         board, "pulls_behind_main", behind_main_but_forks,
         "G10", "a pull request from a fork hears \"main moved\" as any other does (F17)"),
+    "the clerk carrying by labels alone": Mutant(
+        team.Snapshot, "named", holder_by_labels,
+        "G14", "a worker carries the claims whose claim files name it, whatever the issue's labels say, and no "
+               "other's (F18)"),
+    "a shared task dealt to none": Mutant(
+        team, "given_to", team.is_mine,
+        "G14", "a task the labels of several workers give goes to the first of them in the team's order with "
+               "nothing else to do (F18)"),
+    "a shared task before one given alone": Mutant(
+        team.Snapshot, "own_move", lambda snap, agent: snap.carry(agent),
+        "G14", "a worker takes a task given to it alone before one the labels of several workers give (F18)"),
+    "a blocked claim carried": Mutant(
+        team.Snapshot, "carry", carrying_blocked_claims,
+        "G14", "a claim labelled blocked waits on a peer or the coordinator, so its holder is not told to carry "
+               "it (F18)"),
+    "the clerk dealing blockers in number order": Mutant(
+        team.Snapshot, "pool", pool_by_number,
+        "G14", "the clerk deals the unclaimed blockers before the Queue, as Pick has a worker take them (F15's "
+               "fifth review)"),
+    "the clerk dealing an issue labelled blocked": Mutant(
+        team.Snapshot, "free", free_though_blocked,
+        "G14", "Pick never has anyone take an issue labelled blocked, so the clerk deals none (F15's fifth "
+               "review)"),
+    "the Overlaps landing a blocker after other work": Mutant(
+        board, "landing_key", lambda work: (not work.ready, board.began_at(work.began), work.number),
+        "G7", "a blocker lands first, since it stops everyone (F15's fifth review)"),
+    "a released claim carried by its holder": Mutant(
+        team.Snapshot, "released", lambda snap, issue: False,
+        "G14", "a claim that counts as released is nobody's, though its branch stands until the board renames it, "
+               "so the clerk sends nobody back to it (F18's review)"),
+    "a Worker line naming nobody taken for a name": Mutant(
+        team, "claim_worker", blank_names_a_worker,
+        "G14", "a claim file whose Worker line names nobody leaves whose the claim is to the issue's label (F18's "
+               "review)"),
+    "a run dealt as though it were the whole team": Mutant(
+        team, "deal_moves", run_dealt_alone,
+        "G14", "a run that starts some of the team is dealt in the team's order, so a worker outside it keeps its "
+               "share (F18's review)"),
 }
 
 
@@ -807,7 +906,10 @@ SHARED = ("src/shared.py",)
 # board before its comment. The fork's search has a stranger open a pull
 # request from a fork whose branch bears the due claim's name (F17), as a
 # draft or ready, and say a draft finished, so every reading of which pull
-# request is a claim's is searched; no search before it opens one.
+# request is a claim's is searched; no search before it opens one. The
+# second search on one file has the owner label the later claim's issue a
+# blocker, so the board's landing order is searched with a blocker in it,
+# which lands first though it began last (F15's fifth review).
 PLAIN_COMMANDS = [c for c in guard_grammar.commands() if c.prefix == "" and c.wrapper == "{}"]
 
 
@@ -860,8 +962,12 @@ def labels_lane():
 LANES = (Lane("the regression traces", traces_lane),
          Lane("the guard grammar against git's answers", guard_lane),
          Lane("dealing at every look", dealing_lane))
-# Every label mix comes after the searches: it is the widest and the
-# slowest, and a mutant reaches it only past every search.
+# Two lanes come after the searches, each wider and slower than any of
+# them, so a mutant reaches them only past every search: the clerk's deal
+# against Pick, from one look at every state a person can label an issue
+# into (dealing.picking_lane, F18), and every label mix on one issue, the
+# slowest, last.
+PICKING = Lane("the clerk's deal against Pick", dealing.picking_lane)
 LABEL_MIXES = Lane("every label mix on one issue", labels_lane)
 SEARCHES = (
     Search("a released claim under every fault", DUE, Scope(workers=("a",), people=(), waits=(25,),
@@ -880,6 +986,10 @@ SEARCHES = (
     Search("two claims on one file", (CLAIM, Verb("claim", "b", (2,))),
            Scope(workers=("a", "b"), issues=(1, 2), people=(), waits=(25,),
                  files=((1, SHARED), (2, SHARED))), 3, issues=(1, 2)),
+    Search("two claims on one file, the later a blocker",
+           (CLAIM, Verb("claim", "b", (2,)), Verb("label-on", M.OWNER, (2, "blocker"))),
+           Scope(workers=("a", "b"), issues=(1, 2), people=(), waits=(25,),
+                 files=((1, SHARED), (2, SHARED))), 1, issues=(1, 2)),
     Search("a held claim, the clock and a release by hand", (CLAIM, CLAIMED, WORKER),
            Scope(workers=("a",), people=(M.OWNER, DANA, SAM), waits=(24, 25)), 4),
     Search("a draft GitHub calls blocked", (CLAIM, Verb("open-draft", "a", (1,))),
@@ -894,7 +1004,7 @@ SEARCHES = (
            Scope(workers=("a", "b"), issues=(1, 2), people=(SAM,), waits=(25,),
                  files=((1, SHARED), (2, SHARED))), 2, issues=(1, 2)),
 )
-CATCHERS = LANES + SEARCHES + (LABEL_MIXES,)
+CATCHERS = LANES + SEARCHES + (PICKING, LABEL_MIXES)
 
 
 # --- running ------------------------------------------------------------------

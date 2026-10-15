@@ -175,7 +175,13 @@ def one_name_one_holder(model):
     the file was gone, on a closed issue's leftover branch whose stale
     label named the worker that had merged, which the spec's words do not
     ask of the board. A file over 1 MB, which the board does not read, is
-    one no verb writes."""
+    one no verb writes. A file whose Worker line names nobody, or that has
+    none (spec, Claim: "a line with nothing after it but markup or a note
+    in parentheses names nobody"), owes the cell the library's documented
+    word for it, unnamed (tests/test_board.py), since the file is there to
+    be corrected; the clerk and a release fall back to the issue's label
+    for such a file, which the spec's Claim says, and the board does not
+    (F18's second review, where the cell was held to the pusher)."""
     problems = []
     for ref, numbers in sorted(readers_of(model).items()):
         for number in numbers:
@@ -186,10 +192,14 @@ def one_name_one_holder(model):
         if number is None or number not in model.issues or oracle.released(model, number):
             continue
         shown = shown_worker(model, ref, number)
-        if oracle.claim_file_text(model, ref, number):
-            if shown != model.creators.get(ref):
+        text = oracle.claim_file_text(model, ref, number)
+        if text:
+            nameless = oracle.claim_file_worker(text) is None
+            owed = claims.UNNAMED if nameless else model.creators.get(ref)
+            if shown != owed:
                 problems.append(Violation("G1", f"the board names {shown} for {ref}, whose holder is "
-                                                f"{model.creators.get(ref)}"))
+                                                f"{model.creators.get(ref)}"
+                                                + (" and whose claim file names nobody" if nameless else "")))
         else:
             owed = oracle.label_worker(model.issues[number].labels) or board.NO_CLAIM_FILE
             if shown != owed:

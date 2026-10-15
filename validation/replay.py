@@ -1,7 +1,7 @@
 """One replayable regression trace per finding (DESIGN.md, 5.3 and 14, step 5).
 
 Each file under validation/traces/, <finding>.json, is the trace of
-DESIGN.md's table in 5.3 for one finding F1 to F17: the repository it
+DESIGN.md's table in 5.3 for one finding F1 to F18: the repository it
 starts from (its issues with their labels, its workers, the people beside
 them, the files each claim lists, whether the workers are careless, the
 events the board hears and whether a run is made in two halves) and its
@@ -13,10 +13,11 @@ mismatches and a timeline a person reads; scripts/validate.py replay
 <file> prints it.
 
 A trace of a fixed finding (F1, F3, F5, F6, F10 and F11 in 0.4.1; F4,
-F7, F9, F12, F13, F14, F15 and F17 after it; F16 in the spec's words,
-which the library already kept) is green, and the mutant that undoes its fix turns
-it red at the step where the finding showed, for the guarantee the table
-names, which tests/test_validation_traces.py holds it to. A
+F7, F9, F12, F13, F14, F15, F17 and F18 after it; F16 in the spec's
+words, which the library already kept) is green, and the mutant that
+undoes its fix turns it red at the step where the finding showed, for the
+guarantee the table names, which tests/test_validation_traces.py holds it
+to. A
 trace of an open finding is red where known.json records it, with the
 finding's switch off in the oracle for the ones the oracle reads as built
 (F2); none is red as built now, as F4's was until its fix.
@@ -24,8 +25,9 @@ F8's trace breaks nothing and records the assumption under which
 G2 and G3 hold, that idleness is the committer date the pusher sets.
 
 The file's steps are objects: "verb" (a verb of verbs.py, or "announce",
-the three Announce verbs; "guard" and "deal", the two steps run.py plays
-without the model), "actor" (the board's and the clock's need none),
+the Announce verbs, claimed and the worker's label on, each other worker's
+label the step's second argument lists off, and the plan; "guard" and
+"deal", the two steps run.py plays without the model), "actor" (the board's and the clock's need none),
 "args" as a list, "at", the hour, kept from the step before when left
 out, "skew", hours added to a claim's or a commit's committer date,
 "event", "ref" and "faults" for a board verb, "expect" in Expect's shape
@@ -33,7 +35,7 @@ with lists for its sets and numbers for its keys where JSON has strings,
 "shows", the finding the step is red for, and "note" and the file's
 "world", read by nobody. A step is numbered, in known.json, in the tests
 and in a replay's report, by its place among the steps as played, from
-zero, where an "announce" counts as its three verbs. Every file is ASCII:
+zero, where an "announce" counts as each of its verbs. Every file is ASCII:
 a character outside it is written as a \\u escape.
 """
 
@@ -47,7 +49,7 @@ from .model import HOUR, OWNER
 from .scenarios import Expect, Scenario, Step
 
 TRACES = Path(__file__).resolve().parent / "traces"
-FINDINGS = tuple(f"F{n}" for n in range(1, 18))
+FINDINGS = tuple(f"F{n}" for n in range(1, 19))
 SET_FIELDS = ("labels", "told")
 BOARD_VERBS = ("board", "board-start", "board-finish")
 
@@ -90,9 +92,11 @@ def steps_of(raw_steps):
         verb, actor = raw["verb"], raw.get("actor", "board" if raw["verb"] in BOARD_VERBS else "clock")
         expect, shows = expectation(raw.get("expect")), raw.get("shows", "")
         if verb == "announce":
-            number = raw["args"][0]
+            number, off = raw["args"][0], raw["args"][1] if len(raw["args"]) > 1 else ()
             steps.append(Step(at, actor, "label-on", (number, "claimed")))
             steps.append(Step(at, actor, "label-on", (number, f"worker:{actor}")))
+            for label in off:
+                steps.append(Step(at, actor, "label-off", (number, label)))
             steps.append(Step(at, actor, "plan", (number,), expect, shows))
         elif verb in ("board", "board-start"):
             args = (raw.get("event", cycle.SCHEDULE), raw.get("ref", ""), tuple(raw.get("faults", ())))

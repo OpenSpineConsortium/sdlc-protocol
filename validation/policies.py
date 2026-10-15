@@ -121,13 +121,16 @@ def workers_named(names):
 
 
 def announce(seen, claim):
-    """The Announce steps not yet done, one at a time: another worker's
-    label comes off, and a bare worker:, which names nobody, stays."""
+    """The Announce steps not yet done, one at a time: every other worker's
+    label comes off, in any spelling, since the spec's Labels reads the
+    older spellings as the same label (F18's second review, where the
+    policy took off worker: labels alone), and a bare worker:, which names
+    nobody, and the holder's own labels stay."""
     for label in ("claimed", WORKER_LABEL + seen.worker):
         if label not in claim.labels:
             return Verb("label-on", seen.worker, (claim.number, label))
     for label in sorted(claim.labels):
-        if label.startswith(WORKER_LABEL) and workers_named((label,)) and label != WORKER_LABEL + seen.worker:
+        if workers_named((label,)) not in ([], [seen.worker]):
             return Verb("label-off", seen.worker, (claim.number, label))
     if not claim.planned:
         return Verb("plan", seen.worker, (claim.number,))

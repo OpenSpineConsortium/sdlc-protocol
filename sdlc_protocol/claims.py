@@ -148,14 +148,20 @@ def by_number(value):
 
 
 def claim_worker(text):
-    """The worker a claim file names, from a line like "Worker: main", or
-    the older "Account: main", in any of the Markdown spellings a hand might
-    give it, without a note in parentheses after it; "unnamed" when no line
-    does."""
+    """The worker a claim file names, from the first line like "Worker:
+    main", or the older "Account: main", in any of the Markdown spellings a
+    hand might give it, without a note in parentheses after it; "unnamed"
+    when no line does. A line whose name is empty once the note and the
+    markup are gone, as "- Worker: " or "- Worker: (to be filled)", names
+    nobody: until F18's review it named "", which the board showed as the
+    worker, a release named as whose the claim was, and the clerk took for
+    the holder, so nobody carried the claim."""
     for line in text.splitlines():
         match = WORKER_LINE.match(line)
         if match:
-            return TRAILING_NOTE.sub("", match.group(1)).strip("`*_ ")
+            name = TRAILING_NOTE.sub("", match.group(1)).strip("`*_ ")
+            if name:
+                return name
     return UNNAMED
 
 

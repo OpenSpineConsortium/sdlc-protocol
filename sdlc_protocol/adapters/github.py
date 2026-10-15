@@ -289,6 +289,17 @@ class GitHub:
                 runs.extend(page.get("check_runs") or [])
         return runs
 
+    def claim_text(self, branch):
+        """The claim file on a claude/<issue> branch, as the board reads it
+        (claim_text below): the clerk reads whose a claim is from it (F18)."""
+        return claim_text(self, branch)
+
+    def released(self, branch):
+        """Whether a release comment counts for the claim on a claude/<issue>
+        branch (claim_released below): the clerk carries a released claim
+        for nobody (F18's review)."""
+        return claim_released(self, branch)
+
     def create_label(self, name, colour):
         """Make the label; GitHub answers 422 for one that exists, which is
         the label being there, not a failure."""
@@ -519,6 +530,28 @@ def committed_at(api, sha):
     does not know the commit."""
     commit = api.get(f"/repos/{api.repo}/git/commits/{sha}", missing_ok=True) or {}
     return (commit.get("committer") or {}).get("date") or ""
+
+
+def claim_released(api, branch, now=None):
+    """Whether a release comment counts for the claim on a claude/<issue>
+    branch, by the part of the release rule its issue's comments and the
+    branch's head decide, read as releases reads them for the board: the
+    latest release comment by an author the repository trusts came after
+    the branch had gone more than a day without a commit, and nothing was
+    committed since (claims.was_released). The labels and the pull request
+    decide the rest (board.is_released), which the clerk reads from its own
+    look (team.Snapshot.released). A branch with no head GitHub knows is no
+    released claim, as the board counts none. It costs a call for the
+    branch's head and one for its commit and, once that commit is more than
+    a day old, the issue's comments and a call for each author whose
+    permission must be asked."""
+    sha = branch_sha(api, board.branch_name(branch))
+    last_commit = committed_at(api, sha) if sha else ""
+    if not last_commit or not claims.is_idle(last_commit, now or datetime.now(timezone.utc)):
+        return False
+    key = claims.key_of(board.branch_name(branch))
+    comments = api.get_all(f"/repos/{api.repo}/issues/{quoted(key)}/comments")
+    return claims.was_released(claims.latest_release(comments, may_write(api)), last_commit)
 
 
 def finished_draft(api, pull):

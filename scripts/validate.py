@@ -8,7 +8,7 @@
     python3 scripts/validate.py explore       the fast lane's searches, with their counts
     python3 scripts/validate.py guard         the guard against git's recorded answers
     python3 scripts/validate.py guard --record  run git first and write the answers
-    python3 scripts/validate.py deal          the dealing lane
+    python3 scripts/validate.py deal          the dealing lane, and the clerk against Pick
     python3 scripts/validate.py properties    the property lane
     python3 scripts/validate.py fast          every lane above but the recording
     python3 scripts/validate.py mutants       the mutation lane (minutes)
@@ -120,9 +120,17 @@ def run_guard(out, record=False):
 
 
 def run_deal(out):
+    """The dealing lane, then the clerk against Pick at every mix of labels
+    (dealing.picking_lane), as tests/test_validation_dealing.py runs them;
+    the first problems are printed, since one case says what is wrong and
+    thousands repeat it."""
     lane = dealing.run_lane()
     print(dealing.report(lane), file=out)
-    return 1 if lane.doubled_from_one_look else 0
+    picked = dealing.picking_lane()
+    for (guarantee, problem), (case, moves) in sorted(picked.items())[:8]:
+        print(f"{guarantee}: {problem}, in {case}: {moves}", file=out)
+    print(f"the clerk against Pick: {len(picked)} problems", file=out)
+    return 1 if lane.doubled_from_one_look or picked else 0
 
 
 def run_properties(out):

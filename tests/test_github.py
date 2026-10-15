@@ -1767,6 +1767,103 @@ class TeamClient(unittest.TestCase):
         })
         self.assertEqual(team.next_for(api, "w1"), "take 4")
 
+    def test_the_clerk_reads_whose_a_claim_is_from_its_claim_file_over_rest(self):
+        """F18: #7 still carries a's label, but the claim file b pushed names
+        b, so b carries the claim and a is told nothing of it; the file is
+        read once for the look, through the contents API, as the board
+        reads it."""
+        claim = "# Claim: #7\n\n- Worker: b\n- Branch: claude/7\n"
+        path = "/repos/o/r/contents/docs/agents/claims/7.md?ref=claude%2F7"
+        api, opener = client({
+            "/repos/o/r/issues?state=open&per_page=100": FakeAnswer([
+                {"number": 7, "state": "open", "labels": [{"name": "todo"}, {"name": "worker:a"}]}]),
+            "/repos/o/r/branches?per_page=100": FakeAnswer([{"name": "main"}, {"name": "claude/7"}]),
+            path: FakeAnswer({"type": "file", "content": base64.b64encode(claim.encode()).decode()}),
+            PULL_LIST: FakeAnswer([]),
+        })
+        self.assertEqual(api.claim_text("claude/7"), claim)
+        self.assertEqual(team.deals(api, ["a", "b"]), {"a": "none", "b": "carry 7"})
+        asked = [c.full_url.replace(github.API, "") for c in opener.calls]
+        self.assertEqual(asked.count(path), 2)
+
+    def test_a_claim_file_github_refuses_stops_the_look_and_one_it_has_not_got_leaves_the_label_to_name(self):
+        """F18's second review: a read GitHub refuses stops the look, as
+        every other read of the look does, rather than guess whose a claim
+        is from the labels and send a worker to another's, the finding over
+        again; a 404, no file on the branch yet, is no refusal, and the
+        issue's label then names the holder."""
+        path = "/repos/o/r/contents/docs/agents/claims/7.md?ref=claude%2F7"
+        answers = {
+            "/repos/o/r/issues?state=open&per_page=100": FakeAnswer([
+                {"number": 7, "state": "open", "labels": [{"name": "todo"}, {"name": "worker:a"}]}]),
+            "/repos/o/r/branches?per_page=100": FakeAnswer([{"name": "main"}, {"name": "claude/7"}]),
+            PULL_LIST: FakeAnswer([]),
+        }
+        for code in (403, 500):
+            api, opener = client({**answers, path: Refusal(code)})
+            with self.assertRaises(github.GitHubError):
+                team.deals(api, ["a", "b"])
+            asked = [c.full_url.replace(github.API, "") for c in opener.calls]
+            self.assertEqual(asked[-1], path, f"nothing is read after the refusal ({code})")
+        api, _ = client({**answers, path: Refusal(404)})
+        self.assertEqual(team.deals(api, ["a", "b"]), {"a": "carry 7", "b": "none"})
+
+
+class ClaimReleased(unittest.TestCase):
+    """github.claim_released, what the clerk asks of a claim whose labels and
+    pull request leave a release possible (team.Snapshot.released, F18's
+    review): the branch's head and its commit, and only once that commit is
+    more than a day old the issue's comments, with a permission asked per
+    author no association vouches for, as the board reads a release."""
+
+    REF_12 = "/repos/o/r/git/ref/heads/claude/12"
+    COMMIT_12 = f"/repos/o/r/git/commits/{HEAD_12}"
+    NOW = datetime(2026, 9, 20, 12, 0, tzinfo=timezone.utc)
+
+    def answers(self, comments, committed="2026-09-18T12:00:00Z"):
+        return {
+            self.REF_12: FakeAnswer({"object": {"sha": HEAD_12}}),
+            self.COMMIT_12: FakeAnswer({"sha": HEAD_12, "committer": {"date": committed}}),
+            COMMENTS_12: FakeAnswer(comments),
+        }
+
+    def asked(self, opener):
+        return [c.full_url.replace(github.API, "") for c in opener.calls]
+
+    def test_a_trusted_release_comment_after_a_day_idle_counts_and_costs_three_calls(self):
+        api, opener = client(self.answers([RELEASE_COMMENT]))
+        self.assertTrue(github.claim_released(api, "claude/12", self.NOW))
+        self.assertEqual(self.asked(opener), [self.REF_12, self.COMMIT_12, COMMENTS_12])
+        # The Client's method, on the clock: the commit is long past.
+        self.assertTrue(client(self.answers([RELEASE_COMMENT]))[0].released("claude/12"))
+
+    def test_a_branch_github_does_not_know_is_no_released_claim_and_costs_one_call(self):
+        api, opener = client({})
+        self.assertFalse(github.claim_released(api, "claude/12", self.NOW))
+        self.assertEqual(self.asked(opener), [self.REF_12])
+
+    def test_a_commit_within_the_day_asks_no_comments(self):
+        api, opener = client(self.answers([RELEASE_COMMENT], committed="2026-09-20T01:00:00Z"))
+        self.assertFalse(github.claim_released(api, "claude/12", self.NOW))
+        self.assertEqual(self.asked(opener), [self.REF_12, self.COMMIT_12])
+
+    def test_a_comment_sooner_than_a_day_after_the_commit_or_before_it_releases_nothing(self):
+        for created in ("2026-09-19T11:00:00Z", "2026-09-18T11:00:00Z"):
+            api, _ = client(self.answers([dict(RELEASE_COMMENT, created_at=created)]))
+            self.assertFalse(github.claim_released(api, "claude/12", self.NOW), created)
+
+    def test_an_author_no_association_vouches_for_is_asked_once_and_a_refusal_counts_as_no(self):
+        stranger = dict(RELEASE_COMMENT, author_association="NONE", user={"login": "sam"})
+        permission = "/repos/o/r/collaborators/sam/permission"
+        answers = self.answers([stranger, dict(stranger, created_at="2026-09-20T10:00:00Z")])
+        answers[permission] = FakeAnswer({"permission": "write", "role_name": "write"})
+        api, opener = client(answers)
+        self.assertTrue(github.claim_released(api, "claude/12", self.NOW))
+        self.assertEqual(self.asked(opener).count(permission), 1)
+        api, opener = client(self.answers([stranger]))
+        self.assertFalse(github.claim_released(api, "claude/12", self.NOW))
+        self.assertIn(permission, self.asked(opener))
+
 
 def world(answers, who_merges=gate.GATE, waits=None):
     api, opener = client(answers, waits)

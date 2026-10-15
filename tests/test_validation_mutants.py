@@ -17,7 +17,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from validation import cycle, invariants, model as M, mutants, oracle, verbs  # noqa: E402
+from validation import cycle, dealing, invariants, model as M, mutants, oracle, verbs  # noqa: E402
 from validation.verbs import DANA, SAM, Scope, Verb  # noqa: E402
 
 BOARD = Verb("board", "board", (cycle.SCHEDULE, ""))
@@ -32,6 +32,9 @@ BLOCKER = Verb("label-on", M.OWNER, (1, "blocker"))
 # sam's draft from a fork whose branch is named claude/1 there (F17).
 FORK_DRAFT = Verb("fork-pull", SAM, (1, False))
 FORKS = Scope(forks=True)
+# b's claim on #2 beside a's on #1, both listing one file, #2 then
+# labelled a blocker (F15's fifth review).
+LATER_BLOCKER = [CLAIM, Verb("claim", "b", (2,)), Verb("label-on", M.OWNER, (2, "blocker"))]
 
 
 def labelled(name):
@@ -125,6 +128,24 @@ TRACES = {
     "a fork's pull request named on a claim's row": (HELD + [FORK_DRAFT, BOARD], FORKS),
     "a fork's pull request taken for a claim's work": (HELD + [FORK_DRAFT, BOARD], FORKS),
     "a fork's pull request never told main moved": "the regression traces",
+    "the clerk carrying by labels alone": "the regression traces",
+    "a shared task dealt to none": "the regression traces",
+    "a shared task before one given alone": "the regression traces",
+    "a blocked claim carried": "the regression traces",
+    # Two rules of the clerk F18's trace does not reach are caught by the
+    # clerk's deal from one look against Pick (dealing.picking_lane), each
+    # on a case of that lane, judged with each worker's run alone too, as
+    # the lane's first setting is; so are the three the review of F18's
+    # fix added: a released claim, a Worker line naming nobody, and a run
+    # of one worker dealt over the run alone, which gives b a task the
+    # team's deal gives a.
+    "the clerk dealing blockers in number order": dealing.Case({1: ("todo",), 2: ("blocker",)}, 2, "none", ("a",)),
+    "the clerk dealing an issue labelled blocked": dealing.Case({1: ("blocked", "todo")}, 1, "none", ("a", "b")),
+    "the Overlaps landing a blocker after other work": (LATER_BLOCKER + [BOARD], SHARED),
+    "a released claim carried by its holder": dealing.Case({1: ("todo",)}, 1, "released", ("a", "b")),
+    "a Worker line naming nobody taken for a name": dealing.Case({1: ("worker:b",)}, 1, "blank", ("a", "b")),
+    "a run dealt as though it were the whole team": dealing.Case({1: ("todo", "worker:a", "worker:b")}, 1, "none",
+                                                                 ("a", "b")),
 }
 LANES = {lane.name: lane for lane in mutants.LANES}
 
@@ -147,10 +168,11 @@ class TheLane(unittest.TestCase):
         since at least one that undoes it (F7's first), and the reviews of
         F13's and F15's fixes more, and F17's fix one for each place that
         read a claim's pull request by its branch's name it has a check for
-        and its review one more, so the bound is widened to 80 and the count
-        noted."""
+        and its review one more, and F18's fix four, with three for the
+        rules F15's fifth review found no catcher of, so the bound is
+        widened to 80 and the count noted."""
         self.assertTrue(10 <= len(mutants.MUTANTS) <= 80)
-        self.assertEqual(len(mutants.MUTANTS), 68)
+        self.assertEqual(len(mutants.MUTANTS), 78)
         self.assertEqual(sorted(TRACES), sorted(mutants.MUTANTS))
 
     def test_every_mutant_names_a_rule_the_library_still_has(self):
@@ -188,12 +210,13 @@ class TheLane(unittest.TestCase):
                 required = [p for p in positional if p.default is p.empty]
                 replacement.bind(*range(len(required)), **{p.name: None for p in keywords if p.default is p.empty})
 
-    def test_the_lanes_come_first_then_the_searches_cheapest_first_then_every_label_mix(self):
+    def test_the_lanes_come_first_then_the_searches_cheapest_first_then_the_two_widest_lanes(self):
         self.assertEqual([c.name for c in mutants.CATCHERS[:len(LANES)]], list(LANES))
         self.assertEqual(mutants.SEARCHES[-3].name, "a stranger's pull request from a fork on a due claim")
         self.assertEqual(mutants.SEARCHES[-2].name, "the holder back between the halves of a run")
         self.assertEqual(mutants.SEARCHES[-1].name, "a stranger's marker on overlapping claims")
-        self.assertEqual(mutants.CATCHERS[len(LANES):-1], mutants.SEARCHES)
+        self.assertEqual(mutants.CATCHERS[len(LANES):-2], mutants.SEARCHES)
+        self.assertIs(mutants.CATCHERS[-2], mutants.PICKING)
         self.assertIs(mutants.CATCHERS[-1], mutants.LABEL_MIXES)
         self.assertEqual([s.known for s in mutants.CATCHERS if s.known], [], "nothing is known on the library now")
 
@@ -209,6 +232,12 @@ class EachMutantIsCaught(unittest.TestCase):
                     with mutants.switched_on(mutants.MUTANTS[name]):
                         found = lane.run()
                     self.assertNotEqual(set(found) - set(plain), set())
+                    continue
+                if isinstance(trace, dealing.Case):
+                    self.assertEqual(dealing.judge_case(trace, runs=True)[1], [],
+                                     "the library itself deals the case by Pick")
+                    with mutants.switched_on(mutants.MUTANTS[name]):
+                        self.assertNotEqual(dealing.judge_case(trace, runs=True)[1], [])
                     continue
                 steps, scope = trace
                 self.assertEqual(violations(steps, scope), [], "the library itself passes the trace")
@@ -262,6 +291,19 @@ class TheSearchesCatchWhatTheyWereAddedFor(unittest.TestCase):
                 continue
             with self.subTest(mutant=name), mutants.switched_on(mutant):
                 self.assertIn(mutant.guarantee, {g for g, _ in mutants.violations(search)})
+
+    def test_two_claims_on_one_file_the_later_a_blocker_catches_the_landing_order_without_blockers(self):
+        """The search added with F18's fix for a rule F15's fifth review
+        found no catcher of: it finds nothing on the library and, under the
+        mutant that lands a blocker by when it began, the Overlaps in
+        another order than the oracle's, which it can only while the later
+        claim's issue is labelled a blocker."""
+        search = next(s for s in mutants.SEARCHES if s.name == "two claims on one file, the later a blocker")
+        self.assertEqual(search.prefix[-1], Verb("label-on", M.OWNER, (2, "blocker")))
+        self.assertEqual(mutants.violations(search), {})
+        with mutants.switched_on(mutants.MUTANTS["the Overlaps landing a blocker after other work"]):
+            found = mutants.violations(search)
+        self.assertTrue(any(g == "G7" and "Overlaps" in detail for g, detail in found), found)
 
     def test_the_searches_from_f15_s_review_catch_its_mutants(self):
         """The lane credits these mutants to the searches F15's three

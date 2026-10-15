@@ -91,6 +91,7 @@ SPEC = {
               "request from a fork or from a branch it says nothing of, when the pull request was opened; work "
               "whose beginning nothing says, which can only be a claim with no pull request yet, counts as the "
               "newest, since a claim opens its draft at once (Work in the open), and the number breaks a tie",
+    "rename first": "Until the board has renamed the branch, a push of the name is still refused",
     "rename refused": "When GitHub refuses the rename for good, for a ruleset whose target takes in the claim "
                       "branches or a token without the right, the board says so once on the issue",
     "behind": "The board reads a branch as behind where GitHub calls its pull request behind, as it does under a "
@@ -101,6 +102,37 @@ SPEC = {
             "claim's, whatever its branch is called: the board lists it as a pull request of its own and tells it "
             "what it tells any other, it finishes no claim, marked ready or said finished, and a release's rename, "
             "which closes the claim's own pull request, leaves it open",
+    "pick": "Take an issue the Given to workers section gives you first. Else take a blocker, with or without todo, "
+            "that the Blockers section lists, that nobody has claimed and that no worker's label gives to another, "
+            "since a blocker comes before the Queue. Else take an open issue labelled todo that the Queue section "
+            "shows as unclaimed and that no open blocker stands in the way of.",
+    "never": "Wherever an issue is listed, never take an epic, which the coordinator plans (Planning), nor an issue "
+             "labelled blocked, which waits on a peer or the coordinator.",
+    "another's": "An issue with a branch `claude/<issue>` on origin, or a file `docs/agents/claims/<issue>.md` on the "
+                 "default branch, is another worker's, whatever its labels say.",
+    "several": "Where the labels of several workers name one issue, it is theirs alone in the same way: given to "
+               "each of them, and held by the first of them to claim it, whose Announce takes the others' labels off.",
+    "blocked": "- blocked: a worker waits on a peer or the coordinator.",
+    "held blocker": "a second worker that sees it held waits for it, helps on the one pull request by review, or "
+                    "takes other work it does not stand in the way of (Pick)",
+    "worker line": "the `- Worker:` line (or the older `- Account:`), whose name is the worker's label without the "
+                   "`worker:` prefix",
+    "nameless": "a line with nothing after it but markup or a note in parentheses names nobody: the board shows such "
+                "a claim as unnamed, since the file is there to be corrected, while the clerk and a release, which "
+                "must name a worker, take the one the issue's label names",
+    "own claim": "each takes its own claim that needs work, one whose claim file names it, whatever the issue's "
+                 "labels say, or, where no claim file names a worker, one whose issue's label names it, a "
+                 "worker:<name> label before the older spellings and the first by name among labels of one "
+                 "spelling, as a release names whose the claim was",
+    "not released": "but never a claim that counts as released, which no worker carries and none takes until the "
+                    "board has renamed its branch (Pick, Release)",
+    "not blocked": "nor a claim labelled blocked, whose holder waits on a peer or the coordinator (Labels) and so has "
+                   "nothing else to do",
+    "given first": "else the task it was given, one given to it alone first, and a task the labels of several workers "
+                   "give going to the first of them with nothing else to do",
+    "team's order": "The order is the team's: every worker the deal is for, in the workers' workflow every registered "
+                    "worker in Actions, whether or not the run starts it, so a worker outside the run keeps its share, "
+                    "and two runs that look at one state deal no issue to two workers.",
     "as it stands": "A pull request GitHub calls clean, unstable or has_hooks, a draft among them, since GitHub gives "
                     "a draft the word its branch has, is not held for being behind under the repository's rules, so "
                     "it hears nothing however far the default branch has moved; one GitHub calls dirty, in conflict "
@@ -111,8 +143,13 @@ CLAIM_PREFIX = "claude/"
 CLAIM_NUMBER = re.compile(r"[1-9][0-9]{0,8}")
 CLAIM_DIR = "docs/agents/claims/"
 FILES_HEADING = "## Files to touch"
-TODO, CLAIMED, IN_REVIEW, BLOCKER, EPIC = "todo", "claimed", "in-review", "blocker", "epic"
+TODO, CLAIMED, IN_REVIEW, BLOCKER, EPIC, BLOCKED = "todo", "claimed", "in-review", "blocker", "epic", "blocked"
 WORKER_SPELLINGS = ("worker:", "account:", "agent:")
+# The lines of a claim file that name its worker (SPEC["worker line"]),
+# and a note in parentheses after the name, which names nobody
+# (SPEC["nameless"]).
+WORKER_LINES = ("- Worker:", "- Account:")
+NOTE = re.compile(r"\([^()]*\)\s*$")
 IDLE_MINUTES = 24 * HOUR
 # Where work whose beginning nothing says stands, as the newest
 # (SPEC["oldest"]): after every minute the model counts.
@@ -189,9 +226,12 @@ def is_worker_label(name):
 def label_worker(labels):
     """The worker the issue's label names (spec, Labels: `worker:<name>`,
     with the older spellings read as the same label), worker: before the
-    older; None when no label names one. The oracle's own reading, so the
-    Worker cell is not judged by the library's labels.worker_of, which the
-    board renders it with."""
+    older and the first by name among the labels of one spelling; None
+    when no label names one. The oracle's own reading, so neither the
+    Worker cell nor the clerk's holder (claim_holder) is judged by the
+    library's labels.worker_of, which the board and the clerk use; one
+    function for both readers, so the two cannot drift apart (F18's second
+    review, which found a second copy of it)."""
     for prefix in WORKER_SPELLINGS:
         named = sorted(name[len(prefix):] for name in labels if name.startswith(prefix) and name[len(prefix):])
         if named:
@@ -618,3 +658,172 @@ def half_released(model):
                 stuck.append(number)
                 break
     return stuck
+
+
+# --- Pick and the clerk's deal (F18) ----------------------------------------
+
+def claim_file_worker(text):
+    """The worker a claim file names (SPEC["worker line"]): the name after
+    the first `- Worker:`, or the older `- Account:`, that names one, a
+    line with nothing after it but markup or a note in parentheses naming
+    nobody (SPEC["nameless"]); None for a file with no such line, or no
+    file. Markup is Markdown's code and emphasis marks around the name."""
+    for line in (text or "").splitlines():
+        for spelling in WORKER_LINES:
+            if line.startswith(spelling):
+                name = NOTE.sub("", line[len(spelling):]).strip().strip("`*_").strip()
+                if name:
+                    return name
+    return None
+
+
+def claim_holder(model, number):
+    """Whose the claim on the issue is (SPEC["own claim"]): the worker its
+    claim file names, whatever the issue's labels say, or, where no claim
+    file names a worker, the one its label names (label_worker); None for
+    an issue no claim branch holds, a claim that counts as released, which
+    is nobody's though its branch stands (SPEC["not released"]), or a claim
+    nothing names."""
+    if number not in held_numbers(model) or number not in model.issues:
+        return None
+    named = claim_file_worker(claim_file_text(model, branch_of(number), number))
+    return named or label_worker(model.issues[number].labels)
+
+
+def carries(model, worker):
+    """The claims Planning has the worker carry before it takes anything
+    (SPEC["own claim"]): its own, on an open issue, and not labelled
+    blocked, whose holder waits on a peer or the coordinator and so has
+    nothing else to do (SPEC["not blocked"], from F18's second review, which
+    found Planning silent on it, and SPEC["blocked"]). The clerk carries a
+    claim only when it needs work,
+    which the spec does not define; a claim with no pull request yet has
+    work, since Work in the open has its holder open the draft at once, and
+    the lane that holds the clerk to this (dealing.picking_lane) makes no
+    other kind."""
+    return [n for n in sorted(held_numbers(model)) if n in model.issues and model.issues[n].state == "open"
+            and BLOCKED not in model.issues[n].labels and claim_holder(model, n) == worker]
+
+
+def takeable(model, number):
+    """Whether Pick lets anyone take the issue: open, no epic and not
+    labelled blocked (SPEC["never"]), and nobody's claim, by neither a claim
+    branch, a claim file on the default branch (SPEC["another's"]) nor the
+    label claimed, which the board's Queue and Given to workers leave out.
+    A released claim's branch counts until the board renames it, though
+    the board lists its issue again: Pick reads the branch on origin as
+    another worker's, whatever the labels say, and the claim it would push
+    is refused until the rename (SPEC["rename first"]). Until F18's review
+    the oracle let anyone take such an issue, which no lane reached."""
+    issue = model.issues.get(number)
+    return (issue is not None and issue.state == "open" and EPIC not in issue.labels
+            and BLOCKED not in issue.labels and CLAIMED not in issue.labels
+            and branch_of(number) not in model.refs and claim_file_text(model, MAIN, number) is None)
+
+
+def given_alone(model, worker):
+    """The tasks the labels give the worker alone that Pick lets it take."""
+    return [n for n, names in sorted(given(model).items()) if names == [worker] and takeable(model, n)]
+
+
+def given_to_worker(model, number, worker):
+    """Whether the labels give the issue to the worker, alone or beside
+    others (SPEC["given"], SPEC["several"])."""
+    issue = model.issues.get(number)
+    return issue is not None and worker in workers_named(issue.labels)
+
+
+def pick(model, worker, taken=()):
+    """What Pick lets the worker take (SPEC["pick"]), leaving out what
+    another worker of its run was dealt (taken), as (place, numbers): the
+    first of Pick's places that holds anything for it, "given", the tasks
+    the labels give it, alone or beside others (SPEC["several"]),
+    "blocker", the unclaimed blockers no worker's label gives to another,
+    or "queue", the Queue's issues; ("", ()) when none does. No place has
+    an order of its own: the clerk takes the lowest number, which Pick
+    allows."""
+    def open_to(numbers):
+        return tuple(n for n in sorted(numbers) if n not in taken and takeable(model, n))
+    places = (("given", [n for n, names in given(model).items() if worker in names]),
+              ("blocker", [n for n in blockers(model) if not workers_named(model.issues[n].labels)]),
+              ("queue", queue(model)))
+    for place, numbers in places:
+        found = open_to(numbers)
+        if found:
+            return place, found
+    return "", ()
+
+
+def may_wait(model, place):
+    """Whether a worker whose place is the Queue may take nothing: an open
+    blocker it does not take stands in the way of work the spec does not
+    name, so the worker may wait for it or take other work
+    (SPEC["held blocker"], SPEC["pick"])."""
+    return place == "queue" and bool(blockers(model))
+
+
+def carry_problem(model, worker, number):
+    """Why the worker may not carry the claim on the issue: it is another's
+    or nobody's, its issue is closed, or it is labelled blocked and waits
+    on a peer or the coordinator (carries)."""
+    whose, issue = claim_holder(model, number), model.issues.get(number)
+    if whose != worker:
+        return f"{worker} carries #{number}, whose claim is {whose or 'nobody'}'s"
+    if issue.state != "open":
+        return f"{worker} carries #{number}, whose issue is closed"
+    return f"{worker} carries #{number}, labelled blocked, which waits on a peer or the coordinator"
+
+
+def deal_problems(model, team, moves):
+    """What a deal from one look gets wrong by Pick and Planning, for the
+    workers the deal is for in the team's order (team, SPEC["team's
+    order"]) and the clerk's answer for each (moves: "carry <n>", "take
+    <n>" or "none"), as sentences. Each worker with a claim of its own
+    carries one of its own and nothing else; one with none takes only from
+    its place by Pick, the others' takes left out, a task given to it alone
+    before any other (SPEC["given first"]), and takes nothing only where
+    Pick leaves it nothing or lets it wait (may_wait); a task given to
+    several goes to the first of them in the team's order with nothing
+    else to do, and to none only when each has something else; and no
+    issue goes to two workers. A run that starts only some of the team is
+    held to the team's deal by the lane (dealing.judge_case)."""
+    problems = []
+    dealt = {member: move.split() for member, move in moves.items()}
+    takes = {member: int(words[1]) for member, words in dealt.items() if words[0] == "take"}
+    carried = {member: int(words[1]) for member, words in dealt.items() if words[0] == "carry"}
+    for number in sorted(set(takes.values()) | set(carried.values())):
+        to = sorted(m for m in team if number in (takes.get(m), carried.get(m)))
+        if len(to) > 1:
+            problems.append(f"#{number} dealt to {', '.join(to)}")
+    for member in team:
+        own = carries(model, member)
+        if member in carried and carried[member] not in own:
+            problems.append(carry_problem(model, member, carried[member]))
+        elif own and member not in carried:
+            problems.append(f"{member} carries nothing though its claim on #{own[0]} is its own")
+        if own or member in carried:
+            continue
+        place, numbers = pick(model, member, {n for m, n in takes.items() if m != member})
+        alone = given_alone(model, member)
+        if member in takes and takes[member] not in numbers:
+            problems.append(f"{member} takes #{takes[member]}, where Pick has it take from "
+                            f"{place or 'nothing'} {list(numbers)}")
+        elif member in takes and alone and takes[member] not in alone:
+            problems.append(f"{member} takes #{takes[member]} though #{alone[0]} is given to it alone")
+        elif member not in takes and numbers and not may_wait(model, place):
+            problems.append(f"{member} takes nothing though Pick has it take from {place} {list(numbers)}")
+    def free_for_it(member):
+        return member not in carried and not (member in takes and given_to_worker(model, takes[member], member))
+    for number, names in sorted(given(model).items()):
+        named = [m for m in team if m in names]
+        if len(names) < 2 or not named or not takeable(model, number):
+            continue
+        taker = next((m for m in named if takes.get(m) == number), None)
+        idle = [m for m in named[:named.index(taker)] if free_for_it(m)] if taker else [m for m in named if free_for_it(m)]
+        if taker is None and idle:
+            problems.append(f"#{number}, given to {', '.join(names)}, goes to none though {idle[0]} "
+                            f"has nothing else to do")
+        elif idle:
+            problems.append(f"#{number} goes to {taker}, though {idle[0]} comes before it in the team "
+                            f"with nothing else to do")
+    return problems

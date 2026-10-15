@@ -93,6 +93,18 @@ class Rendering(unittest.TestCase):
         again = Snapshot.from_json(Snapshot.from_dict(snap).to_json())
         self.assertIs(again.claims["12"], board.UNREAD_CLAIM)
 
+    def test_a_claim_file_whose_worker_line_names_nobody_is_shown_as_unnamed(self):
+        """A hand may leave the name off the line ("- Worker: ", "- Worker:
+        (to be filled)"): until F18's review such a file named "", which the
+        row showed as the worker; it names nobody now, as a file with no
+        Worker line does, and the row says so rather than read a label,
+        since the file is there to be corrected."""
+        snap = snapshot()
+        snap["claim_issues"] = {"12": {"state": "open", "labels": ["claimed", "todo", "worker:nightly"]}}
+        for line in ("- Worker: ", "- Worker: (to be filled)", "- **Worker:** __", ""):
+            snap["claims"]["12"] = f"# Claim: #12\n\n{line}\n\n## Plan\n\nDescribe the board.\n"
+            self.assertIn("| #12 | claude/12 | unnamed | #40 |", board.render(snap), line)
+
     def test_a_claim_whose_issue_is_closed_says_so_and_asks_for_the_branch_to_go(self):
         snap = snapshot()
         snap["branches"].append("claude/3")

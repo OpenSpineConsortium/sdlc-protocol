@@ -115,6 +115,20 @@ class ReleaseText(unittest.TestCase):
         self.assertIn("a new claude/12 from main, and bring the commits in from released/12-aaaaaaa", text)
         self.assertTrue(text.endswith("put the label claimed back on the issue.\n"))
 
+    def test_the_release_names_the_label_s_worker_where_the_claim_file_names_nobody(self):
+        """A Worker line with nothing after it but markup or a note names
+        nobody (F18's review): the release then names the worker the
+        issue's label names, as it does where the file was not read, and
+        says nobody named one where no label does either; until the review
+        such a file named "", and the release said "held by "."""
+        for line in ("- Worker: ", "- Worker: (to be filled)", "- **Worker:** __"):
+            snap = idle_claim(claims={"12": CLAIM_TEXT.replace("- Worker: nightly", line)})
+            self.assertEqual(coordinator.holder(snap, "12"), "nightly", line)
+            self.assertIn("held by nightly,", coordinator.release_text(snap, "12", coordinator.Holding(1, "x", ())))
+        snap = idle_claim(claims={"12": CLAIM_TEXT.replace("- Worker: nightly", "- Worker: ")},
+                          claim_issues={"12": {"state": "open", "labels": ["claimed", "todo"]}})
+        self.assertEqual(coordinator.holder(snap, "12"), "a worker nobody named")
+
     def test_the_release_names_the_claim_s_own_pull_request_never_a_fork_s(self):
         """F17: the pull request a release names is the claim's own, whatever
         a fork's branch is called."""
