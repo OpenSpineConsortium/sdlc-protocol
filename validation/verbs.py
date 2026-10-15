@@ -121,9 +121,12 @@ class Scope(NamedTuple):
     other verbs between them, whether workers may be careless (a lease
     onto another's claim, a misnamed claim, and the owner's push of one by
     hand, which meets no guard), the files each issue's claim lists, by
-    issue, whether a stranger opens pull requests from a fork whose
-    branch bears a claim's name (F17), and whether a stranger opens them
-    from a claim's own branch here (F19)."""
+    issue, the clock skews, in hours, a worker's commits may carry (F8: a
+    pusher whose clock is ahead or behind stamps its commits so, and the
+    committer date is what idleness is read from), whether a stranger
+    opens pull requests from a fork whose branch bears a claim's name
+    (F17), and whether a stranger opens them from a claim's own branch
+    here (F19)."""
 
     workers: tuple = ("a", "b")
     issues: tuple = (1,)
@@ -134,6 +137,7 @@ class Scope(NamedTuple):
     careless: bool = False
     files: tuple = ()
     split_board: bool = False
+    skews: tuple = ()
     forks: bool = False
     strangers: bool = False
 
@@ -287,16 +291,37 @@ def merge_main(model, worker, number):
     return touch_pull(model, ref, pushed(model, worker, ref, sha, f"git push origin {ref}"))
 
 
+def patch_of(model, sha):
+    """A commit's change as git's patch-id reads it, near enough: each
+    path it changes, with the text before and after."""
+    record = model.commits[sha]
+    parent = record.parents[0] if record.parents else ""
+    before, after = model.tree(parent), dict(record.tree)
+    return tuple((path, before.get(path), after.get(path)) for path in model.changed(parent, sha))
+
+
 def rebase_main(model, worker, number):
     """Fetch, replay the branch's own commits onto main, and push with a
-    lease, the one forced push the protocol allows."""
+    lease, the one forced push the protocol allows. A merge commit the
+    branch holds, one that brought main in, is dropped, as git's rebase
+    drops it (the git world runs `git rebase origin/main`): replayed, its
+    change against its first parent would write main's old text over main
+    as it is now, where git keeps main's. A commit whose patch main holds
+    already (patch_of: a copy carried on from a released branch, or the
+    same change made on another claim at the same hour) is dropped too,
+    as git's rebase drops a commit whose patch-id is upstream: replayed,
+    it would write the commit's text over main's newer text."""
     model.fetch(worker)
     ref = claim_ref(number)
     head, main = model.refs[ref], model.refs[MAIN]
     own = model.in_order(model.ancestors(head) - model.ancestors(main))
+    upstream = {patch_of(model, sha) for sha in model.ancestors(main) - model.ancestors(head)
+                if len(model.commits[sha].parents) <= 1}
     tip = main
     for sha in own:
         record = model.commits[sha]
+        if len(record.parents) > 1 or patch_of(model, sha) in upstream:
+            continue
         parent = record.parents[0] if record.parents else ""
         tree = model.tree(tip)
         for path in model.changed(parent, sha):
@@ -332,7 +357,9 @@ def carry_on(model, worker, number, released_ref):
     """The next worker carries a released claim's work on: it cherry-picks
     the released branch's commits after its own claim commit, all but the
     old claim file, which its own claim file replaces (.claude/skills/claim
-    in the template), and pushes."""
+    in the template), and pushes. A merge commit on the released branch
+    is skipped, as git's cherry-pick skips it (the git world's -n pick of
+    one fails with no -m), since what it merged in is on main already."""
     ref = claim_ref(number)
     head, main = model.refs[ref], model.refs[MAIN]
     own = model.in_order(model.ancestors(model.refs[released_ref]) - model.ancestors(main))
@@ -340,6 +367,8 @@ def carry_on(model, worker, number, released_ref):
     tip = head
     for sha in own:
         record, parent = model.commits[sha], (model.commits[sha].parents or ("",))[0]
+        if len(record.parents) > 1:
+            continue
         changed = [p for p in model.changed(parent, sha) if p != claim_path]
         if not changed:
             continue
@@ -539,6 +568,8 @@ def apply(model, verb, scope=Scope()):
 
 def act(model, verb, scope):
     name, actor, args = verb
+    if model.store is not None and model.store.handles(name):
+        return model.store.act(model, verb, scope)
     if name == "wait":
         model.now += args[0] * HOUR
         return Outcome(True, "waited")
@@ -680,6 +711,7 @@ def worker_verbs(model, scope, number, worker, pull):
     found = []
     if issue.state == "open" and ref not in model.refs:
         found.append(Verb("claim", worker, (number,)))
+        found += [Verb("claim", worker, (number, skew * HOUR)) for skew in scope.skews]
         for old in released_refs(model, number):
             if model.creators.get(old) == worker:
                 found.append(Verb("push-old-head", worker, (number, old)))
@@ -691,6 +723,7 @@ def worker_verbs(model, scope, number, worker, pull):
     if holder(model, number) != worker:
         return found
     found.append(Verb("commit", worker, (number,)))
+    found += [Verb("commit", worker, (number, skew * HOUR)) for skew in scope.skews]
     if f"{CLAIM_DIR}/{number}.md" in model.tree(model.refs[ref]):
         found.append(Verb("drop-claim-file", worker, (number,)))
     if not model.is_ancestor(model.refs[MAIN], model.refs[ref]):

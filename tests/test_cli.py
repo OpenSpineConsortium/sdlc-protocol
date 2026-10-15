@@ -19,7 +19,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from sdlc_protocol import board, cli, guard, vendoring  # noqa: E402
+from sdlc_protocol import board, cli, guard, team, vendoring  # noqa: E402
 from sdlc_protocol.adapters import github  # noqa: E402
 
 FIXTURES = ROOT / "tests" / "fixtures"
@@ -239,6 +239,7 @@ class FakeClient:
     def __init__(self, token="t", repo=REPO):
         self.token, self.repo = token, repo
         self.issues, self.branches, self.labels, self.sub_issues = {}, set(), {"todo", "epic"}, []
+        self.claims = {}
         self.next_number = 100
 
     def add_issue(self, number, labels=(), body="", state="open", title="t"):
@@ -260,6 +261,12 @@ class FakeClient:
 
     def check_runs(self, sha):
         return []
+
+    def claim_text(self, branch):
+        return self.claims.get(branch)
+
+    def released(self, branch):
+        return False
 
     def create_label(self, name, colour):
         self.labels.add(name)
@@ -386,6 +393,21 @@ class TeamWithTheRegistry(unittest.TestCase):
                              (0, "take 5\n", ""))
         self.assertIn("worker:web", api.labels)
 
+    def test_next_answers_a_worker_the_registry_lists_outside_actions(self):
+        """A session or a routine the registry names asks with the workers
+        in Actions as its team and is dealt after them (team.next_for adds
+        it to the team), so the command answers in one line rather than
+        failing on a name the deal does not hold."""
+        api = FakeClient()
+        api.add_issue(4, ["todo"])
+        with tempfile.TemporaryDirectory() as folder:
+            where = registry(folder, {"name": "api", "runs": "actions"}, {"name": "alice", "runs": "session"})
+            self.assertEqual(self.through_the_adapter(["next", "--agent", "alice", "--registry", where], api),
+                             (0, "none\n", ""))
+            api.add_issue(5, ["todo"])
+            self.assertEqual(self.through_the_adapter(["next", "--agent", "alice", "--registry", where], api),
+                             (0, "take 5\n", ""))
+
     def test_deal_prints_every_run_workers_move_from_one_look(self):
         api = FakeClient()
         api.add_issue(4, ["todo"], body="### Files likely touched\n\nweb/a.js\n")
@@ -406,6 +428,24 @@ class TeamWithTheRegistry(unittest.TestCase):
             self.assertEqual(api.labels, {"todo", "epic", "worker:api", "worker:spare", "worker:web"})
             code, out, _ = self.through_the_adapter(["deal", "--registry", where, "--workers", '["web"]'], api)
         self.assertEqual((code, json.loads(out)), (0, {"web": "take 6"}), "spare is still dealt #4")
+
+    def test_deal_carries_a_claim_by_its_file_and_gives_a_shared_task_once(self):
+        # Whose a claim is, its claim file says, whatever the labels say; a
+        # task the labels of several workers give goes to the first of them,
+        # in the registry's order, with nothing else to do (F18).
+        api = FakeClient()
+        self.assertIsInstance(api, team.Client)
+        api.add_issue(4, ["claimed", "worker:api"])
+        api.branches.add("claude/4")
+        api.claims["claude/4"] = "# Claim: #4\n\n- Worker: web\n"
+        api.add_issue(5, ["todo", "worker:api", "worker:spare", "worker:web"])
+        api.add_issue(6, ["todo"])
+        with tempfile.TemporaryDirectory() as folder:
+            where = registry(folder, {"name": "api", "runs": "actions"}, {"name": "spare", "runs": "actions"},
+                             {"name": "web", "runs": "actions"})
+            code, out, err = self.through_the_adapter(["deal", "--registry", where], api)
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(json.loads(out), {"api": "take 5", "spare": "take 6", "web": "carry 4"})
 
     def test_deal_refuses_a_worker_list_the_registry_does_not_hold(self):
         shape = 'team: --workers must be a JSON list of the registry\'s workers in Actions, ["api"]'

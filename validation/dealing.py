@@ -31,8 +31,9 @@ worker's own answer are judged by the spec's Pick and Planning as the
 oracle reads them (picking_lane, below), and so is a regression trace's
 deal wherever no claim has a pull request yet (pick_problems). As built
 until the fix the clerk read whose a claim is, and whose a task is, from
-the labels alone, and the lane found twelve problems in 4,888 of its
-20,480 deals.
+the labels alone, and the lane found fifteen problems in 7,256 of its
+30,720 deals (twelve in 4,888 of 20,480 before F18's review added the
+nameless and the released claim; DESIGN.md's F18 entry has the figures).
 """
 
 import itertools
@@ -186,12 +187,20 @@ def report(lane):
 # one of each mix beside a task given to a alone, dealt to a and b in
 # either order, which holds a task given alone before one given to
 # several. The issue of each mix is held, in turn, by no claim, by a's
-# claim or b's, each claim file naming its worker, and by a claim whose
-# file names nobody, where the issue's labels say whose it is. No claim
-# has a pull request yet, so each has work for its holder (oracle.carries).
+# claim or b's, each claim file naming its worker, by a claim whose file
+# has no Worker line, or one whose Worker line names nobody, where the
+# issue's labels say whose it is, and by a's claim released a day after
+# its last commit, by the coordinator's comment, whose branch the board
+# has not yet renamed: released where the mix leaves the label claimed
+# off, as the board counts it, and a's held claim where it does not. No
+# claim has a pull request yet, so each has work for its holder
+# (oracle.carries). In the first setting a run that starts one of the
+# two is dealt too, and held to the team's deal (SPEC["team's order"]).
 
 TEAMS = (("a", "b"), ("b", "a"))
-CLAIM_STATES = ("none", "a", "b", "nobody")
+CLAIM_STATES = ("none", "a", "b", "nobody", "blank", "released")
+# What a hand writes on a claim file's Worker line that names nobody.
+BLANK_LINE = "- Worker: (to be named)"
 
 
 class Case(NamedTuple):
@@ -203,9 +212,11 @@ class Case(NamedTuple):
     def describe(self):
         issues = "; ".join(f"#{n} labelled {', '.join(sorted(names)) or 'nothing'}"
                            for n, names in sorted(self.labels.items()))
-        claim = "no claim" if self.state == "none" else (
-            f"a claim on #{self.held} naming nobody" if self.state == "nobody" else
-            f"{self.state}'s claim on #{self.held}")
+        claim = {"none": "no claim",
+                 "nobody": f"a claim on #{self.held} with no Worker line",
+                 "blank": f"a claim on #{self.held} whose Worker line names nobody",
+                 "released": f"a's claim on #{self.held} released, its branch not yet renamed"
+                 }.get(self.state, f"{self.state}'s claim on #{self.held}")
         return f"{issues}; {claim}; dealt to {', '.join(self.team)}"
 
 
@@ -216,37 +227,55 @@ def label_mixes():
 
 
 def picking_cases():
+    """Each case, and whether its runs are dealt too: the first setting's."""
     for names in label_mixes():
         for state in CLAIM_STATES:
             for order in TEAMS:
-                yield Case({1: tuple(names)}, 1, state, order)
-            yield Case({1: ("todo",), 2: tuple(names)}, 2, state, ("a",))
+                yield Case({1: tuple(names)}, 1, state, order), True
+            yield Case({1: ("todo",), 2: tuple(names)}, 2, state, ("a",)), False
             for order in TEAMS:
-                yield Case({1: tuple(names), 2: ("todo", "worker:a")}, 1, state, order)
+                yield Case({1: tuple(names), 2: ("todo", "worker:a")}, 1, state, order), False
 
 
-def push_claim(model, worker, number, named=True):
+def push_claim(model, worker, number, line=None):
     """worker's claim on the issue, its claim file naming the worker or,
-    with named false, nobody, as a file a hand wrote without the line."""
+    with line given, with that in place of its Worker line, as a file a
+    hand wrote: "" leaves the line out."""
     verbs.claim(model, worker, number, ())
-    if not named:
+    if line is not None:
         ref, path = oracle.branch_of(number), f"{oracle.CLAIM_DIR}{number}.md"
         tree = model.tree(model.refs[ref])
-        tree[path] = "".join(line for line in tree[path].splitlines(True) if not line.startswith("- Worker:"))
+        tree[path] = "".join(line + "\n" if old.startswith("- Worker:") and line else old
+                             for old in tree[path].splitlines(True) if line or not old.startswith("- Worker:"))
         model.refs[ref] = model.commit((model.refs[ref],), worker, tree, f"Name nobody on #{number}")
+
+
+def release(model, number):
+    """The coordinator's release comment on the issue, a day and an hour
+    after the claim's last commit, as the board's run posts it; the
+    labels are the case's, and the board has not renamed the branch."""
+    model.now += 25 * M.HOUR
+    model.add_comment(number, M.Comment(M.BOT, "NONE", model.now, f"{oracle.RELEASE_MARKER}\nreleased"))
 
 
 def case_model(case):
     model = M.seeded(tuple(sorted(case.labels)), writers=("a", "b"))
     for number, names in case.labels.items():
         model.issues[number].labels = frozenset(names)
-    if case.state != "none":
-        push_claim(model, "a" if case.state == "nobody" else case.state, case.held, named=case.state != "nobody")
+    if case.state in ("a", "b"):
+        push_claim(model, case.state, case.held)
+    elif case.state in ("nobody", "blank"):
+        push_claim(model, "a", case.held, "" if case.state == "nobody" else BLANK_LINE)
+    elif case.state == "released":
+        push_claim(model, "a", case.held)
+        release(model, case.held)
     return model
 
 
-def judge_case(case):
-    """The problems of one case's deal, and of each worker's own answer."""
+def judge_case(case, runs=False):
+    """The problems of one case's deal, of each worker's own answer and,
+    with runs, of a run that starts one worker of the team alone, which
+    the team's deal binds (SPEC["team's order"])."""
     model = case_model(case)
     client = ModelClient(model)
     moves = team.deals(client, list(case.team))
@@ -254,7 +283,12 @@ def judge_case(case):
     for member in case.team:
         alone = team.next_for(ModelClient(model), member, list(case.team))
         if alone != moves[member]:
-            problems.append(f"{member} asking alone is told {alone}, where the run's deal gives it {moves[member]}")
+            problems.append(f"{member} asking alone is told {alone}, where the team's deal gives it {moves[member]}")
+        if runs and len(case.team) > 1:
+            run = team.deal_moves(ModelClient(model), list(case.team), run=[member])
+            if run != {member: moves[member]}:
+                problems.append(f"a run of {member} alone is dealt {run}, where the team's deal gives it "
+                                f"{moves[member]}")
     return moves, problems
 
 
@@ -262,8 +296,8 @@ def picking_lane():
     """Every case's problems, as the mutation lane reads a lane: by
     (guarantee, problem), the first case that showed it."""
     found = {}
-    for case in picking_cases():
-        moves, problems = judge_case(case)
+    for case, runs in picking_cases():
+        moves, problems = judge_case(case, runs)
         for problem in problems:
             found.setdefault(("G14", problem), (case.describe(), str(moves)))
     return found

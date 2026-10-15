@@ -1,0 +1,1233 @@
+{
+ "searches": [
+  {
+   "space": "E-faults",
+   "depth": 4,
+   "states": 43603,
+   "transitions": 104940,
+   "seconds": 74.0,
+   "stopped": false,
+   "violations": [
+    {
+     "guarantee": "G1",
+     "detail": "the board names a for claude/1, whose holder is b",
+     "count": 12,
+     "trace": [
+      "wait clock 25",
+      "board board schedule  ('ref-delete-422',)",
+      "claim b 1",
+      "lease-onto a 1"
+     ],
+     "found_at": 4,
+     "shortened_to": 4,
+     "file": "traces/G1-E-faults-1.json",
+     "finding": "F7"
+    },
+    {
+     "guarantee": "G1",
+     "detail": "the board names b for claude/1, whose holder is a",
+     "count": 16096,
+     "trace": [
+      "lease-onto b 1"
+     ],
+     "found_at": 1,
+     "shortened_to": 1,
+     "file": "traces/G1-E-faults-2.json",
+     "finding": "F7"
+    }
+   ],
+   "differences": []
+  }
+ ],
+ "soak": {
+  "chunks": [
+   {
+    "seeds": [
+     0,
+     49
+    ],
+    "walks": 50,
+    "steps": 10000,
+    "seconds": 23.3,
+    "violations": [],
+    "counts": {
+     "board": 4672,
+     "claim": 813,
+     "close-issue": 192,
+     "comment:claim-released": 620,
+     "comment:idle": 98,
+     "comment:main-moved": 24,
+     "comment:overlap": 380,
+     "comment:released": 625,
+     "comment:rename-refused": 12,
+     "commit": 238,
+     "delete-ref": 62,
+     "drop-claim-file": 104,
+     "finished": 54,
+     "label-off": 759,
+     "label-on": 1096,
+     "mark-ready": 78,
+     "marker": 299,
+     "merge": 18,
+     "merge-main": 32,
+     "move-main": 96,
+     "open-draft": 194,
+     "overlap-marker": 137,
+     "overlap-quote": 105,
+     "plan": 321,
+     "push-old-head": 64,
+     "rebase-main": 24,
+     "rename": 690,
+     "rename-back": 86,
+     "reopen": 17,
+     "tidy": 85,
+     "wait": 1093
+    }
+   },
+   {
+    "seeds": [
+     50,
+     99
+    ],
+    "walks": 50,
+    "steps": 10000,
+    "seconds": 23.7,
+    "violations": [],
+    "counts": {
+     "board": 4620,
+     "claim": 849,
+     "close-issue": 178,
+     "comment:claim-released": 649,
+     "comment:idle": 102,
+     "comment:main-moved": 19,
+     "comment:overlap": 426,
+     "comment:released": 652,
+     "comment:rename-refused": 17,
+     "commit": 256,
+     "delete-ref": 58,
+     "drop-claim-file": 104,
+     "finished": 58,
+     "label-off": 773,
+     "label-on": 1118,
+     "mark-ready": 71,
+     "marker": 337,
+     "merge": 22,
+     "merge-main": 31,
+     "move-main": 78,
+     "open-draft": 229,
+     "overlap-marker": 102,
+     "overlap-quote": 133,
+     "plan": 292,
+     "push-old-head": 65,
+     "rebase-main": 27,
+     "rename": 711,
+     "rename-back": 83,
+     "reopen": 22,
+     "tidy": 66,
+     "wait": 1067
+    }
+   },
+   {
+    "seeds": [
+     100,
+     149
+    ],
+    "walks": 50,
+    "steps": 10000,
+    "seconds": 21.3,
+    "violations": [],
+    "counts": {
+     "board": 4651,
+     "claim": 838,
+     "close-issue": 198,
+     "comment:claim-released": 643,
+     "comment:idle": 94,
+     "comment:main-moved": 39,
+     "comment:overlap": 414,
+     "comment:released": 646,
+     "comment:rename-refused": 15,
+     "commit": 255,
+     "delete-ref": 71,
+     "drop-claim-file": 108,
+     "finished": 44,
+     "label-off": 789,
+     "label-on": 1112,
+     "mark-ready": 68,
+     "marker": 312,
+     "merge": 19,
+     "merge-main": 27,
+     "move-main": 69,
+     "open-draft": 213,
+     "overlap-marker": 104,
+     "overlap-quote": 144,
+     "plan": 301,
+     "push-old-head": 77,
+     "rebase-main": 37,
+     "rename": 712,
+     "rename-back": 84,
+     "reopen": 20,
+     "tidy": 92,
+     "wait": 1045
+    }
+   },
+   {
+    "seeds": [
+     150,
+     199
+    ],
+    "walks": 50,
+    "steps": 10000,
+    "seconds": 23.4,
+    "violations": [],
+    "counts": {
+     "board": 4678,
+     "claim": 837,
+     "close-issue": 171,
+     "comment:claim-released": 635,
+     "comment:idle": 102,
+     "comment:main-moved": 35,
+     "comment:overlap": 398,
+     "comment:released": 639,
+     "comment:rename-refused": 17,
+     "commit": 276,
+     "delete-ref": 66,
+     "drop-claim-file": 109,
+     "finished": 63,
+     "label-off": 722,
+     "label-on": 1038,
+     "mark-ready": 72,
+     "marker": 299,
+     "merge": 29,
+     "merge-main": 44,
+     "move-main": 80,
+     "open-draft": 207,
+     "overlap-marker": 98,
+     "overlap-quote": 145,
+     "plan": 301,
+     "push-old-head": 70,
+     "rebase-main": 39,
+     "rename": 725,
+     "rename-back": 104,
+     "reopen": 12,
+     "tidy": 81,
+     "wait": 1060
+    }
+   },
+   {
+    "seeds": [
+     200,
+     249
+    ],
+    "walks": 50,
+    "steps": 10000,
+    "seconds": 25.4,
+    "violations": [],
+    "counts": {
+     "board": 4626,
+     "claim": 819,
+     "close-issue": 181,
+     "comment:claim-released": 604,
+     "comment:idle": 111,
+     "comment:main-moved": 22,
+     "comment:overlap": 400,
+     "comment:released": 610,
+     "comment:rename-refused": 16,
+     "commit": 295,
+     "delete-ref": 61,
+     "drop-claim-file": 117,
+     "finished": 52,
+     "label-off": 729,
+     "label-on": 1091,
+     "mark-ready": 88,
+     "marker": 318,
+     "merge": 28,
+     "merge-main": 31,
+     "move-main": 70,
+     "open-draft": 212,
+     "overlap-marker": 98,
+     "overlap-quote": 163,
+     "plan": 293,
+     "push-old-head": 69,
+     "rebase-main": 30,
+     "rename": 672,
+     "rename-back": 84,
+     "reopen": 14,
+     "tidy": 54,
+     "wait": 1083
+    }
+   },
+   {
+    "seeds": [
+     250,
+     299
+    ],
+    "walks": 50,
+    "steps": 10000,
+    "seconds": 24.4,
+    "violations": [],
+    "counts": {
+     "board": 4612,
+     "claim": 929,
+     "close-issue": 159,
+     "comment:claim-released": 735,
+     "comment:idle": 92,
+     "comment:main-moved": 27,
+     "comment:overlap": 418,
+     "comment:released": 739,
+     "comment:rename-refused": 23,
+     "commit": 244,
+     "delete-ref": 53,
+     "drop-claim-file": 87,
+     "finished": 49,
+     "label-off": 811,
+     "label-on": 1125,
+     "mark-ready": 67,
+     "marker": 327,
+     "merge": 20,
+     "merge-main": 28,
+     "move-main": 57,
+     "open-draft": 205,
+     "overlap-marker": 119,
+     "overlap-quote": 146,
+     "plan": 288,
+     "push-old-head": 59,
+     "rebase-main": 28,
+     "rename": 828,
+     "rename-back": 111,
+     "reopen": 21,
+     "tidy": 68,
+     "wait": 1089
+    }
+   },
+   {
+    "seeds": [
+     300,
+     349
+    ],
+    "walks": 50,
+    "steps": 10000,
+    "seconds": 21.2,
+    "violations": [],
+    "counts": {
+     "board": 4619,
+     "claim": 846,
+     "close-issue": 168,
+     "comment:claim-released": 647,
+     "comment:idle": 95,
+     "comment:main-moved": 28,
+     "comment:overlap": 425,
+     "comment:released": 649,
+     "comment:rename-refused": 14,
+     "commit": 284,
+     "delete-ref": 84,
+     "drop-claim-file": 111,
+     "finished": 57,
+     "label-off": 755,
+     "label-on": 1079,
+     "mark-ready": 69,
+     "marker": 342,
+     "merge": 20,
+     "merge-main": 32,
+     "move-main": 50,
+     "open-draft": 210,
+     "overlap-marker": 105,
+     "overlap-quote": 136,
+     "plan": 320,
+     "push-old-head": 89,
+     "rebase-main": 27,
+     "rename": 725,
+     "rename-back": 83,
+     "reopen": 27,
+     "tidy": 69,
+     "wait": 1077
+    }
+   },
+   {
+    "seeds": [
+     350,
+     399
+    ],
+    "walks": 50,
+    "steps": 10000,
+    "seconds": 22.0,
+    "violations": [],
+    "counts": {
+     "board": 4646,
+     "claim": 823,
+     "close-issue": 186,
+     "comment:claim-released": 625,
+     "comment:idle": 108,
+     "comment:main-moved": 20,
+     "comment:overlap": 403,
+     "comment:released": 631,
+     "comment:rename-refused": 20,
+     "commit": 271,
+     "delete-ref": 55,
+     "drop-claim-file": 97,
+     "finished": 56,
+     "label-off": 766,
+     "label-on": 1090,
+     "mark-ready": 68,
+     "marker": 333,
+     "merge": 19,
+     "merge-main": 27,
+     "move-main": 62,
+     "open-draft": 221,
+     "overlap-marker": 114,
+     "overlap-quote": 119,
+     "plan": 304,
+     "push-old-head": 63,
+     "rebase-main": 21,
+     "rename": 693,
+     "rename-back": 84,
+     "reopen": 17,
+     "tidy": 75,
+     "wait": 1101
+    }
+   },
+   {
+    "seeds": [
+     450,
+     499
+    ],
+    "walks": 50,
+    "steps": 10000,
+    "seconds": 23.3,
+    "violations": [],
+    "counts": {
+     "board": 4662,
+     "claim": 880,
+     "close-issue": 177,
+     "comment:claim-released": 671,
+     "comment:idle": 103,
+     "comment:main-moved": 29,
+     "comment:overlap": 386,
+     "comment:released": 676,
+     "comment:rename-refused": 28,
+     "commit": 304,
+     "delete-ref": 61,
+     "drop-claim-file": 109,
+     "finished": 48,
+     "label-off": 761,
+     "label-on": 1101,
+     "mark-ready": 71,
+     "marker": 338,
+     "merge": 16,
+     "merge-main": 25,
+     "move-main": 57,
+     "open-draft": 203,
+     "overlap-marker": 89,
+     "overlap-quote": 116,
+     "plan": 290,
+     "push-old-head": 65,
+     "rebase-main": 14,
+     "rename": 740,
+     "rename-back": 85,
+     "reopen": 15,
+     "tidy": 66,
+     "wait": 1096
+    }
+   },
+   {
+    "seeds": [
+     500,
+     549
+    ],
+    "walks": 50,
+    "steps": 10000,
+    "seconds": 21.8,
+    "violations": [],
+    "counts": {
+     "board": 4663,
+     "claim": 979,
+     "close-issue": 152,
+     "comment:claim-released": 774,
+     "comment:idle": 93,
+     "comment:main-moved": 26,
+     "comment:overlap": 406,
+     "comment:released": 778,
+     "comment:rename-refused": 18,
+     "commit": 245,
+     "delete-ref": 44,
+     "drop-claim-file": 94,
+     "finished": 42,
+     "label-off": 838,
+     "label-on": 1179,
+     "mark-ready": 68,
+     "marker": 332,
+     "merge": 13,
+     "merge-main": 26,
+     "move-main": 52,
+     "open-draft": 206,
+     "overlap-marker": 113,
+     "overlap-quote": 123,
+     "plan": 300,
+     "push-old-head": 48,
+     "rebase-main": 27,
+     "rename": 853,
+     "rename-back": 88,
+     "reopen": 18,
+     "tidy": 52,
+     "wait": 1073
+    }
+   },
+   {
+    "seeds": [
+     400,
+     449
+    ],
+    "walks": 50,
+    "steps": 10000,
+    "seconds": 21.7,
+    "violations": [
+     {
+      "seed": 427,
+      "step": 159,
+      "guarantee": "G9",
+      "detail": "a second run with nothing new wrote: ['POST /issues/103/comments']",
+      "shortened_to": 124,
+      "file": "traces/G9-soak-427-159.json"
+     }
+    ],
+    "counts": {
+     "board": 4613,
+     "claim": 868,
+     "close-issue": 179,
+     "comment:claim-released": 670,
+     "comment:idle": 100,
+     "comment:main-moved": 13,
+     "comment:overlap": 375,
+     "comment:released": 683,
+     "comment:rename-refused": 24,
+     "commit": 237,
+     "delete-ref": 75,
+     "drop-claim-file": 102,
+     "finished": 59,
+     "label-off": 799,
+     "label-on": 1128,
+     "mark-ready": 58,
+     "marker": 342,
+     "merge": 13,
+     "merge-main": 28,
+     "move-main": 61,
+     "open-draft": 207,
+     "overlap-marker": 105,
+     "overlap-quote": 131,
+     "plan": 312,
+     "push-old-head": 85,
+     "rebase-main": 20,
+     "rename": 745,
+     "rename-back": 83,
+     "reopen": 21,
+     "tidy": 63,
+     "wait": 1103
+    }
+   },
+   {
+    "seeds": [
+     600,
+     649
+    ],
+    "walks": 50,
+    "steps": 10000,
+    "seconds": 23.2,
+    "violations": [],
+    "counts": {
+     "board": 4694,
+     "claim": 860,
+     "close-issue": 172,
+     "comment:claim-released": 663,
+     "comment:idle": 108,
+     "comment:main-moved": 22,
+     "comment:overlap": 446,
+     "comment:released": 666,
+     "comment:rename-refused": 26,
+     "commit": 265,
+     "delete-ref": 51,
+     "drop-claim-file": 105,
+     "finished": 59,
+     "label-off": 766,
+     "label-on": 1101,
+     "mark-ready": 70,
+     "marker": 334,
+     "merge": 18,
+     "merge-main": 19,
+     "move-main": 51,
+     "open-draft": 208,
+     "overlap-marker": 110,
+     "overlap-quote": 119,
+     "plan": 314,
+     "push-old-head": 62,
+     "rebase-main": 20,
+     "rename": 736,
+     "rename-back": 87,
+     "reopen": 14,
+     "tidy": 70,
+     "wait": 1079
+    }
+   },
+   {
+    "seeds": [
+     650,
+     699
+    ],
+    "walks": 50,
+    "steps": 10000,
+    "seconds": 22.5,
+    "violations": [],
+    "counts": {
+     "board": 4687,
+     "claim": 835,
+     "close-issue": 173,
+     "comment:claim-released": 636,
+     "comment:idle": 113,
+     "comment:main-moved": 31,
+     "comment:overlap": 479,
+     "comment:released": 643,
+     "comment:rename-refused": 25,
+     "commit": 298,
+     "delete-ref": 60,
+     "drop-claim-file": 118,
+     "finished": 64,
+     "label-off": 794,
+     "label-on": 1122,
+     "mark-ready": 74,
+     "marker": 324,
+     "merge": 23,
+     "merge-main": 34,
+     "move-main": 49,
+     "open-draft": 252,
+     "overlap-marker": 98,
+     "overlap-quote": 121,
+     "plan": 325,
+     "push-old-head": 66,
+     "rebase-main": 36,
+     "rename": 711,
+     "rename-back": 84,
+     "reopen": 26,
+     "tidy": 57,
+     "wait": 976
+    }
+   },
+   {
+    "seeds": [
+     700,
+     749
+    ],
+    "walks": 50,
+    "steps": 10000,
+    "seconds": 22.1,
+    "violations": [],
+    "counts": {
+     "board": 4700,
+     "claim": 894,
+     "close-issue": 166,
+     "comment:claim-released": 692,
+     "comment:idle": 92,
+     "comment:main-moved": 18,
+     "comment:overlap": 395,
+     "comment:released": 691,
+     "comment:rename-refused": 24,
+     "commit": 262,
+     "delete-ref": 40,
+     "drop-claim-file": 109,
+     "finished": 52,
+     "label-off": 779,
+     "label-on": 1151,
+     "mark-ready": 63,
+     "marker": 297,
+     "merge": 16,
+     "merge-main": 22,
+     "move-main": 62,
+     "open-draft": 210,
+     "overlap-marker": 115,
+     "overlap-quote": 142,
+     "plan": 286,
+     "push-old-head": 48,
+     "rebase-main": 38,
+     "rename": 757,
+     "rename-back": 90,
+     "reopen": 18,
+     "tidy": 61,
+     "wait": 1039
+    }
+   },
+   {
+    "seeds": [
+     750,
+     799
+    ],
+    "walks": 50,
+    "steps": 10000,
+    "seconds": 20.2,
+    "violations": [],
+    "counts": {
+     "board": 4627,
+     "claim": 834,
+     "close-issue": 190,
+     "comment:claim-released": 641,
+     "comment:idle": 115,
+     "comment:main-moved": 17,
+     "comment:overlap": 406,
+     "comment:released": 649,
+     "comment:rename-refused": 19,
+     "commit": 277,
+     "delete-ref": 90,
+     "drop-claim-file": 109,
+     "finished": 53,
+     "label-off": 735,
+     "label-on": 1085,
+     "mark-ready": 76,
+     "marker": 328,
+     "merge": 18,
+     "merge-main": 29,
+     "move-main": 50,
+     "open-draft": 222,
+     "overlap-marker": 105,
+     "overlap-quote": 144,
+     "plan": 293,
+     "push-old-head": 100,
+     "rebase-main": 27,
+     "rename": 717,
+     "rename-back": 104,
+     "reopen": 15,
+     "tidy": 78,
+     "wait": 1060
+    }
+   },
+   {
+    "seeds": [
+     800,
+     849
+    ],
+    "walks": 50,
+    "steps": 10000,
+    "seconds": 21.1,
+    "violations": [],
+    "counts": {
+     "board": 4625,
+     "claim": 801,
+     "close-issue": 175,
+     "comment:claim-released": 594,
+     "comment:idle": 121,
+     "comment:main-moved": 27,
+     "comment:overlap": 407,
+     "comment:released": 597,
+     "comment:rename-refused": 21,
+     "commit": 275,
+     "delete-ref": 50,
+     "drop-claim-file": 100,
+     "finished": 86,
+     "label-off": 747,
+     "label-on": 1101,
+     "mark-ready": 73,
+     "marker": 322,
+     "merge": 27,
+     "merge-main": 28,
+     "move-main": 68,
+     "open-draft": 214,
+     "overlap-marker": 114,
+     "overlap-quote": 136,
+     "plan": 316,
+     "push-old-head": 54,
+     "rebase-main": 39,
+     "rename": 653,
+     "rename-back": 71,
+     "reopen": 15,
+     "tidy": 81,
+     "wait": 1084
+    }
+   },
+   {
+    "seeds": [
+     850,
+     899
+    ],
+    "walks": 50,
+    "steps": 10000,
+    "seconds": 20.8,
+    "violations": [],
+    "counts": {
+     "board": 4736,
+     "claim": 879,
+     "close-issue": 169,
+     "comment:claim-released": 669,
+     "comment:idle": 98,
+     "comment:main-moved": 28,
+     "comment:overlap": 395,
+     "comment:released": 674,
+     "comment:rename-refused": 20,
+     "commit": 243,
+     "delete-ref": 69,
+     "drop-claim-file": 100,
+     "finished": 49,
+     "label-off": 782,
+     "label-on": 1125,
+     "mark-ready": 72,
+     "marker": 310,
+     "merge": 18,
+     "merge-main": 26,
+     "move-main": 63,
+     "open-draft": 220,
+     "overlap-marker": 109,
+     "overlap-quote": 119,
+     "plan": 297,
+     "push-old-head": 73,
+     "rebase-main": 21,
+     "rename": 752,
+     "rename-back": 92,
+     "reopen": 18,
+     "tidy": 75,
+     "wait": 989
+    }
+   },
+   {
+    "seeds": [
+     900,
+     949
+    ],
+    "walks": 50,
+    "steps": 10000,
+    "seconds": 21.5,
+    "violations": [],
+    "counts": {
+     "board": 4588,
+     "claim": 816,
+     "close-issue": 184,
+     "comment:claim-released": 622,
+     "comment:idle": 131,
+     "comment:main-moved": 34,
+     "comment:overlap": 432,
+     "comment:released": 621,
+     "comment:rename-refused": 18,
+     "commit": 258,
+     "delete-ref": 52,
+     "drop-claim-file": 116,
+     "finished": 59,
+     "label-off": 757,
+     "label-on": 1127,
+     "mark-ready": 84,
+     "marker": 328,
+     "merge": 22,
+     "merge-main": 30,
+     "move-main": 73,
+     "open-draft": 213,
+     "overlap-marker": 102,
+     "overlap-quote": 134,
+     "plan": 333,
+     "push-old-head": 58,
+     "rebase-main": 35,
+     "rename": 675,
+     "rename-back": 80,
+     "reopen": 20,
+     "tidy": 83,
+     "wait": 1074
+    }
+   },
+   {
+    "seeds": [
+     550,
+     599
+    ],
+    "walks": 50,
+    "steps": 10000,
+    "seconds": 21.7,
+    "violations": [
+     {
+      "seed": 585,
+      "step": 161,
+      "guarantee": "G1",
+      "detail": "the board names e for claude/5, whose holder is b",
+      "shortened_to": 112,
+      "file": "traces/G1-soak-585-161.json"
+     },
+     {
+      "seed": 585,
+      "step": 162,
+      "guarantee": "G1",
+      "detail": "the board names e for claude/5, whose holder is b",
+      "shortened_to": 112,
+      "file": "traces/G1-soak-585-162.json"
+     },
+     {
+      "seed": 585,
+      "step": 163,
+      "guarantee": "G1",
+      "detail": "the board names e for claude/5, whose holder is b",
+      "shortened_to": 112,
+      "file": "traces/G1-soak-585-163.json"
+     },
+     {
+      "seed": 585,
+      "step": 164,
+      "guarantee": "G1",
+      "detail": "the board names e for claude/5, whose holder is b",
+      "shortened_to": 112,
+      "file": "traces/G1-soak-585-164.json"
+     },
+     {
+      "seed": 585,
+      "step": 165,
+      "guarantee": "G1",
+      "detail": "the board names e for claude/5, whose holder is b",
+      "shortened_to": 112,
+      "file": "traces/G1-soak-585-165.json"
+     },
+     {
+      "seed": 585,
+      "step": 166,
+      "guarantee": "G1",
+      "detail": "the board names e for claude/5, whose holder is b",
+      "shortened_to": 112,
+      "file": "traces/G1-soak-585-166.json"
+     }
+    ],
+    "counts": {
+     "board": 4639,
+     "claim": 857,
+     "close-issue": 183,
+     "comment:claim-released": 649,
+     "comment:idle": 103,
+     "comment:main-moved": 38,
+     "comment:overlap": 376,
+     "comment:released": 655,
+     "comment:rename-refused": 13,
+     "commit": 266,
+     "delete-ref": 46,
+     "drop-claim-file": 115,
+     "finished": 55,
+     "label-off": 802,
+     "label-on": 1151,
+     "mark-ready": 70,
+     "marker": 305,
+     "merge": 15,
+     "merge-main": 32,
+     "move-main": 66,
+     "open-draft": 206,
+     "overlap-marker": 88,
+     "overlap-quote": 112,
+     "plan": 296,
+     "push-old-head": 51,
+     "rebase-main": 33,
+     "rename": 708,
+     "rename-back": 75,
+     "reopen": 24,
+     "tidy": 92,
+     "wait": 1103
+    }
+   }
+  ]
+ },
+ "gate": {
+  "memory": [
+   {
+    "policy": "account",
+    "states": 57836,
+    "transitions": 687648,
+    "depth": 8,
+    "seconds": 45.6,
+    "violations": [],
+    "violation_count": 0
+   },
+   {
+    "policy": "team",
+    "states": 57836,
+    "transitions": 687648,
+    "depth": 8,
+    "seconds": 45.8,
+    "violations": [],
+    "violation_count": 0
+   },
+   {
+    "policy": "arm",
+    "states": 63780,
+    "transitions": 722680,
+    "depth": 8,
+    "seconds": 49.8,
+    "violations": [],
+    "violation_count": 0
+   },
+   {
+    "policy": "gated-check",
+    "states": 51424,
+    "transitions": 633592,
+    "depth": 8,
+    "seconds": 57.4,
+    "violations": [],
+    "violation_count": 0
+   }
+  ],
+  "s05g": {
+   "timeline": [
+    "claim m 1: done",
+    "push m 1 conflicting: done",
+    "open m 1: done",
+    "claim r 2: done",
+    "push r 2 conflicting: done",
+    "open r 2: done",
+    "ready m 1: merged",
+    "ready r 2: main moved",
+    "r merges team/main in and pushes",
+    "ready r 2: merged"
+   ],
+   "mismatches": [],
+   "violations": []
+  },
+  "git": {
+   "sequences": 40,
+   "acts": 480,
+   "merges": 20,
+   "main_moved": 3,
+   "refusals": 78,
+   "violations": [],
+   "seconds": 32.0
+  }
+ },
+ "git": {
+  "scenarios": [
+   {
+    "scenario": "S01",
+    "seconds": 1.72,
+    "checks": 15,
+    "mismatches": [],
+    "red": [],
+    "differences": []
+   },
+   {
+    "scenario": "S01l-account",
+    "seconds": 1.43,
+    "checks": 15,
+    "mismatches": [],
+    "red": [],
+    "differences": []
+   },
+   {
+    "scenario": "S01l-agent",
+    "seconds": 1.56,
+    "checks": 15,
+    "mismatches": [],
+    "red": [],
+    "differences": []
+   },
+   {
+    "scenario": "S01c",
+    "seconds": 1.34,
+    "checks": 5,
+    "mismatches": [],
+    "red": [
+     [
+      4,
+      "G1"
+     ],
+     [
+      5,
+      "G1"
+     ]
+    ],
+    "differences": []
+   },
+   {
+    "scenario": "S02",
+    "seconds": 2.18,
+    "checks": 18,
+    "mismatches": [],
+    "red": [],
+    "differences": []
+   },
+   {
+    "scenario": "S02l",
+    "seconds": 2.41,
+    "checks": 18,
+    "mismatches": [],
+    "red": [],
+    "differences": []
+   },
+   {
+    "scenario": "S03",
+    "seconds": 1.73,
+    "checks": 28,
+    "mismatches": [],
+    "red": [],
+    "differences": []
+   },
+   {
+    "scenario": "S04",
+    "seconds": 1.91,
+    "checks": 21,
+    "mismatches": [],
+    "red": [],
+    "differences": []
+   },
+   {
+    "scenario": "S05a",
+    "seconds": 1.81,
+    "checks": 29,
+    "mismatches": [],
+    "red": [],
+    "differences": []
+   },
+   {
+    "scenario": "S05b",
+    "seconds": 1.42,
+    "checks": 29,
+    "mismatches": [],
+    "red": [],
+    "differences": []
+   },
+   {
+    "scenario": "S05q",
+    "seconds": 1.45,
+    "checks": 29,
+    "mismatches": [],
+    "red": [],
+    "differences": []
+   }
+  ],
+  "traces": [
+   {
+    "trace": "F1",
+    "seconds": 0.34,
+    "checks": 6,
+    "mismatches": [],
+    "red": [],
+    "differences": []
+   },
+   {
+    "trace": "F2",
+    "seconds": 0.53,
+    "checks": 5,
+    "mismatches": [],
+    "red": [],
+    "differences": []
+   },
+   {
+    "trace": "F3",
+    "seconds": 0.37,
+    "checks": 6,
+    "mismatches": [],
+    "red": [],
+    "differences": []
+   },
+   {
+    "trace": "F4",
+    "seconds": 0.71,
+    "checks": 10,
+    "mismatches": [],
+    "red": [
+     [
+      9,
+      "G14"
+     ]
+    ],
+    "differences": []
+   },
+   {
+    "trace": "F5",
+    "seconds": 0.56,
+    "checks": 4,
+    "mismatches": [],
+    "red": [],
+    "differences": []
+   },
+   {
+    "trace": "F6",
+    "seconds": 0.39,
+    "checks": 4,
+    "mismatches": [],
+    "red": [],
+    "differences": []
+   },
+   {
+    "trace": "F7",
+    "seconds": 0.52,
+    "checks": 3,
+    "mismatches": [],
+    "red": [
+     [
+      1,
+      "G1"
+     ],
+     [
+      2,
+      "G1"
+     ]
+    ],
+    "differences": []
+   },
+   {
+    "trace": "F8",
+    "seconds": 0.42,
+    "checks": 7,
+    "mismatches": [],
+    "red": [],
+    "differences": []
+   },
+   {
+    "trace": "F9",
+    "seconds": 0.44,
+    "checks": 4,
+    "mismatches": [],
+    "red": [],
+    "differences": []
+   },
+   {
+    "trace": "F10",
+    "seconds": 0.41,
+    "checks": 10,
+    "mismatches": [],
+    "red": [],
+    "differences": []
+   },
+   {
+    "trace": "F11",
+    "seconds": 0.4,
+    "checks": 8,
+    "mismatches": [],
+    "red": [],
+    "differences": []
+   },
+   {
+    "trace": "F12",
+    "seconds": 0.71,
+    "checks": 10,
+    "mismatches": [],
+    "red": [],
+    "differences": []
+   },
+   {
+    "trace": "F13",
+    "seconds": 0.51,
+    "checks": 4,
+    "mismatches": [],
+    "red": [],
+    "differences": []
+   },
+   {
+    "trace": "F14",
+    "seconds": 0.26,
+    "checks": 1,
+    "mismatches": [],
+    "red": [],
+    "differences": []
+   }
+  ]
+ },
+ "guard": {
+  "recorded": 699,
+  "seconds": 71.6,
+  "git": "git version 2.43.0",
+  "recorded_git": "git version 2.43.0",
+  "differing": []
+ },
+ "conformance": [],
+ "seconds": 2044.8,
+ "red": [
+  "soak seed 427 step 159: G9 a second run with nothing new wrote: ['POST /issues/103/comments'], traces/G9-soak-427-159.json",
+  "soak seed 585 step 161: G1 the board names e for claude/5, whose holder is b, traces/G1-soak-585-161.json",
+  "soak seed 585 step 162: G1 the board names e for claude/5, whose holder is b, traces/G1-soak-585-162.json",
+  "soak seed 585 step 163: G1 the board names e for claude/5, whose holder is b, traces/G1-soak-585-163.json",
+  "soak seed 585 step 164: G1 the board names e for claude/5, whose holder is b, traces/G1-soak-585-164.json",
+  "soak seed 585 step 165: G1 the board names e for claude/5, whose holder is b, traces/G1-soak-585-165.json",
+  "soak seed 585 step 166: G1 the board names e for claude/5, whose holder is b, traces/G1-soak-585-166.json"
+ ]
+}

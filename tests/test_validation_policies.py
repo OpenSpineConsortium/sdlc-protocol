@@ -57,6 +57,27 @@ class Workers(unittest.TestCase):
         self.assertEqual(model.creators["claude/1"], "c")
         self.assertTrue(any(ref.startswith("released/1-") for ref in model.refs))
 
+    def test_announce_takes_every_other_worker_s_label_off_in_any_spelling(self):
+        """F18's second review: the spec's Labels reads account:<name> and
+        agent:<name> as the same label as worker:<name>, and its Announce
+        takes every other worker's label off, so from the claim on the
+        labels name the holder alone; the policy took off worker: labels
+        alone, and left a peer's older spelling on. A bare worker: and the
+        holder's own labels, in any spelling, stay."""
+        model = M.seeded((1,), writers=("a", "b"), labels=("todo", "account:a", "worker:b", "agent:b", "worker:"))
+        cycle.board_run(model)
+        claimer, applied = policies.EagerClaimer(k=1), []
+        for _ in range(8):
+            verb = claimer.decide(policies.view(model, "b"))
+            if verb is None or verb.name == "commit":
+                break
+            applied.append(verb)
+            before = model.clone()
+            outcome = verbs.apply(model, verb)
+            self.assertEqual(invariants.step_checks(before, model, verb, outcome), [], str(verb))
+        self.assertEqual([v for v in applied if v.name == "label-off"], [verbs.Verb("label-off", "b", (1, "account:a"))])
+        self.assertEqual(model.issues[1].labels, frozenset({"claimed", "todo", "worker:b", "agent:b", "worker:"}))
+
     def test_a_finished_draft_waits_however_long_it_takes(self):
         model = M.seeded((1,), writers=("f",))
         drive(model, {"f": policies.Finisher()}, 100, self)

@@ -134,10 +134,18 @@ TRACES = {
     "a blocked claim carried": "the regression traces",
     # Two rules of the clerk F18's trace does not reach are caught by the
     # clerk's deal from one look against Pick (dealing.picking_lane), each
-    # on a case of that lane.
+    # on a case of that lane, judged with each worker's run alone too, as
+    # the lane's first setting is; so are the three the review of F18's
+    # fix added: a released claim, a Worker line naming nobody, and a run
+    # of one worker dealt over the run alone, which gives b a task the
+    # team's deal gives a.
     "the clerk dealing blockers in number order": dealing.Case({1: ("todo",), 2: ("blocker",)}, 2, "none", ("a",)),
     "the clerk dealing an issue labelled blocked": dealing.Case({1: ("blocked", "todo")}, 1, "none", ("a", "b")),
     "the Overlaps landing a blocker after other work": (LATER_BLOCKER + [BOARD], SHARED),
+    "a released claim carried by its holder": dealing.Case({1: ("todo",)}, 1, "released", ("a", "b")),
+    "a Worker line naming nobody taken for a name": dealing.Case({1: ("worker:b",)}, 1, "blank", ("a", "b")),
+    "a run dealt as though it were the whole team": dealing.Case({1: ("todo", "worker:a", "worker:b")}, 1, "none",
+                                                                 ("a", "b")),
 }
 LANES = {lane.name: lane for lane in mutants.LANES}
 
@@ -164,7 +172,7 @@ class TheLane(unittest.TestCase):
         rules F15's fifth review found no catcher of, so the bound is
         widened to 80 and the count noted."""
         self.assertTrue(10 <= len(mutants.MUTANTS) <= 80)
-        self.assertEqual(len(mutants.MUTANTS), 75)
+        self.assertEqual(len(mutants.MUTANTS), 78)
         self.assertEqual(sorted(TRACES), sorted(mutants.MUTANTS))
 
     def test_every_mutant_names_a_rule_the_library_still_has(self):
@@ -226,9 +234,10 @@ class EachMutantIsCaught(unittest.TestCase):
                     self.assertNotEqual(set(found) - set(plain), set())
                     continue
                 if isinstance(trace, dealing.Case):
-                    self.assertEqual(dealing.judge_case(trace)[1], [], "the library itself deals the case by Pick")
+                    self.assertEqual(dealing.judge_case(trace, runs=True)[1], [],
+                                     "the library itself deals the case by Pick")
                     with mutants.switched_on(mutants.MUTANTS[name]):
-                        self.assertNotEqual(dealing.judge_case(trace)[1], [])
+                        self.assertNotEqual(dealing.judge_case(trace, runs=True)[1], [])
                     continue
                 steps, scope = trace
                 self.assertEqual(violations(steps, scope), [], "the library itself passes the trace")

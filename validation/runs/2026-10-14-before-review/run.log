@@ -1,0 +1,45 @@
+    soak 0 done at 20.2 s
+    soak 50 done at 40.0 s
+    soak 100 done at 59.7 s
+    search E-faults done at 61.1 s
+    soak 150 done at 80.2 s
+    soak 200 done at 81.3 s
+    soak 250 done at 99.3 s
+    soak 300 done at 101.1 s
+    soak 350 done at 118.4 s
+    soak 400 done at 120.7 s
+    soak 450 done at 137.7 s
+    soak 500 done at 140.4 s
+    soak 550 done at 156.5 s
+    soak 600 done at 161.0 s
+    soak 650 done at 177.4 s
+    soak 700 done at 181.7 s
+    soak 750 done at 197.6 s
+    soak 800 done at 202.4 s
+    soak 850 done at 217.5 s
+    soak 900 done at 222.6 s
+    soak 950 done at 236.9 s
+    git scenarios done at 250.3 s
+    git traces done at 258.8 s
+    guard done at 292.5 s
+    gate done at 434.7 s
+    search E-deep done at 5995.1 s
+    search E-two done at 7618.9 s
+    conformance E-deep done at 7669.7 s
+    conformance E-two done at 7671.0 s
+    conformance E-faults done at 7688.8 s
+search E-deep: depth 8, 16727208 states, 26745598 transitions, 5994.2 s, 0 violations
+search E-faults: depth 4, 41409 states, 101769 transitions, 61.0 s, 0 violations
+search E-two: depth 7, 18801050 states, 33008162 transitions, 7618.1 s, 0 violations
+soak: 1000 walks, 200000 steps, 398.3 s of walking, 0 violations
+gate account: depth 8, 57836 states, 687648 transitions, 46.4 s, 0 violations
+gate team: depth 8, 57836 states, 687648 transitions, 44.6 s, 0 violations
+gate arm: depth 8, 63780 states, 722680 transitions, 45.4 s, 0 violations
+gate gated-check: depth 8, 51424 states, 633592 transitions, 38.9 s, 0 violations
+gate S05g: 10 acts, 0 mismatches
+gate over git: 40 sequences, 480 acts, 20 merges, 3 main moved, 78 refusals, 36.0 s
+git scenarios: 11 played, 13.3 s, matching known.json
+git traces: 14 played, 8.6 s, matching known.json
+guard: 699 argument lists recorded again under git version 2.43.0, 0 differing from guard_git.json (git version 2.43.0), 0 of the file's missing
+conformance: 200 paths and 0 counterexamples in both worlds, 0 disagreements, 171.8 s
+deep lane: ok in 7688.8 s; validation-out/deep.json

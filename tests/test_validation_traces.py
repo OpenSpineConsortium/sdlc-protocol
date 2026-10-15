@@ -58,10 +58,10 @@ BUDGET_SECONDS = 10
 # step 1, where #1, which the labels of a and b give, goes to neither once
 # such a task is dealt as one given alone, or a takes it before #2, given
 # to it alone, once the task given alone waits for the rest; and at its
-# second, step 8, after b has claimed #1 and c has claimed #3 and labelled
-# it blocked, where a is told to carry b's claim once whose a claim is is
-# read from the labels alone, and c its waiting claim once a claim
-# labelled blocked is carried.
+# second, step 5, after b has claimed #1, its Announce still to come, and
+# c has claimed #3 and labelled it blocked, where a is told to carry b's
+# claim once whose a claim is is read from the labels alone, and c its
+# waiting claim once a claim labelled blocked is carried.
 UNDONE = {
     "F1": [("the comment before the labels", 5, "G3L")],
     "F3": [("the guard passes --force", 1, "G11a")],
@@ -87,7 +87,7 @@ UNDONE = {
             ("a fork's pull request left off with a released claim", 7, "G9"),
             ("a fork's pull request never told main moved", 9, "G10")],
     "F18": [("a shared task dealt to none", 1, "G14"), ("a shared task before one given alone", 1, "G14"),
-            ("the clerk carrying by labels alone", 8, "G14"), ("a blocked claim carried", 8, "G14")],
+            ("the clerk carrying by labels alone", 5, "G14"), ("a blocked claim carried", 5, "G14")],
 }
 # The sixteen settled findings: F1, F3, F5, F6, F10 and F11 fixed in
 # 0.4.1; F4, F7, F9, F12, F13, F14, F15, F17 and F18 fixed on main after
@@ -174,22 +174,29 @@ class TheTraces(unittest.TestCase):
         self.assertEqual({(v.guarantee, v.detail) for _, v in record.violations},
                          {("G14", "#6 dealt twice from differing looks: {'a': 'take 5', 'b': 'take 6', 'c': 'take 6'}")})
 
-    def test_f18_s_trace_deals_by_pick_and_the_old_clerk_s_deals_are_red(self):
+    def test_f18_s_trace_deals_by_pick_and_is_red_under_the_labels_alone_mutant(self):
         """Each deal of F18's trace is judged by Pick on the run's look,
         where no claim has a pull request yet (dealing.pick_problems); with
         the fix, #1 goes to b, the first of a and b with nothing else to
-        do, and b, once it holds #1, carries it."""
+        do, and b, once it holds #1, carries it, before its Announce has
+        come and while a's label is still on. The mutant that reads the
+        holder from the labels alone, one rule of the clerk as built until
+        the fix, sends a to b's claim at step 5. The Announce then takes
+        a's label off, so the labels name the holder alone (the spec's
+        Announce, from F18's review)."""
         record = replay.replay(self.traces["F18"])
         self.assertEqual(replay.results(record), set())
         deals = [line for line in record.timeline if " deal " in line]
         self.assertEqual(len(deals), 2)
         self.assertIn("{'a': 'take 2', 'b': 'take 1', 'c': 'take 3'}", deals[0])
         self.assertIn("{'a': 'take 2', 'b': 'carry 1', 'c': 'none'}", deals[1])
+        self.assertTrue(any("label-off b 1 worker:a: label taken off" in line for line in record.timeline),
+                        "\n".join(record.timeline))
         with mutants.switched_on(mutants.MUTANTS["the clerk carrying by labels alone"]):
             record = replay.replay(self.traces["F18"])
         self.assertEqual({(at, v.detail) for at, v in record.violations},
-                         {(8, "a carries #1, whose claim is b's"),
-                          (8, "b carries nothing though its claim on #1 is its own")})
+                         {(5, "a carries #1, whose claim is b's"),
+                          (5, "b carries nothing though its claim on #1 is its own")})
 
     def test_f7_s_trace_is_green_and_red_for_g1_too_under_its_mutant(self):
         """The fence refuses the careless lease (G11a at the lease); with

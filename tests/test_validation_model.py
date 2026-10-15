@@ -4,6 +4,9 @@ main, the rename and the delete GitHub make, the board workflow's queue
 in its concurrency group, and a state key that keeps everything a
 guarantee reads."""
 
+import os
+import pickle
+import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -89,6 +92,21 @@ class CommitsInOrder(unittest.TestCase):
         self.assertEqual({p: after.get(p) for p in own}, {p: before[p] for p in own})
         self.assertTrue(model.is_ancestor(model.refs[M.MAIN], model.refs["claude/1"]))
 
+    def test_a_rebase_after_a_merge_of_main_drops_the_merge_as_git_does(self):
+        """Replayed, the merge's change against its first parent wrote
+        main's old text over main as it is now; git's rebase drops the
+        merge and keeps main's text, so the branch changes only its own
+        files (the review of the deep lane, played over both worlds)."""
+        model = M.seeded()
+        for verb in (Verb("claim", "a", (1,)), Verb("move-main", M.OWNER), Verb("merge-main", "a", (1,)),
+                     Verb("move-main", M.OWNER), Verb("rebase-main", "a", (1,))):
+            verbs.apply(model, verb)
+        main, branch = model.tree(model.refs[M.MAIN]), model.tree(model.refs["claude/1"])
+        self.assertEqual(branch["README.md"], main["README.md"])
+        self.assertEqual(model.files_changed("claude/1"), ["docs/agents/claims/1.md"])
+        self.assertTrue(all(len(model.commits[sha].parents) < 2
+                            for sha in model.ancestors(model.refs["claude/1"]) - model.ancestors(model.refs[M.MAIN])))
+
 
 class Standing(unittest.TestCase):
     def setUp(self):
@@ -134,8 +152,12 @@ class Rename(unittest.TestCase):
 
 class Delete(unittest.TestCase):
     """GitHub closes the open pull requests a deleted branch was the head of
-    (managing-branches-within-your-repository.md:71), as the board's
-    delete of a branch pushed again at the head a release kept meets."""
+    on the web UI's delete (managing-branches-within-your-repository.md:71),
+    and is assumed to on the REST delete the board makes, which canary C6
+    settles; the board's delete of a branch pushed again at the head a
+    release kept meets it. The
+    soak's G9 lead (seed 427) met the model keeping such a draft open,
+    which the next run told "idle", and F17's work met it too."""
 
     def setUp(self):
         self.model = M.seeded()
@@ -187,6 +209,26 @@ class TheKey(unittest.TestCase):
         when the work began, so neither may be folded."""
         self.assertTrue(self.differs(lambda m: setattr(m, "board_text", "# Board\n")))
         self.assertTrue(self.differs(lambda m: m.created.__setitem__("claude/1", 5)))
+
+    def test_the_digest_survives_a_pickle_into_another_interpreter(self):
+        """A search's checkpoint (deep.py) pickles the models on its stack,
+        and a resume reads it in another process, whose hash seed orders a
+        set another way, so every set in the key is sorted. A round trip
+        within one process keeps a set's order and caught an unsorted set
+        about one run in six; fresh interpreters under eight seeds each
+        read the pickle as this process wrote it."""
+        self.model.add_label(1, "a", "claimed")
+        self.model.add_label(1, "a", "worker:a")
+        script = ("import pickle, sys\n"
+                  f"sys.path.insert(0, {str(ROOT)!r})\n"
+                  "print(pickle.loads(sys.stdin.buffer.read()).digest().hex())\n")
+        written = pickle.dumps(self.model)
+        read = set()
+        for seed in range(8):
+            done = subprocess.run([sys.executable, "-c", script], input=written, capture_output=True, check=True,
+                                  env={**os.environ, "PYTHONHASHSEED": str(seed)})
+            read.add(done.stdout.decode("ascii").strip())
+        self.assertEqual(read, {self.model.digest().hex()})
 
     def test_keeps_whether_github_hides_a_held_branch_s_standing(self):
         """The fake answers blocked or the branch's own word by it (F9), so

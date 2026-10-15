@@ -20,8 +20,8 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from sdlc_protocol.adapters import github  # noqa: E402
-from sdlc_protocol import guard  # noqa: E402
-from validation import cycle, invariants, model as M, mutants, oracle, verbs  # noqa: E402
+from sdlc_protocol import board, guard  # noqa: E402
+from validation import cycle, dealing, invariants, model as M, mutants, oracle, verbs  # noqa: E402
 from validation.fake_github import Call  # noqa: E402
 from validation.verbs import Scope, Verb  # noqa: E402
 
@@ -83,6 +83,96 @@ class AnHonestRun(unittest.TestCase):
                  Verb("finished", "a", (100,)), Verb("wait", "clock", (50,)), BOARD, Verb("marker", M.OWNER, (1,)),
                  Verb("label-off", M.OWNER, (1, "claimed")), BOARD]
         self.assertEqual(violations(steps), [])
+
+
+class TheWorkerCell(unittest.TestCase):
+    """G1 holds the board's Worker cell to the branch's holder by the claim
+    file, and, once the finishing push has deleted the file, to the issue's
+    worker label, which the spec leaves the board; the soak's G1 leads
+    (seeds 585 and 959) were a closed issue's leftover branch whose stale
+    label named the worker that had merged."""
+
+    def claim(self, pusher, named, labels=("todo",)):
+        model = M.seeded((1,), writers=("a", "b", "e"), labels=labels)
+        tree = model.tree(model.refs[M.MAIN])
+        tree["docs/agents/claims/1.md"] = M.claim_text(1, named)
+        model.push(pusher, "claude/1", model.commit((model.refs[M.MAIN],), pusher, tree, "Claim #1"))
+        return model
+
+    def drop_file(self, model, pusher):
+        tree = model.tree(model.refs["claude/1"])
+        del tree["docs/agents/claims/1.md"]
+        model.push(pusher, "claude/1", model.commit((model.refs["claude/1"],), pusher, tree, "Finish #1"))
+
+    def test_the_cell_names_the_holder_by_the_claim_file(self):
+        self.assertEqual(invariants.one_name_one_holder(self.claim("b", "b")), [])
+        found = invariants.one_name_one_holder(self.claim("b", "e"))
+        self.assertEqual([v.guarantee for v in found], ["G1"])
+        self.assertIn("names e for claude/1, whose holder is b", found[0].detail)
+
+    def test_once_the_file_is_gone_the_cell_names_the_issue_s_label_or_says_there_is_none(self):
+        model = self.claim("b", "b", labels=("todo", "worker:e"))
+        self.drop_file(model, "b")
+        self.assertEqual(invariants.one_name_one_holder(model), [])
+        model.issues[1].state = "closed"
+        self.assertEqual(invariants.one_name_one_holder(model), [])
+        model = self.claim("b", "b")
+        self.drop_file(model, "b")
+        self.assertEqual(invariants.one_name_one_holder(model), [])
+
+    def test_a_board_that_shows_another_cell_than_the_rule_owes_is_seen(self):
+        """The cell is held to one value: a board that drops the label once
+        the file is gone, or says there is no claim file while one is
+        there, breaks G1."""
+        no_file = mock.patch.object(invariants.board, "claim_row",
+                                    lambda key, branch, text, pull, issue: ["", branch, board.NO_CLAIM_FILE, "", ""])
+        model = self.claim("b", "b", labels=("todo", "worker:e"))
+        self.drop_file(model, "b")
+        with no_file:
+            found = invariants.one_name_one_holder(model)
+        self.assertEqual([(v.guarantee, v.detail) for v in found],
+                         [("G1", "the board names no claim file yet for claude/1, whose claim file is gone and whose "
+                                 "issue's label names e")])
+        with no_file:
+            found = invariants.one_name_one_holder(self.claim("b", "b"))
+        self.assertEqual([(v.guarantee, v.detail) for v in found],
+                         [("G1", "the board names no claim file yet for claude/1, whose holder is b")])
+
+    def test_the_oracle_reads_the_worker_label_by_itself(self):
+        self.assertEqual(oracle.label_worker(["todo", "account:main", "worker:e"]), "e")
+        self.assertEqual(oracle.label_worker(["agent:w1", "todo"]), "w1")
+        self.assertIsNone(oracle.label_worker(["todo", "worker:"]))
+
+    def test_a_worker_line_that_names_nobody_owes_the_cell_unnamed(self):
+        """F18's second review: the cell for a claim file that is there and
+        whose Worker line names nobody, or that has no such line, is the
+        library's documented word, unnamed, since the file is there to be
+        corrected, and not the pusher, whom the oracle expected, nor the
+        issue's label, which the clerk and a release fall back to; a board
+        that names the label's worker, or the pusher, for such a file is
+        seen. The picking lane's three file forms (dealing.CLAIM_STATES a,
+        nobody and blank) go through one board run green."""
+        for line in ("- Worker: (to be filled)", "- Worker: ", ""):
+            model = M.seeded((1,), writers=("a", "b", "e"), labels=("todo", "worker:e"))
+            tree = model.tree(model.refs[M.MAIN])
+            tree["docs/agents/claims/1.md"] = f"# Claim: #1\n\n{line}\n- Branch: claude/1\n"
+            model.push("b", "claude/1", model.commit((model.refs[M.MAIN],), "b", tree, "Claim #1"))
+            with self.subTest(line=line):
+                self.assertEqual(invariants.one_name_one_holder(model), [])
+                self.assertEqual(invariants.shown_worker(model, "claude/1", 1), "unnamed")
+                names_the_label = mock.patch.object(invariants.board, "claim_row",
+                                                    lambda key, branch, text, pull, issue: ["", branch, "e", "", ""])
+                with names_the_label:
+                    found = invariants.one_name_one_holder(model)
+                self.assertEqual([(v.guarantee, v.detail) for v in found],
+                                 [("G1", "the board names e for claude/1, whose holder is b and whose claim file "
+                                         "names nobody")])
+        for state in ("a", "nobody", "blank"):
+            model = dealing.case_model(dealing.Case({1: ("todo", "worker:b")}, 1, state, ("a", "b")))
+            before = model.clone()
+            run = verbs.Verb("board", "board", (cycle.SCHEDULE, "", ()))
+            outcome = verbs.apply(model, run)
+            self.assertEqual(invariants.step_checks(before, model, run, outcome), [], state)
 
 
 class TheProtocolCheckIsReadAsGitHubReadsABody(unittest.TestCase):

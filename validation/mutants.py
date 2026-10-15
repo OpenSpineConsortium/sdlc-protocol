@@ -115,6 +115,7 @@ ORIGINAL_PULLS_BEHIND_MAIN = board.pulls_behind_main
 ORIGINAL_POOL = team.Snapshot.pool
 ORIGINAL_CLAIM_ROWS = board.claim_rows
 ORIGINAL_OPEN_WORK = board.open_work
+ORIGINAL_DEAL_MOVES = team.deal_moves
 
 
 def comment_then_labels(api, snap, key, now):
@@ -600,11 +601,35 @@ def behind_main_but_forks(pulls):
 
 
 def holder_by_labels(snap, issue):
-    """team.Snapshot.holder reading the issue's labels alone, as the clerk
-    did until F18's fix, so a worker whose label the issue carries is told
-    to carry a claim another worker pushed, and the claim's holder is told
-    nothing."""
+    """team.Snapshot.named reading whose a claim is from the issue's labels
+    alone, the worker its label names (labels.worker_of), never from the
+    claim file, so a worker whose label the issue carries is told to carry
+    a claim another worker pushed, and the claim's holder is told nothing.
+    The clerk as built until F18's fix read the labels alone too, though
+    by holders(issue) == {worker}, so where two workers' labels named the
+    issue it carried the claim for neither."""
     return labels.worker_of(issue)
+
+
+def blank_names_a_worker(text):
+    """claims.claim_worker, as the clerk reads it (team.claim_worker), as
+    it read a Worker line until F18's review: a name that is empty once
+    the note and the markup are gone is still a name, so the clerk takes
+    "" for the holder and carries the claim for nobody."""
+    for line in text.splitlines():
+        match = claims.WORKER_LINE.match(line)
+        if match:
+            return claims.TRAILING_NOTE.sub("", match.group(1)).strip("`*_ ")
+    return claims.UNNAMED
+
+
+def run_dealt_alone(client, team_names, areas=None, worker_labels=None, run=None):
+    """team.deal_moves dealing a run that starts some of the team as though
+    they were the whole team, so a worker outside the run loses its share,
+    a task several workers' labels give among them, to one inside it, and
+    two runs that look at one state can deal one issue to two workers
+    (F18's review)."""
+    return ORIGINAL_DEAL_MOVES(client, team_names if run is None else run, areas, worker_labels)
 
 
 def carrying_blocked_claims(snap, agent):
@@ -612,7 +637,7 @@ def carrying_blocked_claims(snap, agent):
     holder waits on a peer or the coordinator."""
     for issue in snap.issues:
         number = issue["number"]
-        if number in snap.claimed and snap.holder(issue) == agent and snap.claim_needs_work(number):
+        if number in snap.claimed and snap.holds(issue, agent) and snap.claim_needs_work(number):
             return f"carry {number}"
     return None
 
@@ -892,12 +917,12 @@ MUTANTS = {
         board, "comments_due", reading(ORIGINAL_COMMENTS_DUE, "closed_by_release", closed_by_release_as_f17),
         "G10", "a stranger's pull request that a release's rename closed hears nothing more (F19)"),
     "the clerk carrying by labels alone": Mutant(
-        team.Snapshot, "holder", holder_by_labels,
+        team.Snapshot, "named", holder_by_labels,
         "G14", "a worker carries the claims whose claim files name it, whatever the issue's labels say, and no "
                "other's (F18)"),
     "a shared task dealt to none": Mutant(
         team, "given_to", team.is_mine,
-        "G14", "a task the labels of several workers give goes to the first of them in the run's order with "
+        "G14", "a task the labels of several workers give goes to the first of them in the team's order with "
                "nothing else to do (F18)"),
     "a shared task before one given alone": Mutant(
         team.Snapshot, "own_move", lambda snap, agent: snap.carry(agent),
@@ -917,6 +942,18 @@ MUTANTS = {
     "the Overlaps landing a blocker after other work": Mutant(
         board, "landing_key", lambda work: (not work.ready, board.began_at(work.began), work.number),
         "G7", "a blocker lands first, since it stops everyone (F15's fifth review)"),
+    "a released claim carried by its holder": Mutant(
+        team.Snapshot, "released", lambda snap, issue: False,
+        "G14", "a claim that counts as released is nobody's, though its branch stands until the board renames it, "
+               "so the clerk sends nobody back to it (F18's review)"),
+    "a Worker line naming nobody taken for a name": Mutant(
+        team, "claim_worker", blank_names_a_worker,
+        "G14", "a claim file whose Worker line names nobody leaves whose the claim is to the issue's label (F18's "
+               "review)"),
+    "a run dealt as though it were the whole team": Mutant(
+        team, "deal_moves", run_dealt_alone,
+        "G14", "a run that starts some of the team is dealt in the team's order, so a worker outside it keeps its "
+               "share (F18's review)"),
 }
 
 

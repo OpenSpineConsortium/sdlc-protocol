@@ -1,0 +1,305 @@
+{
+ "finding": "",
+ "title": "a counterexample of the deep lane's soak",
+ "status": "counterexample",
+ "violated": "G1 the board names e for claude/5, whose holder is b",
+ "breaks": [
+  "G1"
+ ],
+ "library": {
+  "version": "0.4.1"
+ },
+ "scope": {
+  "name": "soak",
+  "depth": 0,
+  "workers": [
+   "a",
+   "b",
+   "c",
+   "d",
+   "e"
+  ],
+  "issues": [
+   1,
+   2,
+   3,
+   4,
+   5,
+   6
+  ],
+  "faults": [
+   "comment-500",
+   "comment-lost",
+   "comment-rate-limited",
+   "label-delete-500",
+   "label-post-500",
+   "rename-403",
+   "rename-422",
+   "ref-delete-422",
+   "compare-404",
+   "comments-read-500"
+  ],
+  "waits": [
+   1,
+   2,
+   3,
+   6,
+   12,
+   23,
+   24,
+   25,
+   30
+  ],
+  "skews": []
+ },
+ "issues": {
+  "1": [
+   "todo"
+  ],
+  "2": [
+   "todo"
+  ],
+  "3": [
+   "todo"
+  ],
+  "4": [
+   "todo"
+  ],
+  "5": [
+   "todo"
+  ],
+  "6": [
+   "todo"
+  ]
+ },
+ "workers": [
+  "a",
+  "b",
+  "c",
+  "d",
+  "e"
+ ],
+ "people": [
+  "owner",
+  "dana",
+  "sam"
+ ],
+ "files": {
+  "1": [
+   "src/shared.py"
+  ],
+  "2": [
+   "src/shared.py"
+  ],
+  "3": [
+   "src/three.py"
+  ],
+  "4": [
+   "src/three.py"
+  ],
+  "5": [
+   "src/5.py"
+  ],
+  "6": [
+   "src/6.py"
+  ]
+ },
+ "careless": false,
+ "events": [
+  "schedule",
+  "push",
+  "create",
+  "delete",
+  "pull_request",
+  "issues"
+ ],
+ "split_board": false,
+ "world": "memory",
+ "steps": [
+  {
+   "verb": "board",
+   "event": "schedule",
+   "ref": "",
+   "faults": [],
+   "at": 0
+  },
+  {
+   "verb": "claim",
+   "actor": "e",
+   "args": [
+    2
+   ],
+   "at": 0
+  },
+  {
+   "verb": "board",
+   "event": "create",
+   "ref": "claude/2",
+   "faults": [],
+   "at": 0
+  },
+  {
+   "verb": "open-draft",
+   "actor": "e",
+   "args": [
+    2
+   ],
+   "at": 0
+  },
+  {
+   "verb": "board",
+   "event": "pull_request",
+   "ref": "",
+   "faults": [],
+   "at": 0
+  },
+  {
+   "verb": "claim",
+   "actor": "b",
+   "args": [
+    5
+   ],
+   "at": 0
+  },
+  {
+   "verb": "board",
+   "event": "create",
+   "ref": "claude/5",
+   "faults": [],
+   "at": 0
+  },
+  {
+   "verb": "wait",
+   "args": [
+    30
+   ],
+   "at": 0
+  },
+  {
+   "verb": "claim",
+   "actor": "b",
+   "args": [
+    4
+   ],
+   "at": 30
+  },
+  {
+   "verb": "board",
+   "event": "create",
+   "ref": "claude/4",
+   "faults": [],
+   "at": 30
+  },
+  {
+   "verb": "claim",
+   "actor": "e",
+   "args": [
+    5
+   ],
+   "at": 30
+  },
+  {
+   "verb": "board",
+   "event": "create",
+   "ref": "claude/5",
+   "faults": [],
+   "at": 30
+  },
+  {
+   "verb": "open-draft",
+   "actor": "e",
+   "args": [
+    5
+   ],
+   "at": 30
+  },
+  {
+   "verb": "board",
+   "event": "pull_request",
+   "ref": "",
+   "faults": [],
+   "at": 30
+  },
+  {
+   "verb": "label-on",
+   "actor": "e",
+   "args": [
+    5,
+    "worker:e"
+   ],
+   "at": 30
+  },
+  {
+   "verb": "board",
+   "event": "issues",
+   "ref": "",
+   "faults": [],
+   "at": 30
+  },
+  {
+   "verb": "mark-ready",
+   "actor": "e",
+   "args": [
+    101
+   ],
+   "at": 30
+  },
+  {
+   "verb": "merge",
+   "actor": "owner",
+   "args": [
+    101
+   ],
+   "at": 30
+  },
+  {
+   "verb": "board",
+   "event": "push",
+   "ref": "main",
+   "faults": [],
+   "at": 30
+  },
+  {
+   "verb": "board",
+   "event": "issues",
+   "ref": "",
+   "faults": [],
+   "at": 30
+  },
+  {
+   "verb": "rename-back",
+   "actor": "owner",
+   "args": [
+    5,
+    [
+     "released",
+     5,
+     0
+    ]
+   ],
+   "at": 30
+  },
+  {
+   "verb": "board",
+   "event": "delete",
+   "ref": "main",
+   "faults": [],
+   "at": 30
+  },
+  {
+   "verb": "board",
+   "event": "create",
+   "ref": "claude/5",
+   "faults": [],
+   "at": 30
+  },
+  {
+   "verb": "drop-claim-file",
+   "actor": "b",
+   "args": [
+    5
+   ],
+   "at": 30
+  }
+ ]
+}

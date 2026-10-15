@@ -136,6 +136,14 @@ class ClaimFile(unittest.TestCase):
         self.assertEqual(claims.claim_worker("- Worker: a\n- Account: b\n"), "a")
         self.assertIs(claims.claim_account, claims.claim_worker)
 
+    def test_a_worker_line_with_an_empty_name_names_nobody(self):
+        # Until F18's review "" came back, which the board showed as the
+        # worker, a release named as whose the claim was, and the clerk took
+        # for the holder, so nobody carried the claim.
+        for line in ("- Worker: ", "- Worker: **", "- Worker: ``", "- Worker: (to be filled)", "- **Worker:** __"):
+            self.assertEqual(claims.claim_worker(line + "\nPlan: x\n"), "unnamed", line)
+        self.assertEqual(claims.claim_worker("- Worker: (to be filled)\n- Account: main\n"), "main")
+
     def test_the_plan_is_the_prose_under_its_heading(self):
         self.assertEqual(claims.claim_plan(CLAIM_TEXT), "Two sentences on what changes.")
         self.assertEqual(claims.claim_plan("## Plan\n\nFirst line,\nsecond line.\n\n## Files to touch\n\n- a\n"),
