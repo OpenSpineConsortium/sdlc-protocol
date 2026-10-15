@@ -84,10 +84,13 @@ SPEC = {
     "overlap": "the coordinator tells each piece of open work about the work it meets, once, in a comment whose "
                "first line is `<!-- sdlc-coordinator: overlap <numbers> -->` naming every piece it told of",
     "told again": "tells it again only when work it has not been told of starts to meet it",
-    "one piece": "The marker names each piece by its identity: a claim and the pull request from its branch are one "
-                 "piece, the issue's number for as long as the claim lives, told on that issue, so opening the pull "
-                 "request tells nothing again; a pull request that is no claim's is a piece of its own, its number, "
-                 "told on itself",
+    "one piece": "The marker names each piece by its identity: a claim and the pull requests from its branch are one "
+                 "piece, the issue's number, told on that issue, so opening a pull request tells nothing again",
+    "own pull marker": "a marker on one of the claim's own open pull requests counts as one on the issue",
+    "no claim's piece": "a pull request that is no claim's is a piece of its own, its number, told on itself",
+    "in turn": "An issue's number names each claim on it in turn, so a marker tells a claim's work, or tells of it, "
+               "only when it came no earlier than the push that made that claim's branch, as GitHub dates that push "
+               "for the order above, and every marker counts for a claim whose push GitHub does not date",
     "open work": "an open pull request by its files or, while it changes nothing but its claim file, by the files "
                  "its claim lists, and a claim with no pull request yet by the files its claim lists",
     "landing order": "a blocker first, since it stops everyone; then work marked ready, which waits only for its "
@@ -406,7 +409,8 @@ class Piece(NamedTuple):
     files, the landing order's two words, and the minute the work began
     (SPEC["oldest"]): the push that made its branch, or the opening of a
     pull request from a branch the model records no push of; None when
-    nothing says."""
+    nothing says; and whether it is a claim's work, whose identity names
+    each claim on its issue in turn (SPEC["in turn"])."""
 
     identity: int
     number: int
@@ -414,6 +418,7 @@ class Piece(NamedTuple):
     ready: bool
     blocker: bool
     began: int | None = None
+    claim: bool = False
 
 
 def listed_files(text):
@@ -480,14 +485,15 @@ def open_work(model, known=AS_BUILT, unsaid=frozenset()):
     A claim and the pull request from its branch are one piece, which
     keeps the issue's number as its identity (SPEC["one piece"]; until
     F2's fix the library named it by the number it was shown by, which the
-    switch F2 read). A pull request
-    from a fork is a piece of its own, whatever its branch is called, and
-    began when it was opened (SPEC["fork"], SPEC["oldest"]); so is a
-    stranger's from a claim's branch here, which began when that branch was
-    made, as any pull request from a branch here (SPEC["stranger"]). unsaid names
-    the branches GitHub refused to date in the run, whose work then began
-    when nothing else says (SPEC["oldest"]): a pull request's at its
-    opening, and a claim's never."""
+    switch F2 read). A pull request from a fork is a piece of its own,
+    whatever its branch is called, and began when it was opened
+    (SPEC["fork"], SPEC["oldest"]); so is a stranger's from a claim's branch
+    here, which began when that branch was made, as any pull request from a
+    branch here (SPEC["stranger"]). unsaid names the branches GitHub refused
+    to date in the run, whose work then began when nothing else says
+    (SPEC["oldest"]): a pull request's at its opening, and a claim's never.
+    No finding switches this rule now, and known is taken as every rule of
+    the page takes it."""
     pieces = []
     pulled = set()
     for pull in sorted(model.pulls.values(), key=lambda p: p.number):
@@ -501,14 +507,15 @@ def open_work(model, known=AS_BUILT, unsaid=frozenset()):
         identity = number if number is not None else pull.number
         began = None if pull.fork or pull.head in unsaid else model.created.get(pull.head)
         began = pull.opened_at if began is None else began
-        pieces.append(Piece(identity, pull.number, files, not pull.draft, is_blocker(model, number), began))
+        pieces.append(Piece(identity, pull.number, files, not pull.draft, is_blocker(model, number), began,
+                            number is not None))
     for ref in sorted(model.refs):
         number = claim_number(ref)
         if number is None or ref in pulled or released(model, number):
             continue
         files = own(listed_files(claim_file_text(model, ref, number)))
         began = None if ref in unsaid else model.created.get(ref)
-        pieces.append(Piece(number, number, files, False, is_blocker(model, number), began))
+        pieces.append(Piece(number, number, files, False, is_blocker(model, number), began, True))
     return pieces
 
 
@@ -538,33 +545,55 @@ def overlaps(model, known=AS_BUILT, unsaid=frozenset()):
             for path, pieces in sorted(meeting.items()) if len(pieces) > 1}
 
 
-def told_of(model, piece, by_number, known=AS_BUILT):
+def claims_made(model, pieces):
+    """When the push that made each claim's branch came, by its issue, for
+    the claims among the pieces the model records a push of (SPEC["in
+    turn"]); a claim with none takes every marker."""
+    return {p.identity: model.created[branch_of(p.identity)] for p in pieces
+            if p.claim and branch_of(p.identity) in model.created}
+
+
+def told_of(model, identity, places, by_number, made):
     """The identities a piece has been told of, from the overlap markers by
-    trusted authors on its identity, the one place it is told
-    (SPEC["one piece"]), each number a marker names read as the identity
-    of the piece shown by it now, so a marker that names a claim's pull
-    request names the claim."""
+    trusted authors on its identity and on the claim's own open pull
+    requests (SPEC["one piece"], SPEC["own pull marker"]), each number a
+    marker names read as the identity of the piece shown by it now, so a
+    marker that names a claim's pull request names the claim, and counted
+    only when the marker came no earlier than the push that made the
+    branch of the claim it is on and of the claim it names, where the
+    model records one (SPEC["in turn"])."""
     told = set()
-    for comment in model.comments_on(piece.identity):
-        match = OVERLAP_MARKER.fullmatch(first_line(comment.body))
-        if match and trusted(model, comment):
-            told |= {by_number.get(int(n), int(n)) for n in match.group(1).split()}
+    for place in places:
+        for comment in model.comments_on(place):
+            match = OVERLAP_MARKER.fullmatch(first_line(comment.body))
+            if not (match and trusted(model, comment)):
+                continue
+            for other in {by_number.get(int(n), int(n)) for n in match.group(1).split()}:
+                if all(comment.at >= made[i] for i in (identity, other) if i in made):
+                    told.add(other)
     return told
 
 
 def overlap_effects(model, known=AS_BUILT):
-    """SPEC["overlap"], SPEC["told again"] and SPEC["one piece"]: a comment
-    on the identity of each piece that meets work it has not been told
-    of, a marker's numbers read as the identities of the pieces shown by
-    them now, so one naming a pull request closed since names nothing."""
+    """SPEC["overlap"], SPEC["told again"], SPEC["one piece"], SPEC["own
+    pull marker"], SPEC["no claim's piece"] and SPEC["in turn"]: a comment
+    on the identity of each piece that meets work it has not been told of,
+    a piece with two pull requests being one, a marker's numbers read as
+    the identities of the pieces shown by them now, so one naming a pull
+    request closed since names nothing. No finding switches this rule now,
+    and known is taken as every rule of the page takes it."""
     pieces = open_work(model, known)
     by_number = {p.number: p.identity for p in pieces}
+    files, places = {}, {}
+    for piece in pieces:
+        files.setdefault(piece.identity, set()).update(piece.files)
+        places.setdefault(piece.identity, {piece.identity}).add(piece.number)
+    made = claims_made(model, pieces)
     effects = []
-    for piece in sorted(pieces, key=lambda p: p.identity):
-        meets = {other.identity for other in pieces if other.identity != piece.identity
-                 and set(other.files) & set(piece.files)}
-        if meets and not meets <= told_of(model, piece, by_number, known):
-            effects.append(Effect("comment", piece.identity, "overlap"))
+    for identity in sorted(files):
+        meets = {other for other in files if other != identity and files[other] & files[identity]}
+        if meets and not meets <= told_of(model, identity, sorted(places[identity]), by_number, made):
+            effects.append(Effect("comment", identity, "overlap"))
     return effects
 
 

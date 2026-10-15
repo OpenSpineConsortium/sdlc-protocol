@@ -685,6 +685,21 @@ def named_by_the_number_shown(work):
     return work.number
 
 
+def no_place_but_the_identity(snapshot, identity):
+    """coordinator.told_places as F2's fix first built it: a piece read on
+    its identity alone, so a claim the coordinator told on its pull
+    request before the fix is told again on its issue at the upgrade."""
+    return []
+
+
+def no_claim_dated(snapshot):
+    """coordinator.claims_made as F2's fix first built it: no claim dated, so
+    every marker counts whenever it came, and a claim on an issue released
+    and claimed anew is taken as told by the markers that spoke of the
+    claim before it, and never told, nor told of."""
+    return {}
+
+
 def blank_names_a_worker(text):
     """claims.claim_worker, as the clerk reads it (team.claim_worker), as
     it read a Worker line until F18's review: a name that is empty once
@@ -1038,10 +1053,19 @@ MUTANTS = {
                "share (F18's review)"),
     "a piece of work named by the number it is shown by": Mutant(
         board, "identity", named_by_the_number_shown,
-        "G7", "a claim and the pull request from its branch are one piece, named by the issue for as long as the "
-              "claim lives and told on it, so opening the pull request tells nothing again; named by the pull "
+        "G7", "a claim and the pull request from its branch are one piece, named by the issue while the claim "
+              "lives and told on it, so opening the pull request tells nothing again; named by the pull "
               "request's number as soon as it has one, as before the fix, the claim is told again of the work it "
               "was told of, and that work of it (F2)"),
+    "the markers on a claim's own pull request never read": Mutant(
+        coordinator, "told_places", no_place_but_the_identity,
+        "G7", "a marker on a claim's own pull request counts as one on the issue, so a claim told there before "
+              "F2's fix is told nothing again at the upgrade (F2's review)"),
+    "a marker counted whenever it came": Mutant(
+        coordinator, "claims_made", no_claim_dated,
+        "G7", "an issue's number names each claim on it in turn, so a marker counts for a claim only from the "
+              "push that made its branch, and a claim on an issue released and claimed anew is told, and told of, "
+              "again (F2's review)"),
 }
 
 

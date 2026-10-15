@@ -785,7 +785,9 @@ def identity(work):
     (spec, Overlaps; F2: until the fix the work was named by its pull
     request's number as soon as it had one, and told on it, so a claim
     that opened its pull request was told again of the work it was told
-    of, and that work told again of it)."""
+    of, and that work told again of it). An issue's number names each
+    claim on it in turn, which the coordinator tells apart by when the
+    claim's branch was made (coordinator.heard_of)."""
     return work.number if work.issue is None else work.issue
 
 
