@@ -1007,10 +1007,19 @@ def check_c6(site, seen):
         return
     if released is None or (held is not None and not held.due):
         return
+    # The clone that pushes the held claim's head again comes before the
+    # fresh claim is held, so nothing that can fail stands between the hold
+    # and the label's removal, as in C7: a clone that fails leaves the held
+    # claim for the next run and closes the fresh one with this run, where
+    # one made after the hold left both held. git clone fetches every
+    # branch, the held claim's among them, which still stands. The runs are
+    # still read from just before the label comes off.
+    if held is not None:
+        held.clone = site.clone()
     hold(site, seen, "C6", fresh, held)
     if held is None:
         return
-    held.clone, held.since = site.clone(), site.now() - RUNS_MARGIN
+    held.since = site.now() - RUNS_MARGIN
     unhold(site, held)
     follow_release(site, seen, held)
 
@@ -1087,12 +1096,14 @@ def held_claim(site, seen, check):
     push, and the spec's expectation that a finished claim waits however
     long it takes, its branch standing, its draft open, the label claimed
     on and no release comment. One found released is closed with this run
-    and counts as none, so the run holds another."""
+    and counts as none, so the run holds another. Every other held claim
+    of the check closes with this run (close_extras)."""
     found = sorted((i for i in site.open_issues() if is_held(i) and i.get("title") == throwaway_title(check)),
                    key=lambda i: i["number"])
     if not found:
         return None
     issue = found[0]
+    close_extras(site, seen, check, found[1:])
     number = issue["number"]
     branch = claims.branch_of(number)
     held = Claim(number, site.branch_sha(branch), pull_of(site, branch), made=made_at(issue))
@@ -1108,6 +1119,24 @@ def held_claim(site, seen, check):
         seen.note(f"#{number}, the claim an earlier run held, was made at {issue.get('created_at')}, less than "
                   f"{hours(HELD_FOR)} hours ago, so it stands for a later run and this run holds no other")
     return held
+
+
+def close_extras(site, seen, check, extras):
+    """Close with this run, issue and draft, each held claim of the check
+    but the oldest: a run stopped between holding its fresh claim and
+    taking in-review off the one it follows, as a cancelled job is, leaves
+    two held, and the next run brings them back to one, where following
+    the oldest alone would hold one more in its place and keep two for
+    good."""
+    if not extras:
+        return
+    for issue in extras:
+        number = issue["number"]
+        site.take_over(number, pull_of(site, claims.branch_of(number)))
+    numbers = ", ".join(f"#{issue['number']}" for issue in extras)
+    seen.note(f"more than one claim an earlier run of {check} held stands, as a run stopped between holding its fresh "
+              f"claim and taking in-review off the one it followed leaves; the oldest is the held claim, and the "
+              f"others close with this run: {numbers}")
 
 
 def hold(site, seen, check, fresh, held):
@@ -1232,6 +1261,9 @@ def check_c7(site, seen):
         if released:
             subject = fresh
         elif released is False and (held is None or held.due):
+            # Nothing that can fail stands between the hold and unhold's
+            # take-over, which comes before its one call, so only a run
+            # stopped in that moment leaves two held (close_extras).
             hold(site, seen, "C7", fresh, held)
             if held is not None:
                 unhold(site, held)

@@ -461,6 +461,19 @@ def missed(seen):
     return [e["expectation"] for e in seen.expectations if not e["holds"] and not e["known"]]
 
 
+def held_open(site):
+    """The open issues labelled in-review, the claims the next run of a
+    check finds held (canary.is_held)."""
+    return sorted(n for n, issue in site.issues.items()
+                  if issue["state"] == "open" and labels.IN_REVIEW in issue["labels"])
+
+
+class JobStopped(BaseException):
+    """A job stopped in the middle of a step, as a cancel stops it: no
+    except Exception in the driver catches it, so nothing after it runs
+    but the clean-up's finally."""
+
+
 NOT_AT_ONCE = ("the board does not release at once a claim whose commit is dated 25 hours back, since a claim is idle "
                "by when GitHub received its push (F8)")
 WAITED = "the claim an earlier run held in review waited unreleased, as a finished claim waits however long it takes"
@@ -831,6 +844,44 @@ class TheChecks(unittest.TestCase):
         self.assertEqual(site.issues[101]["state"], "closed")
         self.assertEqual(site.held, [101, 104])
 
+    def test_c6_whose_clone_of_the_held_claim_fails_leaves_that_claim_and_holds_no_other(self):
+        """The clone that pushes the held claim's head again is made before
+        the fresh claim is held: one that fails once the fresh claim was
+        seen not released stops the check with the held claim still held
+        and the fresh one closed with the run, so the next run follows the
+        held claim and one claim is held after each run, never two."""
+        site, _, _ = self.first_f8_run()
+        site.clock += timedelta(days=30)
+        clone = site.clone
+        mark = canary.throwaway_title("C6 mark")
+
+        def clone_that_fails_once_the_fresh_claim_is_judged():
+            if any(i["title"] == mark and i["state"] == "open" for i in site.issues.values()):
+                raise canary.CanaryError("git clone: the remote end hung up unexpectedly")
+            return clone()
+        site.clone = clone_that_fails_once_the_fresh_claim_is_judged
+        seen, _ = run(site, "C6", known_of(site))
+        self.assertEqual(seen.status, "failed", seen.as_dict())
+        self.assertEqual(seen.notes[-1], "stopped: git clone: the remote end hung up unexpectedly")
+        self.assertIn(NOT_AT_ONCE, [e["expectation"] for e in seen.expectations if e["holds"]],
+                      "the clone failed after the fresh claim was seen not released")
+        self.assertNotIn("held for a later run", seen.values)
+        self.assertEqual(site.held, [101])
+        self.assertEqual(held_open(site), [101])
+        self.assertEqual((site.issues[104]["state"], site.pulls[105]["state"]), ("closed", "closed"),
+                         "the fresh claim and its draft close with the run")
+        self.assertNotIn(labels.IN_REVIEW, site.issues[104]["labels"])
+
+        site.clone = clone
+        site.clock += timedelta(days=30)
+        seen, _ = run(site, "C6", known_of(site))
+        self.assertEqual(seen.status, "passed", seen.as_dict())
+        self.assertEqual(seen.values["held claim"]["issue"], 101)
+        self.assertIn("the delete closed the draft opened from the second push",
+                      [e["expectation"] for e in seen.expectations if e["holds"]])
+        self.assertEqual(site.issues[101]["state"], "closed")
+        self.assertEqual(held_open(site), [107])
+
     def test_c6_on_a_copy_with_f8_fails_when_the_backdated_push_is_released_at_once(self):
         """With the fix, a release at once says the board read the claim by
         its committer date, as where the activity had not listed the push
@@ -912,6 +963,42 @@ class TheChecks(unittest.TestCase):
         self.assertIn(("add", 101, (labels.BLOCKED,)), site.label_calls)
         self.assertEqual(site.branches.get("released/101-sha-003"), "sha-003")
         self.assertEqual(site.issues[101]["state"], "closed")
+
+    def test_a_run_that_finds_two_held_claims_follows_the_oldest_and_closes_the_other(self):
+        """A run stopped between holding its fresh claim and taking
+        in-review off the claim it follows, as a cancelled job is, leaves
+        two claims of the check held, in C6 and C7 alike; the next run
+        follows the oldest, closes the other with the run, issue and draft,
+        and holds its own fresh claim, so one is held again, where
+        following the oldest alone kept two for good."""
+        for check, later, options in (("C6", timedelta(days=30), {}), ("C7", timedelta(hours=26), {"admin": True})):
+            with self.subTest(check=check):
+                site, _, _ = self.first_f8_run(check, **options)
+                site.clock += later
+                take_over = site.take_over
+
+                def stopped(number, pull):
+                    raise JobStopped(f"the job was cancelled before #{number} was taken over")
+                site.take_over = stopped
+                with self.assertRaises(JobStopped):
+                    run(site, check, known_of(site))
+                site.take_over = take_over
+                self.assertEqual(site.held, [101, 104])
+                self.assertEqual(held_open(site), [101, 104])
+                self.assertIn(labels.IN_REVIEW, site.issues[101]["labels"], "the label never came off")
+
+                site.clock += later
+                seen, _ = run(site, check, known_of(site))
+                self.assertEqual(seen.status, "passed", seen.as_dict())
+                self.assertEqual(seen.values["held claim"]["issue"], 101)
+                closed = [note for note in seen.notes if note.startswith("more than one claim")]
+                self.assertEqual(len(closed), 1, seen.notes)
+                self.assertTrue(closed[0].endswith("the others close with this run: #104"), closed[0])
+                self.assertEqual((site.issues[104]["state"], site.pulls[105]["state"]), ("closed", "closed"),
+                                 "the extra held claim and its draft close with the run")
+                self.assertEqual(site.issues[101]["state"], "closed", "the claim followed closes with the run")
+                self.assertEqual(site.held, [101, 104, 107])
+                self.assertEqual(held_open(site), [107])
 
     def test_c0_reads_a_draft_and_opens_one_when_none_is_open(self):
         site = FakeSite()
