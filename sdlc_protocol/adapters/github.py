@@ -52,6 +52,8 @@ ACTIVITY_PAGE = 100
 # (began_refused_lines).
 UNDATED_PULL = "date its pull request by when it was opened"
 UNDATED_CLAIM = "put its claim last, as work nothing dates"
+UNDATED_STRANGER = ("date a stranger's pull request from it by when it was opened and put its claim last, as work "
+                    "nothing dates")
 # GitHub computes mergeability after the first ask; one more ask after a
 # pause is enough, and "unknown" is the honest word when it still has not.
 MERGEABLE_RETRY_SECONDS = 3
@@ -274,13 +276,19 @@ class GitHub:
         owner, which a fork in the same organization shares (github/docs,
         content/pull-requests/reference/forks.md:113), so a pull request
         from such a fork is left out by the head and base the list gives
-        (board.from_fork; F17's review); and so is one that someone who may
-        not write opened from the branch here, which is no claim's either
-        (claims.opened_by_writer, may_open; F19)."""
+        (board.from_fork; F17's review); and so, from a claim's branch, is
+        one that someone who may not write opened from the branch here,
+        which is no claim's either (claims.opened_by_writer, may_open;
+        F19), a filter for claim branches alone, as mark_strangers's is,
+        since another branch's pull request is no claim's whoever opened
+        it. The gate's world reads a branch's pull request through this too
+        (GitHubWorld.pull_of, merge), so a stranger's from a claim's branch
+        has no standing and is never merged."""
         owner = self.repo.split("/")[0]
         found = self.get(f"/repos/{self.repo}/pulls", {"state": "open", "head": f"{owner}:{branch}"}) or []
         own = [pull for pull in found
-               if not board.from_fork(pull) and claims.opened_by_writer(pull, may_open(self.asked))]
+               if not board.from_fork(pull)
+               and (not claims.is_claim_branch(branch) or claims.opened_by_writer(pull, may_open(self.asked)))]
         return self.get(f"/repos/{self.repo}/pulls/{own[0]['number']}") if own else None
 
     def check_runs(self, sha):
@@ -540,12 +548,16 @@ def permissions(api):
 
 def may_write(api, asked=None):
     """A callable saying whether a login may write to the repository, from
-    GitHub's collaborator permission (permissions), asked once per login.
-    It stands in for author_association where that word does not vouch for
-    an author: GitHub may show a private member of the organization to a
-    workflow's token as a contributor. A call GitHub refuses counts as no,
-    so a release by an author nobody can vouch for frees nothing."""
-    asked = asked or permissions(api)
+    GitHub's collaborator permission (permissions), asked once per login:
+    through asked where the caller passes it, else the client's own cache
+    (GitHub.asked), so a board run and a clerk's look ask about an author
+    once however many readers name them, and only a client with no cache
+    pays for one of its own (F19's review). It stands in for
+    author_association where that word does not vouch for an author:
+    GitHub may show a private member of the organization to a workflow's
+    token as a contributor. A call GitHub refuses counts as no, so a
+    release by an author nobody can vouch for frees nothing."""
+    asked = asked or getattr(api, "asked", None) or permissions(api)
     return lambda login: asked(login) is True
 
 
@@ -554,8 +566,9 @@ def may_open(asked):
     request (claims.opened_by_writer), from the answers permissions gives:
     unless GitHub says it may not write. A call GitHub refuses counts as
     yes, so a lost answer never takes a claim's own pull request for a
-    stranger's, which would free a finished claim; it costs at most a run
-    that does not release a claim a stranger's ready pull request held."""
+    stranger's, which would free a finished claim; it costs the runs in
+    which GitHub refuses the call, each releasing no claim such a pull
+    request holds."""
     return lambda login: asked(login) is not False
 
 
@@ -602,8 +615,7 @@ def claim_released(api, branch, now=None):
         return False
     key = claims.key_of(board.branch_name(branch))
     comments = api.get_all(f"/repos/{api.repo}/issues/{quoted(key)}/comments")
-    return claims.was_released(claims.latest_release(comments, may_write(api, getattr(api, "asked", None))),
-                               last_commit)
+    return claims.was_released(claims.latest_release(comments, may_write(api)), last_commit)
 
 
 def finished_draft(api, pull):
@@ -783,9 +795,22 @@ def began_refused_lines(snapshot):
     lands last (board.pull_began, board.UNDATED)."""
     snap = board.as_snapshot(snapshot)
     opened = {pull.branch for pull in snap.pulls if not pull.fork}
+    own = {pull.branch for pull in snap.pulls if board.claim_of(pull) is not None}
     return [f"{branch}: GitHub refused to say when the branch was made ({answer}), so the Overlaps "
-            f"{UNDATED_PULL if branch in opened else UNDATED_CLAIM}"
+            f"{undated_words(branch, opened, own)}"
             for branch, answer in sorted(snap.began_refused.items())]
+
+
+def undated_words(branch, opened, own):
+    """What the Overlaps do with the work of a branch GitHub refused to
+    date: date its pull request by its opening where the branch has one of
+    its own, or is no claim's; and for a claim branch with none of its own,
+    put the claim last, and date a stranger's pull request from it, where
+    there is one, by its opening, since that is a piece of its own (F19;
+    the fix's review)."""
+    if branch in own or (branch in opened and not claims.is_claim_branch(branch)):
+        return UNDATED_PULL
+    return UNDATED_STRANGER if branch in opened else UNDATED_CLAIM
 
 
 def snapshot(api, sha, default_branch, now=None):

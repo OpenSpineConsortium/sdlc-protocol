@@ -223,6 +223,14 @@ class TheKey(unittest.TestCase):
             m.pulls[100].association = "NONE"
         self.assertTrue(self.differs(shown_as_a_stranger))
 
+    def test_keeps_whom_github_will_not_say_may_write(self):
+        """The fake's permission answers turn on it, and with them whose a
+        pull request is and which comments count (SPEC["unanswered"]; F19's
+        review); a clone keeps it."""
+        self.assertTrue(self.differs(lambda m: setattr(m, "unanswered", frozenset({"sam"}))))
+        self.model.unanswered = frozenset({"sam"})
+        self.assertEqual(self.model.clone().unanswered, frozenset({"sam"}))
+
     def test_keeps_the_label_events_every_head_and_the_tracking_refs(self):
         self.assertTrue(self.differs(lambda m: setattr(m, "label_events", m.label_events + (
             M.LabelEvent(0, 1, "a", True, "claimed"),))))

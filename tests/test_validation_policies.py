@@ -78,6 +78,35 @@ class Workers(unittest.TestCase):
         self.assertEqual([v for v in applied if v.name == "label-off"], [verbs.Verb("label-off", "b", (1, "account:a"))])
         self.assertEqual(model.issues[1].labels, frozenset({"claimed", "todo", "worker:b", "agent:b", "worker:"}))
 
+    def test_a_holder_closes_a_stranger_s_pull_request_before_opening_its_own(self):
+        """The spec's Work in the open (F19): a holder that finds a
+        stranger's pull request open from its branch closes it and opens
+        its own, since GitHub refuses a second pull request between two
+        branches; the scripted worker had no such step, so it would have
+        asked for its draft and been refused for ever (F19's review)."""
+        model = M.seeded((1,), writers=("a",))
+        cycle.board_run(model)
+        claimer, applied = policies.EagerClaimer(k=1), []
+        for _ in range(8):
+            verb = claimer.decide(policies.view(model, "a"))
+            if verb.name == "open-draft":
+                break
+            self.assertEqual(invariants.step_checks(model.clone(), model, verb, verbs.apply(model, verb)), [], str(verb))
+        self.assertEqual(verb, verbs.Verb("open-draft", "a", (1,)))
+        verbs.apply(model, verbs.Verb("stranger-pull", verbs.SAM, (1, False)), verbs.Scope(strangers=True))
+        theirs = model.open_pull_from("claude/1").number
+        self.assertEqual(policies.view(model, "a").mine[0].stranger, theirs)
+        for expected in (verbs.Verb("close-pull", "a", (theirs,)), verbs.Verb("open-draft", "a", (1,))):
+            verb = claimer.decide(policies.view(model, "a"))
+            self.assertEqual(verb, expected)
+            before = model.clone()
+            outcome = verbs.apply(model, verb)
+            self.assertTrue(outcome.taken, str(verb))
+            self.assertEqual(invariants.step_checks(before, model, verb, outcome), [], str(verb))
+        self.assertEqual(model.pulls[theirs].state, "closed")
+        self.assertIsNotNone(oracle.own_pull(model, "claude/1"))
+        self.assertIsNone(policies.view(model, "a").mine[0].stranger)
+
     def test_a_finished_draft_waits_however_long_it_takes(self):
         model = M.seeded((1,), writers=("f",))
         drive(model, {"f": policies.Finisher()}, 100, self)

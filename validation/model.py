@@ -18,8 +18,9 @@ canonical() is the state key (DESIGN.md, 6.3): everything a guarantee,
 the oracle or a scripted worker reads, comment bodies whole, the label
 events, every head a claim branch ever had, the tracking refs, the
 board's last page, whether GitHub hides a held branch's standing
-(opaque_pulls) and whether it calls a branch that is behind clean
-(lenient_rules) included, so two states with one key behave the same
+(opaque_pulls), whether it calls a branch that is behind clean
+(lenient_rules) and whom it will not say may write (unanswered) included,
+so two states with one key behave the same
 under every verb. The reductions of section 6.4
 (times capped, workers by symmetry) come with the checker's fast lane.
 """
@@ -176,6 +177,12 @@ class RepoModel:
     # template's crowd ruleset, or under no rule; rather than "behind",
     # which it gives only under one that does (F16). Part of the key.
     lenient_rules: bool = False
+    # The logins GitHub will not say whether they may write, answering the
+    # permission API 403 on every call, as for a token without the right:
+    # a pull request such a login opened stays the claim's and a comment it
+    # wrote counts for nothing (SPEC["unanswered"]; F19's review). Part of
+    # the key, since the fake's answers turn on it.
+    unanswered: frozenset = frozenset()
     # The board branch's STATE.md: written only by a board run that exits 0.
     board_text: str = ""
     # The board workflow's concurrency group (DESIGN.md, 3.3), each run as
@@ -514,6 +521,7 @@ class RepoModel:
             self.board_text,
             self.opaque_pulls,
             self.lenient_rules,
+            tuple(sorted(self.unanswered)),
         )
 
     def digest(self):
@@ -559,7 +567,7 @@ class RepoModel:
             made=dict(self.made), made_count=self.made_count,
             tracking={w: dict(refs) for w, refs in self.tracking.items()}, board_text=self.board_text,
             queued=self.queued, pending=self.pending, running=None, opaque_pulls=self.opaque_pulls,
-            lenient_rules=self.lenient_rules, standings=self.standings,
+            lenient_rules=self.lenient_rules, unanswered=self.unanswered, standings=self.standings,
         )
 
 

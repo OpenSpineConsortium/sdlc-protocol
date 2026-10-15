@@ -57,6 +57,24 @@ class TheAdapterReadsTheModel(unittest.TestCase):
         self.assertEqual([(p.number, p.stranger) for p in snap.pulls], [(100, True)])
         self.assertEqual(sum(1 for c in fake.calls if c.path == "/collaborators/sam/permission"), 1)
 
+    def test_the_permission_api_answers_admin_for_the_owner_and_403_for_a_login_github_will_not_answer_for(self):
+        """F19's review: GitHub answers admin for an owner, and a token
+        without the right meets a 403 on every call, which the adapter
+        reads as no answer (github.permissions), so a stranger's pull
+        request then stays the claim's (may_open) and nothing is marked."""
+        model = claimed()
+        model.unanswered = frozenset({"sam"})
+        model.pulls[100] = M.PullRequest(100, "claude/1", "sam", "Closes #1", draft=False, association="NONE")
+        api, fake = cycle.api_for(model)
+        self.assertEqual(api.get(f"/repos/{M.REPO}/collaborators/{M.OWNER}/permission")["permission"], "admin")
+        self.assertIsNone(api.asked("sam"))
+        with self.assertRaises(github.GitHubError) as caught:
+            api.get(f"/repos/{M.REPO}/collaborators/sam/permission")
+        self.assertIn("403", str(caught.exception))
+        snap = github.snapshot(api, model.refs[M.MAIN], M.MAIN, M.moment(0))
+        self.assertEqual([(p.number, p.stranger) for p in snap.pulls], [(100, False)])
+        self.assertEqual([c.status for c in fake.calls if c.path == "/collaborators/sam/permission"], [403, 403])
+
 
 class TheTransport(unittest.TestCase):
     def test_a_path_outside_ascii_is_refused_before_it_is_sent(self):

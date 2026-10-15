@@ -47,8 +47,10 @@ names its author's fork in its head and this repository in its base, in
 its detail and in the list's entries, and the list's head filter,
 owner:branch, matches the repository the branch stands in (F17); a pull
 request names its author and the author's author_association, in its
-detail and in the list's entries, and the permission API answers write
-for the model's writers and read for anyone else (F19); a rename onto a
+detail and in the list's entries, and the permission API answers admin
+for the owner, write for the model's other writers, read for anyone else
+and 403 for a login the model says GitHub will not answer for (F19); a
+rename onto a
 name that stands answers 422; the board posts as github-actions[bot]
 with the author_association NONE; a pull request's updated_at moves
 with pushes and comments; and the repository's activity lists the push
@@ -65,7 +67,7 @@ import urllib.error
 import urllib.parse
 from typing import NamedTuple
 
-from .model import BOT, MAIN, REPO, Comment, iso
+from .model import BOT, MAIN, OWNER, REPO, Comment, iso
 
 PER_PAGE = 100
 # GitHub's contents API gives the text of a file of up to 1 MB and answers
@@ -205,7 +207,9 @@ class FakeGitHub:
         if s[:1] == ["git"]:
             return self.git_route(method, s), {}
         if route == ("GET", "collaborators") and s[-1] == "permission":
-            word = "write" if s[1] in self.model.writers else "read"
+            if s[1] in self.model.unanswered:
+                raise Refused(403)
+            word = "admin" if s[1] == OWNER else "write" if s[1] in self.model.writers else "read"
             return {"permission": word, "role_name": word}, {}
         if route == ("GET", "compare"):
             base, _, sha = s[1].partition("...")

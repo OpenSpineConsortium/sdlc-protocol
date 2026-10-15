@@ -34,6 +34,10 @@ class Mine(NamedTuple):
     last_commit: int
     claim_file: bool
     said_finished: bool
+    # The open pull request from the claim's branch that is no claim's, a
+    # stranger's, which the holder closes before opening its own (spec,
+    # Work in the open; F19's review); None where there is none.
+    stranger: int | None = None
 
 
 class View(NamedTuple):
@@ -59,13 +63,15 @@ def view(model, worker):
         if number is None or number not in model.issues:
             continue
         issue, pull = model.issues[number], oracle.own_pull(model, ref)
+        other = model.open_pull_from(ref) if pull is None else None
         head = model.refs[ref]
         own = model.ancestors(head) - model.ancestors(model.refs["main"])
         mine.append(Mine(number, issue.labels, any(c.author == worker for c in issue.comments),
                          pull.number if pull else None, bool(pull and pull.draft), model.standing(ref),
                          len(own) - 1, model.commits[head].committed_at,
                          f"{CLAIM_DIR}/{number}.md" in model.tree(head),
-                         bool(pull and any(c.author == worker and c.body.startswith("finished") for c in pull.comments))))
+                         bool(pull and any(c.author == worker and c.body.startswith("finished") for c in pull.comments)),
+                         other.number if other is not None else None))
     released = tuple(sorted((int(ref[len(RELEASED_PREFIX):].split("-")[0]), ref) for ref, who in model.creators.items()
                             if who == worker and ref.startswith(RELEASED_PREFIX)))
     given = {number: issue.labels for number, issue in model.issues.items()
@@ -125,7 +131,10 @@ def announce(seen, claim):
     label comes off, in any spelling, since the spec's Labels reads the
     older spellings as the same label (F18's second review, where the
     policy took off worker: labels alone), and a bare worker:, which names
-    nobody, and the holder's own labels stay."""
+    nobody, and the holder's own labels stay. A stranger's pull request
+    from the branch is closed before the holder opens its own, as the
+    spec's Work in the open says, since GitHub refuses a second pull
+    request between two branches (F19's review)."""
     for label in ("claimed", WORKER_LABEL + seen.worker):
         if label not in claim.labels:
             return Verb("label-on", seen.worker, (claim.number, label))
@@ -134,6 +143,8 @@ def announce(seen, claim):
             return Verb("label-off", seen.worker, (claim.number, label))
     if not claim.planned:
         return Verb("plan", seen.worker, (claim.number,))
+    if claim.pull is None and claim.stranger is not None:
+        return Verb("close-pull", seen.worker, (claim.stranger,))
     if claim.pull is None:
         return Verb("open-draft", seen.worker, (claim.number,))
     return None

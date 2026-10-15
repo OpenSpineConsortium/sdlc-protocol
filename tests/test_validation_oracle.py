@@ -85,6 +85,26 @@ class Terms(unittest.TestCase):
         self.assertEqual(oracle.own_pull(own, "claude/1").number, 100)
         self.assertTrue(oracle.finished(own, 1))
 
+    def test_a_login_github_will_not_answer_for_keeps_its_pull_request_and_loses_its_comments(self):
+        """SPEC["unanswered"] (F19's review): where GitHub will not say
+        whether sam or dana may write, sam's pull request from the claim's
+        branch stays the claim's, finished once marked ready, and dana's
+        release marker, which counted while GitHub vouched for dana, counts
+        for nothing; the owner's, vouched for by association, still does."""
+        model = claimed()
+        model.unanswered = frozenset({verbs.SAM, verbs.DANA})
+        theirs = run(model, Verb("stranger-pull", verbs.SAM, (1, True)))
+        self.assertTrue(oracle.opened_by_writer(theirs, theirs.open_pull_from("claude/1")))
+        self.assertEqual(oracle.claim_of(theirs, theirs.open_pull_from("claude/1")), 1)
+        self.assertIs(oracle.own_pull(theirs, "claude/1"), theirs.open_pull_from("claude/1"))
+        self.assertTrue(oracle.finished(theirs, 1))
+        marked = run(claimed(), Verb("wait", "clock", (25,)), Verb("marker", verbs.DANA, (1,)))
+        self.assertEqual(len(oracle.release_times(marked, 1)), 1)
+        marked.unanswered = frozenset({verbs.DANA})
+        self.assertEqual(oracle.release_times(marked, 1), [])
+        both = run(marked, Verb("marker", M.OWNER, (1,)))
+        self.assertEqual(len(oracle.release_times(both, 1)), 1)
+
     def test_a_release_comment_made_too_soon_frees_nothing(self):
         model = claimed(Verb("marker", M.OWNER, (1,)), Verb("label-off", M.OWNER, (1, "claimed")),
                         Verb("wait", "clock", (25,)))

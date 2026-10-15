@@ -109,6 +109,9 @@ SPEC = {
                 "claim's either: the board lists it as a pull request of its own and tells it what it tells any "
                 "other, it finishes no claim, marked ready or said finished, and a release's rename closes it with "
                 "the claim's own, since GitHub closes each open pull request whose branch it renames.",
+    "unanswered": "Where GitHub will not answer whether someone may write, a pull request they opened stays the "
+                  "claim's, and a release comment or an overlap marker they wrote counts for nothing, so a lost "
+                  "answer never frees a finished claim and never keeps work from being told",
     "pick": "Take an issue the Given to workers section gives you first. Else take a blocker, with or without todo, "
             "that the Blockers section lists, that nobody has claimed and that no worker's label gives to another, "
             "since a blocker comes before the Queue. Else take an open issue labelled todo that the Queue section "
@@ -258,9 +261,10 @@ def workers_named(labels):
 
 
 def trusted(model, comment):
-    """SPEC["trusted"]."""
+    """SPEC["trusted"]; a writer GitHub will not answer for, whom no
+    association vouches for, counts for nothing (SPEC["unanswered"])."""
     return (comment.association in TRUSTED_ASSOCIATIONS or comment.author == BOT
-            or comment.author in model.writers)
+            or (comment.author in model.writers and comment.author not in model.unanswered))
 
 
 def head_time(model, ref):
@@ -441,9 +445,10 @@ def claim_of(model, pull):
 def opened_by_writer(model, pull):
     """SPEC["stranger"]: the owner, a member of the organization or a
     collaborator, by GitHub's author_association, anyone else who may
-    write, or a GitHub App."""
+    write, or a GitHub App; and anyone GitHub will not answer for, whose
+    pull request stays the claim's (SPEC["unanswered"])."""
     return (pull.association in TRUSTED_ASSOCIATIONS or pull.author.endswith(APP_SUFFIX)
-            or pull.author in model.writers)
+            or pull.author in model.writers or pull.author in model.unanswered)
 
 
 def own_pull(model, ref):

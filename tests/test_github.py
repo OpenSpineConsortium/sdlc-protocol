@@ -11,6 +11,7 @@ import json
 import os
 import sys
 import tempfile
+import types
 import unittest
 import urllib.error
 import urllib.parse
@@ -657,6 +658,33 @@ class WhenWorkBegan(unittest.TestCase):
             f"claude/5: GitHub refused to say when the branch was made ({live.began_refused['claude/5']}), "
             f"so the Overlaps put its claim last, as work nothing dates"])
 
+    def test_the_log_says_a_stranger_s_pull_request_is_dated_and_the_claim_put_last(self):
+        """F19's review: a stranger's pull request from a claim's branch is
+        a piece of its own, dated by its opening once GitHub refuses the
+        branch, while the claim, which has no pull request of its own, is
+        the work nothing dates; the line says both, where it said the
+        branch's pull request alone."""
+        snap, answers = wide_answers()
+        stranger = {"number": 90, "title": "Describe b", "draft": False, "created_at": "2026-09-20T10:00:00Z",
+                    "user": {"login": "sam"}, "author_association": "NONE",
+                    "head": {"ref": "claude/5", "sha": "s90", "repo": {"full_name": "o/r"}},
+                    "base": {"ref": "main", "repo": {"full_name": "o/r"}}}
+        answers["/repos/o/r/pulls?state=open&per_page=100"] = FakeAnswer(
+            [{"number": p["number"]} for p in snap["pulls"]] + [{"number": 90}])
+        answers["/repos/o/r/pulls/90"] = FakeAnswer(stranger)
+        answers["/repos/o/r/pulls/90/files?per_page=100"] = FakeAnswer([{"filename": "docs/b.md"}])
+        answers["/repos/o/r/collaborators/sam/permission"] = FakeAnswer({"permission": "read", "role_name": "read"})
+        answers[NEWEST_CREATIONS] = FakeAnswer([made("claude/31", "2026-09-20T08:00:00Z")])
+        answers[activity_path("claude/5")] = Refusal(502)
+        api, _ = client(answers)
+        live = github.snapshot(api, snap["sha"], snap["default_branch"])
+        self.assertTrue(next(p for p in live.pulls if p.number == 90).stranger)
+        self.assertIn("| docs/b.md | #63, #90, #5 |", board.render(live))
+        self.assertEqual(github.began_refused_lines(live), [
+            f"claude/5: GitHub refused to say when the branch was made ({live.began_refused['claude/5']}), "
+            f"so the Overlaps date a stranger's pull request from it by when it was opened and put its claim "
+            f"last, as work nothing dates"])
+
     def test_a_branch_two_pull_requests_share_is_asked_about_once(self):
         """F13's second review: two open pull requests from one head, as to
         the default branch and to a release branch, are two pieces of work
@@ -1075,6 +1103,31 @@ class Releases(unittest.TestCase):
         self.assertIn(DRAFT_COMMENTS_40, asked)
         self.assertNotIn("/repos/o/r/issues/50/comments?per_page=100", asked)
 
+    def test_the_marking_and_the_release_rule_share_one_answer_about_an_author(self):
+        """F19's review: sam, whom GitHub shows with no association and
+        whose permission reads write, opened draft #50 from claude/12 to
+        the branch board and posted issue 12's release comment; one collect
+        asks about sam once, through the client's cache both readers share,
+        marks no stranger and reads the release."""
+        permission = "/repos/o/r/collaborators/sam/permission"
+        _, answers = released_answers()
+        answers[COMMENTS_12] = FakeAnswer([dict(RELEASE_COMMENT, author_association="NONE", user={"login": "sam"})])
+        answers["/repos/o/r/pulls?state=open&per_page=100"] = FakeAnswer([{"number": n} for n in (40, 41, 50)])
+        answers["/repos/o/r/pulls/50"] = FakeAnswer({
+            "number": 50, "title": "Fix the board", "draft": True, "mergeable_state": "clean",
+            "updated_at": "2026-09-19T12:00:00Z", "user": {"login": "sam"}, "author_association": "NONE",
+            "head": {"ref": "claude/12", "sha": "ddd", "repo": {"full_name": "o/r"}},
+            "base": {"ref": "board", "repo": {"full_name": "o/r"}}})
+        answers["/repos/o/r/pulls/50/files?per_page=100"] = FakeAnswer([{"filename": "docs/agents/README.md"}])
+        answers["/repos/o/r/issues/50/comments?per_page=100"] = FakeAnswer([])
+        answers[permission] = FakeAnswer({"permission": "write", "role_name": "write"})
+        api, opener = client(answers)
+        found = github.collect(api, "abc", "main")
+        self.assertNotIn("stranger", next(p for p in found["pulls"] if p["number"] == 50))
+        self.assertEqual(found["releases"]["12"]["released_at"], RELEASE_COMMENT["created_at"])
+        asked = [c.full_url.replace(github.API, "") for c in opener.calls]
+        self.assertEqual(asked.count(permission), 1)
+
     def test_a_refused_permission_call_keeps_a_pull_request_the_claim_s_and_a_404_makes_it_a_stranger_s(self):
         """A lost answer never takes a claim's own pull request for a
         stranger's, which would free a finished claim; it costs at most a
@@ -1355,9 +1408,14 @@ class Permissions(unittest.TestCase):
         self.assertEqual([asked("sam") for _ in range(3)], [False, False, False])
         self.assertEqual(sum(c.full_url.endswith("/collaborators/sam/permission") for c in opener.calls), 1)
         self.assertEqual([api.asked("sam"), api.asked("sam"), github.may_write(api)("sam")], [False, False, False])
-        self.assertEqual(sum(c.full_url.endswith("/collaborators/sam/permission") for c in opener.calls), 3,
-                         "the client's own cache asks once more, and may_write given no cache builds one of its own, "
-                         "which is why collect and claim_released hand it the client's")
+        self.assertEqual(sum(c.full_url.endswith("/collaborators/sam/permission") for c in opener.calls), 2,
+                         "the client's own cache asks once more, and may_write given no cache takes the client's, so "
+                         "every reader of a run, collect, releases, claim_released, landed_release and tell_overlaps, "
+                         "asks about an author once (F19's review)")
+        bare = types.SimpleNamespace(repo="o/r", get=api.get)
+        self.assertEqual([github.may_write(bare)("sam"), github.may_write(bare)("sam")], [False, False])
+        self.assertEqual(sum(c.full_url.endswith("/collaborators/sam/permission") for c in opener.calls), 4,
+                         "a client with no cache pays for one of its own at each call")
 
 
 IDLE_CLAIM = ("# Claim: #12\n\n- Worker: nightly\n- Branch: claude/12\n\n## Plan\n\nDescribe the board.\n\n"
@@ -1624,6 +1682,40 @@ class Coordinate(unittest.TestCase):
         api, opener = client(answers)
         self.assertEqual(github.coordinate(api, board.Snapshot.from_dict(snap), NOW), [])
         self.assertEqual(opener.calls, [])
+
+    def test_one_client_asks_about_an_author_once_through_a_lost_release_comment_and_the_overlaps_too(self):
+        """F19's review: landed_release, which reads an issue's comments
+        again after a refused release comment, and tell_overlaps, which
+        reads the overlap markers, each built a permission cache of their
+        own, so a board run asked GitHub twice about a login collect had
+        asked about; may_write takes the client's cache when its caller
+        passes none, so one run asks once."""
+        permission = "/repos/o/r/collaborators/sam/permission"
+        answers = release_answers()
+        answers["POST /repos/o/r/issues/12/comments"] = Refusal(502)
+        answers[COMMENTS_12] = FakeAnswer([dict(RELEASE_COMMENT, author_association="NONE", user={"login": "sam"})])
+        answers[permission] = FakeAnswer({"permission": "write", "role_name": "write"})
+        snap = idle_snapshot()
+        api, opener = client(answers)
+        self.assertTrue(api.asked("sam"))
+        line, = github.coordinate(api, snap, NOW)
+        self.assertIn("released", line)
+        self.assertEqual(board.released_keys(snap), {"12"}, "the comment GitHub wrote and lost its answer to counts")
+        asked = [c.full_url.replace(github.API, "") for c in opener.calls]
+        self.assertEqual(asked.count(permission), 1)
+        answers = {
+            "/repos/o/r/issues/40/comments?per_page=100": FakeAnswer([
+                {"body": "<!-- sdlc-coordinator: overlap 41 -->", "author_association": "NONE",
+                 "user": {"login": "sam"}}]),
+            "/repos/o/r/issues/41/comments?per_page=100": FakeAnswer([]),
+            permission: FakeAnswer({"permission": "write", "role_name": "write"}),
+            "POST /repos/o/r/issues/41/comments": FakeAnswer({}),
+        }
+        api, opener = client(answers)
+        self.assertTrue(api.asked("sam"))
+        self.assertEqual(github.coordinate(api, self.overlapping(), NOW), ["#41: overlap comment posted"])
+        asked = [c.full_url.replace(github.API, "") for c in opener.calls]
+        self.assertEqual(asked.count(permission), 1)
 
 
 class Repository(FakeOpener):
@@ -1923,6 +2015,19 @@ class TeamClient(unittest.TestCase):
         api, _ = client(answers)
         self.assertEqual(api.open_pull("claude/7")["number"], 506)
 
+    def test_open_pull_from_a_branch_that_is_no_claim_s_is_whoever_s_at_no_call(self):
+        """The stranger filter is for claim branches alone, as
+        mark_strangers's is (F19's review): another branch's pull request
+        is no claim's whoever opened it, so the first open one is the
+        branch's, and nobody's permission is asked."""
+        theirs = {"number": 508, "head": {"ref": "feature/x", "repo": {"full_name": "o/r"}},
+                  "base": {"ref": "main", "repo": {"full_name": "o/r"}}, "user": {"login": "sam"},
+                  "author_association": "NONE"}
+        api, opener = client({"/repos/o/r/pulls?state=open&head=o%3Afeature%2Fx": FakeAnswer([theirs]),
+                              "/repos/o/r/pulls/508": FakeAnswer(dict(theirs, draft=True, mergeable_state="clean"))})
+        self.assertEqual(api.open_pull("feature/x")["number"], 508)
+        self.assertFalse(any("/collaborators/" in c.full_url for c in opener.calls))
+
     def test_check_runs_reads_every_page(self):
         first = "/repos/o/r/commits/sha7/check-runs?per_page=100"
         api, _ = client({
@@ -2196,6 +2301,33 @@ class World(unittest.TestCase):
         place, _ = world({PULL_LIST: FakeAnswer([])})
         with self.assertRaises(gate.MergeRefused):
             place.merge("claude/7")
+
+    def test_a_stranger_s_pull_request_from_a_claim_s_branch_has_no_standing_and_is_never_merged(self):
+        """The gate's world reads a branch's pull request through
+        pull_detail, so a pull request someone who may not write opened
+        from a claim's branch is no claim's here either (F19's review): a
+        branch with only such a pull request has no standing and nothing to
+        merge, and beside the claim's own, the own one is merged."""
+        theirs = {"number": 506, "head": {"ref": "claude/7", "repo": {"full_name": "o/r"}},
+                  "base": {"ref": "main", "repo": {"full_name": "o/r"}}, "user": {"login": "sam"},
+                  "author_association": "NONE"}
+        own = {"number": 507, "head": {"ref": "claude/7", "repo": {"full_name": "o/r"}},
+               "base": {"ref": "main", "repo": {"full_name": "o/r"}}, "user": {"login": "alice"},
+               "author_association": "COLLABORATOR"}
+        permission = "/repos/o/r/collaborators/sam/permission"
+        put = "PUT /repos/o/r/pulls/507/merge"
+        answers = {**pull_answers(), permission: FakeAnswer({"permission": "read", "role_name": "read"}),
+                   put: FakeAnswer({"sha": "m1", "merged": True}), PULL_LIST: FakeAnswer([theirs])}
+        place, opener = world(answers)
+        self.assertEqual(place.standing("claude/7"), gate.UNKNOWN)
+        with self.assertRaises(gate.MergeRefused):
+            place.merge("claude/7")
+        asked = [c.full_url.replace(github.API, "") for c in opener.calls]
+        self.assertNotIn("/repos/o/r/pulls/506", asked)
+        self.assertEqual(asked.count(permission), 1, "asked once a client")
+        place, opener = world({**answers, PULL_LIST: FakeAnswer([theirs, own])})
+        self.assertEqual(place.merge("claude/7"), gate.MergeResult("m1"))
+        self.assertEqual(opener.sent("PUT"), [{"sha": "sha7", "merge_method": "merge"}])
 
     def test_now_is_the_worlds_clock(self):
         self.assertEqual(world({})[0].now(), datetime(2026, 10, 10, tzinfo=timezone.utc))
