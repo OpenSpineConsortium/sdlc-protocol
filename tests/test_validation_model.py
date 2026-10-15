@@ -149,6 +149,15 @@ class Rename(unittest.TestCase):
         model.rename_ref("claude/1", "released/1-abcdef0")
         self.assertEqual(model.pulls[100].state, "open")
 
+    def test_closes_a_stranger_s_pull_request_from_the_branch_too(self):
+        """GitHub closes each open pull request whose head it renames, a
+        stranger's from the claim's own branch as the claim's own (F19)."""
+        model = M.seeded()
+        model.push("a", "claude/1", claim_commit(model, "a"))
+        model.pulls[101] = M.PullRequest(101, "claude/1", "sam", "Closes #1", association="NONE")
+        model.rename_ref("claude/1", "released/1-abcdef0")
+        self.assertEqual(model.pulls[101].state, "closed")
+
 
 class Delete(unittest.TestCase):
     """GitHub closes the open pull requests a deleted branch was the head of
@@ -177,6 +186,11 @@ class Delete(unittest.TestCase):
         self.assertEqual(self.model.pulls[100].state, "merged")
         self.assertEqual(self.model.pulls[101].state, "open")
 
+    def test_closes_a_stranger_s_pull_request_from_the_branch_too(self):
+        self.model.pulls[101] = M.PullRequest(101, "claude/1", "sam", "Closes #1", association="NONE")
+        self.model.delete_ref("claude/1")
+        self.assertEqual(self.model.pulls[101].state, "closed")
+
 
 class TheKey(unittest.TestCase):
     """DESIGN.md, 6.3: the prototype's key left out what its guarantees read."""
@@ -197,6 +211,17 @@ class TheKey(unittest.TestCase):
     def test_keeps_pull_request_comments(self):
         self.model.pulls[100] = M.PullRequest(100, "claude/1", "a", "Closes #1")
         self.assertTrue(self.differs(lambda m: m.add_comment(100, M.Comment("a", "COLLABORATOR", 0, "finished"))))
+
+    def test_keeps_a_pull_request_s_author_association(self):
+        """Whose a pull request is, by GitHub's word, decides whether it is
+        a claim's own (oracle.opened_by_writer, F19); a pull request made
+        by hand is a worker's, as the verbs make a worker's."""
+        self.model.pulls[100] = M.PullRequest(100, "claude/1", "a", "Closes #1")
+        self.assertEqual(self.model.pulls[100].association, verbs.WORKER_ASSOCIATION)
+
+        def shown_as_a_stranger(m):
+            m.pulls[100].association = "NONE"
+        self.assertTrue(self.differs(shown_as_a_stranger))
 
     def test_keeps_the_label_events_every_head_and_the_tracking_refs(self):
         self.assertTrue(self.differs(lambda m: setattr(m, "label_events", m.label_events + (

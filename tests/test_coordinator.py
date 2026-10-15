@@ -48,6 +48,13 @@ def fork_pull():
                       ["docs/agents/README.md"], draft=False, fork=True)
 
 
+def stranger_pull():
+    """sam's pull request #50, marked ready, from claim 12's own branch,
+    which the adapter marked as a stranger's (F19)."""
+    return board.Pull(50, "Fix the board", "claude/12", "ddddddd4444444", "clean", "2026-09-19T12:00:00Z",
+                      ["docs/agents/README.md"], draft=False, stranger=True)
+
+
 class ReleasesDue(unittest.TestCase):
     def test_a_claim_idle_for_more_than_a_day_is_due(self):
         self.assertEqual(coordinator.releases_due(idle_claim(), NOW), ["12"])
@@ -96,6 +103,18 @@ class ReleasesDue(unittest.TestCase):
         ready.pulls.insert(0, fork_pull())
         self.assertEqual(coordinator.releases_due(ready, NOW), [])
 
+    def test_a_ready_pull_request_a_stranger_opened_from_the_claim_s_branch_keeps_no_claim_from_its_release(self):
+        """F19: a pull request someone who may not write opened from
+        claude/12 itself is no claim's, so marked ready it finishes nothing;
+        the claim's own, marked ready, still does."""
+        for own in (idle_claim(), idle_claim(pulls=[])):
+            own.pulls.insert(0, stranger_pull())
+            self.assertEqual(coordinator.releases_due(own, NOW), ["12"])
+        ready = idle_claim()
+        ready.pulls[0].draft = False
+        ready.pulls.insert(0, stranger_pull())
+        self.assertEqual(coordinator.releases_due(ready, NOW), [])
+
 
 class ReleaseText(unittest.TestCase):
     def test_the_release_says_why_whose_what_and_how_to_carry_on(self):
@@ -137,6 +156,16 @@ class ReleaseText(unittest.TestCase):
         self.assertIn("its pull request #40 is still a draft", coordinator.release_text(snap, "12", coordinator.Holding()))
         alone = idle_claim(pulls=[])
         alone.pulls.append(fork_pull())
+        self.assertIn("and it has no pull request, so", coordinator.release_text(alone, "12", coordinator.Holding()))
+
+    def test_the_release_names_the_claim_s_own_pull_request_never_a_stranger_s(self):
+        """F19: the pull request a release names is the claim's own, never
+        one a stranger opened from the claim's branch."""
+        snap = idle_claim()
+        snap.pulls.insert(0, stranger_pull())
+        self.assertIn("its pull request #40 is still a draft", coordinator.release_text(snap, "12", coordinator.Holding()))
+        alone = idle_claim(pulls=[])
+        alone.pulls.append(stranger_pull())
         self.assertIn("and it has no pull request, so", coordinator.release_text(alone, "12", coordinator.Holding()))
 
     def test_what_a_release_says_without_a_pull_request_a_comparison_or_a_claim_file(self):

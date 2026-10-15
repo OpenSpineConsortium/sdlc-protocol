@@ -40,6 +40,23 @@ class TheAdapterReadsTheModel(unittest.TestCase):
         api, _ = cycle.api_for(model)
         self.assertIs(github.claim_text(api, "claude/1"), board.UNREAD_CLAIM)
 
+    def test_a_pull_request_names_its_author_and_the_permission_api_answers_by_the_writers(self):
+        """F19: the adapter reads whose a pull request is from the list and
+        the detail, as GitHub shows it, and asks the permission of an
+        author no association vouches for, which the fake answers from
+        the model's writers, once a client."""
+        model = claimed()
+        model.pulls[100] = M.PullRequest(100, "claude/1", "sam", "Closes #1", draft=False, association="NONE")
+        api, fake = cycle.api_for(model)
+        listed = api.get_all(f"/repos/{M.REPO}/pulls", {"state": "open"})
+        self.assertEqual([(p["user"]["login"], p["author_association"]) for p in listed], [("sam", "NONE")])
+        detail = api.get(f"/repos/{M.REPO}/pulls/100")
+        self.assertEqual((detail["user"]["login"], detail["author_association"]), ("sam", "NONE"))
+        self.assertEqual((api.asked("sam"), api.asked("a")), (False, True))
+        snap = github.snapshot(api, model.refs[M.MAIN], M.MAIN, M.moment(0))
+        self.assertEqual([(p.number, p.stranger) for p in snap.pulls], [(100, True)])
+        self.assertEqual(sum(1 for c in fake.calls if c.path == "/collaborators/sam/permission"), 1)
+
 
 class TheTransport(unittest.TestCase):
     def test_a_path_outside_ascii_is_refused_before_it_is_sent(self):

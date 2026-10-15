@@ -1082,6 +1082,24 @@ class StrangerPulls(unittest.TestCase):
         self.assertTrue(work[50].ready)
         self.assertEqual([w.number for w in board.overlaps(snap)["docs/agents/README.md"]], [50, 12])
 
+    def test_the_key_is_the_board_s_own_and_the_work_began_when_the_branch_was_pushed(self):
+        """from_stranger reads only the adapter's key, so a fixture without
+        it names no stranger; a stranger's pull request from a branch that
+        is no claim's is no claim's either way; and its work began when
+        the branch it is from was pushed, as the claim's did, where a
+        fork's began when it was opened (pull_began, F13's review)."""
+        self.assertFalse(board.from_stranger({}))
+        self.assertFalse(board.from_stranger({"stranger": False}))
+        self.assertIsNone(board.claim_of(Pull(50, branch="feature/x", stranger=True)))
+        snap = snapshot()
+        snap["pulls"] = [dict(stranger_pull(), created_at="2026-09-22T08:30:00Z")] + snap["pulls"][1:]
+        snap["began"] = {"claude/12": "2026-09-22T10:00:00Z"}
+        read = Snapshot.from_dict(snap)
+        theirs = next(p for p in read.pulls if p.number == 50)
+        self.assertEqual(board.pull_began(read, theirs), "2026-09-22T10:00:00Z")
+        from_fork = Pull.from_dict(dict(fork_pull(), created_at="2026-09-22T08:30:00Z"))
+        self.assertEqual(board.pull_began(read, from_fork), "2026-09-22T08:30:00Z")
+
 
 ACCOUNT_ENV = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "LC_ALL": "C"}
 ISSUE = 5

@@ -1025,6 +1025,81 @@ class Releases(unittest.TestCase):
         self.assertIn(DRAFT_COMMENTS_40, asked)
         self.assertNotIn("/repos/o/r/issues/50/comments?per_page=100", asked)
 
+    def test_a_pull_request_a_stranger_opened_from_the_claim_s_branch_neither_finishes_nor_holds_it(self):
+        """F19: sam, whom GitHub shows with no association and whose
+        permission reads read, opened #50 from claude/12 itself, to the
+        branch board, beside alice's own #40 to main. Marked ready, it
+        leaves the claim to be read for its release; as a draft its author
+        said is finished, it holds nothing, and its comments cost no call;
+        sam's permission costs one call a run; and the release's rename
+        closes it, so the board leaves it off the page, where it lists a
+        fork's."""
+        stranger = {"number": 50, "title": "Fix the board", "mergeable_state": "clean",
+                    "updated_at": "2026-09-19T12:00:00Z", "user": {"login": "sam"}, "author_association": "NONE",
+                    "head": {"ref": "claude/12", "sha": "ddd", "repo": {"full_name": "o/r"}},
+                    "base": {"ref": "board", "repo": {"full_name": "o/r"}}}
+        permission = "/repos/o/r/collaborators/sam/permission"
+        for ready in (True, False):
+            _, answers = released_answers()
+            answers["/repos/o/r/pulls?state=open&per_page=100"] = FakeAnswer([{"number": n} for n in (40, 41, 50)])
+            answers["/repos/o/r/pulls/50"] = FakeAnswer(dict(stranger, draft=not ready))
+            answers["/repos/o/r/pulls/50/files?per_page=100"] = FakeAnswer([{"filename": "docs/agents/README.md"}])
+            answers["/repos/o/r/issues/50/comments?per_page=100"] = FakeAnswer([dict(FINISHED, user={"login": "sam"})])
+            answers[permission] = FakeAnswer({"permission": "read", "role_name": "read"})
+            api, opener = client(answers)
+            found = github.collect(api, "abc", "main")
+            snap = board.Snapshot.from_dict(found)
+            with self.subTest(ready=ready):
+                self.assertTrue(next(p for p in found["pulls"] if p["number"] == 50)["stranger"])
+                self.assertEqual(snap.releases["12"].released_at, RELEASE_COMMENT["created_at"])
+                self.assertEqual(board.released_keys(snap), {"12"})
+                asked = [c.full_url.replace(github.API, "") for c in opener.calls]
+                self.assertNotIn("/repos/o/r/issues/50/comments?per_page=100", asked)
+                self.assertEqual(asked.count(permission), 1, "asked once a run")
+                self.assertNotIn("| #50 |", board.render(snap))
+        # While the claim is still held, the claim's own draft, which nobody
+        # said is finished, decides, so the claim is read for its release;
+        # sam's "finished; ready to mark" on #50 holds nothing.
+        _, answers = released_answers()
+        answers["/repos/o/r/issues?state=open&per_page=100"] = FakeAnswer([
+            {"number": 12, "title": "Describe the board", "state": "open",
+             "labels": [{"name": "claimed"}, {"name": "todo"}, {"name": "worker:alice"}]}])
+        answers["/repos/o/r/pulls?state=open&per_page=100"] = FakeAnswer([{"number": n} for n in (40, 41, 50)])
+        answers["/repos/o/r/pulls/50"] = FakeAnswer(dict(stranger, draft=True))
+        answers["/repos/o/r/pulls/50/files?per_page=100"] = FakeAnswer([{"filename": "docs/agents/README.md"}])
+        answers["/repos/o/r/issues/50/comments?per_page=100"] = FakeAnswer([dict(FINISHED, user={"login": "sam"})])
+        answers[permission] = FakeAnswer({"permission": "read", "role_name": "read"})
+        api, opener = client(answers)
+        self.assertIn("12", github.collect(api, "abc", "main")["releases"])
+        asked = [c.full_url.replace(github.API, "") for c in opener.calls]
+        self.assertIn(DRAFT_COMMENTS_40, asked)
+        self.assertNotIn("/repos/o/r/issues/50/comments?per_page=100", asked)
+
+    def test_a_refused_permission_call_keeps_a_pull_request_the_claim_s_and_a_404_makes_it_a_stranger_s(self):
+        """A lost answer never takes a claim's own pull request for a
+        stranger's, which would free a finished claim; it costs at most a
+        run that releases nothing. GitHub knowing no such login makes it
+        a stranger's (F19)."""
+        stranger = {"number": 50, "title": "Fix the board", "mergeable_state": "clean",
+                    "updated_at": "2026-09-19T12:00:00Z", "user": {"login": "sam"}, "author_association": "NONE",
+                    "head": {"ref": "claude/12", "sha": "ddd", "repo": {"full_name": "o/r"}},
+                    "base": {"ref": "board", "repo": {"full_name": "o/r"}}}
+        permission = "/repos/o/r/collaborators/sam/permission"
+        for answer, kept in ((Refusal(403, {"message": "Must have push access"}), True), (None, False)):
+            _, answers = released_answers()
+            answers["/repos/o/r/pulls?state=open&per_page=100"] = FakeAnswer([{"number": n} for n in (40, 41, 50)])
+            answers["/repos/o/r/pulls/50"] = FakeAnswer(dict(stranger, draft=False))
+            answers["/repos/o/r/pulls/50/files?per_page=100"] = FakeAnswer([{"filename": "docs/agents/README.md"}])
+            if answer is not None:
+                answers[permission] = answer
+            api, opener = client(answers)
+            found = github.collect(api, "abc", "main")
+            with self.subTest(kept=kept):
+                self.assertEqual("stranger" in next(p for p in found["pulls"] if p["number"] == 50), not kept)
+                self.assertEqual("12" in found["releases"], not kept)
+                self.assertEqual(board.released_keys(board.Snapshot.from_dict(found)), set() if kept else {"12"})
+                self.assertIn(permission, [c.full_url.replace(github.API, "") for c in opener.calls])
+
     def test_a_finished_claim_costs_no_call(self):
         ready, answers = released_answers()
         answers["/repos/o/r/pulls/40"] = FakeAnswer({k: v for k, v in ready["pulls"][0].items() if k != "files"})
@@ -1192,6 +1267,97 @@ class Releases(unittest.TestCase):
         api, opener = client(answers)
         self.assertEqual(github.release_claims(api, snap), [])
         self.assertEqual(opener.calls, [])
+
+
+class MarkStrangers(unittest.TestCase):
+    """github.mark_strangers writes the board's key stranger on a pull
+    request from a claim branch here that someone who may not write opened
+    (F19); the adapter's readings then leave it out (is_claims)."""
+
+    def pull(self, number, branch="claude/12", login="sam", association="NONE", repo="o/r"):
+        return {"number": number, "user": {"login": login}, "author_association": association,
+                "head": {"ref": branch, "sha": "ddd", "repo": {"full_name": repo}},
+                "base": {"ref": "main", "repo": {"full_name": "o/r"}}}
+
+    def marked(self, pulls, answers):
+        asked = []
+
+        def ask(login):
+            asked.append(login)
+            return answers.get(login)
+
+        self.assertIs(github.mark_strangers(pulls, ask), pulls)
+        return [p.get("stranger") for p in pulls], asked
+
+    def test_a_pull_request_from_a_claim_branch_is_marked_when_its_author_may_not_write(self):
+        pulls = [self.pull(50), self.pull(51, login="private-member", association="CONTRIBUTOR")]
+        self.assertEqual(self.marked(pulls, {"sam": False, "private-member": True}),
+                         ([True, None], ["sam", "private-member"]))
+
+    def test_an_author_the_association_or_an_app_s_login_vouches_for_costs_no_call(self):
+        pulls = [self.pull(50, association="COLLABORATOR"), self.pull(51, association="MEMBER"),
+                 self.pull(52, association="OWNER"), self.pull(53, login="some-app[bot]")]
+        self.assertEqual(self.marked(pulls, {}), ([None] * 4, []))
+
+    def test_only_a_pull_request_from_a_claim_branch_here_is_marked(self):
+        pulls = [self.pull(50, branch="feature/x"), self.pull(51, repo="sam/r"), self.pull(52)]
+        self.assertEqual(self.marked(pulls, {"sam": False}), ([None, None, True], ["sam"]))
+
+    def test_an_answer_github_refused_marks_nothing(self):
+        self.assertEqual(self.marked([self.pull(50)], {"sam": None}), ([None], ["sam"]))
+
+    def test_the_ready_branches_and_the_drafts_the_releases_read_leave_a_marked_one_out(self):
+        theirs, own = dict(self.pull(50), draft=False), {"head": {"ref": "claude/13"}}
+        self.assertEqual(github.ready_branches([theirs, own]), {"claude/12", "claude/13"})
+        self.assertTrue(github.is_claims(theirs))
+        github.mark_strangers([theirs], lambda login: False)
+        self.assertEqual(github.ready_branches([theirs, own]), {"claude/13"})
+        self.assertFalse(github.is_claims(theirs))
+
+
+class Permissions(unittest.TestCase):
+    """github.permissions, the client's one cache of who may write, which
+    may_write reads for a release comment's author and may_open for a pull
+    request's (F19): a refused call is no to the one, so a release by an
+    author nobody vouches for frees nothing, and yes to the other, so a lost
+    answer never takes a claim's own pull request for a stranger's."""
+
+    def answers(self, login, answer):
+        return {f"/repos/o/r/collaborators/{login}/permission": answer}
+
+    def test_a_write_permission_or_role_counts_and_read_or_triage_does_not(self):
+        cases = (({"permission": "admin", "role_name": "admin"}, True),
+                 ({"permission": "write", "role_name": "write"}, True),
+                 ({"permission": "read", "role_name": "maintain"}, True),
+                 ({"permission": "read", "role_name": "read"}, False),
+                 ({"permission": "read", "role_name": "triage"}, False))
+        for answer, may in cases:
+            api, _ = client(self.answers("sam", FakeAnswer(answer)))
+            with self.subTest(answer=answer):
+                asked = github.permissions(api)
+                self.assertEqual(asked("sam"), may)
+                self.assertEqual(github.may_write(api, asked)("sam"), may)
+                self.assertEqual(github.may_open(asked)("sam"), may)
+
+    def test_a_login_github_does_not_know_may_not_and_a_refusal_is_no_answer(self):
+        api, _ = client({})
+        asked = github.permissions(api)
+        self.assertEqual((asked("nobody"), github.may_write(api, asked)("nobody"), github.may_open(asked)("nobody")),
+                         (False, False, False))
+        api, _ = client(self.answers("sam", Refusal(403, {"message": "Must have push access"})))
+        asked = github.permissions(api)
+        self.assertEqual((asked("sam"), github.may_write(api, asked)("sam"), github.may_open(asked)("sam")),
+                         (None, False, True))
+
+    def test_each_login_is_asked_once_and_the_client_keeps_one_cache(self):
+        api, opener = client(self.answers("sam", FakeAnswer({"permission": "read", "role_name": "read"})))
+        asked = github.permissions(api)
+        self.assertEqual([asked("sam") for _ in range(3)], [False, False, False])
+        self.assertEqual(sum(c.full_url.endswith("/collaborators/sam/permission") for c in opener.calls), 1)
+        self.assertEqual([api.asked("sam"), api.asked("sam"), github.may_write(api)("sam")], [False, False, False])
+        self.assertEqual(sum(c.full_url.endswith("/collaborators/sam/permission") for c in opener.calls), 3,
+                         "the client's own cache asks once more, and may_write given no cache builds one of its own, "
+                         "which is why collect and claim_released hand it the client's")
 
 
 IDLE_CLAIM = ("# Claim: #12\n\n- Worker: nightly\n- Branch: claude/12\n\n## Plan\n\nDescribe the board.\n\n"
@@ -1724,6 +1890,39 @@ class TeamClient(unittest.TestCase):
         api, _ = client(answers)
         self.assertIsNone(api.open_pull("claude/7"))
 
+    def test_open_pull_leaves_out_a_stranger_s_pull_request_from_the_claim_s_branch(self):
+        """The clerk's read of a claim's pull request (team.Snapshot.released,
+        F18) agrees with the board: one that someone who may not write
+        opened from the branch here is no claim's (F19), so it neither
+        finishes the claim nor stands in for its own, at one permission
+        call a client; a call GitHub refuses keeps it the claim's, as the
+        board keeps it."""
+        theirs = {"number": 506, "head": {"ref": "claude/7", "repo": {"full_name": "o/r"}},
+                  "base": {"ref": "main", "repo": {"full_name": "o/r"}}, "user": {"login": "sam"},
+                  "author_association": "NONE"}
+        own = {"number": 507, "head": {"ref": "claude/7", "repo": {"full_name": "o/r"}},
+               "base": {"ref": "main", "repo": {"full_name": "o/r"}}, "user": {"login": "alice"},
+               "author_association": "COLLABORATOR"}
+        permission = "/repos/o/r/collaborators/sam/permission"
+        answers = pull_answers(state="behind")
+        answers[PULL_LIST] = FakeAnswer([theirs, own])
+        answers[permission] = FakeAnswer({"permission": "read", "role_name": "read"})
+        api, opener = client(answers)
+        self.assertEqual(api.open_pull("claude/7")["number"], 507)
+        self.assertEqual(api.open_pull("claude/7")["number"], 507)
+        asked = [c.full_url.replace(github.API, "") for c in opener.calls]
+        self.assertNotIn("/repos/o/r/pulls/506", asked)
+        self.assertEqual(asked.count(permission), 1)
+        answers[PULL_LIST] = FakeAnswer([theirs])
+        api, _ = client(answers)
+        self.assertIsNone(api.open_pull("claude/7"))
+        answers[permission] = Refusal(403, {"message": "Must have push access"})
+        answers["/repos/o/r/pulls/506"] = FakeAnswer({"number": 506, "draft": False, "mergeable": True,
+                                                      "mergeable_state": "clean",
+                                                      "head": {"ref": "claude/7", "sha": "sha6"}, "base": {"ref": "main"}})
+        api, _ = client(answers)
+        self.assertEqual(api.open_pull("claude/7")["number"], 506)
+
     def test_check_runs_reads_every_page(self):
         first = "/repos/o/r/commits/sha7/check-runs?per_page=100"
         api, _ = client({
@@ -1864,6 +2063,19 @@ class ClaimReleased(unittest.TestCase):
         api, opener = client(self.answers([stranger]))
         self.assertFalse(github.claim_released(api, "claude/12", self.NOW))
         self.assertIn(permission, self.asked(opener))
+
+    def test_one_client_asks_about_an_author_once_however_many_claims_it_reads(self):
+        """The clerk reads each candidate claim's release with one client
+        (team.Snapshot.released), whose cache of who may write
+        (GitHub.asked) the board's marking of strangers shares (F19), so an
+        author is asked about once a look."""
+        stranger = dict(RELEASE_COMMENT, author_association="NONE", user={"login": "sam"})
+        permission = "/repos/o/r/collaborators/sam/permission"
+        answers = self.answers([stranger])
+        answers[permission] = FakeAnswer({"permission": "write", "role_name": "write"})
+        api, opener = client(answers)
+        self.assertEqual([github.claim_released(api, "claude/12", self.NOW) for _ in range(2)], [True, True])
+        self.assertEqual(self.asked(opener).count(permission), 1)
 
 
 def world(answers, who_merges=gate.GATE, waits=None):

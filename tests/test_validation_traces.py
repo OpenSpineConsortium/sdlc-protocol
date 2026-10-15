@@ -1,4 +1,4 @@
-"""The regression traces of DESIGN.md 5.3, one per finding F1 to F18
+"""The regression traces of DESIGN.md 5.3, one per finding F1 to F19
 (validation/traces/, played by validation/replay.py), and known.json, the
 record of what is red on purpose: every trace loads and plays with no
 mismatch; its red results are exactly what known.json records, as built
@@ -61,7 +61,17 @@ BUDGET_SECONDS = 10
 # second, step 5, after b has claimed #1, its Announce still to come, and
 # c has claimed #3 and labelled it blocked, where a is told to carry b's
 # claim once whose a claim is is read from the labels alone, and c its
-# waiting claim once a claim labelled blocked is carried.
+# waiting claim once a claim labelled blocked is carried. F19's at its
+# first board run, step 6, where sam, who may not write, has opened a
+# pull request marked ready from a's own claude/1 before a opened its
+# draft: the claim's row names sam's pull request, or the Overlaps fold
+# it into the claim's work, once it is read as the claim's own; and at
+# its second, step 7, where a's claim is due: it is not released once
+# sam's ready pull request is read as finishing it, by the adapter's
+# marking, the coordinator, the adapter's ready branches or the board's
+# reading of a release, and sam's pull request, which the release's
+# rename closes, is listed or spoken to once the rename is read as
+# leaving it open.
 UNDONE = {
     "F1": [("the comment before the labels", 5, "G3L")],
     "F3": [("the guard passes --force", 1, "G11a")],
@@ -88,13 +98,22 @@ UNDONE = {
             ("a fork's pull request never told main moved", 9, "G10")],
     "F18": [("a shared task dealt to none", 1, "G14"), ("a shared task before one given alone", 1, "G14"),
             ("the clerk carrying by labels alone", 5, "G14"), ("a blocked claim carried", 5, "G14")],
+    "F19": [("no pull request taken for a stranger's", 7, "G3"),
+            ("a stranger's ready pull request finishes a claim", 7, "G3"),
+            ("a stranger's ready pull request skipped as a claim's", 7, "G3"),
+            ("a stranger's ready pull request keeps a release from counting", 7, "G3"),
+            ("a stranger's pull request named on a claim's row", 6, "G9"),
+            ("a stranger's pull request taken for a claim's work", 6, "G7"),
+            ("a stranger's pull request listed after its release", 7, "G9"),
+            ("a stranger's pull request spoken to after its release", 7, "G10")],
 }
-# The sixteen settled findings: F1, F3, F5, F6, F10 and F11 fixed in
-# 0.4.1; F4, F7, F9, F12, F13, F14, F15, F17 and F18 fixed on main after
-# it (known.json's fixed_after); and F16, fixed in the spec's words, which
+# The seventeen settled findings: F1, F3, F5, F6, F10 and F11 fixed in
+# 0.4.1; F4, F7, F9, F12, F13, F14, F15, F17, F18 and F19 fixed on main
+# after it (known.json's fixed_after); and F16, fixed in the spec's words, which
 # the library as built already keeps, so known.json names no version for
 # it.
-FIXED = ("F1", "F3", "F4", "F5", "F6", "F7", "F9", "F10", "F11", "F12", "F13", "F14", "F15", "F16", "F17", "F18")
+FIXED = ("F1", "F3", "F4", "F5", "F6", "F7", "F9", "F10", "F11", "F12", "F13", "F14", "F15", "F16", "F17", "F18",
+         "F19")
 # Findings red as built, which no rule of the library answers: none since
 # F4's fix; the test keeps the case for the next one.
 RED_AS_BUILT = ()
@@ -267,7 +286,7 @@ class KnownJson(unittest.TestCase):
         at that version and before, and new from the next release on."""
         self.assertEqual(known.FIXED_AFTER,
                          {"F4": "0.4.1", "F7": "0.4.1", "F9": "0.4.1", "F12": "0.4.1", "F13": "0.4.1", "F14": "0.4.1",
-                          "F15": "0.4.1", "F17": "0.4.1", "F18": "0.4.1"})
+                          "F15": "0.4.1", "F17": "0.4.1", "F18": "0.4.1", "F19": "0.4.1"})
         current = known.version_key(sdlc_protocol.__version__)
         for finding, version in known.FIXED_AFTER.items():
             with self.subTest(finding=finding):
@@ -276,7 +295,7 @@ class KnownJson(unittest.TestCase):
                 self.assertIsNotNone(known.version_key(version))
                 self.assertLessEqual(known.version_key(version), current,
                                      "the last version with a finding is one main has stated, never a later one")
-        fixed_on_main = {"F4", "F7", "F9", "F12", "F13", "F14", "F15", "F17", "F18"}
+        fixed_on_main = {"F4", "F7", "F9", "F12", "F13", "F14", "F15", "F17", "F18", "F19"}
         self.assertEqual(known.as_built_for("0.4.1"), known.AS_BUILT | fixed_on_main)
         self.assertEqual(known.as_built_for("0.4.0"), known.AS_BUILT | fixed_on_main)
         self.assertEqual(known.as_built_for("0.4.2"), known.AS_BUILT, "the next release carries the fixes")

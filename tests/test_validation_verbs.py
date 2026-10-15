@@ -189,5 +189,45 @@ class TheBoardVerbs(unittest.TestCase):
         self.assertEqual((model.running, outcome.run.exit_code), (None, 0))
 
 
+class TheStrangerVerbs(unittest.TestCase):
+    """With the scope's strangers on, sam, who may not write, opens a pull
+    request from the claim's own branch while none from it is open, as
+    GitHub opens one at a time between two branches, and says a draft of
+    its own finished; the holder may close it, and opens its own draft only
+    once it is gone (F19)."""
+
+    def test_a_stranger_opens_from_the_claim_s_branch_while_none_is_open_and_the_holder_may_close_it(self):
+        scope = Scope(strangers=True)
+        model, _ = after([CLAIM], scope)
+        found = names(verbs.enabled(model, scope))
+        self.assertTrue({"stranger-pull sam 1 False", "stranger-pull sam 1 True", "open-draft a 1"} <= set(found))
+        opened = verbs.apply(model, Verb("stranger-pull", verbs.SAM, (1, True)), scope)
+        self.assertEqual((opened.taken, opened.note, opened.events),
+                         (True, "opened #100 from claude/1", (("pull_request", ""),)))
+        self.assertEqual(model.pulls[100].association, "NONE")
+        found = names(verbs.enabled(model, scope))
+        self.assertIn("close-pull a 100", found)
+        self.assertNotIn("open-draft a 1", found)
+        self.assertEqual([v for v in found if v.startswith(("stranger-pull", "finished", "mark-ready"))], [])
+        refused = verbs.apply(model, Verb("open-draft", "a", (1,)), scope)
+        self.assertEqual((refused.taken, refused.note, refused.events),
+                         (False, "a pull request already exists for claude/1", ()))
+        closed = verbs.apply(model, Verb("close-pull", "a", (100,)), scope)
+        self.assertEqual((closed.taken, model.pulls[100].state, closed.events), (True, "closed", (("pull_request", ""),)))
+        found = names(verbs.enabled(model, scope))
+        self.assertTrue({"stranger-pull sam 1 False", "open-draft a 1"} <= set(found))
+        verbs.apply(model, Verb("stranger-pull", verbs.SAM, (1, False)), scope)
+        found = names(verbs.enabled(model, scope))
+        self.assertTrue({"finished sam 101", "close-pull a 101"} <= set(found))
+        self.assertNotIn("open-draft a 1", found)
+        model.rename_ref("claude/1", "released/1-abcdef0")
+        self.assertEqual([v for v in names(verbs.enabled(model, scope)) if v.startswith(("stranger-pull", "finished"))],
+                         [])
+
+    def test_the_default_scope_offers_no_stranger(self):
+        model, _ = after([CLAIM], Scope())
+        self.assertEqual([v for v in names(verbs.enabled(model, Scope())) if v.startswith("stranger-pull")], [])
+
+
 if __name__ == "__main__":
     unittest.main()

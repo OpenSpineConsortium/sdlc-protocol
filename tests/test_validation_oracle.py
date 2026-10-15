@@ -57,6 +57,34 @@ class Terms(unittest.TestCase):
                                 Verb("label-off", M.OWNER, (1, "claimed")))
                 self.assertEqual(oracle.released(model, 1), counts)
 
+    def test_whose_pull_request_is_the_claim_s_own(self):
+        """SPEC["stranger"]: the owner's, a collaborator's, a writer's GitHub
+        shows as a contributor (dana) and an App's are the claim's own;
+        sam's from the claim's own branch is no claim's, so it finishes
+        nothing, and a release's rename closes it, after which the board
+        speaks to it no more (F19)."""
+        model = claimed()
+        for person, own in ((M.OWNER, True), (verbs.CAROL, True), (verbs.DANA, True), (verbs.SAM, False)):
+            pull = M.PullRequest(100, "claude/1", person, "Closes #1", draft=False,
+                                 association=verbs.ASSOCIATIONS[person])
+            with self.subTest(person=person):
+                self.assertEqual(oracle.opened_by_writer(model, pull), own)
+                self.assertEqual(oracle.claim_of(model, pull), 1 if own else None)
+        app = M.PullRequest(100, "claude/1", "symphony[bot]", "Closes #1", association="NONE")
+        self.assertTrue(oracle.opened_by_writer(model, app))
+        theirs = run(model, Verb("stranger-pull", verbs.SAM, (1, True)))
+        self.assertIsNotNone(theirs.open_pull_from("claude/1"))
+        self.assertIsNone(oracle.own_pull(theirs, "claude/1"))
+        self.assertFalse(oracle.finished(theirs, 1))
+        released = run(theirs, Verb("wait", "clock", (25,)), Verb("marker", M.OWNER, (1,)),
+                       Verb("label-off", M.OWNER, (1, "claimed")))
+        self.assertTrue(oracle.released(released, 1))
+        self.assertTrue(oracle.closed_by_release(released, released.open_pull_from("claude/1")))
+        self.assertEqual(oracle.pulls_spoken_to(released), [])
+        own = run(claimed(), Verb("open-draft", "a", (1,)), Verb("mark-ready", "a", (100,)))
+        self.assertEqual(oracle.own_pull(own, "claude/1").number, 100)
+        self.assertTrue(oracle.finished(own, 1))
+
     def test_a_release_comment_made_too_soon_frees_nothing(self):
         model = claimed(Verb("marker", M.OWNER, (1,)), Verb("label-off", M.OWNER, (1, "claimed")),
                         Verb("wait", "clock", (25,)))

@@ -503,7 +503,7 @@ class RepoModel:
             tuple(sorted(self.refs.items())),
             tuple(sorted((n, i.state, tuple(sorted(i.labels)), i.comments, i.body) for n, i in self.issues.items())),
             tuple(sorted((n, p.head, p.author, p.body, p.draft, p.state, p.opened_at, p.updated_at, p.merged_at,
-                          p.comments, p.fork, p.sha) for n, p in self.pulls.items())),
+                          p.comments, p.fork, p.sha, p.association) for n, p in self.pulls.items())),
             self.next_pull,
             tuple(sorted(self.writers)),
             tuple(sorted(self.ever_heads)),

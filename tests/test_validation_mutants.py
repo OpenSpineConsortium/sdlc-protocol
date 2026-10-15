@@ -32,6 +32,10 @@ BLOCKER = Verb("label-on", M.OWNER, (1, "blocker"))
 # sam's draft from a fork whose branch is named claude/1 there (F17).
 FORK_DRAFT = Verb("fork-pull", SAM, (1, False))
 FORKS = Scope(forks=True)
+# sam's draft from the claim's own branch here, to which sam may not
+# write (F19).
+STRANGER_DRAFT = Verb("stranger-pull", SAM, (1, False))
+STRANGERS = Scope(strangers=True)
 # b's claim on #2 beside a's on #1, both listing one file, #2 then
 # labelled a blocker (F15's fifth review).
 LATER_BLOCKER = [CLAIM, Verb("claim", "b", (2,)), Verb("label-on", M.OWNER, (2, "blocker"))]
@@ -128,6 +132,16 @@ TRACES = {
     "a fork's pull request named on a claim's row": (HELD + [FORK_DRAFT, BOARD], FORKS),
     "a fork's pull request taken for a claim's work": (HELD + [FORK_DRAFT, BOARD], FORKS),
     "a fork's pull request never told main moved": "the regression traces",
+    "no pull request taken for a stranger's": "the regression traces",
+    "a stranger's ready pull request finishes a claim": "the regression traces",
+    "a stranger's ready pull request skipped as a claim's": "the regression traces",
+    "a stranger's finished draft holds a claim": (HELD + [WAIT, STRANGER_DRAFT, Verb("finished", SAM, (100,)),
+                                                         BOARD], STRANGERS),
+    "a stranger's ready pull request keeps a release from counting": "the regression traces",
+    "a stranger's pull request named on a claim's row": "the regression traces",
+    "a stranger's pull request taken for a claim's work": "the regression traces",
+    "a stranger's pull request listed after its release": "the regression traces",
+    "a stranger's pull request spoken to after its release": "the regression traces",
     "the clerk carrying by labels alone": "the regression traces",
     "a shared task dealt to none": "the regression traces",
     "a shared task before one given alone": "the regression traces",
@@ -162,17 +176,19 @@ def violations(steps, scope):
 
 
 class TheLane(unittest.TestCase):
-    def test_it_holds_10_to_80_mutants_each_with_a_trace(self):
+    def test_it_holds_10_to_90_mutants_each_with_a_trace(self):
         """Section 7 asks for 10 to 20; step 4 added five for the rules its
         lanes judge, step 5 four that undo fixes of 0.4.1, and each fix
         since at least one that undoes it (F7's first), and the reviews of
         F13's and F15's fixes more, and F17's fix one for each place that
         read a claim's pull request by its branch's name it has a check for
-        and its review one more, and F18's fix four, with three for the
-        rules F15's fifth review found no catcher of, so the bound is
-        widened to 80 and the count noted."""
-        self.assertTrue(10 <= len(mutants.MUTANTS) <= 80)
-        self.assertEqual(len(mutants.MUTANTS), 78)
+        and its review one more, F18's fix four, with three for the rules
+        F15's fifth review found no catcher of, and F19's fix nine, one
+        for each reading that took a pull request from a claim's own
+        branch for the claim's and one for the adapter's marking, so the
+        bound is widened to 90 and the count noted."""
+        self.assertTrue(10 <= len(mutants.MUTANTS) <= 90)
+        self.assertEqual(len(mutants.MUTANTS), 87)
         self.assertEqual(sorted(TRACES), sorted(mutants.MUTANTS))
 
     def test_every_mutant_names_a_rule_the_library_still_has(self):
@@ -212,7 +228,8 @@ class TheLane(unittest.TestCase):
 
     def test_the_lanes_come_first_then_the_searches_cheapest_first_then_the_two_widest_lanes(self):
         self.assertEqual([c.name for c in mutants.CATCHERS[:len(LANES)]], list(LANES))
-        self.assertEqual(mutants.SEARCHES[-3].name, "a stranger's pull request from a fork on a due claim")
+        self.assertEqual(mutants.SEARCHES[-4].name, "a stranger's pull request from a fork on a due claim")
+        self.assertEqual(mutants.SEARCHES[-3].name, "a stranger's pull request from a due claim's own branch")
         self.assertEqual(mutants.SEARCHES[-2].name, "the holder back between the halves of a run")
         self.assertEqual(mutants.SEARCHES[-1].name, "a stranger's marker on overlapping claims")
         self.assertEqual(mutants.CATCHERS[len(LANES):-2], mutants.SEARCHES)
@@ -288,6 +305,23 @@ class TheSearchesCatchWhatTheyWereAddedFor(unittest.TestCase):
         self.assertEqual(mutants.violations(search), {})
         for name, mutant in mutants.MUTANTS.items():
             if "(F17)" not in mutant.why:
+                continue
+            with self.subTest(mutant=name), mutants.switched_on(mutant):
+                self.assertIn(mutant.guarantee, {g for g, _ in mutants.violations(search)})
+
+    def test_a_stranger_s_pull_request_from_a_due_claim_s_own_branch_catches_every_mutant_of_f19_s_fix(self):
+        """The lane credits eight of F19's nine mutants to the regression
+        traces, so the search added with F19's fix is held here to all
+        nine: it finds nothing on the library, and the violation each
+        mutant names, which it can only while sam, who may not write, may
+        open a pull request from the claim's own branch here."""
+        search = next(s for s in mutants.SEARCHES
+                      if s.name == "a stranger's pull request from a due claim's own branch")
+        self.assertTrue(search.scope.strangers)
+        self.assertIn(M.OWNER, search.scope.people)
+        self.assertEqual(mutants.violations(search), {})
+        for name, mutant in mutants.MUTANTS.items():
+            if "(F19)" not in mutant.why:
                 continue
             with self.subTest(mutant=name), mutants.switched_on(mutant):
                 self.assertIn(mutant.guarantee, {g for g, _ in mutants.violations(search)})

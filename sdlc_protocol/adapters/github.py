@@ -594,14 +594,16 @@ def claim_released(api, branch, now=None):
     released claim, as the board counts none. It costs a call for the
     branch's head and one for its commit and, once that commit is more than
     a day old, the issue's comments and a call for each author whose
-    permission must be asked."""
+    permission must be asked, once a client (GitHub.asked), so the clerk's
+    look asks about an author once however many claims it reads."""
     sha = branch_sha(api, board.branch_name(branch))
     last_commit = committed_at(api, sha) if sha else ""
     if not last_commit or not claims.is_idle(last_commit, now or datetime.now(timezone.utc)):
         return False
     key = claims.key_of(board.branch_name(branch))
     comments = api.get_all(f"/repos/{api.repo}/issues/{quoted(key)}/comments")
-    return claims.was_released(claims.latest_release(comments, may_write(api)), last_commit)
+    return claims.was_released(claims.latest_release(comments, may_write(api, getattr(api, "asked", None))),
+                               last_commit)
 
 
 def finished_draft(api, pull):
@@ -666,7 +668,7 @@ def collect(api, sha, default_branch, now=None):
     the moment a claim's idleness is measured from, the wall clock unless
     given."""
     repo = api.repo
-    asked = permissions(api)
+    asked = getattr(api, "asked", None) or permissions(api)
     issues = [i for i in api.get_all(f"/repos/{repo}/issues", {"state": "open"}) if "pull_request" not in i]
     pulls = mark_strangers([pull_with_detail(api, p["number"], default_branch)
                             for p in api.get_all(f"/repos/{repo}/pulls", {"state": "open"})], asked)
