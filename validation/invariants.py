@@ -282,13 +282,21 @@ def of_first_half(effect):
                                                         and effect.detail in ("claim-released", "overlap"))
 
 
-def injected(calls):
+WRITES_KEPT = ("/activity",)
+
+
+def injected(calls, but=()):
     """Whether an injected fault touched the run, read from its calls,
-    since a verb may name a fault that never fires; the writes are
-    compared with the oracle's, and a half release or a noisy second run
-    counted, only for a run no fault touched, while the release order, the
-    rename refused and the rest hold under faults too."""
-    return any(c.injected for c in calls)
+    since a verb may name a fault that never fires, leaving out the faults
+    on the paths but names; the writes are compared with the oracle's, and
+    a half release or a noisy second run counted, only for a run no fault
+    touched, while the release order, the rename refused and the rest hold
+    under faults too. A fault on the activity (WRITES_KEPT) changes nothing
+    the run writes but which work it tells of an overlap, which the oracle
+    reads with the branches the run could not date (unsaid_branches), so
+    the writes of a run it alone touched are compared too (F2's second
+    review); its second run is not, since that one dates them."""
+    return any(c.injected and c.path not in but for c in calls)
 
 
 def first_half_checks(before, after, half, known=oracle.AS_BUILT):
@@ -301,8 +309,9 @@ def first_half_checks(before, after, half, known=oracle.AS_BUILT):
         return [] if reads_failed(half.fake.calls) else [Violation("G15", f"the run's first half raised: {half.raised}")]
     actual = effects_of(half.fake.calls)
     problems = []
-    if not injected(half.fake.calls):
-        expected = oracle.expected_effects(before, half.event, half.ref_name, known)
+    if not injected(half.fake.calls, but=WRITES_KEPT):
+        expected = oracle.expected_effects(before, half.event, half.ref_name, known,
+                                           unsaid_branches(half.fake.calls))
         problems += differences([e for e in expected if of_first_half(e)], actual)
         problems += [Violation("G3L", f"a release no rule completes: #{n}") for n in oracle.half_released(after)]
     problems += release_order(actual)
@@ -330,8 +339,10 @@ def cycle_checks(before, after, record, known=oracle.AS_BUILT):
     start = record.started_from if split else before
     planned = record.planned if split else after
     problems = []
-    if not injected(record.calls):
-        expected = kept_renames(oracle.expected_effects(start, record.event, record.ref_name, known), start, before)
+    if not injected(record.calls, but=WRITES_KEPT):
+        unsaid = unsaid_branches(record.calls)
+        expected = kept_renames(oracle.expected_effects(start, record.event, record.ref_name, known, unsaid), start,
+                                before)
         if split:
             # The second half's writes are the calls after the first half's,
             # whatever their kind, so a label or a release comment it wrote
@@ -341,7 +352,7 @@ def cycle_checks(before, after, record, known=oracle.AS_BUILT):
         problems += differences(expected, effects_of(record.calls[record.first_calls:] if split else record.calls))
         if not split:
             problems += [Violation("G3L", f"a release no rule completes: #{n}") for n in oracle.half_released(after)]
-        if not split or before.repository_key() == planned.repository_key():
+        if not injected(record.calls) and (not split or before.repository_key() == planned.repository_key()):
             problems += quiet_second_run(after, record)
     actual = effects_of(record.calls)
     problems += rename_refused_said(before, record, actual)

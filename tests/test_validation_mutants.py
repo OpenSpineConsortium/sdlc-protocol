@@ -152,6 +152,7 @@ TRACES = {
     "a piece of work named by the number it is shown by": "the regression traces",
     "the markers on a claim's own pull request never read": "the regression traces",
     "a marker counted whenever it came": "the regression traces",
+    "an undated claim taking no marker": "the regression traces",
     "a stranger's pull request named on a claim's row": "the regression traces",
     "a stranger's pull request taken for a claim's work": "the regression traces",
     "a stranger's pull request listed after its release": "the regression traces",
@@ -205,7 +206,7 @@ class TheLane(unittest.TestCase):
         way, and F2's fix one, a piece of work named by the number it is
         shown by, so the bound is widened to 100 and the count noted."""
         self.assertTrue(10 <= len(mutants.MUTANTS) <= 100)
-        self.assertEqual(len(mutants.MUTANTS), 92)
+        self.assertEqual(len(mutants.MUTANTS), 93)
         self.assertEqual(sorted(TRACES), sorted(mutants.MUTANTS))
 
     def test_every_mutant_names_a_rule_the_library_still_has(self):

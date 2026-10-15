@@ -885,12 +885,15 @@ def pull_began(snap, pull):
 
 def overlaps(snapshot):
     """The files that more than one piece of open work changes, each with
-    that work in the order it should land (landing_key), in file order."""
+    that work in the order it should land (landing_key), in file order; a
+    claim's two pull requests, which GitHub allows to two bases, are one
+    piece (identity), so a file they alone change meets nothing."""
     meeting = {}
     for work in open_work(snapshot):
         for path in work.files:
             meeting.setdefault(path, []).append(work)
-    return {path: sorted(works, key=landing_key) for path, works in sorted(meeting.items()) if len(works) > 1}
+    return {path: sorted(works, key=landing_key) for path, works in sorted(meeting.items())
+            if len({identity(work) for work in works}) > 1}
 
 
 def overlap_rows(snap):

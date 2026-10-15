@@ -84,8 +84,8 @@ SPEC = {
     "overlap": "the coordinator tells each piece of open work about the work it meets, once, in a comment whose "
                "first line is `<!-- sdlc-coordinator: overlap <numbers> -->` naming every piece it told of",
     "told again": "tells it again only when work it has not been told of starts to meet it",
-    "one piece": "The marker names each piece by its identity: a claim and the pull requests from its branch are one "
-                 "piece, the issue's number, told on that issue, so opening a pull request tells nothing again",
+    "one piece": "The marker names each piece by its identity: a claim and its own pull requests are one piece, the "
+                 "issue's number, told on that issue, so opening a pull request tells nothing again",
     "own pull marker": "a marker on one of the claim's own open pull requests counts as one on the issue",
     "no claim's piece": "a pull request that is no claim's is a piece of its own, its number, told on itself",
     "in turn": "An issue's number names each claim on it in turn, so a marker tells a claim's work, or tells of it, "
@@ -536,21 +536,24 @@ def landing(piece, known=AS_BUILT):
 
 def overlaps(model, known=AS_BUILT, unsaid=frozenset()):
     """Each file more than one piece changes, with the numbers the pieces
-    are shown by, in landing order; unsaid as open_work takes it."""
+    are shown by, in landing order, the pull requests of one claim being
+    one piece (SPEC["one piece"]); unsaid as open_work takes it."""
     meeting = {}
     for piece in open_work(model, known, unsaid):
         for path in piece.files:
             meeting.setdefault(path, []).append(piece)
     return {path: [p.number for p in sorted(pieces, key=lambda p: landing(p, known))]
-            for path, pieces in sorted(meeting.items()) if len(pieces) > 1}
+            for path, pieces in sorted(meeting.items()) if len({p.identity for p in pieces}) > 1}
 
 
-def claims_made(model, pieces):
+def claims_made(model, pieces, unsaid=frozenset()):
     """When the push that made each claim's branch came, by its issue, for
-    the claims among the pieces the model records a push of (SPEC["in
-    turn"]); a claim with none takes every marker."""
+    the claims among the pieces whose push GitHub dates in the run: the
+    model records one, and the run's own read of the branch's activity was
+    not refused (unsaid, invariants.unsaid_branches). A claim GitHub does
+    not date takes every marker (SPEC["in turn"])."""
     return {p.identity: model.created[branch_of(p.identity)] for p in pieces
-            if p.claim and branch_of(p.identity) in model.created}
+            if p.claim and branch_of(p.identity) in model.created and branch_of(p.identity) not in unsaid}
 
 
 def told_of(model, identity, places, by_number, made):
@@ -574,21 +577,22 @@ def told_of(model, identity, places, by_number, made):
     return told
 
 
-def overlap_effects(model, known=AS_BUILT):
+def overlap_effects(model, known=AS_BUILT, unsaid=frozenset()):
     """SPEC["overlap"], SPEC["told again"], SPEC["one piece"], SPEC["own
     pull marker"], SPEC["no claim's piece"] and SPEC["in turn"]: a comment
     on the identity of each piece that meets work it has not been told of,
     a piece with two pull requests being one, a marker's numbers read as
     the identities of the pieces shown by them now, so one naming a pull
-    request closed since names nothing. No finding switches this rule now,
-    and known is taken as every rule of the page takes it."""
-    pieces = open_work(model, known)
+    request closed since names nothing; unsaid names the branches whose
+    push the run could not date (claims_made). No finding switches this
+    rule now, and known is taken as every rule of the page takes it."""
+    pieces = open_work(model, known, unsaid)
     by_number = {p.number: p.identity for p in pieces}
     files, places = {}, {}
     for piece in pieces:
         files.setdefault(piece.identity, set()).update(piece.files)
         places.setdefault(piece.identity, {piece.identity}).add(piece.number)
-    made = claims_made(model, pieces)
+    made = claims_made(model, pieces, unsaid)
     effects = []
     for identity in sorted(files):
         meets = {other for other in files if other != identity and files[other] & files[identity]}
@@ -654,12 +658,14 @@ def pulls_spoken_to(model):
 
 # --- what a board run must do -------------------------------------------------
 
-def expected_effects(before, event="schedule", ref_name="", known=AS_BUILT):
+def expected_effects(before, event="schedule", ref_name="", known=AS_BUILT, unsaid=frozenset()):
     """The writes a fault-free board run owes from the state before it: the
     releases due, in the spec's order, the overlap comments, the renames of
     the released claims and the word on each issue, then the comments on
     pull requests. The oracle applies its own releases to a copy to see
-    what the rest of the run reads."""
+    what the rest of the run reads. unsaid names the branches whose push the
+    run could not date, for a run whose only faults were on the activity
+    (overlap_effects)."""
     model = before.clone()
     effects = []
     for number in sorted(n for n in model.issues if due(model, n)):
@@ -672,7 +678,7 @@ def expected_effects(before, event="schedule", ref_name="", known=AS_BUILT):
             model.issues[number].labels = model.issues[number].labels | set(put_on)
         effects.append(Effect("comment", number, "claim-released"))
         model.issues[number].comments += (Comment(BOT, "NONE", model.now, RELEASE_MARKER),)
-    effects += overlap_effects(model, known)
+    effects += overlap_effects(model, known, unsaid)
     spoken = pulls_spoken_to(model)
     for number in sorted(n for ref in model.refs if (n := claim_number(ref)) is not None and released(model, n)):
         ref, sha = branch_of(number), model.refs[branch_of(number)]

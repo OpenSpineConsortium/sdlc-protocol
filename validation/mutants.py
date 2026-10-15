@@ -110,6 +110,7 @@ ORIGINAL_COMMENTS_DUE = board.comments_due
 ORIGINAL_OVERLAPS_DUE = coordinator.overlap_comments_due
 ORIGINAL_REFUSAL = guard.refusal
 ORIGINAL_TOLD = coordinator.told_numbers
+ORIGINAL_CLAIMS_MADE = coordinator.claims_made
 ORIGINAL_PUT_BACK = github.put_back
 ORIGINAL_AFTER_RELEASE = coordinator.after_release
 ORIGINAL_IS_CANDIDATE = coordinator.is_candidate
@@ -700,6 +701,19 @@ def no_claim_dated(snapshot):
     return {}
 
 
+def undated_claims_take_no_marker(snapshot):
+    """coordinator.claims_made dating a claim GitHub does not date as the
+    newest of all, so no marker counts for it and it is told on every run
+    GitHub will not date it, where the spec has it take every marker (F2's
+    second review)."""
+    snap = board.as_snapshot(snapshot)
+    made = ORIGINAL_CLAIMS_MADE(snap)
+    for work in board.open_work(snap):
+        if work.issue is not None and work.branch and work.issue not in made:
+            made[work.issue] = board.UNDATED
+    return made
+
+
 def blank_names_a_worker(text):
     """claims.claim_worker, as the clerk reads it (team.claim_worker), as
     it read a Worker line until F18's review: a name that is empty once
@@ -1066,6 +1080,10 @@ MUTANTS = {
         "G7", "an issue's number names each claim on it in turn, so a marker counts for a claim only from the "
               "push that made its branch, and a claim on an issue released and claimed anew is told, and told of, "
               "again (F2's review)"),
+    "an undated claim taking no marker": Mutant(
+        coordinator, "claims_made", undated_claims_take_no_marker,
+        "G7", "a claim whose push GitHub does not date takes every marker, so a run that cannot read the activity "
+              "tells nothing again (F2's second review)"),
 }
 
 

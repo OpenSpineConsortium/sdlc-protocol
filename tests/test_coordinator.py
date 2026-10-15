@@ -339,6 +339,15 @@ class Overlaps(unittest.TestCase):
         self.assertIn("Land them in this order: #40, #17, #42, #43:", due[16].text)
         self.assertEqual(coordinator.told_places(snap, 16), [42, 43])
 
+    def test_a_file_the_pull_requests_of_one_claim_alone_change_meets_nothing(self):
+        """F2's second review: the Overlaps list a file more than one piece
+        changes, and a claim's two pull requests are one piece."""
+        snap = meeting_work()
+        snap.pulls[2].files = ["a.md", "b.md", "z.md"]
+        snap.pulls.append(board.Pull(43, "43", "claude/16", "", "clean", "2026-09-20T00:00:00Z", ["z.md"], True))
+        self.assertEqual(sorted(board.overlaps(snap)), ["a.md", "b.md"])
+        self.assertEqual(sorted(coordinator.meeting(snap)), [12, 16, 17])
+
     def test_a_claim_s_own_open_pull_requests_are_where_it_was_told_before_the_fix(self):
         """F2's review: the coordinator told a claim's work on its pull
         request before the fix, so those markers count as the issue's; a

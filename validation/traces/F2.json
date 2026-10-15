@@ -27,6 +27,8 @@
     {"verb": "overlap-marker", "actor": "github-actions[bot]", "args": [102, [101]],
      "note": "the coordinator before the fix told a claim's work on its pull request once it had one, and named it by that number"},
     {"verb": "board", "event": "pull_request", "expect": {"overlaps": {"src/other.py": [101, 102], "src/shared.py": [2, 1]}, "comments": {"3": {}, "4": {}, "101": {"overlap": 1}, "102": {"overlap": 1}}, "told": {"3": [], "4": [], "101": [102], "102": [101]}},
-     "note": "the upgrade tells nothing again: the markers on the claims' own pull requests count as the issues', their numbers read as the claims; until the review of the fix only the issues were read, and both claims were told again"}
+     "note": "the upgrade tells nothing again: the markers on the claims' own pull requests count as the issues', their numbers read as the claims; until the review of the fix only the issues were read, and both claims were told again"},
+    {"verb": "board", "faults": ["activity-500-all"], "expect": {"comments": {"1": {"overlap": 2, "claim-released": 1, "released": 1}, "2": {"overlap": 2}, "3": {}, "4": {}}},
+     "note": "GitHub will not date any branch in this run, so each claim takes every marker and nothing is told again; dating such a claim as the newest of all would tell every claim on every such run"}
   ]
 }

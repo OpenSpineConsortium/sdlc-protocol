@@ -1008,8 +1008,10 @@ def tell_overlaps(api, snap):
     identity are read first; a claim's work that they leave something to
     tell is read on its own open pull requests too
     (coordinator.told_places), where the coordinator told it before F2's
-    fix, so the upgrade tells nothing again and the extra read is paid
-    only where a comment would otherwise go out. Work whose comments
+    fix, so the upgrade tells nothing again; the extra read is paid only
+    where the issue's markers alone would have a comment go out, which for
+    a claim told on its pull request before the fix, and never on its
+    issue since, is every run until its overlap ends. Work whose comments
     GitHub would not give is told nothing this run, so it is never told
     twice. The lines say what was posted."""
     lines, told, trusted = [], {}, may_write(api)
