@@ -2,7 +2,7 @@
   "finding": "F19",
   "title": "a stranger's ready pull request from a claim's own branch keeps that claim from ever being released",
   "status": "fixed after 0.4.1: a pull request someone who may not write opens from a claim's branch is no claim's (board.claim_of; DESIGN.md, 13)",
-  "breaks": ["G3", "G7", "G9", "G10"],
+  "breaks": ["G3", "G5", "G7", "G9", "G10"],
   "world": "memory",
   "issues": {"1": ["todo"]},
   "workers": ["a"],

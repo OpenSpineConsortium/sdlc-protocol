@@ -1104,10 +1104,10 @@ class Releases(unittest.TestCase):
         self.assertNotIn("/repos/o/r/issues/50/comments?per_page=100", asked)
 
     def test_the_marking_and_the_release_rule_share_one_answer_about_an_author(self):
-        """F19's review: sam, whom GitHub shows with no association and
-        whose permission reads write, opened draft #50 from claude/12 to
-        the branch board and posted issue 12's release comment; one collect
-        asks about sam once, through the client's cache both readers share,
+        """F19: sam, whom GitHub shows with no association and whose
+        permission reads write, opened draft #50 from claude/12 to the
+        branch board and posted issue 12's release comment; one collect
+        asks about sam once, through the one cache it hands both readers,
         marks no stranger and reads the release."""
         permission = "/repos/o/r/collaborators/sam/permission"
         _, answers = released_answers()
@@ -1130,9 +1130,10 @@ class Releases(unittest.TestCase):
 
     def test_a_refused_permission_call_keeps_a_pull_request_the_claim_s_and_a_404_makes_it_a_stranger_s(self):
         """A lost answer never takes a claim's own pull request for a
-        stranger's, which would free a finished claim; it costs at most a
-        run that releases nothing. GitHub knowing no such login makes it
-        a stranger's (F19)."""
+        stranger's, which would free a finished claim; it costs the runs in
+        which GitHub refuses the call, each releasing no claim such a pull
+        request holds. GitHub knowing no such login makes it a stranger's
+        (F19)."""
         stranger = {"number": 50, "title": "Fix the board", "mergeable_state": "clean",
                     "updated_at": "2026-09-19T12:00:00Z", "user": {"login": "sam"}, "author_association": "NONE",
                     "head": {"ref": "claude/12", "sha": "ddd", "repo": {"full_name": "o/r"}},

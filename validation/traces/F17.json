@@ -2,7 +2,7 @@
   "finding": "F17",
   "title": "a stranger's ready pull request from a fork's claude/<issue> keeps that claim from ever being released",
   "status": "fixed after 0.4.1: a pull request from a fork is no claim's, whatever its branch is called (board.claim_of; DESIGN.md, 13)",
-  "breaks": ["G3", "G7", "G9", "G10"],
+  "breaks": ["G3", "G5", "G7", "G9", "G10"],
   "world": "memory",
   "issues": {"1": ["todo"]},
   "workers": ["a"],
