@@ -333,9 +333,10 @@ class Snapshot:
     the adapter reads it for the overlaps' landing order (began_at), with
     GitHub's answer for each branch it refused to date, which the run's log
     names (adapters.github.began_refused_lines); and why each claim
-    branch whose head the run dated by its committer date was so dated,
-    GitHub's refusal or an activity that lists no push of the head
-    (adapters.github.pushed_refused_lines)."""
+    branch whose head no read dated by its push was dated otherwise, by
+    its committer date or by the newest entry listed, GitHub's refusal or
+    an activity that lists no push of the head, with what was read in its
+    place (adapters.github.pushed_refused_lines)."""
 
     sha: str = ""
     default_branch: str = "main"

@@ -617,7 +617,7 @@ def head_since(api, branch, sha, refused=None, now=None):
     """When the branch's last commit came, as (pushed_at, committed_at),
     the one read and the other "" (board.Release.last_commit): when GitHub
     received the push that set the head, from the repository's activity
-    (head_pushed_at), so no worker's clock decides how long a claim has
+    (read_push, pushed_by), so no worker's clock decides how long a claim has
     been idle (F8: until its fix the head's committer date did, which the
     pusher sets, so a commit dated ahead held a claim past its day and one
     dated back had it released at once). now is when the run began, the
@@ -865,11 +865,12 @@ def releases(api, heads, found_issues, pulls, now=None, asked=None, every_head=N
     already kept, a branch released/<issue>-<short sha> standing at the
     same commit (board.Release.kept), which is read whatever its time, so
     the board frees the name of a branch pushed again at such a head;
-    refused gathers, for the run's log, why each claim whose head was
-    dated by its committer date was so dated: GitHub's refusal, or an
-    activity that, read twice, lists no push of the head. now is when the
-    run began, taken before it read the branches, so a push after that
-    read is told from a stale entry (head_pushed_at)."""
+    refused gathers, for the run's log, why each claim whose head no read
+    dated by its push was dated by its committer date or by the newest
+    entry listed: GitHub's refusal, or an activity that, read twice, lists
+    no push of the head. now is when the run began, taken before it read
+    the branches, so a push after that read is told from a stale entry
+    (pushed_by)."""
     now = now or datetime.now(timezone.utc)
     ready, trusted = ready_branches(pulls), may_write(api, asked)
     drafts = {(p.get("head") or {}).get("ref"): p for p in pulls if p.get("draft") and is_claims(p)}
@@ -899,7 +900,7 @@ def collect(api, sha, default_branch, now=None):
     so a live run's answers can be saved and rendered again offline; now is
     the moment a claim's idleness is measured from, the wall clock unless
     given, taken before the branches are read, so a push after that read
-    dates its claim (head_pushed_at)."""
+    dates its claim (pushed_by)."""
     now = now or datetime.now(timezone.utc)
     repo = api.repo
     asked = getattr(api, "asked", None) or permissions(api)
