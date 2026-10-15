@@ -53,7 +53,7 @@ from typing import NamedTuple
 from sdlc_protocol import guard
 
 from . import cycle, model as M, oracle
-from .fake_github import Fault
+from .fake_github import LAGGING, MOVED, MOVED_TWICE, Fault
 from .model import CLAIM_PREFIX, HOUR, MAIN, OWNER, RELEASED_PREFIX, Comment, PullRequest, claim_text
 
 CLOCK, BOARD = "clock", "board"
@@ -62,6 +62,10 @@ ASSOCIATIONS = {OWNER: "OWNER", CAROL: "COLLABORATOR", DANA: "CONTRIBUTOR", SAM:
 WORKER_ASSOCIATION = "COLLABORATOR"
 CLAIM_DIR = "docs/agents/claims"
 
+# A read of the activity with no type named: the read of the push that set
+# a claim's head (github.read_push), told from the reads of a
+# branch's making, which name branch_creation (F13).
+PUSHES = (("activity_type", None),)
 # The faults a board run can meet, by name (DESIGN.md, 3.2).
 FAULTS = {
     "comment-500": Fault("POST", "/issues/*/comments", 500),
@@ -78,10 +82,64 @@ FAULTS = {
     "ref-delete-422": Fault("DELETE", "/git/refs/heads/*", 422),
     "compare-404": Fault("GET", "/compare/*", 404),
     "comments-read-500": Fault("GET", "/issues/*/comments", 500),
-    "activity-500": Fault("GET", "/activity", 500),
-    # Every read of the activity in the run, the newest creations and each
-    # branch's own alike, as for a token that may not read it.
+    # The first read of the branches' making in the run (F13), the newest
+    # creations' or a branch's own.
+    "activity-500": Fault("GET", "/activity", 500, query=(("activity_type", "branch_creation"),)),
+    # Every read of the activity in the run, the newest creations, each
+    # branch's own and the pushes of the claims' heads alike, as for a
+    # token that may not read it: a claim's push is read twice, since a 500
+    # may be answered later, and dated by its committer date.
     "activity-500-all": Fault("GET", "/activity", 500, times=100),
+    # The first read of a claim's head's push in the run (F8), which GitHub
+    # may answer later: the run reads it once more, which is answered, and
+    # dates the claim by its push.
+    "pushes-500": Fault("GET", "/activity", 500, query=PUSHES),
+    # Every read of a claim's head's push refused for good, as for a token
+    # that may not read the activity: each claim's read once and dated by
+    # its committer date, which the run's log says.
+    "pushes-403": Fault("GET", "/activity", 403, times=100, message="Resource not accessible by integration",
+                        query=PUSHES),
+    # The first read of a claim's head's push answered before the activity
+    # lists the push that set the head: the run reads it once more, which
+    # lists it, and dates the claim by its push.
+    "pushes-lagging": Fault("GET", "/activity", 200, query=PUSHES, answer=LAGGING),
+    # The first two such reads, a claim's first and the one more it takes,
+    # both answered before the activity lists the push that set the head,
+    # each a push behind: the entry before that push is newest, the push
+    # before it or the branch's making, and stale, so neither dates the
+    # push, and the claim is dated by that entry, the floor, where it came
+    # later than the head's committer date, as for a commit dated back,
+    # and by its committer date where not, each said in the run's log
+    # (github.NO_PUSH_LISTED, SPEC["floor"]); until F8's fix check the
+    # committer date stood in whatever the reads listed. A branch whose
+    # making is its only entry is listed with none, so its committer date
+    # stands in.
+    "pushes-lagging-twice": Fault("GET", "/activity", 200, times=2, query=PUSHES, answer=LAGGING),
+    # The first read of a claim's head's push listing a push that came
+    # after the run read the branch, from the head it read to another: the
+    # branch had a commit then, which dates the claim (SPEC["moved off"]).
+    "pushes-moved": Fault("GET", "/activity", 200, query=PUSHES, answer=MOVED),
+    # The first such read listing two pushes since the run read the
+    # branch, the newest naming the head the run read on neither side: it
+    # came after the run began, so it dates the claim, and the run reads no
+    # more (SPEC["moved off"]: an entry that set the branch to another
+    # head; F8's fix check, which found the library dating nothing by it).
+    "pushes-moved-twice": Fault("GET", "/activity", 200, query=PUSHES, answer=MOVED_TWICE),
+    # The first such read refused with a 500, which GitHub may answer
+    # later, and the one more it takes listing a push after the run read
+    # the branch: the run dates the claim by that push, judging the second
+    # read by when the run began as it judged the first; one that reads it
+    # with no such moment dates nothing by it and says so in its log, the
+    # floor dating the claim at the same minute (F8's fix check).
+    "pushes-500-then-moved": Fault("GET", "/activity", 500, query=PUSHES,
+                                   then=Fault("GET", "/activity", 200, query=PUSHES, answer=MOVED)),
+    # The first such read a push behind, its newest entry stale, and the
+    # one more it takes refused with a 500: the second lists nothing, so
+    # the floor is the first read's, which dates the claim where it came
+    # later than the head's committer date (SPEC["floor"]: the newest
+    # entry either read listed; F8's fix check).
+    "pushes-lagging-then-500": Fault("GET", "/activity", 200, query=PUSHES, answer=LAGGING,
+                                     then=Fault("GET", "/activity", 500, query=PUSHES)),
 }
 
 
@@ -122,8 +180,14 @@ class Scope(NamedTuple):
     onto another's claim, a misnamed claim, and the owner's push of one by
     hand, which meets no guard), the files each issue's claim lists, by
     issue, the clock skews, in hours, a worker's commits may carry (F8: a
-    pusher whose clock is ahead or behind stamps its commits so, and the
-    committer date is what idleness is read from), whether a stranger
+    pusher whose clock is ahead or behind stamps its commits so, which
+    since F8's fix decides idleness only where GitHub will not date the
+    push of the head and lists no entry of the branch later than the
+    commit's date, as under the faults pushes-403 and activity-500-all,
+    and pushes-lagging-twice for a commit dated ahead or a branch whose
+    making is its only entry; a commit dated back under
+    pushes-lagging-twice or pushes-lagging-then-500 is dated by the floor,
+    the newest entry listed, since F8's fix check), whether a stranger
     opens pull requests from a fork whose branch bears a claim's name
     (F17), and whether a stranger opens them from a claim's own branch
     here (F19)."""
@@ -345,6 +409,30 @@ def lease_onto(model, worker, number, files):
     tree[f"{CLAIM_DIR}/{number}.md"] = claim_text(number, worker, files)
     sha = model.commit((model.refs[MAIN],), worker, tree, f"Claim #{number}")
     return pushed(model, worker, ref, sha, f"git push --force-with-lease origin {ref}", lease=True, allowed=False)
+
+
+def claim_commit(model, number):
+    """The claim commit of the branch claude/<number>: the first of the
+    branch's own commits, those main does not hold, oldest first."""
+    ref = claim_ref(number)
+    own = model.in_order(model.ancestors(model.refs[ref]) - model.ancestors(model.refs[MAIN]))
+    return own[0] if own else model.refs[ref]
+
+
+def drop_commits(model, worker, number):
+    """The holder drops every commit after its claim commit and pushes the
+    branch back to it with a lease (git reset --hard, then git push
+    --force-with-lease), the one forced push the protocol allows, onto its
+    own claim: a push of a head the branch had before, which the activity
+    lists as a forced push of it, and which an activity a push behind
+    answers with the push that moved the branch off that head (F8's
+    second review). No search offers it; F8's trace plays it."""
+    model.fetch(worker)
+    ref, sha = claim_ref(number), claim_commit(model, number)
+    if sha == model.refs[ref]:
+        return Outcome(True, "nothing to drop")
+    return touch_pull(model, ref, pushed(model, worker, ref, sha, f"git push --force-with-lease origin {ref}",
+                                         lease=True))
 
 
 def push_old_head(model, worker, number, released_ref):
@@ -600,6 +688,8 @@ def act(model, verb, scope):
         return lease_onto(model, actor, number, scope.files_of(number))
     if name == "push-old-head":
         return push_old_head(model, actor, number, args[1])
+    if name == "drop-commits":
+        return drop_commits(model, actor, number)
     if name == "label-on":
         if args[1] in model.issues[number].labels:
             return Outcome(True, "labelled already")

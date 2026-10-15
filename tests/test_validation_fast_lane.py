@@ -65,10 +65,13 @@ class TheFastLane(unittest.TestCase):
         self.assertLess(time.perf_counter() - began, 30)
 
     def test_the_faults_one_kind_at_a_time_from_a_due_claim(self):
+        """With a's commits dated two days back as well as on time, so the
+        faults on the read of a claim's push (F8) decide between its push
+        and its committer date, which differ by two days."""
         began = time.perf_counter()
         for fault in verbs.FAULTS:
             with self.subTest(fault=fault):
-                scope = Scope(workers=("a",), people=(), waits=(25,), faults=(fault,))
+                scope = Scope(workers=("a",), people=(), waits=(25,), faults=(fault,), skews=(-48,))
                 found = explore.explore(start(scope, DUE), scope, 3)
                 self.assertGreater(found.states, 20)
                 self.assertEqual(broken(found), [])

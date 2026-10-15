@@ -9,15 +9,19 @@ catching a mutant fails here too, naming the rule. A mutant of a rule no
 search runs names the cheap lane that catches it instead (step 4), and
 the test runs that lane."""
 
+import ast
 import inspect
 import sys
+import textwrap
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from validation import cycle, dealing, invariants, model as M, mutants, oracle, verbs  # noqa: E402
+from sdlc_protocol.adapters import github  # noqa: E402
+from validation import cycle, dealing, invariants, model as M, mutants, oracle, replay, verbs  # noqa: E402
 from validation.verbs import DANA, SAM, Scope, Verb  # noqa: E402
 
 BOARD = Verb("board", "board", (cycle.SCHEDULE, ""))
@@ -153,6 +157,34 @@ TRACES = {
     "the markers on a claim's own pull request never read": "the regression traces",
     "a marker counted whenever it came": "the regression traces",
     "an undated claim taking no marker": "the regression traces",
+    "idleness by the committer date": "the regression traces",
+    "a kept head dated by its push": "the regression traces",
+    "kept counts only at or after the push": "the regression traces",
+    "a kept head released again": "the regression traces",
+    "a kept release undone holds for good": "the regression traces",
+    "the push read once": "the regression traces",
+    "the before side ignored": "the regression traces",
+    # F8's fix check: c's commits dated back, read with both reads a push
+    # behind, a second refused, a second listing a push after the run read
+    # the branch, and two such pushes, at the end of F8's trace.
+    "a fresh entry dating only off the head": "the regression traces",
+    "the floor dropped": "the regression traces",
+    "the floor of the last read alone": "the regression traces",
+    "the second read judged with no moment of the run": "the regression traces",
+    "a floor at the committer date taken for later": "the regression traces",
+    # F8's second review: a's claim commit, dated two days ahead, pushed
+    # back with a lease a day after a commit moved the branch off it, the
+    # activity a push behind; and a kept head pushed again, its release
+    # undone by the label claimed, released once idle by a run whose
+    # comment GitHub refuses. No search reaches either: none offers the
+    # drop of commits, and the kept head needs a release, a push and a
+    # day; F8's trace plays both.
+    "a stale entry off the head dates it": ([Verb("claim", "a", (1, 48 * M.HOUR)), CLAIMED, Verb("wait", "clock", (1,)),
+                                             Verb("commit", "a", (1,)), WAIT, Verb("drop-commits", "a", (1,)),
+                                             board_with("pushes-lagging")], Scope()),
+    "a kept head's old release taken for the lost comment": (
+        HELD + [WAIT, BOARD, Verb("push-old-head", "a", (1, "released/1-6d6ae03")), CLAIMED, WAIT,
+                board_with("comment-500")], Scope()),
     "a stranger's pull request named on a claim's row": "the regression traces",
     "a stranger's pull request taken for a claim's work": "the regression traces",
     "a stranger's pull request listed after its release": "the regression traces",
@@ -175,8 +207,21 @@ TRACES = {
     "a Worker line naming nobody taken for a name": dealing.Case({1: ("worker:b",)}, 1, "blank", ("a", "b")),
     "a run dealt as though it were the whole team": dealing.Case({1: ("todo", "worker:a", "worker:b")}, 1, "none",
                                                                  ("a", "b")),
+    # F8's review: the clerk reads a release as the board does, a claim
+    # dated by its push though its commit is dated ahead, and a head a
+    # release kept counted released whenever its comment came.
+    "the clerk dating by the committer date": dealing.Case({1: ("todo",)}, 1, "released-ahead", ("a", "b")),
+    "the clerk ignoring a kept head": dealing.Case({1: ("todo",)}, 1, "kept", ("a", "b")),
 }
 LANES = {lane.name: lane for lane in mutants.LANES}
+
+
+def body_lines(function):
+    """The function's body after its docstring, a line each, stripped."""
+    source = textwrap.dedent(inspect.getsource(function))
+    statements = ast.parse(source).body[0].body
+    first = statements[1] if isinstance(statements[0], ast.Expr) else statements[0]
+    return [line.strip() for line in source.splitlines()[first.lineno - 1:] if line.strip()]
 
 
 def violations(steps, scope, unanswered=()):
@@ -204,9 +249,21 @@ class TheLane(unittest.TestCase):
         branch for the claim's and one for the adapter's marking, and its
         review two that read a permission answer GitHub refused the other
         way, and F2's fix one, a piece of work named by the number it is
-        shown by, so the bound is widened to 100 and the count noted."""
-        self.assertTrue(10 <= len(mutants.MUTANTS) <= 100)
-        self.assertEqual(len(mutants.MUTANTS), 93)
+        shown by, with three from its two reviews, and F8's fix two,
+        idleness by the committer date and a kept head dated by its push,
+        and its review seven: a kept head released again, a kept release
+        undone holding for good, kept counting only from the push on, the
+        push read once, the before side ignored, and the clerk dating by
+        the committer date or ignoring a kept head, and its second review
+        two: a stale entry off the head dating it, and a kept head's old
+        release taken for the comment a failed post would have written, and
+        its fix check five: a fresh entry dating only where it moved the
+        branch off the head, the floor dropped, the floor of the last read
+        alone, the second read judged with no moment of the run, and a
+        floor at the committer date taken for later, so the bound is
+        widened to 120 and the count noted."""
+        self.assertTrue(10 <= len(mutants.MUTANTS) <= 120)
+        self.assertEqual(len(mutants.MUTANTS), 109)
         self.assertEqual(sorted(TRACES), sorted(mutants.MUTANTS))
 
     def test_every_mutant_names_a_rule_the_library_still_has(self):
@@ -221,6 +278,57 @@ class TheLane(unittest.TestCase):
                 else:
                     self.assertIs(type(target), type(mutant.replacement))
                 self.assertIn(mutant.guarantee, invariants.GUARANTEES)
+
+    def test_the_copies_of_releases_follow_the_library_but_for_the_rule_each_changes(self):
+        """A mutant that copies github.releases to change one rule tests an
+        older library once the rest of the copy falls behind, as F8's
+        review checked of the copies' dating of a head (head_since, from
+        3c0ee51 on). Each line of a copy's body, the module's name taken
+        off, is a line of the library's, but for the lines the mutant
+        changes; and the library's lines the copy lacks are the ones it
+        leaves out on purpose."""
+        library = body_lines(github.releases)
+        for copy, changed, dropped in (
+                (mutants.releases_reading_drafts,
+                 ['drafts = {(p.get("head") or {}).get("ref"): p for p in pulls if p.get("draft") and counted(p)}'],
+                 ['drafts = {(p.get("head") or {}).get("ref"): p for p in pulls if p.get("draft") and is_claims(p)}']),
+                (mutants.releases_skipping_finished,
+                 ["if finished_draft(api, drafts.get(branch)):"],
+                 ["finished = finished_draft(api, drafts.get(branch))",
+                  "if finished and labels.CLAIMED in found_issues[key][\"labels\"]:",
+                  "if finished and not board.release_counts(release):"])):
+            with self.subTest(copy=copy.__name__):
+                lines = [line.replace("github.", "") for line in body_lines(copy)]
+                self.assertEqual([line for line in lines if line not in library], changed)
+                self.assertEqual([line for line in library if line not in lines], dropped)
+
+    def test_the_copy_of_head_since_follows_the_library_but_for_the_rules_it_takes(self):
+        """The mutants of head_since since F8's fix check change one rule
+        each of one copy (mutants.head_since_copy), which would test an
+        older library once the rest fell behind; so each line of its body,
+        the module's name taken off, is one of the library's but for the
+        four lines that take the rules as arguments, and the library's
+        lines it lacks are those four as the library writes them. With
+        every argument left as it is, the copy plays F8's trace green, as
+        the library does."""
+        lines = [line.replace("github.", "") for line in body_lines(mutants.head_since_copy)]
+        library = body_lines(github.head_since)
+        self.assertEqual([line for line in lines if line not in library],
+                         ["if first.again and again:",
+                          "read = read_push(api, branch, sha, now if now_again else None)",
+                          "floor, why = floor_of(read, first), read.why or first.why",
+                          "if floor and later(floor, committed):"])
+        self.assertEqual([line for line in library if line not in lines],
+                         ["if first.again:", "read = read_push(api, branch, sha, now)",
+                          "floor, why = latest(read.floor, first.floor), read.why or first.why",
+                          "if floor and latest(committed, floor) != committed:"])
+
+        def as_built(api, branch, sha, refused=None, now=None):
+            return mutants.head_since_copy(api, branch, sha, refused, now)
+
+        with mock.patch.object(github, "head_since", as_built):
+            record = replay.replay(replay.traces()["F8"])
+        self.assertEqual(replay.results(record), set(), "\n".join(record.timeline))
 
     def test_every_replacement_takes_what_its_target_is_called_with(self):
         """A replacement that no longer takes its target's arguments is

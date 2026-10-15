@@ -67,6 +67,69 @@ class Pushes(unittest.TestCase):
         later = self.model.commit((moved,), "b", {"x": "2\n"}, "more")
         self.assertEqual(self.model.push("b", "claude/1", later, lease=True), M.Push(False, "stale info"))
 
+    def test_each_push_that_moves_a_head_is_recorded_with_its_minute_and_kind(self):
+        """F8: what the activity lists of the push that last set a branch's
+        head, with the head it moved the branch from; a push of the head
+        the branch already has sends nothing. The head the making set is
+        kept apart, since the activity's entry of the making names it
+        whatever was pushed since."""
+        self.model.push("a", "claude/1", self.first)
+        self.assertEqual(self.model.pushed["claude/1"], (0, self.first, "branch_creation", None))
+        self.model.now = 90
+        later = self.model.commit((self.first,), "a", {"x": "1\n"}, "work")
+        self.model.push("a", "claude/1", later)
+        self.assertEqual(self.model.pushed["claude/1"], (90, later, "push", self.first))
+        self.model.now = 120
+        self.model.push("a", "claude/1", later)
+        self.assertEqual(self.model.pushed["claude/1"], (90, later, "push", self.first))
+        self.model.push("b", "claude/1", claim_commit(self.model, "b"), force=True)
+        self.assertEqual(self.model.pushed["claude/1"][::2], (120, "force_push"))
+        self.assertEqual(self.model.pushed["claude/1"][3], later)
+        self.assertEqual(self.model.made_heads, {"claude/1": self.first})
+
+    def test_the_entry_before_the_last_push_is_kept_and_a_delete_until_the_branch_is_made_again(self):
+        """F8's second review: an activity a push behind shows the entry
+        before the last push newest, so the model keeps it: none after the
+        making, the push before after a later one, and, for a claim branch
+        a push makes again, the delete that took it away, with the head it
+        had; a rename keeps the old name's, and a clone and the key keep
+        both."""
+        self.model.push("a", "claude/1", self.first)
+        self.assertEqual(self.model.earlier, {})
+        self.model.now = 60
+        later = self.model.commit((self.first,), "a", {"x": "1\n"}, "work")
+        self.model.push("a", "claude/1", later)
+        self.assertEqual(self.model.earlier, {})
+        self.model.now = 120
+        self.model.fetch("a")
+        self.model.push("a", "claude/1", self.first, lease=True)
+        self.assertEqual(self.model.earlier, {"claude/1": (60, "push", later, self.first)})
+        self.assertEqual(self.model.clone().earlier, self.model.earlier)
+        key = self.model.repository_key()
+        self.model.earlier = {}
+        self.assertNotEqual(self.model.repository_key(), key)
+        self.model.delete_ref("claude/1")
+        self.assertEqual((self.model.earlier, self.model.deleted), ({}, {"claude/1": (120, self.first)}))
+        self.assertEqual(self.model.clone().deleted, self.model.deleted)
+        self.model.now = 180
+        self.model.push("a", "claude/1", self.first)
+        self.assertEqual((self.model.earlier, self.model.deleted),
+                         ({"claude/1": (120, "branch_deletion", None, self.first)}, {}))
+        self.model.rename_ref("claude/1", "released/1-abcdef0")
+        self.assertEqual(self.model.earlier, {"released/1-abcdef0": (120, "branch_deletion", None, self.first)})
+        self.model.delete_ref("released/1-abcdef0")
+        self.assertEqual((self.model.earlier, self.model.deleted), ({}, {}))
+
+    def test_the_head_a_making_set_follows_a_rename_and_goes_with_a_deletion(self):
+        self.model.push("a", "claude/1", self.first)
+        key = self.model.repository_key()
+        self.model.rename_ref("claude/1", "released/1-abcdef0")
+        self.assertEqual(self.model.made_heads, {"released/1-abcdef0": self.first})
+        self.assertNotEqual(self.model.repository_key(), key)
+        self.assertEqual(self.model.clone().made_heads, self.model.made_heads)
+        self.model.delete_ref("released/1-abcdef0")
+        self.assertEqual(self.model.made_heads, {})
+
 
 class CommitsInOrder(unittest.TestCase):
     def test_a_parent_comes_before_its_child_made_in_the_same_minute(self):
@@ -131,7 +194,6 @@ class Standing(unittest.TestCase):
         self.move_main({"README.md": "main\n"})
         self.assertEqual(self.model.standing("claude/1"), M.DIRTY)
 
-
 class Rename(unittest.TestCase):
     def test_closes_the_open_pull_request_and_keeps_the_holder(self):
         model = M.seeded()
@@ -141,6 +203,8 @@ class Rename(unittest.TestCase):
         self.assertEqual(model.pulls[100].state, "closed")
         self.assertNotIn("claude/1", model.refs)
         self.assertEqual(model.creators["released/1-abcdef0"], "a")
+        self.assertEqual(model.pushed["released/1-abcdef0"][2], "branch_creation")
+        self.assertNotIn("claude/1", model.pushed)
 
     def test_leaves_open_a_pull_request_from_a_fork_whose_branch_bears_the_name(self):
         model = M.seeded()
@@ -178,6 +242,7 @@ class Delete(unittest.TestCase):
         self.assertEqual(self.model.pulls[100].state, "closed")
         self.assertNotIn("claude/1", self.model.refs)
         self.assertNotIn("claude/1", self.model.creators)
+        self.assertNotIn("claude/1", self.model.pushed)
 
     def test_leaves_a_merged_pull_request_merged_and_a_fork_s_open(self):
         self.model.pulls[100] = M.PullRequest(100, "claude/1", "a", "Closes #1", state="merged")
@@ -230,6 +295,12 @@ class TheKey(unittest.TestCase):
         self.assertTrue(self.differs(lambda m: setattr(m, "unanswered", frozenset({"sam"}))))
         self.model.unanswered = frozenset({"sam"})
         self.assertEqual(self.model.clone().unanswered, frozenset({"sam"}))
+
+    def test_keeps_when_each_head_was_pushed(self):
+        """A release dates a claim by it (F8), so two states that differ
+        only in when a head was pushed are two states; a clone keeps it."""
+        self.assertTrue(self.differs(lambda m: m.pushed.update({"claude/1": (5, m.refs["claude/1"], "push")})))
+        self.assertEqual(self.model.clone().pushed, self.model.pushed)
 
     def test_keeps_the_label_events_every_head_and_the_tracking_refs(self):
         self.assertTrue(self.differs(lambda m: setattr(m, "label_events", m.label_events + (

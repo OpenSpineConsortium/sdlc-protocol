@@ -163,6 +163,36 @@ class RepoModel:
     # this in both worlds, where the sha in the name differs.
     made: dict = field(default_factory=dict)
     made_count: int = 0
+    # The push that last set each branch that stands, by branch name: the
+    # minute GitHub received it, the head it set, its kind as the activity
+    # names it (branch_creation, push or force_push) and the head it moved
+    # the branch from, None for the push that made the branch; the
+    # repository's activity lists it and a release dates a claim by it
+    # (F8). A rename keeps the old name's, as GitHub's activity is assumed
+    # to; no canary check reads that yet. Part of the key.
+    pushed: dict = field(default_factory=dict)
+    # The head the push that made each branch that stands set, by branch
+    # name, which the activity's entry of that making names as the head it
+    # set whatever was pushed since (fake_github.FakeGitHub.activity): an
+    # activity that does not list the latest push yet shows that entry
+    # newest (the faults pushes-lagging, F8). A rename keeps the old
+    # name's. Part of the key, since the fake's answers turn on it.
+    made_heads: dict = field(default_factory=dict)
+    # The entry the activity lists just before the push that last set each
+    # branch that stands, by branch name, as (minute, kind, the head it
+    # set, the head before): the push before the last, or, for a branch
+    # whose last push made it again after a delete, that delete
+    # (branch_deletion, setting no head); none where it would be the
+    # making, which the activity lists by made_heads. An activity that
+    # lags the last push by one shows it newest (the fault pushes-lagging,
+    # F8's second review): a push that moved the branch off the head it
+    # has now, older than the run, or a delete at that head. A rename
+    # keeps the old name's. Part of the key.
+    earlier: dict = field(default_factory=dict)
+    # The delete of each claim branch that does not stand now, by branch
+    # name, as (minute, the head it had), which earlier takes when a push
+    # makes the branch again. Part of the key.
+    deleted: dict = field(default_factory=dict)
     # Each worker's remote-tracking refs, as its last fetch or push left them.
     tracking: dict = field(default_factory=dict)
     # Whether GitHub's word for an open pull request that is not in conflict
@@ -283,13 +313,39 @@ class RepoModel:
         if current is None:
             self.made_by(ref, worker)
         self.set_ref(ref, sha)
+        if current != sha:
+            self.pushed_now(ref, current, fast_forward)
         mine[ref] = sha
         return Push(True)
+
+    def pushed_now(self, ref, before=None, fast_forward=True):
+        """GitHub received a push that set the ref's head now, moving the
+        branch from the head before, None for the push that made it: the
+        minute, the head, the kind of push and the head before, as the
+        activity records it (F8), and, for the push that made the branch,
+        the head it set (made_heads); and the entry the activity lists
+        just before it (earlier): the push it follows, unless that made
+        the branch, or, for a push that makes the branch again, the delete
+        that took it away (deleted). The git world's push (GitStore.pushed)
+        records the same. A push of the head the ref already has sends git
+        nothing, so it records none."""
+        head = self.refs[ref]
+        kind = "branch_creation" if before is None else "push" if fast_forward else "force_push"
+        self.earlier.pop(ref, None)
+        last = self.pushed.get(ref)
+        if before is None and ref in self.deleted:
+            at, gone = self.deleted.pop(ref)
+            self.earlier[ref] = (at, "branch_deletion", None, gone)
+        elif before is not None and last is not None and last[2] != "branch_creation":
+            self.earlier[ref] = (last[0], last[2], last[1], last[3])
+        self.pushed[ref] = (self.now, head, kind, before)
+        if before is None:
+            self.made_heads[ref] = head
 
     def made_by(self, ref, worker):
         """A branch the worker's push makes now: who made it, the minute,
         and its place in the order the branches were made in; the git
-        world's push (git_store.pushed) records the same."""
+        world's push (GitStore.pushed) records the same."""
         self.creators[ref] = worker
         self.created[ref] = self.now
         self.made_count += 1
@@ -310,13 +366,21 @@ class RepoModel:
         repository.md:71); for the REST delete the board makes it is
         assumed, and canary C6 settles it. The soak found the model
         keeping such a pull request open, which the board then told "idle"
-        on every run."""
+        on every run. A claim branch's delete is kept, with the head it
+        took away, until a push makes the branch again, whose activity
+        then lists the delete just before that push (deleted, earlier;
+        F8's second review)."""
         if self.store is not None:
             self.store.delete(ref)
-        self.refs.pop(ref, None)
         self.creators.pop(ref, None)
         self.created.pop(ref, None)
         self.made.pop(ref, None)
+        self.pushed.pop(ref, None)
+        self.made_heads.pop(ref, None)
+        self.earlier.pop(ref, None)
+        head = self.refs.pop(ref, None)
+        if ref.startswith(CLAIM_PREFIX) and head is not None:
+            self.deleted[ref] = (self.now, head)
         for pull in self.pulls.values():
             if pull.head == ref and pull.state == "open" and not pull.fork:
                 pull.state = "closed"
@@ -334,6 +398,13 @@ class RepoModel:
             self.creators[new] = self.creators.pop(old)
             self.created[new] = self.created.pop(old)
             self.made[new] = self.made.pop(old)
+        if old in self.pushed:
+            self.pushed[new] = self.pushed.pop(old)
+        if old in self.made_heads:
+            self.made_heads[new] = self.made_heads.pop(old)
+        if old in self.earlier:
+            self.earlier[new] = self.earlier.pop(old)
+        self.deleted.pop(new, None)
         for pull in self.pulls.values():
             if pull.head == old and pull.state == "open" and not pull.fork:
                 pull.state = "closed"
@@ -517,6 +588,10 @@ class RepoModel:
             self.label_events,
             tuple(sorted(self.creators.items())),
             tuple(sorted(self.created.items())),
+            tuple(sorted(self.pushed.items())),
+            tuple(sorted(self.made_heads.items())),
+            tuple(sorted(self.earlier.items())),
+            tuple(sorted(self.deleted.items())),
             tuple(sorted((w, tuple(sorted(refs.items()))) for w, refs in self.tracking.items())),
             self.board_text,
             self.opaque_pulls,
@@ -564,7 +639,8 @@ class RepoModel:
             pulls={n: copy.copy(p) for n, p in self.pulls.items()},
             next_pull=self.next_pull, writers=self.writers, ever_heads=self.ever_heads,
             label_events=self.label_events, creators=dict(self.creators), created=dict(self.created),
-            made=dict(self.made), made_count=self.made_count,
+            made=dict(self.made), made_count=self.made_count, pushed=dict(self.pushed),
+            made_heads=dict(self.made_heads), earlier=dict(self.earlier), deleted=dict(self.deleted),
             tracking={w: dict(refs) for w, refs in self.tracking.items()}, board_text=self.board_text,
             queued=self.queued, pending=self.pending, running=None, opaque_pulls=self.opaque_pulls,
             lenient_rules=self.lenient_rules, unanswered=self.unanswered, standings=self.standings,

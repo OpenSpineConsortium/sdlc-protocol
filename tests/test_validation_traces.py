@@ -27,7 +27,46 @@ BUDGET_SECONDS = 10
 # A fixed finding, each mutant of validation/mutants.py that undoes a part
 # of its fix, the step the trace then goes red at (numbered as played, an
 # announce counting as three) and the guarantee DESIGN.md's table names;
-# F6's fix has two parts, the render's sort key and the quoted path. F9's
+# F6's fix has two parts, the render's sort key and the quoted path. F8's
+# trace goes red at its first board run, step 13, where b's claim, its
+# head dated 48 hours back, was pushed an hour before and is released
+# once idleness is read by the committer date, and where the activity
+# lists a push from a's head after the run read the branch, which the
+# run reads the activity again for once the before side of an entry is
+# ignored; at its second, step 14, where a's claim, its head dated 72
+# hours ahead, a day idle by its push, is held once idleness is read by
+# the committer date; at its third, step 15, where GitHub answers the
+# first read of b's push with a 500 and the run reads it no more once the
+# push is read once; at the run after c pushes its released head again,
+# step 23, where that branch stands as a claim, not deleted, once the
+# release that kept the head counts by its time alone, or only from the
+# push on, since it came before; and at the last, step 25, where a's
+# branch, whose release the label claimed undid, has gone a day without
+# a push and is not released once a release comment holds a kept head
+# whatever the labels say, and b's, the board counting its kept release,
+# is released twice once no head is read as kept; and, since F8's second
+# review, at step 28, where a's kept head, pushed again a day after the
+# board deleted it, meets an activity a push behind whose newest entry is
+# that delete, and at step 37, where c's claim commit, pushed back a day
+# after a commit moved claude/3 off it, meets one whose newest entry is
+# that commit's push, each claim released in the run its push started
+# once a stale entry off the head dates it; and at step 29, where a's
+# kept head, its release undone, is released again by a run whose
+# comment GitHub refuses, and the labels stay off once the earlier
+# release of the head is taken for the comment the post would have
+# written; and, since F8's fix check, at the five runs after c's two
+# commits dated back: at step 39, where both reads are a push behind and
+# the floor is the commit's own minute, the log says the claim is read
+# from its floor once a floor at the committer date is taken for later;
+# at step 41, where the floor is later than a commit dated two days
+# back, c's claim is released in the run its push started once the floor
+# is dropped; at step 42, where the second read is refused, likewise once
+# the floor is the last read's alone; at step 43, where the second read
+# lists a push after the run read the branch, the log says the claim is
+# read from its floor once that read is judged with no moment of the
+# run; and at step 44, where the newest of two such pushes names the head
+# on neither side, the run reads again once a fresh entry dates only
+# where it moved the branch off the head. F9's
 # trace goes red at its first board run, step 2, where the draft level
 # with main is told it moved once the adapter reads the comparison's
 # ahead_by for behind_by, and at its second, step 4, where the draft
@@ -84,6 +123,16 @@ UNDONE = {
     "F5": [("a claim number with leading zeros", 2, "G1")],
     "F6": [("a sort key that calls int after isdigit", 1, "G15"), ("a branch name sent unquoted", 3, "G15")],
     "F7": [("the guard passes a lease onto another's claim", 1, "G11a")],
+    "F8": [("idleness by the committer date", 13, "G2"), ("idleness by the committer date", 14, "G3"),
+           ("the before side ignored", 13, "G2"), ("the push read once", 15, "G2"),
+           ("a kept head dated by its push", 23, "G5"), ("kept counts only at or after the push", 23, "G5"),
+           ("a kept release undone holds for good", 25, "G3"), ("a kept head released again", 25, "G2"),
+           ("a stale entry off the head dates it", 28, "G2"), ("a stale entry off the head dates it", 37, "G2"),
+           ("a kept head's old release taken for the lost comment", 29, "G3L"),
+           ("a floor at the committer date taken for later", 39, "G2"), ("the floor dropped", 41, "G3"),
+           ("the floor of the last read alone", 42, "G3"),
+           ("the second read judged with no moment of the run", 43, "G2"),
+           ("a fresh entry dating only off the head", 44, "G2")],
     "F9": [("an opaque state read by GitHub's word alone", 4, "G10"), ("the comparison read by ahead_by", 2, "G10")],
     "F10": [("a finished draft's release by hand not seen", 9, "G5")],
     "F11": [("a refused comment stops the run", 6, "G15")],
@@ -111,12 +160,12 @@ UNDONE = {
             ("a stranger's pull request listed after its release", 7, "G9"),
             ("a stranger's pull request spoken to after its release", 7, "G10")],
 }
-# The seventeen settled findings: F1, F3, F5, F6, F10 and F11 fixed in
-# 0.4.1; F4, F7, F9, F12, F13, F14, F15, F17, F18 and F19 fixed on main
-# after it (known.json's fixed_after); and F16, fixed in the spec's words, which
-# the library as built already keeps, so known.json names no version for
-# it.
-FIXED = ("F1", "F2", "F3", "F4", "F5", "F6", "F7", "F9", "F10", "F11", "F12", "F13", "F14", "F15", "F16", "F17",
+# The nineteen findings, every one settled since F8's fix: F1, F3, F5,
+# F6, F10 and F11 fixed in 0.4.1; F2, F4, F7, F8, F9, F12, F13, F14, F15,
+# F17, F18 and F19 fixed on main after it (known.json's fixed_after); and
+# F16, fixed in the spec's words, which the library as built already
+# keeps, so known.json names no version for it.
+FIXED = ("F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12", "F13", "F14", "F15", "F16", "F17",
          "F18", "F19")
 # Findings red as built, which no rule of the library answers: none since
 # F4's fix; the test keeps the case for the next one.
@@ -164,8 +213,6 @@ class TheTraces(unittest.TestCase):
                 elif finding in RED_AS_BUILT:
                     self.assertTrue(entries and all(e.finding == finding for e in entries))
                     self.assertNotIn(finding, known.AS_BUILT)
-                elif finding == "F8":
-                    self.assertEqual((entries, trace.breaks), ([], ()))
                 else:
                     self.assertIn(finding, known.AS_BUILT)
                     self.assertTrue(entries and all(e.finding == finding for e in entries))
@@ -184,6 +231,17 @@ class TheTraces(unittest.TestCase):
                         record = replay.replay(trace)
                     self.assertIn((step, guarantee), replay.results(record), "\n".join(record.timeline))
                     self.assertIn(guarantee, trace.breaks)
+
+    def test_a_step_naming_a_released_branch_the_run_never_made_is_a_mismatch_and_not_played(self):
+        """The mutation lane plays every trace under every mutant: F8's
+        push of c's released head names a branch a mutant that skips the
+        rename never makes, so the step is a mismatch the record names and
+        the lane reads the violations of the steps that played."""
+        trace = self.traces["F8"]
+        with mutants.switched_on(mutants.MUTANTS["the rename skipped"]):
+            record = replay.replay(trace)
+        self.assertIn((18, "not played: no released branch of #3"), record.mismatches)
+        self.assertIn((13, "G3"), replay.results(record))
 
     def test_f4_s_trace_deals_from_the_run_s_one_look_and_twice_under_its_mutant(self):
         """The run looks before main moves, so c is dealt nothing; with
@@ -289,8 +347,9 @@ class KnownJson(unittest.TestCase):
         repository vendors, so a finding fixed on main is still known there
         at that version and before, and new from the next release on."""
         self.assertEqual(known.FIXED_AFTER,
-                         {"F2": "0.4.1", "F4": "0.4.1", "F7": "0.4.1", "F9": "0.4.1", "F12": "0.4.1", "F13": "0.4.1",
-                          "F14": "0.4.1", "F15": "0.4.1", "F17": "0.4.1", "F18": "0.4.1", "F19": "0.4.1"})
+                         {"F2": "0.4.1", "F4": "0.4.1", "F7": "0.4.1", "F8": "0.4.1", "F9": "0.4.1", "F12": "0.4.1",
+                          "F13": "0.4.1", "F14": "0.4.1", "F15": "0.4.1", "F17": "0.4.1", "F18": "0.4.1",
+                          "F19": "0.4.1"})
         current = known.version_key(sdlc_protocol.__version__)
         for finding, version in known.FIXED_AFTER.items():
             with self.subTest(finding=finding):
@@ -299,7 +358,7 @@ class KnownJson(unittest.TestCase):
                 self.assertIsNotNone(known.version_key(version))
                 self.assertLessEqual(known.version_key(version), current,
                                      "the last version with a finding is one main has stated, never a later one")
-        fixed_on_main = {"F2", "F4", "F7", "F9", "F12", "F13", "F14", "F15", "F17", "F18", "F19"}
+        fixed_on_main = {"F2", "F4", "F7", "F8", "F9", "F12", "F13", "F14", "F15", "F17", "F18", "F19"}
         self.assertEqual(known.as_built_for("0.4.1"), known.AS_BUILT | fixed_on_main)
         self.assertEqual(known.as_built_for("0.4.0"), known.AS_BUILT | fixed_on_main)
         self.assertEqual(known.as_built_for("0.4.2"), known.AS_BUILT, "the next release carries the fixes")

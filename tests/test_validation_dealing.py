@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from sdlc_protocol import team  # noqa: E402
-from validation import clerk, dealing, mutants  # noqa: E402
+from validation import clerk, dealing, model as M, mutants  # noqa: E402
 from validation.clerk import ModelClient  # noqa: E402
 
 
@@ -145,6 +145,27 @@ class TheClerkAgainstPick(unittest.TestCase):
         snap = team.Snapshot(ModelClient(dealing.case_model(held)))
         self.assertFalse(snap.released(snap.issues[0]), "the label claimed is still on")
         self.assertEqual(dealing.judge_case(held), ({"a": "carry 1", "b": "none"}, []))
+
+    def test_a_release_is_read_as_the_board_reads_it_by_the_push_and_a_kept_head(self):
+        """F8's review: a claim whose commit is dated 72 hours ahead is
+        released by a comment 25 hours after its push, and a released head
+        pushed again is released by the release that kept it, though that
+        came before the push; the clerk counts both released, as the board
+        does, where the label claimed is off, and counts neither released
+        where it is on, so a carries each. Read by the committer date, or
+        with no head kept, it carries the first or the second."""
+        for state, mutant in (("released-ahead", "the clerk dating by the committer date"),
+                              ("kept", "the clerk ignoring a kept head")):
+            with self.subTest(state=state):
+                case = dealing.Case({1: ("todo",)}, 1, state, ("a", "b"))
+                model = dealing.case_model(case)
+                self.assertEqual(model.pushed["claude/1"][0] + (0 if state == "kept" else 25 * M.HOUR), model.now)
+                self.assertTrue(ModelClient(model).released("claude/1"))
+                self.assertEqual(dealing.judge_case(case, runs=True), ({"a": "none", "b": "none"}, []))
+                with mutants.switched_on(mutants.MUTANTS[mutant]):
+                    self.assertEqual(dealing.judge_case(case)[1], ["a carries #1, whose claim is nobody's"])
+                held = dealing.Case({1: ("claimed", "todo", "worker:a")}, 1, state, ("a", "b"))
+                self.assertEqual(dealing.judge_case(held), ({"a": "carry 1", "b": "none"}, []))
 
     def test_a_worker_line_that_names_nobody_leaves_the_claim_to_the_label(self):
         case = dealing.Case({1: ("todo", "worker:b")}, 1, "blank", ("a", "b"))
