@@ -71,6 +71,12 @@ READS_DONE_WITHOUT = ("/compare/", "/activity")
 # any case, then #N and no further digit (spec, Finish: the body says
 # "Closes #N"; Rules: "the body closes its issue").
 CLOSES = r"(?i)\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#%d\b"
+# The client's waits for a rate limit as README.md's What a board run
+# costs promises them, written out here so the harness reads none of the
+# library's constants (adapters.github.RATE_*): where GitHub asks for no
+# wait, "a minute and then two"; "at most twice for one call, never a wait
+# over two minutes and three minutes in all for one run".
+FIRST_WAIT, WAITS_FOR_A_CALL, LONGEST_WAIT, WAITS_IN_ALL = 60, 2, 120, 180
 
 
 class Violation(NamedTuple):
@@ -120,16 +126,66 @@ def guarantee_of(effect):
     return EFFECT_GUARANTEE.get((effect.kind, effect.detail), EFFECT_GUARANTEE.get(effect.kind, "G3"))
 
 
+def rate_limited(call):
+    """Whether the fake refused the call for a rate limit: a 429, or a 403
+    whose message names a rate limit or which names a wait in retry-after.
+    GitHub's documentation gives "a `403` or `429` response" for either
+    limit, the secondary's with "an error message that indicates that you
+    exceeded a secondary rate limit" and, "If the `retry-after` response
+    header is present", the seconds to wait ("Exceeding the rate limit");
+    that a 403 naming a wait in retry-after is a rate limit's whatever its
+    words is this project's assumption, as the library's
+    (adapters.github.rate_limited), since the documentation never says
+    that no other refusal sends one. A 403 that says only that the hour is
+    spent (Fault.reset_after) is no rate limit's, since the hour's last
+    call is answered with no call left whatever it is answered with; and
+    the model's own refusals carry no message, so only a Fault's refusal
+    can be one."""
+    fault = call.fault
+    if call.status == 429:
+        return True
+    return call.status == 403 and fault is not None and (fault.retry_after is not None
+                                                         or "rate limit" in fault.message.lower())
+
+
+def answered(calls):
+    """Each call the library asked its client to make, with the place of
+    its last try among the calls: a call the client made again after a
+    wait (Call.waited, the fake's record of the client's waits between two
+    tries of one call) is the next try of the call before it, and the call
+    is judged by its last try, the one answer the library read; every
+    other call stands for itself, a read the library makes again of its
+    own after a pause among them, as head_since's of a push. Until the
+    harness read them so, a read the client asked again and had answered
+    counted as refused, which excused a run that failed for another reason
+    (reads_failed), and one read of a push counted as several
+    (pushes_read_again); and until the fake kept the client's waits, the
+    harness folded a run of identical calls after a rate limit's refusal,
+    so a read the library made again after the client gave up early, on a
+    wait longer than a run waits or with the run's waits spent, was taken
+    for a try, and a library that read a rate limit's refusal again after
+    its pause was seen only where the client had made all its tries."""
+    found = []
+    for at, call in enumerate(calls):
+        if found and call.waited is not None:
+            found[-1] = (at, call)
+        else:
+            found.append((at, call))
+    return found
+
+
 def reads_failed(calls):
     """Whether GitHub refused a read the run needs, which excuses a run that
     fails; a refused read the run does without excuses nothing: one of
     READS_DONE_WITHOUT, or the read of an issue's comments after its
     release comment failed, which leaves the release for the next run to
-    settle (unsettling_reads, F20)."""
+    settle (unsettling_reads, F20). A read the client made again after a
+    wait is judged by its last try (answered), so one GitHub answered in
+    the end excuses nothing."""
     done_without = unsettling_reads(calls)
     return any(c.method == "GET" and (c.status is None or c.status >= FAILED_READ or c.status in (403, 429))
                and not c.path.startswith(READS_DONE_WITHOUT) and at not in done_without
-               for at, c in enumerate(calls))
+               for at, c in answered(calls))
 
 
 # --- state ----------------------------------------------------------------------
@@ -316,15 +372,22 @@ def first_half_checks(before, after, half, known=oracle.AS_BUILT):
     (pushes_read_again) and its log saying what each claim no read dated
     by its push was read from (pushes_logged), the labels put back where a
     release failed, no label left on a released claim, and the page the
-    state's, every claim dated as the run read its push (push_dates)."""
-    if half.raised is not None:
-        return [] if reads_failed(half.fake.calls) else [Violation("G15", f"the run's first half raised: {half.raised}")]
+    state's, every claim dated as the run read its push (push_dates). Its
+    writes are held to once and its client's waits to GitHub's asking
+    whether or not it raised (written_once, waits_as_asked), since a half
+    that raised after writing twice or waiting wrong did both all the
+    same."""
     actual = effects_of(half.fake.calls)
+    problems = written_once(actual) + waits_as_asked(half.fake.calls)
+    if half.raised is not None:
+        if reads_failed(half.fake.calls):
+            return problems
+        return problems + [Violation("G15", f"the run's first half raised: {half.raised}")]
     started_by = oracle.pushed_branch(half.event, half.ref_name)
     dates = push_dates(half.fake.calls, before, started_by)
     seen_before, seen_after = seen(before, dates), seen(after, dates, unread_releases(half.fake.calls), before.now)
-    problems = (pushes_read_again(half.fake.calls, before)
-                + pushes_logged(half.fake.calls, before, half.lines, started_by))
+    problems += (pushes_read_again(half.fake.calls, before)
+                 + pushes_logged(half.fake.calls, before, half.lines, started_by))
     if not injected(half.fake.calls, but=WRITES_KEPT):
         expected = oracle.expected_effects(seen_before, half.event, half.ref_name, known,
                                            unsaid_branches(half.fake.calls))
@@ -347,12 +410,19 @@ def cycle_checks(before, after, record, known=oracle.AS_BUILT):
     with the record carrying the states the run started from and its
     first half left (cycle.RunRecord). For a run made whole, after is the
     state its first half left as far as labels and the page go, since the
-    second half changes neither."""
+    second half changes neither. Its writes are held to once and its
+    client's waits to GitHub's asking whether or not it exited 0
+    (written_once, waits_as_asked), since a run that failed after writing
+    twice or waiting wrong did both all the same; a run made in two halves
+    had its first half's judged at that half's end."""
     split = record.started_from is not None
+    problems = waits_as_asked(record.calls, record.first_calls if split else 0)
+    if not split:
+        problems += written_once(effects_of(record.calls))
     if record.exit_code != 0:
         if (split and record.raised_in == "plan") or reads_failed(record.calls):
-            return []
-        return [Violation("G15", f"the run exited {record.exit_code}: {record.raised}")]
+            return problems
+        return problems + [Violation("G15", f"the run exited {record.exit_code}: {record.raised}")]
     start = record.started_from if split else before
     planned = record.planned if split else after
     started_by = oracle.pushed_branch(record.event, record.ref_name)
@@ -361,8 +431,9 @@ def cycle_checks(before, after, record, known=oracle.AS_BUILT):
     seen_start, seen_planned = seen(start, dates), seen(planned, dates, unread, start.now)
     # A run made in two halves had its reads of the pushes judged, and its
     # log, when its first half was made (first_half_checks).
-    problems = [] if split else (pushes_read_again(record.calls, start)
-                                 + pushes_logged(record.calls, start, record.lines, started_by))
+    if not split:
+        problems += (pushes_read_again(record.calls, start)
+                     + pushes_logged(record.calls, start, record.lines, started_by))
     if not injected(record.calls, but=WRITES_KEPT):
         unsaid = unsaid_branches(record.calls)
         expected = kept_renames(oracle.expected_effects(seen_start, record.event, record.ref_name, known, unsaid),
@@ -447,10 +518,15 @@ def names_not_freed(before, record):
     head a release kept, and the run deletes it instead (spec, Release:
     "A branch pushed again at the head a release already kept is deleted
     instead"); a refusal of that delete leaves the name taken, as a refused
-    rename does."""
+    rename does. A rename refused for a rate limit is left out too, since
+    the oracle reads a refusal for good by its status alone
+    (oracle.rename_refused_effects) and a rate limit's 403 says nothing of
+    a rule or a right: the next run tries again, as after a 500, and the
+    issue hears no word of it (github.explain_refusal). Each call is
+    judged by the last of the client's tries (answered)."""
     found = []
-    for call in record.calls:
-        if call.applied:
+    for _, call in answered(record.calls):
+        if call.applied or rate_limited(call):
             continue
         if call.method == "POST" and call.path.endswith("/rename"):
             old, new = call.path[len("/branches/"):-len("/rename")], call.body["new_name"]
@@ -491,6 +567,85 @@ def releases_only_due(before, actual):
                 problems.append(Violation("G6", f"released the finished claim on #{effect.target}"))
             elif not oracle.due(before, effect.target):
                 problems.append(Violation("G2", f"released #{effect.target}, which was not due"))
+    return problems
+
+
+def written_once(actual):
+    """G3 and G7 in one run: at most one release comment on an issue and at
+    most one overlap comment to a piece of open work, whatever GitHub
+    answered, since the oracle owes no more in a run
+    (oracle.expected_effects), and a second is the same write made twice,
+    as a call made again after GitHub wrote it makes one: the client asks
+    again only after a rate limit's refusal, which GitHub is assumed to
+    make before it acts (DESIGN.md, 3.2), and never after a 5xx, which may
+    come after GitHub wrote, as comment-lost's 502 does. The writes of a
+    run a fault touched are compared with nothing else (injected), so this
+    is what holds such a run to it, and it holds a run that failed too
+    (cycle_checks, first_half_checks)."""
+    problems = []
+    counted = Counter(e for e in actual if e.kind == "comment" and e.detail in ("claim-released", "overlap"))
+    for effect, count in sorted(counted.items(), key=lambda item: repr(item[0])):
+        if count > 1:
+            problems.append(Violation(guarantee_of(effect), f"#{effect.target} heard {effect.detail} {count} times "
+                                                            f"in one run"))
+    return problems
+
+
+def asked_wait(call, waits):
+    """The wait GitHub asks for before a call its fault refused for a rate
+    limit is made again, read from the fault as GitHub's documentation
+    reads ("Exceeding the rate limit") and README.md says the client takes
+    it: the longest of the seconds retry-after names and, where the hour is
+    spent, until a second after its end, since each holds whatever the
+    other says; where it asks for neither, a minute and then two, by the
+    waits the call has had already."""
+    fault = call.fault
+    asked = [int(fault.retry_after)] if fault.retry_after else []
+    if fault.reset_after is not None:
+        asked.append(fault.reset_after + 1)
+    return max(asked) if asked else FIRST_WAIT * 2 ** waits
+
+
+def owed_wait(call, waits, spent):
+    """The wait the client owes a call before it makes it again: the one
+    GitHub asks for (asked_wait), where GitHub refused the call for a rate
+    limit (rate_limited), the call has had fewer waits than a call may, and
+    the wait is one a run takes, no longer than LONGEST_WAIT and within
+    WAITS_IN_ALL with the run's waits so far (spent); None where it owes
+    none, and so makes the call no more."""
+    if not rate_limited(call) or waits >= WAITS_FOR_A_CALL:
+        return None
+    wait = asked_wait(call, waits)
+    return wait if wait <= LONGEST_WAIT and spent + wait <= WAITS_IN_ALL else None
+
+
+def waits_as_asked(calls, since=0):
+    """G15's share of the client's waits for a rate limit: the client made
+    a call again only after the wait it owed (owed_wait), and made each
+    call it owed a wait again after it, so a run asks GitHub again no
+    sooner than GitHub asks, waits no longer than a run waits, and goes on
+    where GitHub answers after a wait a run takes (README.md, What a board
+    run costs). The waits are the ones the fake kept (Call.waited) and the
+    wait owed is read from the fault, never from the library's rule
+    (adapters.github.rate_wait), so a client that waits wrong is seen
+    whatever the run did after it. A run made in two halves is one
+    client's: its calls from since on are judged, with the waits before
+    them counting toward the run's."""
+    problems, spent, waits = [], 0, 0
+    for at, call in enumerate(calls):
+        waits, spent = (0, spent) if call.waited is None else (waits + 1, spent + call.waited)
+        following = calls[at + 1] if at + 1 < len(calls) else None
+        again = following.waited if following is not None else None
+        owed = owed_wait(call, waits, spent)
+        if at < since or (owed is None and again is None) or owed == again:
+            continue
+        ask = f"{call.method} {call.path}"
+        if owed is None:
+            problems.append(Violation("G15", f"{ask} made again after {again} s, where the client owed no wait"))
+        elif again is None:
+            problems.append(Violation("G15", f"{ask} not made again after the {owed} s GitHub asked for"))
+        else:
+            problems.append(Violation("G15", f"{ask} made again after {again} s, where GitHub asked for {owed} s"))
     return problems
 
 
@@ -553,11 +708,11 @@ def unread_releases(calls):
 def unsettling_reads(calls):
     """The refused reads of an issue's comments that came after GitHub
     answered the post of its release comment with an error, whatever the
-    error, each by its place among the calls, with the issue: the re-read
-    that would have said whether a release comment stands, which the run
-    does without, leaving the release for the next run to settle
-    (SPEC["unread"], SPEC["unsettled"]; F20, and a refusal since F23's
-    review, comment-422-then-unread)."""
+    error, each by the place of its last try among the calls (answered),
+    with the issue: the re-read that would have said whether a release
+    comment stands, which the run does without, leaving the release for
+    the next run to settle (SPEC["unread"], SPEC["unsettled"]; F20, and a
+    refusal since F23's review, comment-422-then-unread)."""
     return {at: number for number, _, at, read in release_rereads(calls) if failed(read)}
 
 
@@ -576,17 +731,19 @@ def release_rereads(calls):
     """Each failed post of an issue's release comment with the first read
     of that issue's comments after it, the re-read that says whether a
     release comment stands, as (the issue, the post, the read's place
-    among the calls, the read). What is looked at is the re-read's first
-    page, which every fault on it refuses or answers (F20's
-    comment-lost-then-unread and comment-500-then-unread, F23's
-    comment-late and comment-unanswered-late, and its review's
-    comment-422-then-unread), so a later page, which no fault makes, is
-    not looked at; a later read of the comments in the run, for an
+    among the calls, the read), each judged by its last try (answered),
+    so a release comment written on the client's second try failed
+    nothing. What is looked at is the re-read's first page, which every
+    fault on it refuses or answers (F20's comment-lost-then-unread and
+    comment-500-then-unread, F23's comment-late and
+    comment-unanswered-late, its review's comment-422-then-unread, and
+    comment-limited-then-unread), so a later page, which no fault makes,
+    is not looked at; a later read of the comments in the run, for an
     overlap's markers or a released branch's comment, is a read like any
     other, so one GitHub refuses is no reason for the labels to stay off
     (F20's review)."""
     posted = {}
-    for at, c in enumerate(calls):
+    for at, c in answered(calls):
         number = comments_of(c.path)
         if number is None:
             continue
@@ -658,8 +815,9 @@ def put_back_refused(calls, number):
     todo is the release failing, not its putting back; and a 404 to taking
     the todo off is no refusal, since it says the todo is not there, as
     after a refused todo GitHub did not write, which the library counts as
-    taken off (github.take_label_off)."""
-    for c in calls:
+    taken off (github.take_label_off). A step the client made again after
+    a wait is judged by its last try (answered)."""
+    for _, c in answered(calls):
         if c.applied:
             continue
         if c.method == "POST" and c.path == f"/issues/{number}/labels" and c.body["labels"] != [oracle.TODO]:
@@ -805,9 +963,10 @@ def activity_reads(calls, kind):
     """Each branch's own reads of the repository's activity in a run, of
     the kind asked for (None for no kind named, a read of the push that
     set a claim's head, github.read_push), in the order made, by
-    branch name."""
+    branch name; a read the client made again after a wait is one read,
+    its last try (answered)."""
     found = {}
-    for call in calls:
+    for _, call in answered(calls):
         query = dict(call.query)
         ref = query.get("ref", "")
         if (call.method == "GET" and call.path == "/activity" and ref.startswith("refs/heads/")
@@ -1021,25 +1180,30 @@ def may_tell_more(call, branch, head, began):
     """Whether a second read may tell more than this first one, of a run
     that began at the minute began (SPEC["undated push"]): GitHub gave no
     answer that holds, none at all (a status None, which F23 made
-    possible and its review found compared with a number here), a 5xx, a
-    429 or a 403 saying a rate limit was reached, or answered a list that
-    "lists no push that set the head", a stale entry among them, one that
-    names another head and came before the run began (read_dates,
-    SPEC["moved off"]); a 404, a repository GitHub keeps no activity of,
-    and any other refusal are its answer for good."""
+    possible and its review found compared with a number here), or a
+    5xx, or answered a list that "lists no push that set the head", a
+    stale entry among them, one that names another head and came before
+    the run began (read_dates, SPEC["moved off"]); a 404, a repository
+    GitHub keeps no activity of, and any other refusal are its answer for
+    the run, a rate limit's among them, which the client has waited out
+    as long as GitHub asks and a run waits before the run reads it
+    (answered, github.may_answer_later), so the committer date stands in
+    after it."""
     if call.status == 200:
         return read_dates(call, branch, head, began) is None
-    said = (call.fault.message if call.fault is not None else "") or ""
-    return (call.status is None or call.status >= 500 or call.status == 429
-            or (call.status == 403 and "rate limit" in said.lower()))
+    return call.status is None or call.status >= 500
 
 
 def pushes_read_again(calls, model):
     """G2's dating: a run reads the push of a claim's head once more, after
     a pause, exactly where its first read may tell more (may_tell_more),
     and otherwise once, so a first read GitHub answers later still dates
-    the claim by its push and no answer that holds costs a second call
-    (SPEC["undated push"])."""
+    the claim by its push and no answer that holds costs a second read
+    (SPEC["undated push"]); a read is all the client's tries of it
+    (activity_reads), and a rate limit's refusal, which the client has
+    waited out as long as GitHub asks and a run waits, is not read again
+    after the pause, since GitHub still asks for no call where the client
+    gave up on a longer wait or with the run's waits spent."""
     problems = []
     for branch, reads in activity_reads(calls, None).items():
         owed = 2 if may_tell_more(reads[0], branch, model.refs.get(branch), model.now) else 1

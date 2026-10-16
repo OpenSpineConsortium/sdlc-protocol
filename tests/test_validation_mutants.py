@@ -95,6 +95,14 @@ TRACES = {
     "the guard passes --force": "the guard grammar against git's answers",
     "the guard passes a lease outside claude/": "the guard grammar against git's answers",
     "the guard passes a lease onto another's claim": "the regression traces",
+    "the guard ignores git's and env's -C": "the regression traces",
+    "the guard does not follow the shell's moves": "the regression traces",
+    "a cd to what is not a directory taken as made": "the regression traces",
+    "a push judged only where the shell's moves take it": "the regression traces",
+    "a push whose clone cannot be told judged by its words alone": "the regression traces",
+    "a relative -C after a move judged where it names alone": "the regression traces",
+    "GIT_DIR forgotten once an absolute path names a place": "the regression traces",
+    "a -C by ~ judged where it names alone": "the regression traces",
     "dealing without its taken set": "dealing at every look",
     "each leg dealt from its own look": "the regression traces",
     "given to workers needing the label todo": "the regression traces",
@@ -228,6 +236,28 @@ TRACES = {
     # release kept counted released whenever its comment came.
     "the clerk dating by the committer date": dealing.Case({1: ("todo",)}, 1, "released-ahead", ("a", "b")),
     "the clerk ignoring a kept head": dealing.Case({1: ("todo",)}, 1, "kept", ("a", "b")),
+    # The release comment GitHub writes and answers with a 502: the client
+    # asks again only after a rate limit's refusal, so under the mutant it
+    # posts the comment a second time, two release comments in one run.
+    "a 5xx retried as a rate limit": (HELD + [WAIT, board_with("comment-lost")], Scope()),
+    # The second review of the client's waits, each mutant on the fault
+    # that shows it: the read of the branches refused with a short
+    # retry-after and the token's hour spent, owed a wait until the hour's
+    # end, and, its words naming no rate limit, owed one at all; a rename
+    # refused for a rate limit on every try, owed a wait before each try
+    # and no word on the issue; a push's read refused for good, owed no
+    # wait; a push's read refused for longer than a run waits, read once; a
+    # 429, owed a minute's wait; and the read after a release comment
+    # refused on every try, owed none once the run's waits are spent.
+    "retry-after waited in place of the hour's end": ([board_with("branches-limited-for-the-hour")], Scope()),
+    "retry-after not telling a rate limit": ([board_with("branches-limited-for-the-hour")], Scope()),
+    "a rate limit's words not telling one": (HELD + [WAIT, board_with("rename-limited")], Scope()),
+    "any 403 taken for a rate limit": (HELD + [WAIT, board_with("pushes-403")], Scope()),
+    "a rate limit's refusal read again after the pause": (HELD + [WAIT, board_with("pushes-limited-too-long")],
+                                                          Scope()),
+    "the client never waiting": ([board_with("branches-429")], Scope()),
+    "no bound on a run's waits": (HELD + [WAIT, board_with("comment-limited-then-unread")], Scope()),
+    "a rename a rate limit refused said refused for good": (HELD + [WAIT, board_with("rename-limited")], Scope()),
 }
 LANES = {lane.name: lane for lane in mutants.LANES}
 
@@ -280,13 +310,23 @@ class TheLane(unittest.TestCase):
         four: the floor of the first read alone, the earlier floor, a fresh
         delete dating nothing, and the run's event ignored, so the bound is
         widened to 120 and the count noted; its follow-up's second review
-        one, an older push trusted in the run its push started; and F20's
-        fix three, an unsettled release put back, counted, or failing the
-        run; and F23's fix three, a late comment's labels put back, no
-        answer taken for a refusal, and a refusal taken for a late comment,
-        which bring the count to the bound, so it is widened to 130."""
-        self.assertTrue(10 <= len(mutants.MUTANTS) <= 130)
-        self.assertEqual(len(mutants.MUTANTS), 120)
+        one, an older push trusted in the run its push started; F20's fix
+        three, an unsettled release put back, counted, or failing the run;
+        F21's fix three, the guard ignoring git's and env's -C, not
+        following the shell's moves, and taking a cd to what is not a
+        directory as made, and its third review two, a push judged only
+        where the shell's moves take it and a push whose clone cannot be
+        told judged by its words alone, so the bound is widened to 130, and
+        its fourth review three, a relative -C after a move judged where it
+        names alone, GIT_DIR forgotten once an absolute path names a place
+        and a -C by ~ judged where it names alone; one from the review of
+        the client's waits for a rate limit, a 5xx retried as a rate
+        limit, and eight from its second review, one for each rule of the
+        client's waits, so the bound is widened to 150; and F23's fix
+        three, a late comment's labels put back, no answer taken for a
+        refusal, and a refusal taken for a late comment, 137 within it."""
+        self.assertTrue(10 <= len(mutants.MUTANTS) <= 150)
+        self.assertEqual(len(mutants.MUTANTS), 137)
         self.assertEqual(sorted(TRACES), sorted(mutants.MUTANTS))
 
     def test_every_mutant_names_a_rule_the_library_still_has(self):
@@ -358,6 +398,20 @@ class TheLane(unittest.TestCase):
             record = replay.replay(replay.traces()["F8"])
         self.assertEqual(replay.results(record), set(), "\n".join(record.timeline))
 
+    def test_the_copy_of_explain_refusal_follows_the_library_but_for_the_skip(self):
+        """The mutant that says a rename a rate limit refused was refused for
+        good copies explain_refusal without its skip of a rate limit's
+        refusal; each line of its body, the module's name taken off, is the
+        library's but for that one test, so the copy tests the library as
+        it stands but for the rule it changes."""
+        lines = [line.replace("github.", "") for line in body_lines(mutants.explain_refusal_of_a_rate_limit_too)]
+        library = body_lines(github.explain_refusal)
+        self.assertEqual([line for line in lines if line not in library],
+                         ["if problem.status not in REFUSED_FOR_GOOD:"])
+        self.assertEqual([line for line in library if line not in lines],
+                         ["if problem.status not in REFUSED_FOR_GOOD or rate_limited(problem.status, problem.headers, "
+                          "problem.detail):"])
+
     def test_every_replacement_takes_what_its_target_is_called_with(self):
         """A replacement that no longer takes its target's arguments is
         caught only by the TypeError it raises, which proves nothing of the
@@ -420,6 +474,29 @@ class EachMutantIsCaught(unittest.TestCase):
 
 
 class TheSearchesCatchWhatTheyWereAddedFor(unittest.TestCase):
+    def test_the_search_under_every_fault_catches_the_client_s_mutants_on_the_faults_added_for_them(self):
+        """The lane credits a mutant to the shortest violation it meets, so
+        a rate limit's refusal read again after the pause is credited to
+        pushes-429-for-the-run, where the client made all its tries. The
+        search under every fault is held here to catch it on
+        pushes-limited-too-long too, where the client made one try, as the
+        harness could only once the fake kept the client's waits, and to
+        catch each mutant of the client on the fault the second review of
+        the client's waits added for it: it finds nothing on the library
+        with that fault alone, and the violation the mutant names."""
+        search = next(s for s in mutants.SEARCHES if s.name == "a released claim under every fault")
+        for name, fault in (("a rate limit's refusal read again after the pause", "pushes-limited-too-long"),
+                            ("retry-after waited in place of the hour's end", "branches-limited-for-the-hour"),
+                            ("retry-after not telling a rate limit", "branches-limited-for-the-hour"),
+                            ("a rate limit's words not telling one", "rename-limited"),
+                            ("a rename a rate limit refused said refused for good", "rename-limited")):
+            alone = search._replace(scope=search.scope._replace(faults=(fault,)))
+            mutant = mutants.MUTANTS[name]
+            with self.subTest(mutant=name):
+                self.assertEqual(mutants.violations(alone), {})
+                with mutants.switched_on(mutant):
+                    self.assertIn(mutant.guarantee, {g for g, _ in mutants.violations(alone)})
+
     def test_a_draft_github_calls_blocked_catches_both_of_f9_s_mutants(self):
         """The lane credits a mutant to the first catcher, the regression
         traces for F9's two, so the search added with F9's fix (DESIGN.md,

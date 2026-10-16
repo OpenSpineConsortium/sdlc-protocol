@@ -21,8 +21,20 @@ fake was not:
   run, and computed on the next, as GitHub computes it late.
 
 Fault makes chosen calls fail: an HTTP status, GitHub's message and, for a
-secondary rate limit, a retry-after header, or no answer at all, as a
-connection that times out waiting for GitHub's (F23); with applied, the
+rate limit, a retry-after header, or the token's hour spent and ending a
+given number of seconds on by the client's clock, which the fake keeps as
+the model's minute (FakeGitHub.clock), or no answer at all, as a
+connection that times out waiting for GitHub's (F23). A fault of a rate
+limit's, a 429 or a 403 that says so, answers one try of the call, which
+the library's client makes again after the wait GitHub asks for
+(adapters.github.rate_wait), so a fault refuses a call for the run only
+with times enough for every try. The client's sleep is the fake's
+(FakeGitHub.sleep), which takes no time and keeps each wait the client
+makes between two tries of one call on the try it makes next
+(Call.waited), so the harness judges a call by its last try and holds
+each wait to the one GitHub asked for (invariants.answered,
+waits_as_asked), while a call the library makes again of its own, a read
+of a push after head_since's pause, stands for itself. With applied, the
 write is made and its answer lost, as a 502 after GitHub wrote the
 comment; with answer, a read of the activity is answered with a list
 other than the model's, one that lags a push or lists one the run did not
@@ -71,7 +83,15 @@ before it, or, for a branch a push made again, the delete before that
 push, at that delete's own time with the head it took away as the head
 before, assumed, as GitHub's branch_deletion entry (F8's second review), a
 renamed branch keeping them, which the model's rename does and canary C6
-now records (DESIGN.md section 11, What C6 records of the activity).
+now records (DESIGN.md section 11, What C6 records of the activity); a
+call GitHub refuses for a rate limit is one it did not act on, so such a
+fault's refusal writes nothing, assumed, which the client's making a
+write again rests on, and which C4 would settle and is not run (DESIGN.md,
+3.2 and 11); and a 403 that names a wait in retry-after is a rate limit's
+refusal whatever its words, assumed as the library assumes it
+(adapters.github.rate_limited), since GitHub's documentation names
+retry-after for a secondary limit's refusal and never says that no other
+refusal sends it (DESIGN.md, 3.2).
 """
 
 import base64
@@ -79,11 +99,14 @@ import fnmatch
 import hashlib
 import io
 import json
+import sys
 import urllib.error
 import urllib.parse
 from typing import NamedTuple
 
-from .model import BOT, MAIN, OWNER, REPO, Comment, iso
+from sdlc_protocol.adapters import github
+
+from .model import BOT, MAIN, OWNER, REPO, Comment, iso, moment
 
 PER_PAGE = 100
 # GitHub's contents API gives the text of a file of up to 1 MB and answers
@@ -134,7 +157,12 @@ class Fault(NamedTuple):
     same calls as its head), so one fault can refuse a read and answer the
     next in place of the model, or the other way about (F8's fix check: a
     read refused and the next listing a push after the run read the
-    branch, and a read a push behind and the next refused)."""
+    branch, and a read a push behind and the next refused). reset_after,
+    for a rate limit's refusal, says the token's hour is spent and ends
+    that many seconds on by the client's clock (FakeGitHub.clock), in the
+    two headers of the hour the client reads, x-ratelimit-remaining 0 and
+    x-ratelimit-reset, so the wait until the hour's end is the fault's own
+    whatever the model's minute."""
 
     method: str
     path: str
@@ -146,6 +174,7 @@ class Fault(NamedTuple):
     query: tuple = ()
     answer: str = ""
     then: object = None
+    reset_after: int | None = None
 
     def chain(self):
         """This fault and each that takes its calls after it (then), in
@@ -197,6 +226,11 @@ class Call(NamedTuple):
     # its reader got it, so a check can read what a run was told of each
     # push (invariants.push_dates); None for every other call.
     answered: object = None
+    # The seconds the library's client waited before this call, the try it
+    # made after its try before was refused (adapters.github.GitHub.request,
+    # FakeGitHub.sleep); None for a call made at once, or after a pause of
+    # the library's own, which is no try of the call before it.
+    waited: object = None
 
 
 class Answer:
@@ -242,6 +276,9 @@ class FakeGitHub:
                 self.faults.append([link, link.times, head])
                 head = len(self.faults) - 1
         self.calls = []
+        # The seconds of the wait the client made since its last try, for
+        # the try it makes next (sleep, record); None while it made none.
+        self.waiting = None
         self.computed = set()
         # The fault listing a push after the run read the branch (MOVED or
         # MOVED_TWICE) each branch's activity met in the run, by the ref
@@ -251,6 +288,32 @@ class FakeGitHub:
         # lost its answer to, so a read answered before it lists them
         # leaves them out (LISTED_LATE).
         self.lost = []
+
+    # --- the client's sleep and clock ---------------------------------------
+
+    def sleep(self, seconds):
+        """The client's sleep, which takes no time here. The client's wait
+        between two tries of one call, the sleep GitHub.request makes, is
+        kept for the try it makes next (record), so a check tells the
+        client's tries of one call from a call the library makes again of
+        its own after a pause, head_since's or settled's, which sleeps from
+        elsewhere and is kept as no wait. The two share the client's one
+        sleep, so the caller is read from the frame that called this one,
+        which is why the client is given this method itself and no wrapper
+        around it (cycle.api_for)."""
+        if sys._getframe(1).f_code is github.GitHub.request.__code__:
+            self.waiting = seconds
+
+    def clock(self):
+        """The client's clock: the model's minute in seconds since the
+        epoch, which x-ratelimit-reset is written in (Fault.reset_after)."""
+        return moment(self.model.now).timestamp()
+
+    def record(self, call):
+        """Keep a call as the fake answered it, with the wait the client
+        made before it where it is the try after a refused one."""
+        self.calls.append(call._replace(waited=self.waiting))
+        self.waiting = None
 
     # --- the opener ---------------------------------------------------------
 
@@ -270,18 +333,18 @@ class FakeGitHub:
         asked = tuple(sorted(query.items()))
         if fault is not None and fault.answer:
             found, headers = self.answer(method, segments, query, body, request.full_url, fault.answer)
-            self.calls.append(Call(method, path, asked, body, fault.status, False, True, fault, found))
+            self.record(Call(method, path, asked, body, fault.status, False, True, fault, found))
             return Answer(found, headers)
         if fault is not None and not fault.applied:
-            self.calls.append(Call(method, path, asked, body, fault.status, False, True, fault))
+            self.record(Call(method, path, asked, body, fault.status, False, True, fault))
             raise self.fault_answer(request.full_url, fault)
         try:
             found, headers = self.answer(method, segments, query, body, request.full_url)
         except Refused as refused:
-            self.calls.append(Call(method, path, asked, body, refused.status, False))
+            self.record(Call(method, path, asked, body, refused.status, False))
             raise refusal(request.full_url, refused.status) from None
-        self.calls.append(Call(method, path, asked, body, fault.status if fault else 200, method != "GET",
-                               fault is not None, fault, found if path == "/activity" else None))
+        self.record(Call(method, path, asked, body, fault.status if fault else 200, method != "GET",
+                         fault is not None, fault, found if path == "/activity" else None))
         if fault is not None:
             self.lost.append(found)
             raise self.fault_answer(request.full_url, fault)
@@ -308,14 +371,17 @@ class FakeGitHub:
         fault = self.moved.get(query.get("ref", "")) if path == "/activity" else None
         return fault if fault is not None and fault.matches(f"{method} {path}", query) else None
 
-    @staticmethod
-    def fault_answer(url, fault):
-        """What the opener raises for a fault: GitHub's refusal, or, for a
-        fault with no status, the timeout of a connection that waited for
-        an answer that never came, as http.client raises it."""
+    def fault_answer(self, url, fault):
+        """What the opener raises for a fault: GitHub's refusal, with the
+        headers of a rate limit the fault names, or, for a fault with no
+        status, the timeout of a connection that waited for an answer that
+        never came, as http.client raises it."""
         if fault.status is None:
             return TimeoutError(fault.message)
         headers = {"retry-after": fault.retry_after} if fault.retry_after else {}
+        if fault.reset_after is not None:
+            reset = int(self.clock()) + fault.reset_after
+            headers.update({"x-ratelimit-remaining": "0", "x-ratelimit-reset": str(reset)})
         return refusal(url, fault.status, fault.message, headers)
 
     # --- dispatch -----------------------------------------------------------

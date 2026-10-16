@@ -1,5 +1,9020 @@
 {
  "answers": {
+  "--config-env user.name=HOME push --al origin": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ],
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ],
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --all origin": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ],
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ],
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --branches origin": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ],
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ],
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --delete origin @": {
+   "fresh": [],
+   "stale": []
+  },
+  "--config-env user.name=HOME push --delete origin HEAD": {
+   "fresh": [],
+   "stale": []
+  },
+  "--config-env user.name=HOME push --delete origin HEAD:board": {
+   "fresh": [],
+   "stale": []
+  },
+  "--config-env user.name=HOME push --delete origin HEAD:claude/07": {
+   "fresh": [],
+   "stale": []
+  },
+  "--config-env user.name=HOME push --delete origin HEAD:claude/7": {
+   "fresh": [],
+   "stale": []
+  },
+  "--config-env user.name=HOME push --delete origin HEAD:claude/8": {
+   "fresh": [],
+   "stale": []
+  },
+  "--config-env user.name=HOME push --delete origin HEAD:claude/\u0667": {
+   "fresh": [],
+   "stale": []
+  },
+  "--config-env user.name=HOME push --delete origin HEAD:feature": {
+   "fresh": [],
+   "stale": []
+  },
+  "--config-env user.name=HOME push --delete origin HEAD:heads/main": {
+   "fresh": [],
+   "stale": []
+  },
+  "--config-env user.name=HOME push --delete origin HEAD:main": {
+   "fresh": [],
+   "stale": []
+  },
+  "--config-env user.name=HOME push --delete origin claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "delete"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --delete origin claude/7:board": {
+   "fresh": [],
+   "stale": []
+  },
+  "--config-env user.name=HOME push --delete origin claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "delete"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --delete origin feature": {
+   "fresh": [
+    [
+     "refs/heads/feature",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/feature",
+     "delete"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --delete origin heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "delete"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --delete origin main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "delete"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --delete origin refs/heads/claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "delete"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --delete origin refs/heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "delete"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --force origin": {
+   "fresh": [],
+   "stale": []
+  },
+  "--config-env user.name=HOME push --force origin +HEAD:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --force origin +HEAD:claude/07": {
+   "fresh": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --force origin +HEAD:claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --force origin +HEAD:claude/\u0667": {
+   "fresh": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --force origin +HEAD:main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --force origin +claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --force origin +claude/7:claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --force origin +feature": {
+   "fresh": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --force origin :board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "delete"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --force origin :claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "delete"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --force origin :main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "delete"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --force origin @": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --force origin HEAD": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --force origin HEAD:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --force origin HEAD:claude/07": {
+   "fresh": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --force origin HEAD:claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --force origin HEAD:claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --force origin HEAD:claude/\u0667": {
+   "fresh": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --force origin HEAD:feature": {
+   "fresh": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --force origin HEAD:heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --force origin HEAD:main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --force origin claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --force origin claude/7:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --force origin claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --force origin feature": {
+   "fresh": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --force origin heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --force origin main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --force origin refs/heads/claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --force origin refs/heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --force-with-lease origin": {
+   "fresh": [],
+   "stale": []
+  },
+  "--config-env user.name=HOME push --force-with-lease origin +HEAD:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --force-with-lease origin +HEAD:claude/07": {
+   "fresh": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --force-with-lease origin +HEAD:claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --force-with-lease origin +HEAD:claude/\u0667": {
+   "fresh": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --force-with-lease origin +HEAD:main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --force-with-lease origin +claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --force-with-lease origin +claude/7:claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --force-with-lease origin +feature": {
+   "fresh": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --force-with-lease origin :board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "delete"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --force-with-lease origin :claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "delete"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --force-with-lease origin :main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "delete"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --force-with-lease origin @": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": []
+  },
+  "--config-env user.name=HOME push --force-with-lease origin HEAD": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": []
+  },
+  "--config-env user.name=HOME push --force-with-lease origin HEAD:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --force-with-lease origin HEAD:claude/07": {
+   "fresh": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --force-with-lease origin HEAD:claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": []
+  },
+  "--config-env user.name=HOME push --force-with-lease origin HEAD:claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --force-with-lease origin HEAD:claude/\u0667": {
+   "fresh": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --force-with-lease origin HEAD:feature": {
+   "fresh": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ],
+   "stale": []
+  },
+  "--config-env user.name=HOME push --force-with-lease origin HEAD:heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --force-with-lease origin HEAD:main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --force-with-lease origin claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": []
+  },
+  "--config-env user.name=HOME push --force-with-lease origin claude/7:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --force-with-lease origin claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --force-with-lease origin feature": {
+   "fresh": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ],
+   "stale": []
+  },
+  "--config-env user.name=HOME push --force-with-lease origin heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --force-with-lease origin main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --force-with-lease origin refs/heads/claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": []
+  },
+  "--config-env user.name=HOME push --force-with-lease origin refs/heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --mirr origin": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "delete"
+    ],
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ],
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ],
+    [
+     "refs/heads/feature",
+     "forced"
+    ],
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ],
+    [
+     "refs/remotes/origin/board",
+     "create"
+    ],
+    [
+     "refs/remotes/origin/claude/7",
+     "create"
+    ],
+    [
+     "refs/remotes/origin/claude/8",
+     "create"
+    ],
+    [
+     "refs/remotes/origin/feature",
+     "create"
+    ],
+    [
+     "refs/remotes/origin/main",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "delete"
+    ],
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ],
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ],
+    [
+     "refs/heads/feature",
+     "forced"
+    ],
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ],
+    [
+     "refs/remotes/origin/board",
+     "create"
+    ],
+    [
+     "refs/remotes/origin/claude/7",
+     "create"
+    ],
+    [
+     "refs/remotes/origin/claude/8",
+     "create"
+    ],
+    [
+     "refs/remotes/origin/feature",
+     "create"
+    ],
+    [
+     "refs/remotes/origin/main",
+     "create"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --mirror origin": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "delete"
+    ],
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ],
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ],
+    [
+     "refs/heads/feature",
+     "forced"
+    ],
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ],
+    [
+     "refs/remotes/origin/board",
+     "create"
+    ],
+    [
+     "refs/remotes/origin/claude/7",
+     "create"
+    ],
+    [
+     "refs/remotes/origin/claude/8",
+     "create"
+    ],
+    [
+     "refs/remotes/origin/feature",
+     "create"
+    ],
+    [
+     "refs/remotes/origin/main",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "delete"
+    ],
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ],
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ],
+    [
+     "refs/heads/feature",
+     "forced"
+    ],
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ],
+    [
+     "refs/remotes/origin/board",
+     "create"
+    ],
+    [
+     "refs/remotes/origin/claude/7",
+     "create"
+    ],
+    [
+     "refs/remotes/origin/claude/8",
+     "create"
+    ],
+    [
+     "refs/remotes/origin/feature",
+     "create"
+    ],
+    [
+     "refs/remotes/origin/main",
+     "create"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --no-verify origin": {
+   "fresh": [],
+   "stale": []
+  },
+  "--config-env user.name=HOME push --no-verify origin +HEAD:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --no-verify origin +HEAD:claude/07": {
+   "fresh": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --no-verify origin +HEAD:claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --no-verify origin +HEAD:claude/\u0667": {
+   "fresh": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --no-verify origin +HEAD:main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --no-verify origin +claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --no-verify origin +claude/7:claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --no-verify origin +feature": {
+   "fresh": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --no-verify origin :board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "delete"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --no-verify origin :claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "delete"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --no-verify origin :main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "delete"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --no-verify origin @": {
+   "fresh": [],
+   "stale": []
+  },
+  "--config-env user.name=HOME push --no-verify origin HEAD": {
+   "fresh": [],
+   "stale": []
+  },
+  "--config-env user.name=HOME push --no-verify origin HEAD:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --no-verify origin HEAD:claude/07": {
+   "fresh": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --no-verify origin HEAD:claude/7": {
+   "fresh": [],
+   "stale": []
+  },
+  "--config-env user.name=HOME push --no-verify origin HEAD:claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --no-verify origin HEAD:claude/\u0667": {
+   "fresh": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --no-verify origin HEAD:feature": {
+   "fresh": [],
+   "stale": []
+  },
+  "--config-env user.name=HOME push --no-verify origin HEAD:heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --no-verify origin HEAD:main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --no-verify origin claude/7": {
+   "fresh": [],
+   "stale": []
+  },
+  "--config-env user.name=HOME push --no-verify origin claude/7:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --no-verify origin claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --no-verify origin feature": {
+   "fresh": [],
+   "stale": []
+  },
+  "--config-env user.name=HOME push --no-verify origin heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --no-verify origin main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push --no-verify origin refs/heads/claude/7": {
+   "fresh": [],
+   "stale": []
+  },
+  "--config-env user.name=HOME push --no-verify origin refs/heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -f origin": {
+   "fresh": [],
+   "stale": []
+  },
+  "--config-env user.name=HOME push -f origin +HEAD:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -f origin +HEAD:claude/07": {
+   "fresh": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -f origin +HEAD:claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -f origin +HEAD:claude/\u0667": {
+   "fresh": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -f origin +HEAD:main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -f origin +claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -f origin +claude/7:claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -f origin +feature": {
+   "fresh": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -f origin :board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "delete"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -f origin :claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "delete"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -f origin :main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "delete"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -f origin @": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -f origin HEAD": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -f origin HEAD:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -f origin HEAD:claude/07": {
+   "fresh": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -f origin HEAD:claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -f origin HEAD:claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -f origin HEAD:claude/\u0667": {
+   "fresh": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -f origin HEAD:feature": {
+   "fresh": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -f origin HEAD:heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -f origin HEAD:main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -f origin claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -f origin claude/7:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -f origin claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -f origin feature": {
+   "fresh": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -f origin heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -f origin main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -f origin refs/heads/claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -f origin refs/heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -fu origin": {
+   "fresh": [],
+   "stale": []
+  },
+  "--config-env user.name=HOME push -fu origin +HEAD:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -fu origin +HEAD:claude/07": {
+   "fresh": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -fu origin +HEAD:claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -fu origin +HEAD:claude/\u0667": {
+   "fresh": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -fu origin +HEAD:main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -fu origin +claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -fu origin +claude/7:claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -fu origin +feature": {
+   "fresh": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -fu origin :board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "delete"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -fu origin :claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "delete"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -fu origin :main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "delete"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -fu origin @": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -fu origin HEAD": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -fu origin HEAD:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -fu origin HEAD:claude/07": {
+   "fresh": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -fu origin HEAD:claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -fu origin HEAD:claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -fu origin HEAD:claude/\u0667": {
+   "fresh": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -fu origin HEAD:feature": {
+   "fresh": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -fu origin HEAD:heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -fu origin HEAD:main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -fu origin claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -fu origin claude/7:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -fu origin claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -fu origin feature": {
+   "fresh": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -fu origin heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -fu origin main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -fu origin refs/heads/claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -fu origin refs/heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -u origin": {
+   "fresh": [],
+   "stale": []
+  },
+  "--config-env user.name=HOME push -u origin +HEAD:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -u origin +HEAD:claude/07": {
+   "fresh": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -u origin +HEAD:claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -u origin +HEAD:claude/\u0667": {
+   "fresh": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -u origin +HEAD:main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -u origin +claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -u origin +claude/7:claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -u origin +feature": {
+   "fresh": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -u origin :board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "delete"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -u origin :claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "delete"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -u origin :main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "delete"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -u origin @": {
+   "fresh": [],
+   "stale": []
+  },
+  "--config-env user.name=HOME push -u origin HEAD": {
+   "fresh": [],
+   "stale": []
+  },
+  "--config-env user.name=HOME push -u origin HEAD:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -u origin HEAD:claude/07": {
+   "fresh": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -u origin HEAD:claude/7": {
+   "fresh": [],
+   "stale": []
+  },
+  "--config-env user.name=HOME push -u origin HEAD:claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -u origin HEAD:claude/\u0667": {
+   "fresh": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -u origin HEAD:feature": {
+   "fresh": [],
+   "stale": []
+  },
+  "--config-env user.name=HOME push -u origin HEAD:heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -u origin HEAD:main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -u origin claude/7": {
+   "fresh": [],
+   "stale": []
+  },
+  "--config-env user.name=HOME push -u origin claude/7:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -u origin claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -u origin feature": {
+   "fresh": [],
+   "stale": []
+  },
+  "--config-env user.name=HOME push -u origin heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -u origin main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push -u origin refs/heads/claude/7": {
+   "fresh": [],
+   "stale": []
+  },
+  "--config-env user.name=HOME push -u origin refs/heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push origin": {
+   "fresh": [],
+   "stale": []
+  },
+  "--config-env user.name=HOME push origin +HEAD:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push origin +HEAD:claude/07": {
+   "fresh": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push origin +HEAD:claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push origin +HEAD:claude/\u0667": {
+   "fresh": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push origin +HEAD:main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push origin +claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push origin +claude/7:claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push origin +feature": {
+   "fresh": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push origin :board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "delete"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push origin :claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "delete"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push origin :main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "delete"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push origin @": {
+   "fresh": [],
+   "stale": []
+  },
+  "--config-env user.name=HOME push origin HEAD": {
+   "fresh": [],
+   "stale": []
+  },
+  "--config-env user.name=HOME push origin HEAD:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push origin HEAD:claude/07": {
+   "fresh": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push origin HEAD:claude/7": {
+   "fresh": [],
+   "stale": []
+  },
+  "--config-env user.name=HOME push origin HEAD:claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push origin HEAD:claude/\u0667": {
+   "fresh": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push origin HEAD:feature": {
+   "fresh": [],
+   "stale": []
+  },
+  "--config-env user.name=HOME push origin HEAD:heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push origin HEAD:main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push origin claude/7": {
+   "fresh": [],
+   "stale": []
+  },
+  "--config-env user.name=HOME push origin claude/7:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push origin claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push origin feature": {
+   "fresh": [],
+   "stale": []
+  },
+  "--config-env user.name=HOME push origin heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push origin main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--config-env user.name=HOME push origin refs/heads/claude/7": {
+   "fresh": [],
+   "stale": []
+  },
+  "--config-env user.name=HOME push origin refs/heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push --al origin": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ],
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ],
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push --all origin": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ],
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ],
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push --branches origin": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ],
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ],
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push --delete origin @": {
+   "fresh": [],
+   "stale": []
+  },
+  "--shallow-file x push --delete origin HEAD": {
+   "fresh": [],
+   "stale": []
+  },
+  "--shallow-file x push --delete origin HEAD:board": {
+   "fresh": [],
+   "stale": []
+  },
+  "--shallow-file x push --delete origin HEAD:claude/07": {
+   "fresh": [],
+   "stale": []
+  },
+  "--shallow-file x push --delete origin HEAD:claude/7": {
+   "fresh": [],
+   "stale": []
+  },
+  "--shallow-file x push --delete origin HEAD:claude/8": {
+   "fresh": [],
+   "stale": []
+  },
+  "--shallow-file x push --delete origin HEAD:claude/\u0667": {
+   "fresh": [],
+   "stale": []
+  },
+  "--shallow-file x push --delete origin HEAD:feature": {
+   "fresh": [],
+   "stale": []
+  },
+  "--shallow-file x push --delete origin HEAD:heads/main": {
+   "fresh": [],
+   "stale": []
+  },
+  "--shallow-file x push --delete origin HEAD:main": {
+   "fresh": [],
+   "stale": []
+  },
+  "--shallow-file x push --delete origin claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "delete"
+    ]
+   ]
+  },
+  "--shallow-file x push --delete origin claude/7:board": {
+   "fresh": [],
+   "stale": []
+  },
+  "--shallow-file x push --delete origin claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "delete"
+    ]
+   ]
+  },
+  "--shallow-file x push --delete origin feature": {
+   "fresh": [
+    [
+     "refs/heads/feature",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/feature",
+     "delete"
+    ]
+   ]
+  },
+  "--shallow-file x push --delete origin heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "delete"
+    ]
+   ]
+  },
+  "--shallow-file x push --delete origin main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "delete"
+    ]
+   ]
+  },
+  "--shallow-file x push --delete origin refs/heads/claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "delete"
+    ]
+   ]
+  },
+  "--shallow-file x push --delete origin refs/heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "delete"
+    ]
+   ]
+  },
+  "--shallow-file x push --force origin": {
+   "fresh": [],
+   "stale": []
+  },
+  "--shallow-file x push --force origin +HEAD:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push --force origin +HEAD:claude/07": {
+   "fresh": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ]
+  },
+  "--shallow-file x push --force origin +HEAD:claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "--shallow-file x push --force origin +HEAD:claude/\u0667": {
+   "fresh": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ]
+  },
+  "--shallow-file x push --force origin +HEAD:main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push --force origin +claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "--shallow-file x push --force origin +claude/7:claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push --force origin +feature": {
+   "fresh": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ]
+  },
+  "--shallow-file x push --force origin :board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "delete"
+    ]
+   ]
+  },
+  "--shallow-file x push --force origin :claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "delete"
+    ]
+   ]
+  },
+  "--shallow-file x push --force origin :main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "delete"
+    ]
+   ]
+  },
+  "--shallow-file x push --force origin @": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "--shallow-file x push --force origin HEAD": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "--shallow-file x push --force origin HEAD:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push --force origin HEAD:claude/07": {
+   "fresh": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ]
+  },
+  "--shallow-file x push --force origin HEAD:claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "--shallow-file x push --force origin HEAD:claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push --force origin HEAD:claude/\u0667": {
+   "fresh": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ]
+  },
+  "--shallow-file x push --force origin HEAD:feature": {
+   "fresh": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ]
+  },
+  "--shallow-file x push --force origin HEAD:heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push --force origin HEAD:main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push --force origin claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "--shallow-file x push --force origin claude/7:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push --force origin claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push --force origin feature": {
+   "fresh": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ]
+  },
+  "--shallow-file x push --force origin heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push --force origin main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push --force origin refs/heads/claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "--shallow-file x push --force origin refs/heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push --force-with-lease origin": {
+   "fresh": [],
+   "stale": []
+  },
+  "--shallow-file x push --force-with-lease origin +HEAD:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push --force-with-lease origin +HEAD:claude/07": {
+   "fresh": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ]
+  },
+  "--shallow-file x push --force-with-lease origin +HEAD:claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "--shallow-file x push --force-with-lease origin +HEAD:claude/\u0667": {
+   "fresh": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ]
+  },
+  "--shallow-file x push --force-with-lease origin +HEAD:main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push --force-with-lease origin +claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "--shallow-file x push --force-with-lease origin +claude/7:claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push --force-with-lease origin +feature": {
+   "fresh": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ]
+  },
+  "--shallow-file x push --force-with-lease origin :board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "delete"
+    ]
+   ]
+  },
+  "--shallow-file x push --force-with-lease origin :claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "delete"
+    ]
+   ]
+  },
+  "--shallow-file x push --force-with-lease origin :main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "delete"
+    ]
+   ]
+  },
+  "--shallow-file x push --force-with-lease origin @": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": []
+  },
+  "--shallow-file x push --force-with-lease origin HEAD": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": []
+  },
+  "--shallow-file x push --force-with-lease origin HEAD:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push --force-with-lease origin HEAD:claude/07": {
+   "fresh": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ]
+  },
+  "--shallow-file x push --force-with-lease origin HEAD:claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": []
+  },
+  "--shallow-file x push --force-with-lease origin HEAD:claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push --force-with-lease origin HEAD:claude/\u0667": {
+   "fresh": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ]
+  },
+  "--shallow-file x push --force-with-lease origin HEAD:feature": {
+   "fresh": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ],
+   "stale": []
+  },
+  "--shallow-file x push --force-with-lease origin HEAD:heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push --force-with-lease origin HEAD:main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push --force-with-lease origin claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": []
+  },
+  "--shallow-file x push --force-with-lease origin claude/7:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push --force-with-lease origin claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push --force-with-lease origin feature": {
+   "fresh": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ],
+   "stale": []
+  },
+  "--shallow-file x push --force-with-lease origin heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push --force-with-lease origin main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push --force-with-lease origin refs/heads/claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": []
+  },
+  "--shallow-file x push --force-with-lease origin refs/heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push --mirr origin": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "delete"
+    ],
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ],
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ],
+    [
+     "refs/heads/feature",
+     "forced"
+    ],
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ],
+    [
+     "refs/remotes/origin/board",
+     "create"
+    ],
+    [
+     "refs/remotes/origin/claude/7",
+     "create"
+    ],
+    [
+     "refs/remotes/origin/claude/8",
+     "create"
+    ],
+    [
+     "refs/remotes/origin/feature",
+     "create"
+    ],
+    [
+     "refs/remotes/origin/main",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "delete"
+    ],
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ],
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ],
+    [
+     "refs/heads/feature",
+     "forced"
+    ],
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ],
+    [
+     "refs/remotes/origin/board",
+     "create"
+    ],
+    [
+     "refs/remotes/origin/claude/7",
+     "create"
+    ],
+    [
+     "refs/remotes/origin/claude/8",
+     "create"
+    ],
+    [
+     "refs/remotes/origin/feature",
+     "create"
+    ],
+    [
+     "refs/remotes/origin/main",
+     "create"
+    ]
+   ]
+  },
+  "--shallow-file x push --mirror origin": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "delete"
+    ],
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ],
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ],
+    [
+     "refs/heads/feature",
+     "forced"
+    ],
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ],
+    [
+     "refs/remotes/origin/board",
+     "create"
+    ],
+    [
+     "refs/remotes/origin/claude/7",
+     "create"
+    ],
+    [
+     "refs/remotes/origin/claude/8",
+     "create"
+    ],
+    [
+     "refs/remotes/origin/feature",
+     "create"
+    ],
+    [
+     "refs/remotes/origin/main",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "delete"
+    ],
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ],
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ],
+    [
+     "refs/heads/feature",
+     "forced"
+    ],
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ],
+    [
+     "refs/remotes/origin/board",
+     "create"
+    ],
+    [
+     "refs/remotes/origin/claude/7",
+     "create"
+    ],
+    [
+     "refs/remotes/origin/claude/8",
+     "create"
+    ],
+    [
+     "refs/remotes/origin/feature",
+     "create"
+    ],
+    [
+     "refs/remotes/origin/main",
+     "create"
+    ]
+   ]
+  },
+  "--shallow-file x push --no-verify origin": {
+   "fresh": [],
+   "stale": []
+  },
+  "--shallow-file x push --no-verify origin +HEAD:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push --no-verify origin +HEAD:claude/07": {
+   "fresh": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ]
+  },
+  "--shallow-file x push --no-verify origin +HEAD:claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "--shallow-file x push --no-verify origin +HEAD:claude/\u0667": {
+   "fresh": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ]
+  },
+  "--shallow-file x push --no-verify origin +HEAD:main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push --no-verify origin +claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "--shallow-file x push --no-verify origin +claude/7:claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push --no-verify origin +feature": {
+   "fresh": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ]
+  },
+  "--shallow-file x push --no-verify origin :board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "delete"
+    ]
+   ]
+  },
+  "--shallow-file x push --no-verify origin :claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "delete"
+    ]
+   ]
+  },
+  "--shallow-file x push --no-verify origin :main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "delete"
+    ]
+   ]
+  },
+  "--shallow-file x push --no-verify origin @": {
+   "fresh": [],
+   "stale": []
+  },
+  "--shallow-file x push --no-verify origin HEAD": {
+   "fresh": [],
+   "stale": []
+  },
+  "--shallow-file x push --no-verify origin HEAD:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push --no-verify origin HEAD:claude/07": {
+   "fresh": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ]
+  },
+  "--shallow-file x push --no-verify origin HEAD:claude/7": {
+   "fresh": [],
+   "stale": []
+  },
+  "--shallow-file x push --no-verify origin HEAD:claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push --no-verify origin HEAD:claude/\u0667": {
+   "fresh": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ]
+  },
+  "--shallow-file x push --no-verify origin HEAD:feature": {
+   "fresh": [],
+   "stale": []
+  },
+  "--shallow-file x push --no-verify origin HEAD:heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push --no-verify origin HEAD:main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push --no-verify origin claude/7": {
+   "fresh": [],
+   "stale": []
+  },
+  "--shallow-file x push --no-verify origin claude/7:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push --no-verify origin claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push --no-verify origin feature": {
+   "fresh": [],
+   "stale": []
+  },
+  "--shallow-file x push --no-verify origin heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push --no-verify origin main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push --no-verify origin refs/heads/claude/7": {
+   "fresh": [],
+   "stale": []
+  },
+  "--shallow-file x push --no-verify origin refs/heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push -f origin": {
+   "fresh": [],
+   "stale": []
+  },
+  "--shallow-file x push -f origin +HEAD:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push -f origin +HEAD:claude/07": {
+   "fresh": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ]
+  },
+  "--shallow-file x push -f origin +HEAD:claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "--shallow-file x push -f origin +HEAD:claude/\u0667": {
+   "fresh": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ]
+  },
+  "--shallow-file x push -f origin +HEAD:main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push -f origin +claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "--shallow-file x push -f origin +claude/7:claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push -f origin +feature": {
+   "fresh": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ]
+  },
+  "--shallow-file x push -f origin :board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "delete"
+    ]
+   ]
+  },
+  "--shallow-file x push -f origin :claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "delete"
+    ]
+   ]
+  },
+  "--shallow-file x push -f origin :main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "delete"
+    ]
+   ]
+  },
+  "--shallow-file x push -f origin @": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "--shallow-file x push -f origin HEAD": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "--shallow-file x push -f origin HEAD:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push -f origin HEAD:claude/07": {
+   "fresh": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ]
+  },
+  "--shallow-file x push -f origin HEAD:claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "--shallow-file x push -f origin HEAD:claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push -f origin HEAD:claude/\u0667": {
+   "fresh": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ]
+  },
+  "--shallow-file x push -f origin HEAD:feature": {
+   "fresh": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ]
+  },
+  "--shallow-file x push -f origin HEAD:heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push -f origin HEAD:main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push -f origin claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "--shallow-file x push -f origin claude/7:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push -f origin claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push -f origin feature": {
+   "fresh": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ]
+  },
+  "--shallow-file x push -f origin heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push -f origin main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push -f origin refs/heads/claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "--shallow-file x push -f origin refs/heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push -fu origin": {
+   "fresh": [],
+   "stale": []
+  },
+  "--shallow-file x push -fu origin +HEAD:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push -fu origin +HEAD:claude/07": {
+   "fresh": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ]
+  },
+  "--shallow-file x push -fu origin +HEAD:claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "--shallow-file x push -fu origin +HEAD:claude/\u0667": {
+   "fresh": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ]
+  },
+  "--shallow-file x push -fu origin +HEAD:main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push -fu origin +claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "--shallow-file x push -fu origin +claude/7:claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push -fu origin +feature": {
+   "fresh": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ]
+  },
+  "--shallow-file x push -fu origin :board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "delete"
+    ]
+   ]
+  },
+  "--shallow-file x push -fu origin :claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "delete"
+    ]
+   ]
+  },
+  "--shallow-file x push -fu origin :main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "delete"
+    ]
+   ]
+  },
+  "--shallow-file x push -fu origin @": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "--shallow-file x push -fu origin HEAD": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "--shallow-file x push -fu origin HEAD:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push -fu origin HEAD:claude/07": {
+   "fresh": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ]
+  },
+  "--shallow-file x push -fu origin HEAD:claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "--shallow-file x push -fu origin HEAD:claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push -fu origin HEAD:claude/\u0667": {
+   "fresh": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ]
+  },
+  "--shallow-file x push -fu origin HEAD:feature": {
+   "fresh": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ]
+  },
+  "--shallow-file x push -fu origin HEAD:heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push -fu origin HEAD:main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push -fu origin claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "--shallow-file x push -fu origin claude/7:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push -fu origin claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push -fu origin feature": {
+   "fresh": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ]
+  },
+  "--shallow-file x push -fu origin heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push -fu origin main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push -fu origin refs/heads/claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "--shallow-file x push -fu origin refs/heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push -u origin": {
+   "fresh": [],
+   "stale": []
+  },
+  "--shallow-file x push -u origin +HEAD:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push -u origin +HEAD:claude/07": {
+   "fresh": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ]
+  },
+  "--shallow-file x push -u origin +HEAD:claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "--shallow-file x push -u origin +HEAD:claude/\u0667": {
+   "fresh": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ]
+  },
+  "--shallow-file x push -u origin +HEAD:main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push -u origin +claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "--shallow-file x push -u origin +claude/7:claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push -u origin +feature": {
+   "fresh": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ]
+  },
+  "--shallow-file x push -u origin :board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "delete"
+    ]
+   ]
+  },
+  "--shallow-file x push -u origin :claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "delete"
+    ]
+   ]
+  },
+  "--shallow-file x push -u origin :main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "delete"
+    ]
+   ]
+  },
+  "--shallow-file x push -u origin @": {
+   "fresh": [],
+   "stale": []
+  },
+  "--shallow-file x push -u origin HEAD": {
+   "fresh": [],
+   "stale": []
+  },
+  "--shallow-file x push -u origin HEAD:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push -u origin HEAD:claude/07": {
+   "fresh": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ]
+  },
+  "--shallow-file x push -u origin HEAD:claude/7": {
+   "fresh": [],
+   "stale": []
+  },
+  "--shallow-file x push -u origin HEAD:claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push -u origin HEAD:claude/\u0667": {
+   "fresh": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ]
+  },
+  "--shallow-file x push -u origin HEAD:feature": {
+   "fresh": [],
+   "stale": []
+  },
+  "--shallow-file x push -u origin HEAD:heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push -u origin HEAD:main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push -u origin claude/7": {
+   "fresh": [],
+   "stale": []
+  },
+  "--shallow-file x push -u origin claude/7:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push -u origin claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push -u origin feature": {
+   "fresh": [],
+   "stale": []
+  },
+  "--shallow-file x push -u origin heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push -u origin main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push -u origin refs/heads/claude/7": {
+   "fresh": [],
+   "stale": []
+  },
+  "--shallow-file x push -u origin refs/heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push origin": {
+   "fresh": [],
+   "stale": []
+  },
+  "--shallow-file x push origin +HEAD:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push origin +HEAD:claude/07": {
+   "fresh": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ]
+  },
+  "--shallow-file x push origin +HEAD:claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "--shallow-file x push origin +HEAD:claude/\u0667": {
+   "fresh": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ]
+  },
+  "--shallow-file x push origin +HEAD:main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push origin +claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "--shallow-file x push origin +claude/7:claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push origin +feature": {
+   "fresh": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ]
+  },
+  "--shallow-file x push origin :board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "delete"
+    ]
+   ]
+  },
+  "--shallow-file x push origin :claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "delete"
+    ]
+   ]
+  },
+  "--shallow-file x push origin :main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "delete"
+    ]
+   ]
+  },
+  "--shallow-file x push origin @": {
+   "fresh": [],
+   "stale": []
+  },
+  "--shallow-file x push origin HEAD": {
+   "fresh": [],
+   "stale": []
+  },
+  "--shallow-file x push origin HEAD:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push origin HEAD:claude/07": {
+   "fresh": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ]
+  },
+  "--shallow-file x push origin HEAD:claude/7": {
+   "fresh": [],
+   "stale": []
+  },
+  "--shallow-file x push origin HEAD:claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push origin HEAD:claude/\u0667": {
+   "fresh": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ]
+  },
+  "--shallow-file x push origin HEAD:feature": {
+   "fresh": [],
+   "stale": []
+  },
+  "--shallow-file x push origin HEAD:heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push origin HEAD:main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push origin claude/7": {
+   "fresh": [],
+   "stale": []
+  },
+  "--shallow-file x push origin claude/7:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push origin claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push origin feature": {
+   "fresh": [],
+   "stale": []
+  },
+  "--shallow-file x push origin heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push origin main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "--shallow-file x push origin refs/heads/claude/7": {
+   "fresh": [],
+   "stale": []
+  },
+  "--shallow-file x push origin refs/heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push --al origin": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ],
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ],
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push --all origin": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ],
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ],
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push --branches origin": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ],
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ],
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push --delete origin @": {
+   "fresh": [],
+   "stale": []
+  },
+  "-C \"\" push --delete origin HEAD": {
+   "fresh": [],
+   "stale": []
+  },
+  "-C \"\" push --delete origin HEAD:board": {
+   "fresh": [],
+   "stale": []
+  },
+  "-C \"\" push --delete origin HEAD:claude/07": {
+   "fresh": [],
+   "stale": []
+  },
+  "-C \"\" push --delete origin HEAD:claude/7": {
+   "fresh": [],
+   "stale": []
+  },
+  "-C \"\" push --delete origin HEAD:claude/8": {
+   "fresh": [],
+   "stale": []
+  },
+  "-C \"\" push --delete origin HEAD:claude/\u0667": {
+   "fresh": [],
+   "stale": []
+  },
+  "-C \"\" push --delete origin HEAD:feature": {
+   "fresh": [],
+   "stale": []
+  },
+  "-C \"\" push --delete origin HEAD:heads/main": {
+   "fresh": [],
+   "stale": []
+  },
+  "-C \"\" push --delete origin HEAD:main": {
+   "fresh": [],
+   "stale": []
+  },
+  "-C \"\" push --delete origin claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "delete"
+    ]
+   ]
+  },
+  "-C \"\" push --delete origin claude/7:board": {
+   "fresh": [],
+   "stale": []
+  },
+  "-C \"\" push --delete origin claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "delete"
+    ]
+   ]
+  },
+  "-C \"\" push --delete origin feature": {
+   "fresh": [
+    [
+     "refs/heads/feature",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/feature",
+     "delete"
+    ]
+   ]
+  },
+  "-C \"\" push --delete origin heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "delete"
+    ]
+   ]
+  },
+  "-C \"\" push --delete origin main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "delete"
+    ]
+   ]
+  },
+  "-C \"\" push --delete origin refs/heads/claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "delete"
+    ]
+   ]
+  },
+  "-C \"\" push --delete origin refs/heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "delete"
+    ]
+   ]
+  },
+  "-C \"\" push --force origin": {
+   "fresh": [],
+   "stale": []
+  },
+  "-C \"\" push --force origin +HEAD:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push --force origin +HEAD:claude/07": {
+   "fresh": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ]
+  },
+  "-C \"\" push --force origin +HEAD:claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "-C \"\" push --force origin +HEAD:claude/\u0667": {
+   "fresh": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ]
+  },
+  "-C \"\" push --force origin +HEAD:main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push --force origin +claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "-C \"\" push --force origin +claude/7:claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push --force origin +feature": {
+   "fresh": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ]
+  },
+  "-C \"\" push --force origin :board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "delete"
+    ]
+   ]
+  },
+  "-C \"\" push --force origin :claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "delete"
+    ]
+   ]
+  },
+  "-C \"\" push --force origin :main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "delete"
+    ]
+   ]
+  },
+  "-C \"\" push --force origin @": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "-C \"\" push --force origin HEAD": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "-C \"\" push --force origin HEAD:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push --force origin HEAD:claude/07": {
+   "fresh": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ]
+  },
+  "-C \"\" push --force origin HEAD:claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "-C \"\" push --force origin HEAD:claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push --force origin HEAD:claude/\u0667": {
+   "fresh": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ]
+  },
+  "-C \"\" push --force origin HEAD:feature": {
+   "fresh": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ]
+  },
+  "-C \"\" push --force origin HEAD:heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push --force origin HEAD:main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push --force origin claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "-C \"\" push --force origin claude/7:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push --force origin claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push --force origin feature": {
+   "fresh": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ]
+  },
+  "-C \"\" push --force origin heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push --force origin main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push --force origin refs/heads/claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "-C \"\" push --force origin refs/heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push --force-with-lease origin": {
+   "fresh": [],
+   "stale": []
+  },
+  "-C \"\" push --force-with-lease origin +HEAD:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push --force-with-lease origin +HEAD:claude/07": {
+   "fresh": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ]
+  },
+  "-C \"\" push --force-with-lease origin +HEAD:claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "-C \"\" push --force-with-lease origin +HEAD:claude/\u0667": {
+   "fresh": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ]
+  },
+  "-C \"\" push --force-with-lease origin +HEAD:main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push --force-with-lease origin +claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "-C \"\" push --force-with-lease origin +claude/7:claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push --force-with-lease origin +feature": {
+   "fresh": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ]
+  },
+  "-C \"\" push --force-with-lease origin :board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "delete"
+    ]
+   ]
+  },
+  "-C \"\" push --force-with-lease origin :claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "delete"
+    ]
+   ]
+  },
+  "-C \"\" push --force-with-lease origin :main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "delete"
+    ]
+   ]
+  },
+  "-C \"\" push --force-with-lease origin @": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": []
+  },
+  "-C \"\" push --force-with-lease origin HEAD": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": []
+  },
+  "-C \"\" push --force-with-lease origin HEAD:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push --force-with-lease origin HEAD:claude/07": {
+   "fresh": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ]
+  },
+  "-C \"\" push --force-with-lease origin HEAD:claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": []
+  },
+  "-C \"\" push --force-with-lease origin HEAD:claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push --force-with-lease origin HEAD:claude/\u0667": {
+   "fresh": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ]
+  },
+  "-C \"\" push --force-with-lease origin HEAD:feature": {
+   "fresh": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ],
+   "stale": []
+  },
+  "-C \"\" push --force-with-lease origin HEAD:heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push --force-with-lease origin HEAD:main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push --force-with-lease origin claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": []
+  },
+  "-C \"\" push --force-with-lease origin claude/7:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push --force-with-lease origin claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push --force-with-lease origin feature": {
+   "fresh": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ],
+   "stale": []
+  },
+  "-C \"\" push --force-with-lease origin heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push --force-with-lease origin main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push --force-with-lease origin refs/heads/claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": []
+  },
+  "-C \"\" push --force-with-lease origin refs/heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push --mirr origin": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "delete"
+    ],
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ],
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ],
+    [
+     "refs/heads/feature",
+     "forced"
+    ],
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ],
+    [
+     "refs/remotes/origin/board",
+     "create"
+    ],
+    [
+     "refs/remotes/origin/claude/7",
+     "create"
+    ],
+    [
+     "refs/remotes/origin/claude/8",
+     "create"
+    ],
+    [
+     "refs/remotes/origin/feature",
+     "create"
+    ],
+    [
+     "refs/remotes/origin/main",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "delete"
+    ],
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ],
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ],
+    [
+     "refs/heads/feature",
+     "forced"
+    ],
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ],
+    [
+     "refs/remotes/origin/board",
+     "create"
+    ],
+    [
+     "refs/remotes/origin/claude/7",
+     "create"
+    ],
+    [
+     "refs/remotes/origin/claude/8",
+     "create"
+    ],
+    [
+     "refs/remotes/origin/feature",
+     "create"
+    ],
+    [
+     "refs/remotes/origin/main",
+     "create"
+    ]
+   ]
+  },
+  "-C \"\" push --mirror origin": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "delete"
+    ],
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ],
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ],
+    [
+     "refs/heads/feature",
+     "forced"
+    ],
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ],
+    [
+     "refs/remotes/origin/board",
+     "create"
+    ],
+    [
+     "refs/remotes/origin/claude/7",
+     "create"
+    ],
+    [
+     "refs/remotes/origin/claude/8",
+     "create"
+    ],
+    [
+     "refs/remotes/origin/feature",
+     "create"
+    ],
+    [
+     "refs/remotes/origin/main",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "delete"
+    ],
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ],
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ],
+    [
+     "refs/heads/feature",
+     "forced"
+    ],
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ],
+    [
+     "refs/remotes/origin/board",
+     "create"
+    ],
+    [
+     "refs/remotes/origin/claude/7",
+     "create"
+    ],
+    [
+     "refs/remotes/origin/claude/8",
+     "create"
+    ],
+    [
+     "refs/remotes/origin/feature",
+     "create"
+    ],
+    [
+     "refs/remotes/origin/main",
+     "create"
+    ]
+   ]
+  },
+  "-C \"\" push --no-verify origin": {
+   "fresh": [],
+   "stale": []
+  },
+  "-C \"\" push --no-verify origin +HEAD:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push --no-verify origin +HEAD:claude/07": {
+   "fresh": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ]
+  },
+  "-C \"\" push --no-verify origin +HEAD:claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "-C \"\" push --no-verify origin +HEAD:claude/\u0667": {
+   "fresh": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ]
+  },
+  "-C \"\" push --no-verify origin +HEAD:main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push --no-verify origin +claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "-C \"\" push --no-verify origin +claude/7:claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push --no-verify origin +feature": {
+   "fresh": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ]
+  },
+  "-C \"\" push --no-verify origin :board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "delete"
+    ]
+   ]
+  },
+  "-C \"\" push --no-verify origin :claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "delete"
+    ]
+   ]
+  },
+  "-C \"\" push --no-verify origin :main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "delete"
+    ]
+   ]
+  },
+  "-C \"\" push --no-verify origin @": {
+   "fresh": [],
+   "stale": []
+  },
+  "-C \"\" push --no-verify origin HEAD": {
+   "fresh": [],
+   "stale": []
+  },
+  "-C \"\" push --no-verify origin HEAD:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push --no-verify origin HEAD:claude/07": {
+   "fresh": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ]
+  },
+  "-C \"\" push --no-verify origin HEAD:claude/7": {
+   "fresh": [],
+   "stale": []
+  },
+  "-C \"\" push --no-verify origin HEAD:claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push --no-verify origin HEAD:claude/\u0667": {
+   "fresh": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ]
+  },
+  "-C \"\" push --no-verify origin HEAD:feature": {
+   "fresh": [],
+   "stale": []
+  },
+  "-C \"\" push --no-verify origin HEAD:heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push --no-verify origin HEAD:main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push --no-verify origin claude/7": {
+   "fresh": [],
+   "stale": []
+  },
+  "-C \"\" push --no-verify origin claude/7:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push --no-verify origin claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push --no-verify origin feature": {
+   "fresh": [],
+   "stale": []
+  },
+  "-C \"\" push --no-verify origin heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push --no-verify origin main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push --no-verify origin refs/heads/claude/7": {
+   "fresh": [],
+   "stale": []
+  },
+  "-C \"\" push --no-verify origin refs/heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push -f origin": {
+   "fresh": [],
+   "stale": []
+  },
+  "-C \"\" push -f origin +HEAD:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push -f origin +HEAD:claude/07": {
+   "fresh": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ]
+  },
+  "-C \"\" push -f origin +HEAD:claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "-C \"\" push -f origin +HEAD:claude/\u0667": {
+   "fresh": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ]
+  },
+  "-C \"\" push -f origin +HEAD:main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push -f origin +claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "-C \"\" push -f origin +claude/7:claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push -f origin +feature": {
+   "fresh": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ]
+  },
+  "-C \"\" push -f origin :board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "delete"
+    ]
+   ]
+  },
+  "-C \"\" push -f origin :claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "delete"
+    ]
+   ]
+  },
+  "-C \"\" push -f origin :main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "delete"
+    ]
+   ]
+  },
+  "-C \"\" push -f origin @": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "-C \"\" push -f origin HEAD": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "-C \"\" push -f origin HEAD:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push -f origin HEAD:claude/07": {
+   "fresh": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ]
+  },
+  "-C \"\" push -f origin HEAD:claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "-C \"\" push -f origin HEAD:claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push -f origin HEAD:claude/\u0667": {
+   "fresh": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ]
+  },
+  "-C \"\" push -f origin HEAD:feature": {
+   "fresh": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ]
+  },
+  "-C \"\" push -f origin HEAD:heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push -f origin HEAD:main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push -f origin claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "-C \"\" push -f origin claude/7:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push -f origin claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push -f origin feature": {
+   "fresh": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ]
+  },
+  "-C \"\" push -f origin heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push -f origin main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push -f origin refs/heads/claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "-C \"\" push -f origin refs/heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push -fu origin": {
+   "fresh": [],
+   "stale": []
+  },
+  "-C \"\" push -fu origin +HEAD:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push -fu origin +HEAD:claude/07": {
+   "fresh": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ]
+  },
+  "-C \"\" push -fu origin +HEAD:claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "-C \"\" push -fu origin +HEAD:claude/\u0667": {
+   "fresh": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ]
+  },
+  "-C \"\" push -fu origin +HEAD:main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push -fu origin +claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "-C \"\" push -fu origin +claude/7:claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push -fu origin +feature": {
+   "fresh": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ]
+  },
+  "-C \"\" push -fu origin :board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "delete"
+    ]
+   ]
+  },
+  "-C \"\" push -fu origin :claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "delete"
+    ]
+   ]
+  },
+  "-C \"\" push -fu origin :main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "delete"
+    ]
+   ]
+  },
+  "-C \"\" push -fu origin @": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "-C \"\" push -fu origin HEAD": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "-C \"\" push -fu origin HEAD:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push -fu origin HEAD:claude/07": {
+   "fresh": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ]
+  },
+  "-C \"\" push -fu origin HEAD:claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "-C \"\" push -fu origin HEAD:claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push -fu origin HEAD:claude/\u0667": {
+   "fresh": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ]
+  },
+  "-C \"\" push -fu origin HEAD:feature": {
+   "fresh": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ]
+  },
+  "-C \"\" push -fu origin HEAD:heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push -fu origin HEAD:main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push -fu origin claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "-C \"\" push -fu origin claude/7:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push -fu origin claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push -fu origin feature": {
+   "fresh": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ]
+  },
+  "-C \"\" push -fu origin heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push -fu origin main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push -fu origin refs/heads/claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "-C \"\" push -fu origin refs/heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push -u origin": {
+   "fresh": [],
+   "stale": []
+  },
+  "-C \"\" push -u origin +HEAD:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push -u origin +HEAD:claude/07": {
+   "fresh": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ]
+  },
+  "-C \"\" push -u origin +HEAD:claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "-C \"\" push -u origin +HEAD:claude/\u0667": {
+   "fresh": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ]
+  },
+  "-C \"\" push -u origin +HEAD:main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push -u origin +claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "-C \"\" push -u origin +claude/7:claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push -u origin +feature": {
+   "fresh": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ]
+  },
+  "-C \"\" push -u origin :board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "delete"
+    ]
+   ]
+  },
+  "-C \"\" push -u origin :claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "delete"
+    ]
+   ]
+  },
+  "-C \"\" push -u origin :main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "delete"
+    ]
+   ]
+  },
+  "-C \"\" push -u origin @": {
+   "fresh": [],
+   "stale": []
+  },
+  "-C \"\" push -u origin HEAD": {
+   "fresh": [],
+   "stale": []
+  },
+  "-C \"\" push -u origin HEAD:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push -u origin HEAD:claude/07": {
+   "fresh": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ]
+  },
+  "-C \"\" push -u origin HEAD:claude/7": {
+   "fresh": [],
+   "stale": []
+  },
+  "-C \"\" push -u origin HEAD:claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push -u origin HEAD:claude/\u0667": {
+   "fresh": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ]
+  },
+  "-C \"\" push -u origin HEAD:feature": {
+   "fresh": [],
+   "stale": []
+  },
+  "-C \"\" push -u origin HEAD:heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push -u origin HEAD:main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push -u origin claude/7": {
+   "fresh": [],
+   "stale": []
+  },
+  "-C \"\" push -u origin claude/7:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push -u origin claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push -u origin feature": {
+   "fresh": [],
+   "stale": []
+  },
+  "-C \"\" push -u origin heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push -u origin main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push -u origin refs/heads/claude/7": {
+   "fresh": [],
+   "stale": []
+  },
+  "-C \"\" push -u origin refs/heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push origin": {
+   "fresh": [],
+   "stale": []
+  },
+  "-C \"\" push origin +HEAD:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push origin +HEAD:claude/07": {
+   "fresh": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ]
+  },
+  "-C \"\" push origin +HEAD:claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "-C \"\" push origin +HEAD:claude/\u0667": {
+   "fresh": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ]
+  },
+  "-C \"\" push origin +HEAD:main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push origin +claude/7": {
+   "fresh": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/7",
+     "forced"
+    ]
+   ]
+  },
+  "-C \"\" push origin +claude/7:claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push origin +feature": {
+   "fresh": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/feature",
+     "forced"
+    ]
+   ]
+  },
+  "-C \"\" push origin :board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "delete"
+    ]
+   ]
+  },
+  "-C \"\" push origin :claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "delete"
+    ]
+   ]
+  },
+  "-C \"\" push origin :main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "delete"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "delete"
+    ]
+   ]
+  },
+  "-C \"\" push origin @": {
+   "fresh": [],
+   "stale": []
+  },
+  "-C \"\" push origin HEAD": {
+   "fresh": [],
+   "stale": []
+  },
+  "-C \"\" push origin HEAD:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push origin HEAD:claude/07": {
+   "fresh": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/07",
+     "create"
+    ]
+   ]
+  },
+  "-C \"\" push origin HEAD:claude/7": {
+   "fresh": [],
+   "stale": []
+  },
+  "-C \"\" push origin HEAD:claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push origin HEAD:claude/\u0667": {
+   "fresh": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/\u0667",
+     "create"
+    ]
+   ]
+  },
+  "-C \"\" push origin HEAD:feature": {
+   "fresh": [],
+   "stale": []
+  },
+  "-C \"\" push origin HEAD:heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push origin HEAD:main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push origin claude/7": {
+   "fresh": [],
+   "stale": []
+  },
+  "-C \"\" push origin claude/7:board": {
+   "fresh": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/board",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push origin claude/8": {
+   "fresh": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/claude/8",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push origin feature": {
+   "fresh": [],
+   "stale": []
+  },
+  "-C \"\" push origin heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push origin main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
+  "-C \"\" push origin refs/heads/claude/7": {
+   "fresh": [],
+   "stale": []
+  },
+  "-C \"\" push origin refs/heads/main": {
+   "fresh": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ],
+   "stale": [
+    [
+     "refs/heads/main",
+     "fast-forward"
+    ]
+   ]
+  },
   "-C . push --al origin": {
    "fresh": [
     [

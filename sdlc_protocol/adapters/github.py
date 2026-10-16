@@ -91,6 +91,25 @@ LIMIT_HEADERS = ("x-ratelimit-remaining", "x-ratelimit-limit", "x-ratelimit-rese
 # the year 2287, which datetime writes, and int() of a longer string
 # spends time no answer is worth (count_in).
 LIMIT_DIGITS = 10
+# GitHub refuses a call for a rate limit with a 403 or a 429, as its own
+# documentation says ("Rate limits for the REST API", "Exceeding the rate
+# limit"): its primary limit with x-ratelimit-remaining at 0, to be asked
+# again only after x-ratelimit-reset; a secondary limit with a message that
+# names it, to be asked again after retry-after's seconds where the answer
+# gives them, else after at least a minute and longer each time, giving up
+# after a few tries. The client waits as GitHub asks only while the wait
+# is short (rate_wait): a run that waited longer would hold up the runs
+# queued behind it, and the next run reads everything again anyway, so a
+# longer wait fails the call as any other refusal does. A client's waits
+# are bounded in all too (RATE_WAIT_BUDGET), at three minutes, so a job
+# with a limit of five minutes, the shortest a consumer gives a job that
+# runs the client, ends with GitHub's own words and not by its limit.
+RATE_STATUSES = (403, 429)
+RATE_WORDS = "rate limit"
+RATE_RETRIES = 2
+RATE_FIRST_WAIT = 60
+RATE_LONGEST_WAIT = 120
+RATE_WAIT_BUDGET = 180
 
 # GitHub's mergeable_state words that say only that something besides the
 # branch stops the merge, a rule, a review or the draft itself: how the
@@ -110,18 +129,21 @@ PASSING = {"success", "neutral", "skipped"}
 class GitHubError(team.ClientError):
     """A call GitHub refused or did not answer. The message names the
     method, the path and the status, never the token; status is the HTTP
-    status (None when there was no answer) and detail GitHub's own message
-    from the answer's body, "" when it gave none."""
+    status (None when there was no answer), detail GitHub's own message
+    from the answer's body, "" when it gave none, and headers the
+    answer's headers, None when there was no answer, for the wait a rate
+    limit asks (rate_wait)."""
 
-    def __init__(self, message, status=None, detail=""):
+    def __init__(self, message, status=None, detail="", headers=None):
         super().__init__(message)
         self.status = status
         self.detail = detail
+        self.headers = headers
 
 
 def next_link(headers):
     """The URL of the next page named by a Link header, or None."""
-    link = (headers.get("Link") if headers is not None else None) or ""
+    link = header(headers, "link") or ""
     for part in link.split(","):
         pieces = part.split(";")
         if len(pieces) >= 2 and pieces[1].strip() == 'rel="next"':
@@ -153,6 +175,62 @@ def count_in(text):
     return int(text)
 
 
+def header(headers, name):
+    """One header of an answer by its lowercase name, read in any case as
+    HTTP reads names, or None where the answer had none: urllib gives an
+    HTTPError's headers as None when it has no answer to read them from,
+    and a stand-in may give them as a plain mapping, whose names keep the
+    case they were written in."""
+    if headers is None:
+        return None
+    return next((value for key, value in headers.items() if isinstance(key, str) and key.lower() == name), None)
+
+
+def rate_limited(status, headers, detail):
+    """Whether GitHub refused a call for a rate limit, a refusal it asks to
+    have waited out (rate_wait) and that says nothing against the call
+    itself: a 429, Too Many Requests; or a 403 that says it is one, by a
+    retry-after header or by a message that names a rate limit, as
+    GitHub's refusals for its primary limit ("API rate limit exceeded")
+    and its secondary limits do. That retry-after tells one whatever the
+    message says is this project's assumption (validation/DESIGN.md,
+    3.2): GitHub's documentation names it for a secondary limit's refusal
+    and never says that no other refusal sends it. A 403 that says
+    neither is GitHub's answer to a token without the right or to a rule,
+    whatever its x-ratelimit-remaining says: every answer counts against
+    the hour, so the hour's last call is answered with none left,
+    whatever GitHub answers it with."""
+    if status not in RATE_STATUSES:
+        return False
+    return status == 429 or header(headers, "retry-after") is not None or RATE_WORDS in (detail or "").lower()
+
+
+def rate_wait(status, headers, detail, tries, now):
+    """The seconds to wait before a call GitHub refused is made again, the
+    call having been made again tries times already: for a refusal of a
+    rate limit's (rate_limited), the longest of the waits GitHub asks
+    for, the seconds retry-after names and, where the token has no call
+    left, until the hour's end, since each holds whatever the other says
+    ("Exceeding the rate limit"), or, where it asks for neither, a minute
+    and then two; None for any other refusal, for a spent hour whose end
+    the answer does not say, once the tries are spent (RATE_RETRIES), or
+    where GitHub asks for a longer wait than a run waits
+    (RATE_LONGEST_WAIT). now is the clock's time in seconds since the
+    epoch, which x-ratelimit-reset is written in."""
+    if tries >= RATE_RETRIES or not rate_limited(status, headers, detail):
+        return None
+    asked = count_in(header(headers, "retry-after"))
+    left = count_in(header(headers, "x-ratelimit-remaining"))
+    reset = count_in(header(headers, "x-ratelimit-reset"))
+    if left == 0 and reset is None:
+        return None
+    waits = [] if asked is None else [asked]
+    if left == 0:
+        waits.append(max(reset - int(now), 0) + 1)
+    wait = max(waits) if waits else RATE_FIRST_WAIT * 2 ** tries
+    return wait if wait <= RATE_LONGEST_WAIT else None
+
+
 def many(count, word):
     return f"{count} {word}{'' if count == 1 else 's'}"
 
@@ -162,11 +240,18 @@ def calls_line(api):
     REST API GitHub answered, its reads and its writes, and what the
     token's rate limit had left by the latest answer that said it, so
     whoever reads the run's log sees what a board run costs and how near
-    the hour's limit it ran (LIMIT_HEADERS)."""
+    the hour's limit it ran (LIMIT_HEADERS), and, where it waited for a
+    rate limit, how many times and how long in all, each wait one call
+    made again, while a refusal it did not wait out is a call like any
+    other; a stand-in client that keeps no waits, as one written before
+    the client waited, waited for none."""
     reads = api.made["GET"]
     writes = sum(api.made.values()) - reads
     line = f"GitHub's REST API: {many(reads + writes, 'call')} in this run, {many(reads, 'read')} and " \
            f"{many(writes, 'write')}"
+    waited = getattr(api, "waited", None) or ()
+    if waited:
+        line += f"; it waited for GitHub's rate limits {many(len(waited), 'time')}, {sum(waited)} s in all"
     if api.limit is None:
         return line
     left, allowed, reset = api.limit
@@ -203,18 +288,23 @@ class GitHub:
     """The REST calls the package makes, through urllib, and the methods
     team.Client lists.
 
-    The opener and the sleep are arguments so a test can hand in fakes; the
-    token is the argument, else GITHUB_TOKEN, and with neither there is no
-    client, since every call would be refused.
+    The opener, the sleep and the clock are arguments so a test can hand in
+    fakes; the token is the argument, else GITHUB_TOKEN, and with neither
+    there is no client, since every call would be refused.
     """
 
-    def __init__(self, token, repo, opener=None, sleep=time.sleep):
+    def __init__(self, token, repo, opener=None, sleep=time.sleep, clock=time.time):
         self.token = token or os.environ.get("GITHUB_TOKEN")
         if not self.token:
             raise GitHubError("no token: pass one, or set GITHUB_TOKEN")
         self.repo = repo
         self.opener = opener or urllib.request.build_opener()
         self.sleep = sleep
+        self.clock = clock
+        # The seconds of each wait the client made for a rate limit, in
+        # order, for the run's log (calls_line) and the run's bound
+        # (RATE_WAIT_BUDGET).
+        self.waited = []
         self.asked = permissions(self)
         # The calls GitHub answered this client, by method, and the rate
         # limit as the latest answer that said it left it: the calls left,
@@ -235,7 +325,37 @@ class GitHub:
         return API + path + ("?" + urllib.parse.urlencode(params) if params else "")
 
     def request(self, method, url, body=None, missing_ok=False):
-        """One call; the decoded JSON and the answer's headers. A 404 is
+        """One call, made again after the wait GitHub asks where it refuses
+        the call for a rate limit and the wait is one a run takes
+        (wait_before_again); the decoded JSON and the answer's headers, or
+        the last refusal's GitHubError. A write is made again as a read is,
+        on an assumption: that GitHub refuses a rate limit's call before it
+        acts on it, which its documentation does not say, and which the
+        validation harness's fake assumes until a canary check settles it
+        (validation/DESIGN.md, 3.2 and section 11, C4)."""
+        tries = 0
+        while True:
+            try:
+                return self.send(method, url, body, missing_ok)
+            except GitHubError as problem:
+                wait = self.wait_before_again(problem, tries)
+                if wait is None:
+                    raise
+            self.waited.append(wait)
+            self.sleep(wait)
+            tries += 1
+
+    def wait_before_again(self, problem, tries):
+        """The wait rate_wait asks before the call is made again, or None
+        where it asks none or the run has waited as long as it waits in all
+        (RATE_WAIT_BUDGET)."""
+        wait = rate_wait(problem.status, problem.headers, problem.detail, tries, self.clock())
+        if wait is None or sum(self.waited) + wait > RATE_WAIT_BUDGET:
+            return None
+        return wait
+
+    def send(self, method, url, body=None, missing_ok=False):
+        """One call, made once; the decoded JSON and the headers. A 404 is
         (None, headers) when missing_ok says absence is an answer. Every
         failure of the call, whether GitHub, the connection or http.client
         refused it, is a GitHubError, whichever part of urllib raised it;
@@ -262,7 +382,8 @@ class GitHub:
             self.count_answer(method, problem.headers)
             if problem.code == 404 and missing_ok:
                 return None, problem.headers
-            raise GitHubError(f"{where}: HTTP {problem.code}", problem.code, error_detail(problem)) from None
+            raise GitHubError(f"{where}: HTTP {problem.code}", problem.code, error_detail(problem),
+                              problem.headers) from None
         except OSError as problem:
             raise GitHubError(f"{where}: {getattr(problem, 'reason', problem)}") from None
         except http.client.HTTPException as problem:
@@ -280,9 +401,10 @@ class GitHub:
         log (calls_line). A call never sent, or one the connection lost
         before any answer, is not counted, as GitHub said nothing of it; a
         redirect urllib follows, which GitHub answers a renamed repository's
-        old name with, is two calls counted as one."""
+        old name with, is two calls counted as one. The headers are read
+        in any case (header), as rate_wait reads them."""
         self.made[method] += 1
-        limit = tuple(count_in(headers.get(name) if headers is not None else None) for name in LIMIT_HEADERS)
+        limit = tuple(count_in(header(headers, name)) for name in LIMIT_HEADERS)
         if None not in limit:
             self.limit = limit
 
@@ -696,8 +818,8 @@ def head_since(api, branch, sha, refused=None, now=None, started_by=""):
     dated back had it released at once). now is when the run began, the
     wall clock unless given, taken before the run read the branch. A first
     read that lists no push that set the head, or that GitHub gives no
-    answer to that holds (a 5xx, a 429, a rate limit's 403, or none at
-    all), is made once more after a pause, as settled asks again for
+    answer to that holds (a 5xx, or none at all, but not a rate limit's
+    refusal), is made once more after a pause, as settled asks again for
     mergeable: the push a run was started by is the one the activity is
     likeliest not to list yet, and the committer date in its place would
     let a commit dated back have its claim released in the run its own
@@ -730,11 +852,17 @@ def head_since(api, branch, sha, refused=None, now=None, started_by=""):
     committer dates were always the rule outside the run its push
     started, which dates it at its start with no line either, and the
     second read's 404 after a first that listed nothing, which says the
-    same. It costs one call where the first read dates the push; two
-    where it does not and the read is not made again, a refusal for good
-    or a 404, the second the commit; and up to three with a pause where it
-    is made again; in the run the branch's push started, the commit is
-    not read."""
+    same. A rate limit's refusal is not read again after the pause: the
+    client has waited it out already, as long as GitHub asks and a run
+    waits, and made the call again (GitHub.request), so it is a refusal
+    like any other, after which the committer date stands in
+    (may_answer_later). It costs one read where the first read dates the
+    push; two where it does not and the read is not made again, a refusal
+    for good or a rate limit's, or a 404, the second the commit; and up to
+    three with a pause where it is made again; in the run the branch's
+    push started, the commit is not read. Each read is one call, or up to
+    three where GitHub refuses it for a rate limit and the client asks
+    again after each wait."""
     now = now or datetime.now(timezone.utc)
     read = first = read_push(api, branch, sha, now)
     if first.again:
@@ -799,13 +927,14 @@ def read_push(api, branch, sha, now=None):
 
 def may_answer_later(problem):
     """Whether GitHub may answer the same call after a pause: it gave no
-    answer, a 5xx, a 429, or a 403 that says a rate limit was reached,
-    which GitHub sends for its secondary limits; any other refusal, a 401,
-    a 403 for a token that may not read, a 422, is its answer for good."""
-    status = problem.status
-    if status is None or status >= 500 or status == 429:
-        return True
-    return status == 403 and "rate limit" in (problem.detail or str(problem)).lower()
+    answer, or a 5xx. Any other refusal is its answer for the run: a 401,
+    a 403 for a token that may not read, a 422, and a rate limit's 429 or
+    403 too, which the client has waited out already, as long as GitHub
+    asks and a run waits, and made again (GitHub.request), so a read after
+    a shorter pause would ask again while GitHub still asks for no call,
+    which "may result in the banning of your integration" (GitHub's "Rate
+    limits for the REST API")."""
+    return problem.status is None or problem.status >= 500
 
 
 def head_pushed_at(api, branch, sha, now=None):
@@ -957,8 +1086,9 @@ def releases(api, heads, found_issues, pulls, now=None, asked=None, every_head=N
     the board counts the release and the coordinator, which finds it done,
     adds none. A claim whose issue is labelled in-review or is not open,
     or whose pull request is marked ready, costs no call; any other costs
-    what dating its head costs (head_since: one call where the activity
-    dates the push at once, up to three where it does not), and, when its
+    what dating its head costs (head_since: one read where the activity
+    dates the push at once, up to three where it does not, each up to
+    three calls where GitHub refuses it for a rate limit), and, when its
     last commit is more than a day old or its head is kept, one for its
     draft's comments, then, unless the draft is finished and its issue
     still carries claimed, one for its issue's comments and one per
@@ -1556,11 +1686,14 @@ def explain_refusal(api, key, old, new, problem):
     """Say once on the issue why its released claim's name is not free,
     when GitHub refused the rename for good: a ruleset over the claim
     branches, or a token without the right. Any other answer, or none, is
-    for the moment, and the next run tries again without a word. The
-    rulesets are read only for the first saying, so a rename refused run
-    after run costs one more call each time. What was said, for the log
-    line, or ""."""
-    if problem.status not in REFUSED_FOR_GOOD:
+    for the moment, and the next run tries again without a word: a 403 of
+    a rate limit's among them (rate_limited), which the client waited out
+    as long as a run waits, since its comment would send the owner after
+    a rule or a right that is not missing, and its marker would keep a
+    later refusal for good unsaid. The rulesets are read only for the
+    first saying, so a rename refused run after run costs one more call
+    each time. What was said, for the log line, or ""."""
+    if problem.status not in REFUSED_FOR_GOOD or rate_limited(problem.status, problem.headers, problem.detail):
         return ""
     marker = board.RENAME_REFUSED_MARKER.format(branch=new)
     words = f"HTTP {problem.status}{github_words(problem)}"

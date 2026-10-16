@@ -299,13 +299,14 @@ class RepoModel:
 
     # --- refs ---------------------------------------------------------------
 
-    def push(self, worker, ref, sha, force=False, lease=False):
+    def push(self, worker, ref, sha, force=False, lease=False, clone=None):
         """git's rule for one ref. A lease with no expected value takes the
-        pusher's own remote-tracking ref, and is refused, fast-forward or
+        remote-tracking ref of the clone the push runs in, the worker's own
+        unless clone names another (F21), and is refused, fast-forward or
         not, when the remote's ref stands and that tracking ref is missing
         or elsewhere."""
         current = self.refs.get(ref)
-        mine = self.tracking.setdefault(worker, {})
+        mine = self.tracking.setdefault(clone or worker, {})
         if lease and current is not None and mine.get(ref) != current:
             return Push(False, "stale info")
         fast_forward = current is None or current == sha or self.is_ancestor(current, sha)
