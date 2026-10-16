@@ -360,7 +360,8 @@ class Client(unittest.TestCase):
             self.assertIn("| #13 | claude/13 | claim file over 1 MB, not read |", out.read_text(encoding="ascii"))
             self.assertEqual(printed.getvalue().splitlines(), [
                 "claude/13: GitHub gave no text for docs/agents/claims/13.md, a file over 1 MB, so the board reads "
-                "no worker and no files from it, and a release quotes no plan", f"{out.as_posix()}: rewritten"])
+                "no worker and no files from it, and a release quotes no plan", f"{out.as_posix()}: rewritten",
+                "GitHub's REST API: 12 calls in this run, 12 reads and 0 writes"])
 
     def test_a_claim_branch_whose_issue_was_deleted_has_no_issue_and_stops_no_run(self):
         # GitHub answers 410 for an issue someone deleted, and the run
@@ -485,6 +486,71 @@ class Token(unittest.TestCase):
 
     def test_an_error_is_a_client_error_the_clerk_can_tolerate(self):
         self.assertTrue(issubclass(github.GitHubError, team.ClientError))
+
+
+class Calls(unittest.TestCase):
+    """What a run spends: the calls GitHub answered the client, by method,
+    and the rate limit the latest answer that said all of it left, which
+    the board run's last line says (cli.board_live_run)."""
+
+    LIMIT = {"x-ratelimit-remaining": "962", "x-ratelimit-limit": "1000", "x-ratelimit-reset": "1760612400"}
+
+    def test_every_call_github_answered_is_counted_by_its_method_and_none_it_never_answered(self):
+        # Answered, one whose body was cut short, a 404 that is an answer
+        # and a 403 count; a call http.client will not send and one whose
+        # connection is refused do not, since GitHub said nothing of them.
+        api, _ = client({"/repos/o/r/issues?per_page=100": FakeAnswer([]),
+                         "/repos/o/r/issues/1": CutAnswer({}),
+                         "POST /repos/o/r/issues/7/comments": Refusal(403, {"message": "nope"})})
+        api.get_all("/repos/o/r/issues")
+        with self.assertRaises(github.GitHubError, msg="an answer whose body was cut short is an answer"):
+            api.get("/repos/o/r/issues/1")
+        self.assertIsNone(api.get("/repos/o/r/contents/x", missing_ok=True))
+        with self.assertRaises(github.GitHubError):
+            api.post("/repos/o/r/issues/7/comments", {"body": "x"})
+        with self.assertRaises(github.GitHubError):
+            api.get("/repos/o/r/git/ref/heads/caf\u00e9")
+        opener = mock.Mock()
+        opener.open.side_effect = OSError("connection refused")
+        lost = github.GitHub("t", "o/r", opener=opener, sleep=lambda seconds: None)
+        with self.assertRaises(github.GitHubError):
+            lost.delete("/repos/o/r/issues/7/labels/claimed")
+        self.assertEqual((dict(api.made), dict(lost.made)), ({"GET": 3, "POST": 1}, {}))
+        self.assertEqual((api.limit, lost.limit), (None, None))
+
+    def test_the_limit_is_the_latest_answer_s_that_says_all_of_it_refusals_included(self):
+        partial = {"x-ratelimit-remaining": "950"}
+        refused = urllib.error.HTTPError(github.API + "/repos/o/r/issues/7", 403, "refused",
+                                         dict(self.LIMIT, **{"x-ratelimit-remaining": "0"}), io.BytesIO(b""))
+        opener = mock.Mock()
+        opener.open.side_effect = [FakeAnswer({}, self.LIMIT), FakeAnswer({}, partial), FakeAnswer({}), refused]
+        api = github.GitHub("t", "o/r", opener=opener, sleep=lambda seconds: None)
+        api.get("/repos/o/r")
+        self.assertEqual(api.limit, (962, 1000, 1760612400))
+        api.get("/repos/o/r")
+        api.get("/repos/o/r")
+        self.assertEqual(api.limit, (962, 1000, 1760612400), "an answer that says less leaves the limit as it was")
+        with self.assertRaises(github.GitHubError):
+            api.get("/repos/o/r/issues/7")
+        self.assertEqual(api.limit, (0, 1000, 1760612400))
+
+    def test_a_header_of_the_limit_is_read_from_ascii_digits_alone_and_never_at_any_length(self):
+        for text, expected in (("962", 962), (" 962 ", 962), ("0", 0), ("9999999999", 9999999999),
+                               ("99999999999", None), ("", None), ("  ", None), (None, None), ("9.5", None),
+                               ("-1", None), ("+1", None), ("1e3", None), ("\u0663", None), ("9" * 5000, None)):
+            with self.subTest(text=text):
+                self.assertEqual(github.count_in(text), expected)
+
+    def test_the_line_says_the_calls_reads_and_writes_and_the_limit_where_an_answer_said_it(self):
+        api, _ = client({})
+        self.assertEqual(github.calls_line(api), "GitHub's REST API: 0 calls in this run, 0 reads and 0 writes")
+        api.made.update({"GET": 1})
+        self.assertEqual(github.calls_line(api), "GitHub's REST API: 1 call in this run, 1 read and 0 writes")
+        api.made.update({"GET": 40, "POST": 1, "DELETE": 2, "PATCH": 1})
+        api.limit = (962, 1000, 1760612400)
+        self.assertEqual(github.calls_line(api),
+                         "GitHub's REST API: 45 calls in this run, 41 reads and 4 writes; GitHub last said the "
+                         "token had 962 of its 1000 calls an hour left, the hour ending at 11:00 UTC")
 
 
 def fixture_answers(name="board.json"):
@@ -806,7 +872,8 @@ class Collect(unittest.TestCase):
                 f"{out.as_posix()}: rewritten",
                 "PR #40: main-moved comment failed: POST /repos/o/r/issues/40/comments: HTTP 500",
                 "PR #40: idle comment failed: POST /repos/o/r/issues/40/comments: HTTP 500",
-                "PR #41: idle comment posted"])
+                "PR #41: idle comment posted",
+                "GitHub's REST API: 18 calls in this run, 15 reads and 3 writes"])
 
     def test_a_board_run_whose_refused_comment_came_with_a_cut_body_writes_the_board_and_exits_0(self):
         # The refusal's body, read for GitHub's words, raised IncompleteRead,
@@ -832,7 +899,8 @@ class Collect(unittest.TestCase):
                 f"{out.as_posix()}: rewritten",
                 "PR #40: main-moved comment failed: POST /repos/o/r/issues/40/comments: HTTP 500",
                 "PR #40: idle comment failed: POST /repos/o/r/issues/40/comments: HTTP 500",
-                "PR #41: idle comment posted"])
+                "PR #41: idle comment posted",
+                "GitHub's REST API: 18 calls in this run, 15 reads and 3 writes"])
 
 
 HEAD_12 = "aaaaaaa1111111"
