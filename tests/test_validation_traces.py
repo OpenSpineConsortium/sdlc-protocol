@@ -141,9 +141,10 @@ BUDGET_SECONDS = 10
 # clone cannot be told is judged by its words alone; and, from F21's
 # fourth review, step 6, by a -C relative to where a cd behind a test
 # that fails would have taken the shell, taken once such a -C is judged
-# where it names alone, and step 7, with GIT_DIR exported before an
-# absolute -C, taken once GIT_DIR is forgotten when an absolute path names
-# a place.
+# where it names alone, step 7, with GIT_DIR exported before an absolute
+# -C, taken once GIT_DIR is forgotten when an absolute path names a place,
+# and step 8, by a -C from a ~ after HOME is set in the command, taken
+# once such a -C is judged where it names alone.
 UNDONE = {
     "F1": [("the comment before the labels", 5, "G3L")],
     "F2": [("a piece of work named by the number it is shown by", 4, "G7"),
@@ -203,7 +204,8 @@ UNDONE = {
             ("a push judged only where the shell's moves take it", 4, "G11a"),
             ("a push whose clone cannot be told judged by its words alone", 5, "G11a"),
             ("a relative -C after a move judged where it names alone", 6, "G11a"),
-            ("GIT_DIR forgotten once an absolute path names a place", 7, "G11a")],
+            ("GIT_DIR forgotten once an absolute path names a place", 7, "G11a"),
+            ("a -C by ~ judged where it names alone", 8, "G11a")],
 }
 # The twenty-one findings, every one settled since F21's fix: F1, F3,
 # F5, F6, F10 and F11 fixed in 0.4.1; F2, F4, F7, F8, F9, F12, F13, F14,

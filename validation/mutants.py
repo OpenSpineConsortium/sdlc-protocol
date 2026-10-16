@@ -1237,6 +1237,11 @@ MUTANTS = {
         "G11a", "a push after GIT_DIR is set alone or exported is judged by its words and in the session's own "
                 "clone, whatever cd or -C comes after, so a lease from the repository GIT_DIR names onto a claim "
                 "another worker holds is refused there (F21's fourth review)"),
+    "a -C by ~ judged where it names alone": Mutant(
+        guard, "from_a_tilde", lambda argv: False,
+        "G11a", "a push by a -C from a ~ is judged in the session's own clone too, since the shell reads the ~ "
+                "from a HOME the command may set, so a lease from there after HOME is set, onto a claim another "
+                "worker holds, is refused (F21's fourth review)"),
     "dealing without its taken set": Mutant(
         team, "deal", deal_without_the_taken_set,
         "G14", "the workers of one run are dealt distinct issues"),

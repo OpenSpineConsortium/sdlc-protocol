@@ -583,10 +583,11 @@ class CloneTest(unittest.TestCase):
     starts, as if no move ran, and, by a relative -C, in the session's own
     clone too, and a push whose clone this module cannot tell, or whose
     repository a variable names, by its words and in the session's own
-    clone. So every push is judged in the session's own clone, as before
-    the fix, save one whose clone git's or env's -C names by a path this
-    module can tell, absolute or from a ~, or relative with no cd, pushd or
-    popd before it, and whose repository nothing names, which is judged
+    clone, and one by a -C from a ~ in the session's own clone too. So
+    every push is judged in the session's own clone, as before the fix,
+    save one whose clone git's or env's -C names by an absolute path, or a
+    relative one with no cd, pushd or popd before it, holding nothing the
+    shell expands, and whose repository nothing names, which is judged
     where the -C names alone (F21's third and fourth reviews)."""
 
     BRANCHES = {"/w/s": ("claude/7", "main"), "/w/other": ("main", "main")}
@@ -759,6 +760,46 @@ class CloneTest(unittest.TestCase):
         self.assertEqual(guard.joined("/w/s", "~"), HOME)
         self.assertEqual(guard.joined("/w/s", "~+x", physical=True), "/w/s/~+x")
         self.assertEqual(guard.joined("/w/s", "a/~-"), "/w/s/a/~-")
+
+    def test_a_minus_c_from_a_tilde_is_judged_in_the_session_s_own_clone_too(self):
+        """This module reads a ~ from the hook's own HOME, while a HOME the
+        command sets before it, assigned or exported, sends the shell
+        elsewhere, and quotes, which this module does not keep, leave a ~ as
+        written, so a push by a -C from a ~ is judged where this module
+        reads it and in the session's own clone too, with UNTOLD's advice
+        (F21's fourth review: with HOME set in the command, a lease git
+        takes from the session's own clone was judged in the hook's ~/other
+        alone, and passed). What it costs, a push by git -C ~/x from a
+        session on main refused as a push to main, is what 0.5.0's guard
+        did. An absolute -C after the ~ names the clone alone, and a cd to
+        a ~ is judged where the command starts too, as after any move."""
+        lease = "push --force-with-lease origin claude/7"
+        held = self.refused("git " + lease, "/w/other")
+        for command, reason in (("HOME=/w; git -C ~/other " + lease, held),
+                                ("export HOME=/w; git -C ~/other " + lease, held),
+                                ("HOME=/w; env -C ~/other git " + lease, held),
+                                ('git -C "~/other" ' + lease, held),
+                                ("git -C ~/x push origin HEAD", MAIN),
+                                ("git -C ~ push origin HEAD", MAIN),
+                                ("git -C ~root/x push origin HEAD", MAIN),
+                                ("env --chdir=~/x git push origin HEAD", MAIN),
+                                ("git -C /w/s -C ~/x push origin HEAD", MAIN),
+                                ("git -C ~/x -C sub push origin HEAD", MAIN),
+                                ("cd /tmp && git -C ~/x push origin HEAD", MAIN)):
+            with self.subTest(command=command):
+                self.assertEqual(self.refused(command, "/w/other"), reason + guard.UNTOLD)
+        for command in ("git -C ~/x -C /w/s push origin HEAD", "env -C ~/x git -C /w/s push origin HEAD",
+                        "git -C /w/s push origin HEAD", "git -C ../s push origin HEAD"):
+            with self.subTest(command=command):
+                self.assertIsNone(self.refused(command, "/w/other"),
+                                  "an absolute -C, or a relative one with no move before it, names its clone alone")
+        self.assertEqual(self.refused("cd ~/x && git push origin HEAD", "/w/other"), MAIN + guard.UNMOVED,
+                         "a cd to a ~ is judged where the command starts too, as after any move")
+        with mock.patch.object(guard, "from_a_tilde", lambda argv: False):
+            for command in ("HOME=/w; git -C ~/other " + lease, "export HOME=/w; git -C ~/other " + lease):
+                with self.subTest(command=command):
+                    self.assertIsNone(self.refused(command, "/w/other"),
+                                      "as built at a71a391: judged in the hook's ~/other alone, which is no clone")
 
 
 class RunTest(unittest.TestCase):
@@ -1183,6 +1224,42 @@ class OtherCloneTest(unittest.TestCase):
                   f"git -C {self.session} push --force-with-lease origin claude/7")
         self.assertIn("[rejected] (stale info)", dry_run(common, self.other), "s's refs, which lack a's claim")
         self.assertEqual(self.hook(common, self.other), (guard.PASS, ""), "judged in s alone, as git judges it")
+
+    def test_a_minus_c_from_a_tilde_is_judged_where_the_command_starts_too(self):
+        """bash reads a ~ from the HOME the command sets, assigned or
+        exported, and leaves a quoted one as written: git -C ~/other then
+        runs in other, though the hook reads the ~ from its own HOME, and
+        git -C "~" in other's own directory named ~, here a link back to
+        other. From other, on main, git pushes main, and once b has claimed
+        #7 there, takes a's claim; the hook judges each push in other too,
+        where the command starts, with UNTOLD's advice (F21's fourth review:
+        until then each was judged in the hook's ~/other or ~ alone, and
+        passed)."""
+        root = self.scratch.name
+        Path(root, "home").mkdir()
+        Path(self.other, ".git", "info").mkdir(exist_ok=True)
+        with open(Path(self.other, ".git", "info", "exclude"), "a") as exclude:
+            exclude.write("/~\n")
+        Path(self.other, "~").symlink_to(".")
+        pushes = (f"HOME={root}; git -C ~/other push origin HEAD",
+                  f"export HOME={root}; git -C ~/other push origin HEAD", 'git -C "~" push origin HEAD')
+        with mock.patch.dict(os.environ, {"HOME": str(Path(root, "home"))}):
+            for command in pushes:
+                with self.subTest(command=command):
+                    self.assertIn("refs/heads/main", dry_run(command, self.other), "git pushes other's main")
+                    self.assertEqual(self.hook(command, self.other), (guard.REFUSE, MAIN + guard.UNTOLD))
+            self.claim_of_b_in_other()
+            for command in pushes:
+                lease = command.replace(" push origin HEAD", " push --force-with-lease origin claude/7")
+                with self.subTest(lease=lease):
+                    self.assertIn("(forced update)", dry_run(lease, self.other), "git would take a's claim")
+                    code, reason = self.hook(lease, self.other)
+                    self.assertEqual(code, guard.REFUSE)
+                    self.assertIn("claude/7 on origin is a's claim", reason)
+                    self.assertTrue(reason.endswith(guard.UNTOLD), reason)
+                    with mock.patch.object(guard, "from_a_tilde", lambda argv: False):
+                        self.assertEqual(self.hook(lease, self.other), (guard.PASS, ""),
+                                         "as built at a71a391: judged where the hook reads the ~ alone")
 
     def test_git_s_minus_c_climbs_from_where_a_link_leads_and_cd_does_not(self):
         """s/peek leads into other: git -C peek/.. changes directory as the

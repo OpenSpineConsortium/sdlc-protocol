@@ -80,16 +80,19 @@ CLONES = "/clones"
 # clone, after a cd in a here-document's body, which the shell reads as
 # text, by a -C through a path the shell expands, which names it, by a -C
 # relative to where a cd behind a test that fails would have taken the
-# shell, which the shell skips (F21's fourth review), or with GIT_DIR
-# exported, which names it whatever -C comes after (the same review).
+# shell, which the shell skips (F21's fourth review), with GIT_DIR
+# exported, which names it whatever -C comes after, or by a -C from a ~
+# after HOME is set, which the shell reads from that HOME and the guard
+# from the hook's own (the same review).
 ELSEWHERE = {"-C": "git -C ../{clone} {push}", "cd": "cd ../{clone} && git {push}",
              "missing": "cd ../{clone}; cd ../{absent}; git {push}",
              "body": "cat > /dev/null <<'EOF'\ncd ..\nEOF\ngit {push}",
              "expanded": 'git -C "$(git rev-parse --show-toplevel)" {push}',
              "skipped": "cd ..; false && cd {clone}; git -C {own} {push}",
-             "exported": "export GIT_DIR={root}/{own}/.git; git -C {root} {push}"}
+             "exported": "export GIT_DIR={root}/{own}/.git; git -C {root} {push}",
+             "home": "HOME={root}; git -C ~/{own} {push}"}
 # The ways whose push runs in the worker's own clone (leasing_clone).
-FROM_OWN_CLONE = ("body", "expanded", "skipped", "exported")
+FROM_OWN_CLONE = ("body", "expanded", "skipped", "exported", "home")
 
 # A read of the activity with no type named: the read of the push that set
 # a claim's head (github.read_push), told from the reads of a
@@ -528,13 +531,15 @@ def lease_elsewhere(model, worker, number, files, how):
     session runs from its own clone, which has not fetched that claim,
     reaching the second by git -C, by cd, or by a cd and then one into a
     directory that is not there, which leaves the shell in the second
-    (ELSEWHERE); or, for body, expanded, skipped and exported, it does all
-    that in its own clone, after a cd in a here-document's body, which the
-    shell does not run, naming its own clone by a -C the shell expands, by
-    a relative -C after a cd behind a test that fails, which the shell
-    skips, or with GIT_DIR exported, which names it whatever -C comes
-    after. Git would take it, so the guard must judge the push in the clone
-    it runs in and refuse it, as it refuses lease_onto's. No search offers
+    (ELSEWHERE); or, for body, expanded, skipped, exported and home, it
+    does all that in its own clone, after a cd in a here-document's body,
+    which the shell does not run, naming its own clone by a -C the shell
+    expands, by a relative -C after a cd behind a test that fails, which
+    the shell skips, with GIT_DIR exported, which names it whatever -C
+    comes after, or by a -C from a ~ after HOME is set to the directory
+    that holds the clones, which the guard reads from the hook's own HOME.
+    Git would take it, so the guard must judge the push in the clone it
+    runs in and refuse it, as it refuses lease_onto's. No search offers
     it; F21's trace plays it."""
     pusher = leasing_clone(worker, how)
     model.fetch(pusher)

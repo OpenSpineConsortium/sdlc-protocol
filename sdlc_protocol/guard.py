@@ -58,22 +58,24 @@ or GIT_REFERENCE_BACKEND, on the push or set before it, the push is
 judged by what its words name and in the session's own clone. A push is
 refused when any of these judgements refuses it. So a push is judged in
 the session's own clone, as every push was judged before F21's fix, save
-one whose clone git's or env's -C names by a path this module can tell,
-absolute or from a ~, or relative with no cd, pushd or popd before it in
-the same shell, and whose repository nothing names: that push is judged
-in the clone the -C names alone. That is the clone it runs in, save where
-the shell does what this module does not read: a ~ is read from the
-hook's own HOME, though quotes, which this module does not keep, leave a
-~ as written for the shell, and a HOME the command sets before it sends
-the shell elsewhere; and this module does not follow a move or an export
-in a command handed to eval or trap or in a file run by source or ., nor
-what a function or alias the session's shell has before the command does,
-as one named git or cd may, nor a variable that names the repository
-given its value by read, printf -v or a for loop: it judges the push as
-if none of them ran. A refusal reads as it did before the fix, and ends
-with what the hook could not tell and how to have the push judged in its
-clone alone (UNMOVED, UNTOLD) only where the reading that refused it is
-one the command's words do not name.
+one whose clone git's or env's -C names by an absolute path, or a
+relative one with no cd, pushd or popd before it in the same shell,
+holding nothing the shell expands, and whose repository nothing names:
+that push is judged in the clone the -C names alone. That is the clone it
+runs in, save where the shell does what this module does not read. This
+module does not trust a ~ to name a clone: it reads one from the hook's
+own HOME, while a HOME the command sets before it sends the shell
+elsewhere, and quotes, which this module does not keep, leave a ~ as
+written, so a push by a -C from a ~ is judged where this module reads it
+and in the session's own clone too (from_a_tilde). And it does not follow
+a move or an export in a command handed to eval or trap or in a file run
+by source or ., nor what a function or alias the session's shell has
+before the command does, as one named git or cd may, nor a variable that
+names the repository given its value by read, printf -v or a for loop: it
+judges the push as if none of them ran. A refusal reads as it did before
+the fix, and ends with what the hook could not tell and how to have the
+push judged in its clone alone (UNMOVED, UNTOLD) only where the reading
+that refused it is one the command's words do not name.
 
 The hook is the first fence and branch protection on GitHub the second,
 so anything this module cannot read it lets through rather than wedging
@@ -521,30 +523,41 @@ def env_directory(options):
     return found
 
 
-def push_place(argv, here):
-    """The directory the git push argv runs in, from here, the directory
-    its shell runs it in (placed_commands): with the directory each env
-    before it names (env_directory), then each -C git is given, joined on
-    in turn as chdir reads them (joined, physical); None where joined
-    cannot tell, or where the push names its repository by a path, with
-    --git-dir, --bare or a variable set on it (GIT_REPOSITORY_VARIABLES),
-    so it goes where this module does not look."""
+def chdir_paths(argv):
+    """The paths the git push argv changes directory by before it pushes,
+    in the order chdir reads them: the directory each env before it names
+    (env_directory), then each -C git is given; None where the push names
+    its repository by a path, with --git-dir, --bare or a variable set on
+    it (GIT_REPOSITORY_VARIABLES), so it goes where this module does not
+    look."""
     found = launch(argv)
     if any(assigns_repository(word) for word in found.assignments):
         return None
-    place = here
-    for name, options in found.wrappers:
-        directory = env_directory(options) if name == "env" else None
-        if directory is not None:
-            place = joined(place, directory, physical=True)
+    named = (env_directory(options) for name, options in found.wrappers if name == "env")
+    paths = [directory for directory in named if directory is not None]
     i = found.start + 1
     while i < len(argv) and argv[i] != "push":
         word = argv[i]
         if word.split("=", 1)[0] in GIT_REPOSITORY_OPTIONS:
             return None
         if word == "-C":
-            place = joined(place, argv[i + 1] if i + 1 < len(argv) else "", physical=True)
+            paths.append(argv[i + 1] if i + 1 < len(argv) else "")
         i += 2 if word in GIT_VALUE_OPTIONS else 1
+    return paths
+
+
+def push_place(argv, here):
+    """The directory the git push argv runs in, from here, the directory
+    its shell runs it in (placed_commands): the paths it changes directory
+    by (chdir_paths), joined on in turn as chdir reads them (joined,
+    physical); None where joined cannot tell, or where the push names its
+    repository by a path."""
+    paths = chdir_paths(argv)
+    if paths is None:
+        return None
+    place = here
+    for path in paths:
+        place = joined(place, path, physical=True)
     return place
 
 
@@ -740,7 +753,8 @@ def placed_commands(command, here, is_directory=os.path.isdir):
 # reads as it read before F21's fix. UNMOVED is the reading from where the
 # command starts, after a cd, pushd or popd, as if none ran, and, where a
 # relative -C names the clone, in the session's own clone (after_a_move);
-# UNTOLD the session's own clone, where this module cannot tell the clone.
+# UNTOLD the session's own clone, where this module cannot tell the clone
+# or reads it from a ~ (from_a_tilde).
 UNMOVED = ("; the push was judged from where the command starts too, since the hook cannot tell where its cd, pushd "
            "or popd leave the shell: name the clone with git -C and an absolute path that holds nothing the "
            "shell expands, or put no cd, pushd or popd before the push, to have it judged there alone")
@@ -785,6 +799,23 @@ def after_a_move(argv, shell):
     return shell.moved and push_place(argv, None) is None
 
 
+def from_a_tilde(argv):
+    """Whether the git push argv names its clone from a ~: of the paths it
+    changes directory by (chdir_paths), the last that names a place
+    wherever the shell stands, an absolute one or one that starts with a
+    ~, starts with a ~, and any after it are joined on what the ~ names.
+    This module reads a ~ from the hook's own HOME, while the shell reads
+    it from a HOME the command may set before it, and leaves one in
+    quotes, which this module does not keep, as written, so such a push
+    may run elsewhere than this module reads it, in the session's own
+    clone among other places (F21's fourth review: from b-own, which had
+    fetched a's claim, "HOME=<the clones>; git -C ~/b-own push
+    --force-with-lease origin HEAD:claude/7" was judged in the hook's own
+    ~/b-own alone and passed, where 0.5.0's guard refused it)."""
+    anchors = [path for path in chdir_paths(argv) or () if path.startswith("~") or os.path.isabs(path)]
+    return bool(anchors) and anchors[-1].startswith("~")
+
+
 def push_places(argv, shell, here):
     """The clones the git push argv may run in, each to judge it in, from
     shell, where the shell stands as this module follows its moves
@@ -794,17 +825,17 @@ def push_places(argv, shell, here):
     none of the moves ran, since this module reads a cd in a
     here-document's body, after a test that fails or in a function never
     called as one the shell makes; and here, the session's own clone, as
-    every push was judged before F21's fix, where either cannot be told, or
-    after a move where a relative -C names the clone (after_a_move). git's
-    and env's -C are joined on in each. Each reading after the first is one
-    the command's words do not name, and carries what a refusal there adds
-    (UNMOVED, UNTOLD)."""
+    every push was judged before F21's fix, where either cannot be told or
+    a ~ names the clone (from_a_tilde), or after a move where a relative -C
+    names it (after_a_move). git's and env's -C are joined on in each. Each
+    reading after the first is one the command's words do not name, and
+    carries what a refusal there adds (UNMOVED, UNTOLD)."""
     followed, unmoved = followed_and_unmoved(argv, shell, here)
     found = [Reading(followed)]
     if unmoved is not None and unmoved != followed:
         found.append(Reading(unmoved, UNMOVED))
     if here is not None and here not in (followed, unmoved):
-        if followed is None or unmoved is None:
+        if followed is None or unmoved is None or from_a_tilde(argv):
             found.append(Reading(here, UNTOLD))
         elif after_a_move(argv, shell):
             found.append(Reading(here, UNMOVED))
@@ -824,18 +855,18 @@ def refused_push(command, here, branches_of=None, reader_of=None, is_directory=N
     from a clone that had fetched another's claim was judged in one that
     had not; since its third review a push after a move is judged where
     the command starts too, and one whose clone this module cannot tell in
-    here's; and since its fourth one by a relative -C after a move in
-    here's too, and one whose repository a variable names by its words and
-    in here's whatever cd or -C comes after. So every push is judged in
-    here's clone, as before the fix, save one whose clone git's or env's -C
-    names by a path this module can tell (joined), absolute or from a ~, or
-    relative with no cd, pushd or popd before it, and whose repository
-    nothing names: that push is judged where the -C names alone, which is
-    where it runs save where the shell does what this module does not read,
-    as the module's docstring says). A push judged by its words alone has
-    no current branch and no claim files, the default branch being here's.
-    is_directory, by default os.path.isdir, says which directories a cd or
-    pushd can reach (placed_commands)."""
+    here's; and since its fourth one by a relative -C after a move, or by a
+    -C from a ~, in here's too, and one whose repository a variable names
+    by its words and in here's whatever cd or -C comes after. So every push
+    is judged in here's clone, as before the fix, save one whose clone
+    git's or env's -C names by an absolute path, or a relative one with no
+    cd, pushd or popd before it, holding nothing the shell expands, and
+    whose repository nothing names: that push is judged where the -C names
+    alone, which is where it runs save where the shell does what this
+    module does not read, as the module's docstring says). A push judged by
+    its words alone has no current branch and no claim files, the default
+    branch being here's. is_directory, by default os.path.isdir, says which
+    directories a cd or pushd can reach (placed_commands)."""
     branches_of = branches_of or branches
     reader_of = reader_of or claim_file_reader
     asked = {}
