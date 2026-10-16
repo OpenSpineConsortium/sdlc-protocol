@@ -684,6 +684,24 @@ class TheOpenFindingsShow(unittest.TestCase):
         self.assertEqual(invariants.pushes_logged([missing], model, [], ref), [])
         self.assertEqual(invariants.push_dates([lagging, lagging], model, ref), {ref: model.now})
         self.assertEqual(invariants.push_dates([missing], model, ref), {ref: model.now})
+        # An entry that set the head a day before the run began dates it
+        # outside the run, and in the run the branch's push started it is an
+        # older push of the head: one read is enough, the run's start dates
+        # the head, and the line says the newest push listed came before the
+        # run began (SPEC["started by"]; F8's follow-up's second review).
+        own = [{"ref": f"refs/heads/{ref}", "timestamp": M.iso(M.HOUR), "after": model.refs[ref],
+                "before": "0" * 40}]
+        older = Call("GET", "/activity", query, None, 200, False, True, None, own)
+        older_line = f"{ref}: {oracle.LOG_WORDS['older push']}" + begun
+        self.assertEqual(invariants.push_readings([older], model),
+                         {ref: invariants.PushReading(M.HOUR, "push")})
+        self.assertEqual(invariants.push_readings([older], model, ref),
+                         {ref: invariants.PushReading(model.now, "run start", "older push", M.iso(model.now))})
+        self.assertEqual(invariants.pushes_read_again([older], model), [])
+        self.assertEqual(invariants.pushes_logged([older], model, [older_line], ref), [])
+        self.assertEqual([v.guarantee for v in invariants.pushes_logged([older], model, [], ref)], ["G2"])
+        self.assertEqual([v.guarantee for v in invariants.pushes_logged([older], model, [listed + begun], ref)],
+                         ["G2"])
         # Another branch's push starting the run leaves the floor rule to
         # date the head: the stale entry's time is later than its commit's.
         self.assertEqual(invariants.push_dates([lagging, lagging], model, "claude/2"), {ref: M.HOUR})

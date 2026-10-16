@@ -71,6 +71,16 @@ class Terms(unittest.TestCase):
                          began - oracle.MOVED_SLACK_MINUTES)
         self.assertIsNone(oracle.entry_dates(False, began - oracle.MOVED_SLACK_MINUTES - 1, began))
         self.assertIsNone(oracle.entry_dates(False, M.HOUR, began))
+        # SPEC["started by"]: in the run a push to the branch started, an
+        # entry that set the head dates it only when it came no earlier than
+        # the slack before the run began, as an entry naming another head
+        # does; an older one is an older push of the head (F8's follow-up's
+        # second review, and its review, which found this rule pinned by no
+        # test of its own).
+        self.assertTrue(oracle.own_push_dates(began, began))
+        self.assertTrue(oracle.own_push_dates(began - oracle.MOVED_SLACK_MINUTES, began))
+        self.assertFalse(oracle.own_push_dates(began - oracle.MOVED_SLACK_MINUTES - 1, began))
+        self.assertFalse(oracle.own_push_dates(M.HOUR, began))
         self.assertEqual(oracle.floor_dates(M.HOUR, 0), M.HOUR)
         self.assertIsNone(oracle.floor_dates(M.HOUR, M.HOUR))
         self.assertIsNone(oracle.floor_dates(M.HOUR, 2 * M.HOUR))

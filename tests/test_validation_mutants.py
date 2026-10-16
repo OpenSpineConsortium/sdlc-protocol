@@ -182,6 +182,7 @@ TRACES = {
     "the earlier floor": "the regression traces",
     "a fresh delete dates nothing": "the regression traces",
     "the run's event ignored": "the regression traces",
+    "an older push trusted in the run its push started": "the regression traces",
     # F8's second review: a's claim commit, dated two days ahead, pushed
     # back with a lease a day after a commit moved the branch off it, the
     # activity a push behind; and a kept head pushed again, its release
@@ -273,10 +274,12 @@ class TheLane(unittest.TestCase):
         floor at the committer date taken for later, and its third review
         four: the floor of the first read alone, the earlier floor, a fresh
         delete dating nothing, and the run's event ignored, so the bound is
-        widened to 120 and the count noted; and F20's fix three, an
-        unsettled release put back, counted, or failing the run."""
+        widened to 120 and the count noted; its follow-up's second review
+        one, an older push trusted in the run its push started; and F20's
+        fix three, an unsettled release put back, counted, or failing the
+        run."""
         self.assertTrue(10 <= len(mutants.MUTANTS) <= 120)
-        self.assertEqual(len(mutants.MUTANTS), 116)
+        self.assertEqual(len(mutants.MUTANTS), 117)
         self.assertEqual(sorted(TRACES), sorted(mutants.MUTANTS))
 
     def test_every_mutant_names_a_rule_the_library_still_has(self):
@@ -320,8 +323,8 @@ class TheLane(unittest.TestCase):
         each of one copy (mutants.head_since_copy), which would test an
         older library once the rest fell behind; so each line of its body,
         the module's name taken off, is one of the library's but for the
-        five lines that take the rules as arguments, and the library's
-        lines it lacks are those five as the library writes them. With
+        six lines that take the rules as arguments, and the library's
+        lines it lacks are those six as the library writes them. With
         every argument left as it is, the copy plays F8's trace green, as
         the library does."""
         lines = [line.replace("github.", "") for line in body_lines(mutants.head_since_copy)]
@@ -329,11 +332,14 @@ class TheLane(unittest.TestCase):
         self.assertEqual([line for line in lines if line not in library],
                          ["if first.again and again:",
                           "read = read_push(api, branch, sha, now if now_again else None)",
+                          "if read.pushed and (branch != started_by or not (by_the_run and older) "
+                          "or came_since(read.pushed, now)):",
                           "floor, why = floor_of(read, first), read.why or (first.why if first.floor else \"\")",
                           "if branch == started_by and by_the_run:",
                           "if floor and later(floor, committed):"])
         self.assertEqual([line for line in library if line not in lines],
                          ["if first.again:", "read = read_push(api, branch, sha, now)",
+                          "if read.pushed and (branch != started_by or came_since(read.pushed, now)):",
                           "floor, why = latest(read.floor, first.floor), read.why or (first.why if first.floor else \"\")",
                           "if branch == started_by:",
                           "if floor and latest(committed, floor) != committed:"])
