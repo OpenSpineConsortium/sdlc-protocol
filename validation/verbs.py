@@ -53,7 +53,7 @@ from typing import NamedTuple
 from sdlc_protocol import guard
 
 from . import cycle, model as M, oracle
-from .fake_github import LAGGING, MOVED, MOVED_TWICE, Fault
+from .fake_github import DELETED, LAGGING, LAGGING_BY_TWO, MOVED, MOVED_TWICE, Fault
 from .model import CLAIM_PREFIX, HOUR, MAIN, OWNER, RELEASED_PREFIX, Comment, PullRequest, claim_text
 
 CLOCK, BOARD = "clock", "board"
@@ -140,6 +140,26 @@ FAULTS = {
     # entry either read listed; F8's fix check).
     "pushes-lagging-then-500": Fault("GET", "/activity", 200, query=PUSHES, answer=LAGGING,
                                      then=Fault("GET", "/activity", 500, query=PUSHES)),
+    # The first such read two pushes behind and the one more it takes one
+    # behind, as an activity catching up answers: each lists a stale entry
+    # of its own where the branch has three, the first the older, so the
+    # floor is the later of the two, the newest entry either read listed
+    # (SPEC["floor"]); a branch with two lists nothing on the first read,
+    # so the floor is the second read's alone (F8's third review).
+    "pushes-catching-up": Fault("GET", "/activity", 200, query=PUSHES, answer=LAGGING_BY_TWO,
+                                then=Fault("GET", "/activity", 200, query=PUSHES, answer=LAGGING)),
+    # The first such read refused with a 500 and the one more it takes a
+    # push behind: the floor is the second read's, the first having listed
+    # nothing, and the log says the activity lists no push of the head,
+    # the last read's word (F8's third review).
+    "pushes-500-then-lagging": Fault("GET", "/activity", 500, query=PUSHES,
+                                     then=Fault("GET", "/activity", 200, query=PUSHES, answer=LAGGING)),
+    # The first such read listing the branch's delete after the run read
+    # it, at the clock's minute, naming the head the run read as the head
+    # it took away: it came after the run began, so it dates the claim as
+    # a push after the read does, and the run reads no more (SPEC["moved
+    # off"]: "or deleted it"; F8's third review).
+    "pushes-deleted": Fault("GET", "/activity", 200, query=PUSHES, answer=DELETED),
 }
 
 

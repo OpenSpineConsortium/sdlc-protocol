@@ -70,6 +70,10 @@ SPEC = {
                     "none, or where GitHub refuses to read it",
     "floor": "but never earlier than the newest entry either read listed for the branch, which the push that set the "
              "head came no sooner than.",
+    "started by": "In the run that a push to the branch started, which the workflow's event names, a head no read "
+                  "dates is dated at the run's start instead, for that run alone, since that push came just before "
+                  "the run, whatever the two reads list, so no claim is released in the run its own push started; "
+                  "the next run reads the activity again.",
     "finished": "an issue labelled in-review, a pull request marked ready, or a draft whose author's latest comment "
                 "on it starts with \"finished; ready to mark\" waits for review however long it takes.",
     "order": "The coordinator first takes the label claimed and every worker's label off the issue, a label "
@@ -218,22 +222,32 @@ BOARD_MARKERS = {
 }
 
 # The run's own words in its log for a claim whose head no read dated by
-# the push that set it (SPEC["undated push"], SPEC["floor"]), which the
-# spec does not spell: why, the activity read twice listing no push of the
-# head or GitHub refusing the read (its answer follows in parentheses), and
-# what the run read the claim's idleness from in its place, the committer
-# date or the floor, the newest entry's time as GitHub wrote it. Each line
-# is the branch's name, ": ", the why and the clause. They are the
-# library's interface, as the board's markers are, and
-# tests/test_validation_guarantees.py pins them to github.py's lines;
-# which clause a line owes is the oracle's (floor_dates).
+# the push that set it (SPEC["undated push"], SPEC["floor"], SPEC["started
+# by"]), which the spec does not spell: why, the activity listing no push
+# of the head or GitHub refusing the read (its answer follows in
+# parentheses), and what the run read the claim's idleness from in its
+# place, the committer date, the floor, the newest entry's time as GitHub
+# wrote it, or the start of the run the branch's push started, as GitHub
+# would write it. Each line is the branch's name, ": ", the why and the
+# clause. They are the library's interface, as the board's markers are,
+# and tests/test_validation_guarantees.py pins them to github.py's lines;
+# which clause a line owes is the oracle's (floor_dates, pushed_branch).
 LOG_WORDS = {
-    "listed none": "the repository's activity, read twice, lists no push that set the branch's head",
+    "listed none": "the repository's activity lists no push that set the branch's head",
     "refused": "GitHub refused to say when the push that set the branch's head came (",
     "read from": ", so its idleness is read from ",
     "committer date": ", so its idleness is read from its committer date",
     "floor": ", so its idleness is read from its newest entry's time, {floor}, later than its committer date",
+    "run start": ", so its idleness is read from the start of this run, {at}, which its push started",
 }
+# The events of the board workflow whose run a push to the ref named
+# started (SPEC["started by"]: "which the workflow's event names"): a push,
+# whose run the job skips for any branch but the default (model.skipped),
+# and a branch's creation, the run a claim's first push starts. A pull
+# request's synchronize names its head branch too, in the library
+# (cli.pushed_branch), which the model, whose pull request events name no
+# branch, never plays.
+STARTED_BY_EVENTS = ("push", "create")
 
 # The answers GitHub gives a rename it refuses for good (DESIGN.md, G10): a
 # rule on the branch, or a token without the right; held to the library's
@@ -320,7 +334,9 @@ def head_time(model, ref):
     the branch's head (model.pushed, F8); its committer date where the
     model holds no push that set it, or for a branch whose push the run
     could not date and whose floor is no later, which a view of the model
-    leaves out (dated, SPEC["undated push"], SPEC["floor"])."""
+    leaves out (dated, SPEC["undated push"], SPEC["floor"]), unless the
+    run was started by that branch's push, which dates it at the run's
+    start (SPEC["started by"], pushed_branch)."""
     head, pushed = model.refs[ref], model.pushed.get(ref)
     if pushed is not None and pushed[1] == head:
         return pushed[0]
@@ -346,6 +362,17 @@ def entry_dates(sets_head, minute, began):
     if sets_head or minute >= began - MOVED_SLACK_MINUTES:
         return minute
     return None
+
+
+def pushed_branch(event, ref_name):
+    """The branch whose push started a board run for the event, as the
+    workflow names it, "" for none (SPEC["started by"]): the ref of a push
+    or of a branch's creation (STARTED_BY_EVENTS), as cli.pushed_branch
+    reads GITHUB_REF. A claim on it whose push no read of the run dates is
+    dated at the run's start, for that run alone, so a claim commit dated
+    back, whose fresh branch the activity lists nothing of yet, is not
+    released in the run its own push started (F8's third review)."""
+    return ref_name if event in STARTED_BY_EVENTS and ref_name else ""
 
 
 def floor_dates(floor, committed):
@@ -377,11 +404,14 @@ def dated(model, undated, pushed_at=None):
     (SPEC["moved off"]; the faults pushes-moved, pushes-moved-twice and
     pushes-500-then-moved), or the floor where no read dated a push and
     the newest entry listed came later than the head's committer date
-    (SPEC["floor"], floor_dates; the faults pushes-lagging-twice and
-    pushes-lagging-then-500); the model itself when nothing differs. A
-    first read answered by the second dates the branch by its push, so it
-    is in neither (invariants.push_dates, which reads each entry by
-    entry_dates and each floor by floor_dates)."""
+    (SPEC["floor"], floor_dates; the faults pushes-lagging-twice,
+    pushes-lagging-then-500, pushes-catching-up and
+    pushes-500-then-lagging), or the run's start where the branch's own
+    push started the run and no read dated it (SPEC["started by"],
+    pushed_branch); the model itself when nothing differs. A first read
+    answered by the second dates the branch by its push, so it is in
+    neither (invariants.push_dates, which reads each entry by entry_dates
+    and each floor by floor_dates)."""
     moved = {ref: minute for ref, minute in (pushed_at or {}).items()
              if ref in model.refs and ref not in undated and head_time(model, ref) != minute}
     gone = [ref for ref in undated if ref in model.pushed]

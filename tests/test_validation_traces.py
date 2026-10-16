@@ -66,7 +66,15 @@ BUDGET_SECONDS = 10
 # read from its floor once that read is judged with no moment of the
 # run; and at step 44, where the newest of two such pushes names the head
 # on neither side, the run reads again once a fresh entry dates only
-# where it moved the branch off the head. F9's
+# where it moved the branch off the head; and, since F8's third review,
+# at step 45, where the first read is two pushes behind and the second
+# one, c's claim is released once the floor is the first read's alone
+# or the earlier of the two; at step 47, where the read lists the
+# branch's delete after the run read it, the run reads again and the
+# log says the claim is read from its floor once a fresh delete dates
+# nothing; and at step 49, where a's claim anew, its commit dated two
+# days back, meets reads both a push behind in the run its own push
+# started, it is released once the run's event is ignored. F9's
 # trace goes red at its first board run, step 2, where the draft level
 # with main is told it moved once the adapter reads the comparison's
 # ahead_by for behind_by, and at its second, step 4, where the draft
@@ -132,7 +140,9 @@ UNDONE = {
            ("a floor at the committer date taken for later", 39, "G2"), ("the floor dropped", 41, "G3"),
            ("the floor of the last read alone", 42, "G3"),
            ("the second read judged with no moment of the run", 43, "G2"),
-           ("a fresh entry dating only off the head", 44, "G2")],
+           ("a fresh entry dating only off the head", 44, "G2"),
+           ("the floor of the first read alone", 45, "G3"), ("the earlier floor", 45, "G3"),
+           ("a fresh delete dates nothing", 47, "G2"), ("the run's event ignored", 49, "G3")],
     "F9": [("an opaque state read by GitHub's word alone", 4, "G10"), ("the comparison read by ahead_by", 2, "G10")],
     "F10": [("a finished draft's release by hand not seen", 9, "G5")],
     "F11": [("a refused comment stops the run", 6, "G15")],
