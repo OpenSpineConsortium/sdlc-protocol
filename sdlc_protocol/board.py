@@ -86,18 +86,24 @@ MERGED_COLUMNS = ("PR", "Title", "Branch", "Merged")
 # default branch, and GitHub's mergeable_state words that mean each.
 STATE_WORDS = ("clean", "behind", "conflicting", "blocked", "unknown")
 GITHUB_STATES = {"has_hooks": "clean", "unstable": "clean", "dirty": "conflicting"}
+# GitHub's state_reason for an open issue that was closed and opened again.
+REOPENED = "reopened"
 
 
 # --- the snapshot -----------------------------------------------------------
 
 @dataclass
 class Issue:
-    """An open issue as the queue and the blockers show it."""
+    """An open issue as the queue and the blockers show it, and whether
+    GitHub says it was reopened (its state_reason), which the coordinator
+    reads to free one whose labels still speak of a claim that ended with
+    its close (coordinator.reopened_due; F22)."""
 
     number: int
     title: str = ""
     labels: list = field(default_factory=list)
     updated_at: str = ""
+    reopened: bool = False
 
     @classmethod
     def from_dict(cls, data):
@@ -106,10 +112,14 @@ class Issue:
             title=data.get("title") or "",
             labels=labels.label_names(data),
             updated_at=data.get("updated_at") or "",
+            reopened=data.get("state_reason") == REOPENED,
         )
 
     def to_dict(self):
-        return {"number": self.number, "title": self.title, "labels": list(self.labels), "updated_at": self.updated_at}
+        """Its JSON shape; state_reason only for an issue reopened, so a
+        snapshot saved before F22's fix is written back as it was."""
+        return {"number": self.number, "title": self.title, "labels": list(self.labels), "updated_at": self.updated_at} \
+            | ({"state_reason": REOPENED} if self.reopened else {})
 
 
 @dataclass
@@ -345,7 +355,10 @@ class Snapshot:
     its committer date, by the newest entry listed or by the start of the
     run its push started, GitHub's refusal or an activity that lists no
     push of the head, with what was read in its place
-    (adapters.github.pushed_refused_lines)."""
+    (adapters.github.pushed_refused_lines); and the branches a release
+    left standing, released/<issue>-<short sha>, by name, whose work a
+    person may put back, so the coordinator frees no reopened issue whose
+    release is being undone (coordinator.claim_stands; F22)."""
 
     sha: str = ""
     default_branch: str = "main"
@@ -359,6 +372,7 @@ class Snapshot:
     began: dict = field(default_factory=dict)
     began_refused: dict = field(default_factory=dict)
     pushed_refused: dict = field(default_factory=dict)
+    kept_names: list = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, data):
@@ -377,6 +391,7 @@ class Snapshot:
             began={str(k): str(v) for k, v in (data.get("began") or {}).items() if v},
             began_refused={str(k): str(v) for k, v in (data.get("began_refused") or {}).items()},
             pushed_refused={str(k): str(v) for k, v in (data.get("pushed_refused") or {}).items()},
+            kept_names=[branch_name(b) for b in data.get("kept_names") or []],
         )
 
     def to_dict(self):
@@ -392,7 +407,8 @@ class Snapshot:
             "releases": {k: v.to_dict() for k, v in self.releases.items()},
             "began": dict(self.began),
         } | ({"began_refused": dict(self.began_refused)} if self.began_refused else {}) \
-            | ({"pushed_refused": dict(self.pushed_refused)} if self.pushed_refused else {})
+            | ({"pushed_refused": dict(self.pushed_refused)} if self.pushed_refused else {}) \
+            | ({"kept_names": list(self.kept_names)} if self.kept_names else {})
 
     @classmethod
     def from_json(cls, text):

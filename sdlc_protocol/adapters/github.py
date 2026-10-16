@@ -546,7 +546,8 @@ def recent_merged(api):
 
 def claim_issues(api, branches, open_issues):
     """The issue behind each claim branch, by its key: the state and the
-    label names. An open issue comes from the list already read; any other
+    label names, and GitHub's state_reason for one reopened, which
+    may_be_due reads. An open issue comes from the list already read; any other
     takes one call, so the board can say that a branch outlived its issue.
     A branch whose key is no number (claims.number_in) has none and costs
     no call: a key such as a superscript would put a path in the URL that
@@ -559,7 +560,8 @@ def claim_issues(api, branches, open_issues):
             continue
         issue = by_number.get(key) or issue_or_none(api, key)
         if issue is not None:
-            found[key] = {"state": issue.get("state", ""), "labels": labels.label_names(issue)}
+            found[key] = {"state": issue.get("state", ""), "labels": labels.label_names(issue)} \
+                | ({"state_reason": board.REOPENED} if issue.get("state_reason") == board.REOPENED else {})
     return found
 
 
@@ -575,6 +577,12 @@ def issue_or_none(api, number):
         if problem.status == GONE:
             return None
         raise
+
+
+def kept_names(listed):
+    """The branches a release left standing, released/<issue>-<short sha>,
+    by name, from the branch list as the API gives it."""
+    return [name for name in (board.branch_name(b) for b in listed) if name.startswith(claims.RELEASED_PREFIX)]
 
 
 def claim_heads(listed):
@@ -594,9 +602,13 @@ def may_be_due(issue):
     """Whether a release can be due on a claim on this issue, or can have
     happened: the issue is open and not labelled in-review, which a
     finished claim waiting for review is, whether or not the label claimed
-    is still on it."""
+    is still on it; or open and reopened, since the coordinator takes the
+    in-review an ended claim left off it before it releases, so its claim
+    branch, which stands, is released in the same run once it has gone a
+    day without a commit (coordinator.freeing; F22)."""
     names = (issue or {}).get("labels", [])
-    return issue is not None and issue.get("state") == "open" and labels.IN_REVIEW not in names
+    return issue is not None and issue.get("state") == "open" and (
+        labels.IN_REVIEW not in names or issue.get("state_reason") == board.REOPENED)
 
 
 def ready_branches(pulls):
@@ -1037,6 +1049,9 @@ def collect(api, sha, default_branch, now=None, started_by=""):
     }
     if undated:
         found["pushed_refused"] = undated
+    kept = kept_names(listed)
+    if kept:
+        found["kept_names"] = kept
     found["began"], refused = began_times(api, found)
     if refused:
         found["began_refused"] = refused
@@ -1202,16 +1217,69 @@ def post_comments(api, due):
 
 def coordinate(api, snapshot, now):
     """What the coordinator does in the board's run, before the board is
-    rendered: release every claim coordinator.releases_due names, then tell
-    each piece of open work about other work it meets that it has not been
-    told of. The snapshot is brought up to date with each release, so the
-    board this run renders shows it and the branch is renamed in the same
-    run. Nothing here raises: a call GitHub refuses is a line, and the next
-    claim is still released. The lines say what was done, one each, for the
-    workflow's log."""
+    rendered: free every reopened issue coordinator.reopened_due names,
+    release every claim coordinator.releases_due names, then tell each
+    piece of open work about other work it meets that it has not been told
+    of. The snapshot is brought up to date with each change, so the board
+    this run renders shows it and a released branch is renamed in the same
+    run, as a claim whose in-review a freeing took off is released once
+    due, its release read with the others' (may_be_due). Nothing here raises: a
+    call GitHub refuses is a line, and the next issue is still freed and
+    the next claim still released. The lines say what was done, one each,
+    for the workflow's log."""
     snap = board.as_snapshot(snapshot)
-    lines = [release_one(api, snap, key, now) for key in coordinator.releases_due(snap, now)]
+    lines = [free_reopened(api, snap, number) for number in coordinator.reopened_due(snap)]
+    lines += [release_one(api, snap, key, now) for key in coordinator.releases_due(snap, now)]
     return lines + tell_overlaps(api, snap)
+
+
+def free_reopened(api, snap, number):
+    """Free one reopened issue whose labels still speak of a claim that
+    ended (coordinator.freeing; F22): read it again first, since a merge
+    can close an issue after the board read it, and leave one that is
+    closed by then; where the board read no branch for it, read its claim
+    branch again too, and leave the issue to the next run once one
+    stands, since a worker that claimed it after the board read the
+    branches has just put claimed and its label on; then put todo on
+    where it goes and take the labels off in freeing's order, claimed
+    last, so a run that fails partway leaves the issue carrying claimed
+    or in-review for the next run to free. Nothing is put back: every
+    step brings the issue nearer to free. The snapshot takes what was
+    done, so the board this run renders shows it. Nothing here raises;
+    what was done, in a line."""
+    try:
+        issue = api.issue(number) or {}
+        if issue.get("state") != "open":
+            return f"#{number}: not freed, closed since the board read it"
+        plan = coordinator.freeing(snap, number, labels.label_names(issue))
+        if plan.taken_off and not plan.branch_stands and branch_sha(api, claims.branch_of(str(number))):
+            return f"#{number}: not freed, claimed since the board read the branches"
+    except GitHubError as problem:
+        return f"#{number}: not freed, reading it again failed: {problem}{github_words(problem)}"
+    put_on, taken_off = [], []
+    try:
+        if plan.put_on:
+            api.post(f"/repos/{api.repo}/issues/{number}/labels", {"labels": list(plan.put_on)})
+            put_on += plan.put_on
+        for name in plan.taken_off:
+            take_label_off(api, number, name)
+            taken_off.append(name)
+    except GitHubError as problem:
+        coordinator.after_labels(snap, str(number), taken_off, put_on)
+        return (f"#{number}: reopened, not wholly freed, the next run goes on: {problem}{github_words(problem)}"
+                + done_words(put_on, taken_off))
+    coordinator.after_labels(snap, str(number), taken_off, put_on)
+    if not taken_off:
+        return f"#{number}: reopened, nothing left to free"
+    if plan.branch_stands:
+        return f"#{number}: reopened with a branch standing for it" + done_words(put_on, taken_off)
+    return f"#{number}: reopened with its claim ended, freed" + done_words(put_on, taken_off)
+
+
+def done_words(put_on, taken_off):
+    """What a freeing did, as the end of its line."""
+    said = f"; {', '.join(put_on)} put on" if put_on else ""
+    return said + (f"; {', '.join(taken_off)} taken off" if taken_off else "")
 
 
 def holding(api, default_branch, sha):

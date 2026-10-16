@@ -446,6 +446,22 @@ class SnapshotShape(unittest.TestCase):
         # The issue behind a branch that is not there adds no row.
         self.assertEqual(board.render(json.loads(snap.to_json())), board.render(snapshot()))
 
+    def test_a_reopened_issue_and_the_released_branches_round_trip_and_are_left_out_where_none(self):
+        """state_reason and kept_names are written only when there is one, so
+        a snapshot saved before F22's fix is written back as it was; only
+        GitHub's word reopened marks an issue reopened."""
+        snap = Snapshot.from_dict(dict(snapshot(), kept_names=[{"name": "released/12-aaaaaaa"}, "released/3-bbbbbbb"]))
+        snap.issues[0] = Issue.from_dict({"number": 14, "labels": ["claimed"], "state_reason": "reopened"})
+        self.assertTrue(snap.issues[0].reopened)
+        self.assertEqual(snap.kept_names, ["released/12-aaaaaaa", "released/3-bbbbbbb"])
+        self.assertEqual(Snapshot.from_json(snap.to_json()), snap)
+        self.assertEqual(snap.issues[0].to_dict()["state_reason"], "reopened")
+        old = Snapshot.from_dict(snapshot())
+        self.assertNotIn("kept_names", old.to_dict())
+        self.assertNotIn("state_reason", old.issues[0].to_dict())
+        for reason in (None, "completed", "not_planned", "REOPENED", True):
+            self.assertFalse(Issue.from_dict({"number": 1, "state_reason": reason}).reopened, reason)
+
     def test_the_dataclass_and_the_dict_render_the_same_page(self):
         self.assertEqual(board.render(Snapshot.from_dict(snapshot())), board.render(snapshot()))
 

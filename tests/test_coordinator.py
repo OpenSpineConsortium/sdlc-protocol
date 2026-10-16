@@ -312,6 +312,98 @@ class ReleaseText(unittest.TestCase):
         self.assertEqual(coordinator.relabelled(["todo", "blocker"], ["blocker"], ["todo"]), ["todo"])
 
 
+def reopened(names=("claimed", "in-review", "todo", "worker:nightly"), **changes):
+    """Issue 12, which nightly's merged pull request closed, opened again
+    with the labels that claim left, its branch deleted at the merge."""
+    snap = {
+        "default_branch": "main",
+        "issues": [{"number": 12, "title": "Describe the board", "labels": list(names), "state_reason": "reopened"}],
+        "branches": [],
+    }
+    snap.update(changes)
+    return board.Snapshot.from_dict(snap)
+
+
+class ReopenedIssues(unittest.TestCase):
+    """F22: an issue reopened once its claim ended keeps the labels the claim
+    left, which until the fix held it out of the Queue and from every
+    worker for good, and with a claim branch still standing kept that claim
+    from ever being released."""
+
+    def test_with_no_branch_todo_goes_on_and_every_label_of_the_claim_comes_off_claimed_last(self):
+        snap = reopened()
+        self.assertEqual(coordinator.reopened_due(snap), [12])
+        self.assertEqual(coordinator.freeing(snap, 12, snap.issues[0].labels),
+                         coordinator.Freeing((), ("worker:nightly", "in-review", "claimed")))
+        given = reopened(("claimed", "in-review", "worker:nightly", "account:old", "worker:"))
+        self.assertEqual(coordinator.freeing(given, 12, given.issues[0].labels),
+                         coordinator.Freeing(("todo",), ("account:old", "worker:nightly", "in-review", "claimed")),
+                         "a task a worker's label alone gave gets todo as a release gives it (F15); a bare "
+                         "worker: names nobody and stays")
+
+    def test_a_blocker_or_an_epic_gets_no_todo(self):
+        for label in ("blocker", "epic"):
+            snap = reopened(("claimed", "in-review", label))
+            with self.subTest(label=label):
+                self.assertEqual(coordinator.freeing(snap, 12, snap.issues[0].labels),
+                                 coordinator.Freeing((), ("in-review", "claimed")))
+
+    def test_either_label_alone_is_enough_and_neither_is_nothing_to_free(self):
+        for names, taken in ((("claimed", "todo"), ("claimed",)), (("in-review", "todo"), ("in-review",)),
+                             (("todo", "worker:nightly"), ())):
+            snap = reopened(names)
+            with self.subTest(names=names):
+                self.assertEqual(coordinator.freeing(snap, 12, snap.issues[0].labels).taken_off, taken)
+                self.assertEqual(coordinator.reopened_due(snap), [12] if taken else [],
+                                 "a worker's label alone gives the issue to that worker, under Given to workers")
+
+    def test_with_a_branch_standing_in_review_alone_comes_off(self):
+        """A merged branch kept, or a new claim on the reopened issue: the
+        branch is a claim whatever the labels say, which the release frees
+        once it has gone a day without a commit, in the same run
+        (tests/test_github.py, FreeReopened); a released branch beside
+        claimed is a release a person is undoing (spec, Release)."""
+        for changes in ({"branches": ["claude/12"]}, {"kept_names": ["released/12-aaaaaaa"]}):
+            snap = reopened(**changes)
+            with self.subTest(changes=changes):
+                self.assertTrue(coordinator.claim_stands(snap, "12"))
+                self.assertEqual(coordinator.freeing(snap, 12, snap.issues[0].labels),
+                                 coordinator.Freeing((), ("in-review",), branch_stands=True))
+                without = reopened(("claimed", "todo", "worker:nightly"), **changes)
+                self.assertEqual(coordinator.reopened_due(without), [])
+        other = reopened(branches=["claude/120"], kept_names=["released/120-bbbbbbb", "released/1-ccccccc"])
+        self.assertFalse(coordinator.claim_stands(other, "12"), "another issue's branches hold nothing of #12")
+
+    def test_a_ready_pull_request_from_the_claim_branch_finishes_the_claim_and_nothing_comes_off(self):
+        ready = {"number": 41, "title": "Again", "head": {"ref": "claude/12", "sha": HEAD}, "mergeable_state": "clean",
+                 "updated_at": "2026-09-20T00:00:00Z", "draft": False, "files": ["a.md"]}
+        snap = reopened(branches=["claude/12"], pulls=[ready])
+        self.assertEqual(coordinator.reopened_due(snap), [])
+        draft = reopened(branches=["claude/12"], pulls=[dict(ready, draft=True)])
+        self.assertEqual(coordinator.freeing(draft, 12, draft.issues[0].labels).taken_off, ("in-review",),
+                         "a draft finishes nothing, so in-review is the old claim's")
+        fork = reopened(branches=["claude/12"], pulls=[dict(ready, head={"ref": "claude/12", "sha": HEAD,
+                                                                        "repo": {"full_name": "sam/fork"}},
+                                                            base={"repo": {"full_name": "octo/widgets"}})])
+        self.assertEqual(coordinator.reopened_due(fork), [12], "a fork's ready pull request is no claim's (F17)")
+
+    def test_an_issue_github_does_not_say_was_reopened_is_left_alone(self):
+        snap = reopened()
+        snap.issues[0].reopened = False
+        self.assertEqual(coordinator.reopened_due(snap), [],
+                         "an open issue never closed, labelled claimed with no branch, is one a merge is closing, "
+                         "or one a person labelled by hand")
+
+    def test_after_the_freeing_the_queue_lists_the_issue(self):
+        snap = reopened()
+        self.assertNotIn("#12", board.render(snap).split(board.QUEUE_HEADING)[1])
+        plan = coordinator.freeing(snap, 12, snap.issues[0].labels)
+        coordinator.after_labels(snap, "12", plan.taken_off, plan.put_on)
+        self.assertEqual(snap.issues[0].labels, ["todo"])
+        self.assertIn("| #12 | Describe the board | todo |", board.render(snap).split(board.QUEUE_HEADING)[1])
+        self.assertEqual(coordinator.reopened_due(snap), [])
+
+
 def meeting_work():
     """Three pull requests and a claim without one: #40 (ready) and #42
     (draft) both change a.md, #42 and the claim on issue 17 both plan b.md,
