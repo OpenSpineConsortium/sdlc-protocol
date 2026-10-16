@@ -30,9 +30,24 @@ where its history last added it, the last so that an issue claimed again
 after a merge is judged by its new claim and not by the one main's
 history keeps. A lease whose two workers differ, or that would put a
 branch with no claim file where another worker's claim stands, is
-refused (other_holder). The file is read with git in the session's own
-clone, so the fence costs a few git calls on a lease push and nothing
+refused (other_holder). The file is read with git in the clone the push
+runs in, so the fence costs a few git calls on a lease push and nothing
 on any other command.
+
+Each push is judged in the clone it runs in (refused_push), since a
+session's shell is not always where its push goes: git -C and env -C
+name another directory, and cd, pushd and popd move the shell before a
+later command, so "cd ../other && git push origin HEAD" pushes the other
+clone's branch, and its current and default branch, and its claim files,
+are that clone's. The module follows the shell's moves within one
+command (placed_commands), each part of a pipeline and each list run
+with & in a shell of its own, and joins each -C on in turn (push_place).
+Where it cannot tell the directory, after cd -, with a path that holds
+what the shell expands, or with the repository named by --git-dir,
+--bare or GIT_DIR, the push is judged by what its words name, with no
+current branch and no claim files, so it passes where only those would
+refuse it, as anything this module cannot read does. Until F21's fix
+every push was judged in the session's own clone.
 
 The hook is the first fence and branch protection on GitHub the second,
 so anything this module cannot read it lets through rather than wedging
@@ -45,8 +60,10 @@ found behind what the shell reads before a command: VAR=value
 assignments, the reserved words that open a compound command or negate a
 pipeline (!, {, if, then, else, elif, while, until, do, and function with
 its name), and the wrappers env, command, nice, time, exec, nohup and
-timeout, each with its own options. A push is read as git reads its
-arguments: short options in a bundle, as in -fu; a long one by any start
+timeout, each with its own options, and git's own options before the
+verb, each with its value where it takes one (GIT_VALUE_OPTIONS), and a
+query after which git runs nothing (GIT_QUERIES). A push is read as git
+reads its arguments: short options in a bundle, as in -fu; a long one by any start
 of its name that names it alone, as --force-w, or taken back with --no-;
 a value that is no refspec; the refspecs that write many branches, the
 matching refspec : and a pattern with a *; and each branch by the name
@@ -85,6 +102,7 @@ than this hook can read, each misreading cut real commands out of sight,
 and the one shape it bought is rare and answered by a rephrasing.
 """
 
+import os
 import re
 import shlex
 import subprocess
@@ -115,8 +133,25 @@ PUSH_LETTERS = {"v": "verbose", "q": "quiet", "d": "delete", "n": "dry-run", "f"
 WHOLESALE = ("all", "branches", "mirror")
 
 # Global options of git itself that take a separate value, between "git"
-# and the verb, as in "git -C clone push".
-GIT_VALUE_OPTIONS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path"}
+# and the verb, as in "git -C clone push": git 2.43's (git.c,
+# handle_options), --config-env and --attr-source among them, whose value
+# was read as the verb until F21's fix, so "git --config-env
+# user.name=HOME push origin main" read as no push.
+GIT_VALUE_OPTIONS = {"-C", "-c", "--config-env", "--git-dir", "--work-tree", "--namespace", "--attr-source"}
+# Global options after which git prints what it is asked and exits, running
+# no command: "git --exec-path push origin main" pushes nothing. So does
+# --list-cmds=<group>.
+GIT_QUERIES = {"--exec-path", "--html-path", "--man-path", "--info-path"}
+# How a push names its repository by a path, an option of git's own,
+# attached or not, or the variable, set before the command or exported
+# earlier: the push then goes where this module does not look (push_place).
+# --work-tree names a work tree and leaves the repository to the directory.
+GIT_REPOSITORY_OPTIONS = {"--git-dir", "--bare"}
+GIT_REPOSITORY_VARIABLE = "GIT_DIR"
+# What the shell expands in a path before cd or git sees it: a variable, a
+# command's output, a glob; such a path names a directory this module does
+# not know (joined).
+EXPANDED = set("$`*?[")
 
 
 class Wrapper(NamedTuple):
@@ -215,16 +250,20 @@ def plain_shell(command):
     return "".join(out)
 
 
-def simple_commands(command):
-    """The argument lists of the simple commands inside a shell command.
+def shell_parts(command):
+    """A shell command as the shell's parts, in order: each simple command
+    as the list of its words, and each run of operators between them, such
+    as ;, && or ) |, as a string.
 
     shlex with punctuation_chars keeps the shell's operators as their own
     tokens: ;, &&, | and ( ) end one command, a redirection swallows its
-    target and the file descriptor digit before it. A command shlex cannot
-    read (an unclosed quote) yields nothing, and the caller lets it pass.
-    Newlines and comments are read by plain_shell first, so shlex's own
-    comment handling, which would read a # inside a word as a comment and
-    swallow the rest of the text, is off.
+    target and the file descriptor digit before it, and a parenthesis in a
+    redirection's run, as in "(...)>log", still closes or opens its
+    subshell, after the command it ends. A command shlex cannot read (an
+    unclosed quote) yields nothing, and the caller lets it pass. Newlines
+    and comments are read by plain_shell first, so shlex's own comment
+    handling, which would read a # inside a word as a comment and swallow
+    the rest of the text, is off.
     """
     lexer = shlex.shlex(plain_shell(command), posix=True, punctuation_chars=True)
     lexer.whitespace_split = True
@@ -233,25 +272,37 @@ def simple_commands(command):
         tokens = list(lexer)
     except ValueError:
         return []
-    commands, current, eat_next = [], [], False
+    parts, current, eat_next, held = [], [], False, ""
     for token in tokens:
-        operator = all(ch in "();<>|&" for ch in token)
+        # An empty word, '' or "", is a word and no operator: read as one, it
+        # ended the command, so "git -C '' push origin main" read as no push
+        # until F21's fix.
+        operator = bool(token) and all(ch in "();<>|&" for ch in token)
         if operator and (">" in token or "<" in token):
             if current and current[-1].isdigit():
                 current.pop()
             eat_next = True
+            held += "".join(ch for ch in token if ch in "()")
         elif operator:
             if current:
-                commands.append(current)
-            current = []
-            eat_next = False
+                parts.append(current)
+            parts.append(held + token)
+            current, eat_next, held = [], False, ""
         elif eat_next:
             eat_next = False
         else:
             current.append(token)
     if current:
-        commands.append(current)
-    return commands
+        parts.append(current)
+    if held:
+        parts.append(held)
+    return parts
+
+
+def simple_commands(command):
+    """The argument lists of the simple commands inside a shell command
+    (shell_parts)."""
+    return [part for part in shell_parts(command) if isinstance(part, list)]
 
 
 def program(word):
@@ -292,38 +343,61 @@ def describes_only(options):
     return any(DESCRIBES_ONLY & set(word[1:]) for word in options if not word.startswith("--"))
 
 
-def command_start(argv):
-    """Where the command itself starts in argv: past leading assignments,
-    the RESERVED words, function and its name, and the WRAPPERS with their
-    options; None when nothing is run, as after a lone assignment or
-    command -v."""
-    i = 0
+class Launch(NamedTuple):
+    """What stands before the command itself in a simple command: the
+    assignments to its environment, each wrapper that runs it, by name with
+    its option words, and where the command starts, None when nothing is
+    run, as after a lone assignment or command -v."""
+
+    assignments: list
+    wrappers: list
+    start: object
+
+
+def launch(argv):
+    """argv read as the shell and the wrappers read it, past leading
+    assignments, the RESERVED words, function and its name, and the
+    WRAPPERS with their options (Launch)."""
+    assignments, wrappers, i = [], [], 0
     while i < len(argv):
         word = argv[i]
         name = program(word)
-        if word in RESERVED or ASSIGNMENT.match(word):
+        if word in RESERVED:
+            i += 1
+        elif ASSIGNMENT.match(word):
+            assignments.append(word)
             i += 1
         elif word == "function":
             i += 2
         elif name in WRAPPERS:
             end = past_options(argv, i + 1, WRAPPERS[name])
             if name == "command" and describes_only(argv[i + 1:end]):
-                return None
+                return Launch(assignments, wrappers, None)
+            wrappers.append((name, argv[i + 1:end]))
             i = end
         else:
-            return i
-    return None
+            return Launch(assignments, wrappers, i)
+    return Launch(assignments, wrappers, None)
+
+
+def command_start(argv):
+    """Where the command itself starts in argv, or None when nothing is run
+    (launch)."""
+    return launch(argv).start
 
 
 def push_arguments(argv):
     """The arguments after "push" when argv is a git push, else None; git
-    may stand behind assignments and wrappers (command_start)."""
+    may stand behind assignments and wrappers (command_start), and a query
+    of git's own, as --exec-path alone, runs no command at all."""
     start = command_start(argv)
     if start is None or program(argv[start]) != "git":
         return None
     i = start + 1
     while i < len(argv):
         word = argv[i]
+        if word in GIT_QUERIES or word.startswith("--list-cmds"):
+            return None
         if word in GIT_VALUE_OPTIONS:
             i += 2
         elif word.startswith("-"):
@@ -332,6 +406,242 @@ def push_arguments(argv):
             return argv[i + 1:]
         else:
             return None
+    return None
+
+
+def assigns_repository(word):
+    """Whether an assignment, or a name export hands on, is GIT_DIR's."""
+    return word.split("=", 1)[0].rstrip("+") == GIT_REPOSITORY_VARIABLE
+
+
+def joined(place, path):
+    """The directory a path names from place, as cd and git -C read it: an
+    absolute path in place of it, a relative one joined on and normalised
+    as cd's logical path is, ~ the home directory, and an empty path, which
+    git -C and bash's cd both take as no change, place itself; None when
+    place is None or the path holds what the shell expands first
+    (EXPANDED)."""
+    if place is None or EXPANDED & set(path):
+        return None
+    if not path:
+        return place
+    return os.path.normpath(os.path.join(place, os.path.expanduser(path)))
+
+
+def env_directories(options):
+    """The directories env's option words name for the command it runs, in
+    order, as GNU env reads -C DIR, -CDIR, a bundle that ends in C, and
+    --chdir with its value attached or as the next word."""
+    found, env, i = [], WRAPPERS["env"], 0
+    while i < len(options):
+        word = options[i]
+        i += 1
+        if word == "--":
+            break
+        if word.startswith("--"):
+            name, attached, value = word.partition("=")
+            if not attached and name in env.long_values and i < len(options):
+                value, i = options[i], i + 1
+            if name == "--chdir":
+                found.append(value)
+            continue
+        for at, letter in enumerate(word[1:], start=1):
+            if letter in env.short_values:
+                value = word[at + 1:]
+                if not value and i < len(options):
+                    value, i = options[i], i + 1
+                if letter == "C":
+                    found.append(value)
+                break
+    return found
+
+
+def push_place(argv, here):
+    """The directory the git push argv runs in, from here, the directory
+    its shell runs it in (placed_commands): with the directory each of
+    env's -C and --chdir names, then each -C git is given, joined on in
+    turn, as git and env read them; None when here is None, a path holds
+    what the shell expands (joined), or the push names its repository by a
+    path, with --git-dir, --bare or GIT_DIR, so it goes where this module
+    does not look."""
+    found = launch(argv)
+    if any(assigns_repository(word) for word in found.assignments):
+        return None
+    place = here
+    for name, options in found.wrappers:
+        for directory in env_directories(options) if name == "env" else ():
+            place = joined(place, directory)
+    i = found.start + 1
+    while i < len(argv) and argv[i] != "push":
+        word = argv[i]
+        if word.split("=", 1)[0] in GIT_REPOSITORY_OPTIONS:
+            return None
+        if word == "-C":
+            place = joined(place, argv[i + 1] if i + 1 < len(argv) else "")
+        i += 2 if word in GIT_VALUE_OPTIONS else 1
+    return place
+
+
+# --- where the shell runs each command ------------------------------------------
+
+class Shell(NamedTuple):
+    """Where a shell stands as it runs a command: its directory and the
+    directories pushd stacked, each None where this module cannot tell."""
+
+    directory: object
+    stack: object = ()
+
+
+def operators(run):
+    """The shell's operators in a run of them, ;; and && and the like as
+    one each: ")", "|" for ")|"."""
+    found, i = [], 0
+    while i < len(run):
+        size = 2 if run[i:i + 2] in ("&&", "||", "|&", ";;", ";&") else 1
+        found.append(run[i:i + size])
+        i += size
+    return found
+
+
+def operands_of(words):
+    """A builtin's operands, past its options and a -- that ends them; a
+    lone - is an operand."""
+    i = 0
+    while i < len(words) and words[i].startswith("-") and words[i] != "-":
+        i += 1
+        if words[i - 1] == "--":
+            break
+    return words[i:]
+
+
+def rotates(word):
+    """Whether pushd's or popd's operand is +N or -N, which turns the stack."""
+    return word[:1] in "+-" and word[1:].isascii() and word[1:].isdigit()
+
+
+def cd(shell, operands):
+    """Where cd takes the shell: to its operand, the home directory with
+    none, and to the directory before for -, which this module does not
+    track; its options (-L, -P, -e, -@) change nothing here, the logical
+    path being joined's."""
+    words = operands_of(operands)
+    target = words[0] if words else "~"
+    if target == "-":
+        return Shell(None, shell.stack)
+    return Shell(joined(shell.directory, target), shell.stack)
+
+
+def pushd(shell, operands):
+    """pushd DIR moves the shell to DIR and stacks where it was; with -n it
+    stacks DIR and moves nothing, and with no operand, -, +N or -N it turns
+    the stack, which this module does not follow."""
+    words, moves = list(operands), True
+    while words and words[0] == "-n":
+        words, moves = words[1:], False
+    if words and words[0] == "--":
+        words = words[1:]
+    if not words or words[0] == "-" or rotates(words[0]):
+        return Shell(None, None)
+    if not moves:
+        return Shell(shell.directory, None)
+    stack = None if shell.stack is None else shell.stack + (shell.directory,)
+    return Shell(joined(shell.directory, words[0]), stack)
+
+
+def popd(shell, operands):
+    """popd moves the shell back to where pushd last stacked it; with -n,
+    +N or -N it takes another entry off, or one without the move, and from
+    a stack this command did not fill it moves where this module cannot
+    tell."""
+    if operands == ["-n"]:
+        return Shell(shell.directory, None)
+    if operands or not shell.stack:
+        return Shell(None, None)
+    return Shell(shell.stack[-1], shell.stack[:-1])
+
+
+def moved_to(argv, shell):
+    """Where the shell stands after the simple command argv: cd, pushd and
+    popd, run by the shell itself, behind assignments, reserved words,
+    command or builtin, move it; GIT_DIR set alone or exported points git
+    at a repository this module does not follow, which puts the directory
+    out of its reading; anything else, a cd another program runs among
+    them, as env cd does, leaves it where it was."""
+    found = launch(argv)
+    if found.start is None:
+        return Shell(None, shell.stack) if any(assigns_repository(word) for word in found.assignments) else shell
+    if any(name != "command" for name, _ in found.wrappers):
+        return shell
+    name, operands = argv[found.start], argv[found.start + 1:]
+    if name == "builtin" and operands:
+        name, operands = operands[0], operands[1:]
+    if name in ("export", "declare", "typeset", "readonly", "local"):
+        return Shell(None, shell.stack) if any(assigns_repository(word) for word in operands) else shell
+    moves = {"cd": cd, "pushd": pushd, "popd": popd}.get(name)
+    return moves(shell, operands) if moves else shell
+
+
+def placed_commands(command, here):
+    """Each simple command in a shell command, with the directory the shell
+    runs it in, from here, where the command starts: a move (moved_to)
+    holds for what follows it in the same shell, a subshell's ends at its
+    ), and each part of a pipeline, and a list run with & in the
+    background, runs in a shell of its own, so its moves change nothing
+    after it. A directory this module cannot tell is None."""
+    placed, shell, opened, piped = [], Shell(here), [], False
+    list_start = pipe_start = shell
+    for part in shell_parts(command):
+        if isinstance(part, list):
+            placed.append((part, shell.directory))
+            shell = moved_to(part, shell)
+            continue
+        for operator in operators(part):
+            if operator in ("|", "|&"):
+                shell, piped = pipe_start, True
+                continue
+            if piped:
+                shell, piped = pipe_start, False
+            if operator == "(":
+                opened.append(shell)
+            elif operator == ")" and opened:
+                shell = opened.pop()
+            elif operator == "&":
+                shell = list_start
+            if operator not in ("&&", "||"):
+                list_start = shell
+            pipe_start = shell
+    return placed
+
+
+def refused_push(command, here, branches_of=None, reader_of=None):
+    """Why the first push of a shell command that this module refuses is
+    refused, or None when it refuses none. Each push is judged in the
+    clone it runs in, from here, the directory the command starts in
+    (placed_commands, push_place), its current and default branch read
+    there (branches_of, by default branches) and, for a lease, its claim
+    files (reader_of, by default claim_file_reader), each clone asked once
+    (F21: until the fix every push was judged in here's clone, so "git -C
+    ../clone push" from a claim branch sent ../clone's main, and a lease
+    from a clone that had fetched another's claim was judged in one that
+    had not). A push whose clone this module cannot tell is judged with no
+    current branch and no claim files, by what its words name, the default
+    branch being here's, so a bare push there passes, as anything this
+    module cannot read does."""
+    branches_of = branches_of or branches
+    reader_of = reader_of or claim_file_reader
+    asked = {}
+    for argv, directory in placed_commands(command, here):
+        args = push_arguments(argv)
+        if args is None:
+            continue
+        place = push_place(argv, directory)
+        if place not in asked:
+            asked[place] = ((branches_of(place), reader_of(place)) if place is not None
+                            else ((None, branches_of(here)[1]), None))
+        (current, default), reader = asked[place]
+        reason = refusal(args, current, default, reader)
+        if reason:
+            return reason
     return None
 
 
@@ -664,22 +974,14 @@ def run(payload, cwd=None):
     """The hook's answer to one tool call: the exit code and the reason,
     which is empty when the call passes. The payload is the hook's JSON
     already decoded; cli.py reads it from stdin and lets a payload that is
-    not JSON pass, as this lets one that is not an object pass. Git is
-    asked in the payload's own cwd, else in cwd, else here, and only once
-    the command holds a push, so a session that never pushes never waits
-    on it; and for the claim files a lease is judged by, only on a lease
-    push (other_holder)."""
+    not JSON pass, as this lets one that is not an object pass. The
+    command starts in the payload's own cwd, else in cwd, else here, and
+    each push is judged in the clone it runs in from there (refused_push),
+    git being asked only once the command holds a push, so a session that
+    never pushes never waits on it; and for the claim files a lease is
+    judged by, only on a lease push (other_holder)."""
     command = command_of(payload)
     if "push" not in command:
         return PASS, ""
-    pushes = [args for argv in simple_commands(command)
-              if (args := push_arguments(argv)) is not None]
-    if not pushes:
-        return PASS, ""
-    where = where_to_ask(payload, cwd)
-    current, default = branches(where)
-    for args in pushes:
-        reason = refusal(args, current, default, claim_file_reader(where))
-        if reason:
-            return REFUSE, reason
-    return PASS, ""
+    reason = refused_push(command, where_to_ask(payload, cwd))
+    return (REFUSE, reason) if reason else (PASS, "")
