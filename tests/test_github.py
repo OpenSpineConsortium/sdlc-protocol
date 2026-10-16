@@ -1804,8 +1804,9 @@ class Coordinate(unittest.TestCase):
         """F20: GitHub refuses the release comment and then the read of the
         issue's comments that would say whether it wrote it anyway. Until
         the fix the run put the labels back, and where the comment stood
-        the claim was held for good, the comment telling every later run it
-        was released and the label claimed telling the board it was held;
+        the claim was held for good, the comment telling every later
+        coordinator it was released and the label claimed telling the board
+        it was held;
         the labels now stay as the release left them, no release is counted
         and the page lists the claim as held until the next run settles it
         (ReleaseAcrossRuns)."""
@@ -1817,8 +1818,7 @@ class Coordinate(unittest.TestCase):
         self.assertEqual(github.coordinate(api, snap, NOW), [
             "#12: release unsettled, the comment failed: POST /repos/o/r/issues/12/comments: HTTP 502; its issue's "
             "comments could not be read to see whether GitHub wrote it anyway: GET /repos/o/r/issues/12/comments: "
-            "HTTP 502; the labels stay as the release left them, and the next run finds the comment or releases the "
-            "claim again"])
+            "HTTP 502; the labels stay as the release left them"])
         self.assertEqual([c.get_method() for c in opener.calls], ["DELETE", "DELETE", "GET", "POST", "GET"])
         self.assertEqual((snap.claim_issues["12"].labels, snap.issues[0].labels), (["todo"], ["todo"]))
         self.assertEqual(snap.releases["12"].released_at, "")
@@ -2350,6 +2350,31 @@ class ReleaseAcrossRuns(unittest.TestCase):
         api, _ = client(answers)
         lines = github.coordinate(api, snap, NOW)
         self.assertIn("but the comment is there", lines[0])
+        self.assertEqual(board.released_keys(snap), {"12"})
+
+    def test_an_unsettled_release_of_a_kept_head_is_the_earlier_release(self):
+        """F20's review: a kept head whose release a person undid is
+        released again once idle, and GitHub refuses the post and the read
+        after it. The run counts no release of its own, but once the labels
+        are off the earlier release comment counts for the kept head
+        whenever it came, so the same run lists the claim as released, the
+        board deleting the branch, with no word of this release on the
+        issue where GitHub wrote none; putting the labels back would hold
+        the claim for good where GitHub wrote the comment, as on any
+        head."""
+        snap = idle_snapshot()
+        snap.releases["12"] = board.Release(released_at="2026-09-17T09:00:00Z", sha=HEAD_12, committed_at="",
+                                            pushed_at="2026-09-18T12:00:00Z", kept=True)
+        answers = release_answers()
+        answers["POST /repos/o/r/issues/12/comments"] = Refusal(502)
+        answers[COMMENTS_12] = Refusal(502)
+        api, opener = client(answers)
+        lines = github.coordinate(api, snap, NOW)
+        self.assertEqual(len(lines), 1)
+        self.assertTrue(lines[0].startswith("#12: release unsettled, the comment failed"), lines)
+        self.assertEqual([c.get_method() for c in opener.calls], ["DELETE", "DELETE", "GET", "POST", "GET"])
+        self.assertEqual(snap.claim_issues["12"].labels, ["todo"])
+        self.assertEqual(snap.releases["12"].released_at, "2026-09-17T09:00:00Z")
         self.assertEqual(board.released_keys(snap), {"12"})
 
     def test_a_plan_longer_than_github_takes_in_a_comment_is_cut_and_the_claim_released(self):

@@ -776,10 +776,22 @@ class AReleaseThatCannotReadItsComment(unittest.TestCase):
                 with self.subTest(fault=fault, mutant=mutant), mutants.switched_on(mutants.MUTANTS[mutant]):
                     self.assertEqual(guarantees(violations(self.DUE + [board_with(fault), BOARD])), [guarantee])
 
+    def test_a_holder_who_pushes_before_the_next_run_keeps_the_claim_with_its_labels_off(self):
+        """F20's review: the holder pushes between the unsettled run and the
+        next, which finds any comment GitHub wrote older than the push and
+        so no release: the claim stays the holder's with its labels off,
+        nothing making a holder announce again, until it goes a day without
+        a commit and is released again."""
+        for fault in self.FAULTS:
+            with self.subTest(fault=fault):
+                self.assertEqual(violations(self.DUE + [board_with(fault), Verb("commit", "a", (1,)), BOARD,
+                                                        Verb("wait", "clock", (25,)), BOARD]), [])
+
     def test_the_read_after_a_failed_release_comment_is_one_the_run_does_without(self):
         """A refused read excuses a run that fails, but not this one, which
         the run does without; nor a refused read after another kind of
-        comment, or of another issue's comments."""
+        comment, or of another issue's comments, nor one after the re-read
+        GitHub answered (F20's review)."""
         posted = Call("POST", "/issues/1/comments", (), {"body": oracle.RELEASE_MARKER + "\nreleased"}, 502, True,
                       True)
         unread = Call("GET", "/issues/1/comments", (), None, 500, False, True)
@@ -788,6 +800,8 @@ class AReleaseThatCannotReadItsComment(unittest.TestCase):
                        True, True)
         self.assertEqual(invariants.unread_releases([posted, unread]), {1})
         self.assertEqual(invariants.unread_releases([unread, posted]), set())
+        answered = Call("GET", "/issues/1/comments", (), None, 200, False)
+        self.assertEqual(invariants.unread_releases([posted, answered, unread]), set())
         self.assertEqual(invariants.unread_releases([overlap, unread]), set())
         self.assertFalse(invariants.reads_failed([posted, unread]))
         self.assertTrue(invariants.reads_failed([posted, unread, another]))

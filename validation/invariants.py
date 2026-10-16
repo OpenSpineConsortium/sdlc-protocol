@@ -333,7 +333,7 @@ def first_half_checks(before, after, half, known=oracle.AS_BUILT):
     problems += release_order(actual)
     problems += releases_only_due(seen_before, actual)
     problems += labels_put_back(before, after, half.fake.calls, actual)
-    problems += unsettled_left_alone(half.fake.calls, actual)
+    problems += unsettled_left_alone(half.fake.calls, actual, seen_before)
     problems += labels_name_the_holder(after, actual)
     problems += board_renders_the_state(seen_after, half, known)
     return problems
@@ -381,7 +381,7 @@ def cycle_checks(before, after, record, known=oracle.AS_BUILT):
             problems += quiet_second_run(after, record)
     actual = effects_of(record.calls)
     problems += rename_refused_said(before, record, actual)
-    problems += unsettled_left_alone(record.calls, actual)
+    problems += unsettled_left_alone(record.calls, actual, seen_start)
     if not split:
         problems += release_order(actual)
         problems += releases_only_due(seen_start, actual)
@@ -541,19 +541,26 @@ def unread_releases(calls):
 def unsettling_reads(calls):
     """The refused reads of an issue's comments that came after GitHub
     answered the post of its release comment with an error, each by its
-    place among the calls, with the issue: the read that would have said
-    whether GitHub wrote the comment anyway, which the run does without,
-    leaving the release for the next run to settle (SPEC["unsettled"];
-    F20)."""
+    place among the calls, with the issue: the re-read that would have
+    said whether GitHub wrote the comment anyway, which the run does
+    without, leaving the release for the next run to settle
+    (SPEC["unsettled"]; F20). That re-read is the first read of the
+    issue's comments after the failed post, one page, since no trace
+    holds more comments on an issue than the fake gives in a page; a
+    later read of them in the run, for an overlap's markers or a
+    released branch's comment, is a read like any other, so one GitHub
+    refuses is no reason for the labels to stay off (F20's review)."""
     failed, found = set(), {}
     for at, c in enumerate(calls):
         number = comments_of(c.path)
-        if number is None or c.status < 400:
+        if number is None:
             continue
-        if c.method == "POST" and oracle.comment_kind(c.body["body"]) == "claim-released":
+        if c.method == "POST" and c.status >= 400 and oracle.comment_kind(c.body["body"]) == "claim-released":
             failed.add(number)
         elif c.method == "GET" and number in failed:
-            found[at] = number
+            failed.discard(number)
+            if c.status >= 400:
+                found[at] = number
     return found
 
 
@@ -567,15 +574,22 @@ def comments_of(path):
     return None
 
 
-def unsettled_left_alone(calls, actual):
+def unsettled_left_alone(calls, actual, start):
     """A run that could not tell whether its release comment stands counts
-    no release: it neither renames nor deletes the claim's branch nor says
-    where the branch went, since the next run, reading the comments, finds
-    the release whole or releases the claim again (SPEC["settled next"];
-    F20) (G3L)."""
+    no release of its own: it neither renames nor deletes the claim's
+    branch nor says where the branch went, since the next run, reading the
+    comments, finds the release whole or releases the claim again
+    (SPEC["unsettled"], SPEC["settled next"]; F20) (G3L). A head a release
+    already kept, in start, the state the run started from, is the
+    exception: its latest release comment counts for it whenever it came,
+    so once the labels are off that earlier release frees the claim in
+    the same run, and the board deletes the branch, whose work is kept
+    (SPEC["unsettled kept"], SPEC["kept deleted"]; F20's review)."""
     problems = []
     for number in sorted(unread_releases(calls)):
         ref = oracle.branch_of(number)
+        if oracle.kept(start, ref) and oracle.latest_release(start, number) is not None:
+            continue
         for effect in actual:
             if (effect.kind in ("rename", "delete-ref") and effect.target == ref) \
                     or effect == oracle.Effect("comment", number, "released"):

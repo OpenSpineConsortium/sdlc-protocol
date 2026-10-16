@@ -787,8 +787,8 @@ def landed_release_finding_none_unread(api, key, release):
     read of the issue's comments GitHub refuses finds no comment, as a
     read that listed none does, so release_one puts the labels back
     beside a comment that may stand, which holds the claim for good, the
-    comment telling every later run the claim is released and the label
-    claimed telling the board it is held (F20)."""
+    comment telling every later coordinator the claim is released and the
+    label claimed telling the board it is held (F20)."""
     try:
         comments = api.get_all(f"/repos/{api.repo}/issues/{key}/comments")
     except github.GitHubError:
