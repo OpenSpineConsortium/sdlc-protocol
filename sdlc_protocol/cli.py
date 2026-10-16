@@ -109,7 +109,8 @@ def plan_board(api, sha, default_branch, now, render_only=False, say=print, star
     half-minute of a workflow run allows; say takes each log line as it is
     made, and started_by is the branch whose push started the run
     (pushed_branch), "" for none, whose claim no read of the activity
-    dates is dated at the run's start (adapters.github.head_since)."""
+    dates, or one dates only by an entry from before the run began, is
+    dated at the run's start (adapters.github.head_since)."""
     github = github_adapter()
     snap = github.snapshot(api, sha, default_branch, now, started_by)
     for line in github.unread_claim_lines(snap) + github.pushed_refused_lines(snap) + github.began_refused_lines(snap):
@@ -158,8 +159,9 @@ def pushed_branch(environ):
     event whose action is not synchronize, whose payload is read all the
     same, since the action is in it, nor on a payload that cannot be read
     or where the environment does not name the repository the run is in
-    (GITHUB_REPOSITORY). A claim on that branch whose push no read
-    of the activity dates is dated at the run's start, for that run alone
+    (GITHUB_REPOSITORY). A claim on that branch whose push no read of the
+    activity dates, or one dates only by an entry from before the run
+    began, is dated at the run's start, for that run alone
     (spec/PROTOCOL.md, Release; adapters.github.head_since): the push
     that started the run is the one the activity is likeliest not to list
     yet. A synchronize that GitHub fires for a change of the pull request's

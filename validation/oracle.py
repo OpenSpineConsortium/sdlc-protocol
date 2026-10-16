@@ -72,10 +72,11 @@ SPEC = {
              "head came no sooner than.",
     "started by": "In the run that a push to the branch started, which the workflow's event names, a head no read "
                   "dates is dated at the run's start instead, and so is one a read dates by an entry that set it "
-                  "before the run began, an older push of the same head that the activity lists while it does not "
-                  "list that push yet, for that run alone, since that push came just before the run, whatever the "
-                  "two reads list, so no claim is released in the run its own push started; the next run reads the "
-                  "activity again.",
+                  "more than a few minutes before the run began, an older push of the same head that the activity "
+                  "lists while it does not list that push yet, or that push itself where the run, queued behind "
+                  "others, began that much after it, for that run alone, since that push came just before the run, "
+                  "whatever the two reads list, so no claim is released in the run its own push started; the next "
+                  "run reads the activity again.",
     "finished": "an issue labelled in-review, a pull request marked ready, or a draft whose author's latest comment "
                 "on it starts with \"finished; ready to mark\" waits for review however long it takes.",
     "order": "The coordinator first takes the label claimed and every worker's label off the issue, a label "
@@ -236,7 +237,7 @@ BOARD_MARKERS = {
 # which clause a line owes is the oracle's (floor_dates, pushed_branch).
 LOG_WORDS = {
     "listed none": "the repository's activity lists no push that set the branch's head",
-    "older push": "the repository's activity lists only an older push that set the branch's head",
+    "older push": "the newest push the repository's activity lists of the branch's head came before this run began",
     "refused": "GitHub refused to say when the push that set the branch's head came (",
     "read from": ", so its idleness is read from ",
     "committer date": ", so its idleness is read from its committer date",
@@ -384,13 +385,16 @@ def own_push_dates(minute, began):
     """Whether the minute a read dates the push of a head at stands in the
     run that the branch's push started, which began at the minute began:
     only when it came after the run began, MOVED_SLACK_MINUTES before
-    allowed, as for an entry that names another head (entry_dates), since
-    an entry that set the head before the run began is an older push of
-    the same head, the run's own not listed yet, and the run's start dates
-    the head in its place (SPEC["started by"]: "and so is one a read dates
-    by an entry that set it before the run began"; F8's follow-up's second
-    review, which found the claim released in the run its own push
-    started, the oracle agreeing with the library)."""
+    allowed, the library's few minutes, as for an entry that names another
+    head (entry_dates), since an entry that set the head before that is an
+    older push of the same head, the run's own not listed yet, and the
+    run's start dates the head in its place (SPEC["started by"]: "and so
+    is one a read dates by an entry that set it more than a few minutes
+    before the run began"; F8's follow-up's second review, which found the
+    claim released in the run its own push started, the oracle agreeing
+    with the library). The model's runs begin at the minute of the push
+    that starts them, so the run's own push, which a run queued behind
+    others reads the same way, is always within the slack here."""
     return minute >= began - MOVED_SLACK_MINUTES
 
 

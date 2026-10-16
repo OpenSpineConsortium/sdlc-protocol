@@ -64,14 +64,19 @@ MERGEABLE_RETRY_SECONDS = 3
 # date (head_since, F8).
 PUSH_RETRY_SECONDS = 3
 NO_PUSH_LISTED = "the repository's activity lists no push that set the branch's head"
-# In the run a branch's push started, an entry that set its head but came
-# before the run began is an older push of that head, the run's own not
-# listed yet (head_since).
-OLDER_PUSH_LISTED = "the repository's activity lists only an older push that set the branch's head"
+# In the run a branch's push started, an entry that set its head more than
+# PUSH_SINCE_SLACK before the run began dates nothing: an older push of
+# that head, the run's own not listed yet, or the run's own where the run
+# began that much after it, queued behind other runs; either way the run's
+# start dates the head, and the line says only what is so of both
+# (head_since).
+OLDER_PUSH_LISTED = "the newest push the repository's activity lists of the branch's head came before this run began"
 # An entry of a branch's activity that names another head dates the claim
 # only when it came after the run began, a push after the run read the
 # branch; this much earlier still counts, for a runner's clock ahead of
-# GitHub's. Dating by it can only hold a claim, never release one.
+# GitHub's. Dating by it can only hold a claim, never release one. In the
+# run a branch's push started, an entry that set the head counts as that
+# push only when it came as late as this too (OLDER_PUSH_LISTED).
 PUSH_SINCE_SLACK = timedelta(minutes=5)
 RECENT_MERGED = board.RECENT_MERGED
 
@@ -647,11 +652,14 @@ def head_since(api, branch, sha, refused=None, now=None, started_by=""):
     floor, so the committer date would have a claim commit dated back
     released in the run its own push started (F8's third review). So is a
     head a read dates by an entry that came more than PUSH_SINCE_SLACK
-    before the run began, an older push of the same head that the
-    activity lists while it does not list the run's own yet, as a head
-    pushed back to one the branch had before gives, which dated by that
-    entry would be released in the run its own push started too
-    (OLDER_PUSH_LISTED; F8's follow-up's second review). The next run
+    before the run began: an older push of the same head that the activity
+    lists while it does not list the run's own yet, as a head pushed back
+    to one the branch had before gives, which dated by that entry would be
+    released in the run its own push started where the entry is more than
+    a day old (OLDER_PUSH_LISTED; F8's follow-up's second review); or the
+    run's own push, where the run began that much after it, queued behind
+    other runs, which the run's start then dates a little late, holding
+    the claim no longer than the queue held the run (its review). The next run
     reads the activity again, so no claim is held for good. refused
     records why, by branch, for the run's log (pushed_refused_lines),
     except for a repository GitHub keeps no activity of (a 404), whose
@@ -904,12 +912,12 @@ def releases(api, heads, found_issues, pulls, now=None, asked=None, every_head=N
     dated by its push was dated by its committer date, by the newest
     entry listed or by the run's start: GitHub's refusal, or an activity
     that lists no push of the head, or, in the run the branch's push
-    started, only an older one. now is when the run began, taken before it
-    read the branches, so a push after that read is told from a stale
-    entry (pushed_by); started_by is the branch whose push started the
-    run, "" for none, whose head is dated at the run's start where no read
-    dates its push, or a read dates it by an older push of the same head
-    (head_since)."""
+    started, only one from before the run began. now is when the run
+    began, taken before it read the branches, so a push after that read is
+    told from a stale entry (pushed_by); started_by is the branch whose
+    push started the run, "" for none, whose head is dated at the run's
+    start where no read dates its push, or a read dates it by an entry from
+    before the run began (head_since)."""
     now = now or datetime.now(timezone.utc)
     ready, trusted = ready_branches(pulls), may_write(api, asked)
     drafts = {(p.get("head") or {}).get("ref"): p for p in pulls if p.get("draft") and is_claims(p)}

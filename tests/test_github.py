@@ -1140,8 +1140,11 @@ class Releases(unittest.TestCase):
         entry that set the head but came more than PUSH_SINCE_SLACK before
         the run began, an older push of the same head, dates nothing in
         that run either: the head is dated at the run's start and the log
-        says the activity lists only an older push that set it; another
-        branch is still dated by such an entry."""
+        says the newest push the activity lists of it came before the run
+        began, which is so too of the run's own push where the run, queued
+        behind others, began more than PUSH_SINCE_SLACK after it (the
+        review of that change); another branch is still dated by such an
+        entry."""
         listed = FakeAnswer([pushed("claude/12", "2026-09-19T12:00:00Z", HEAD_12)])
         older_head = FakeAnswer([pushed("claude/12", "2026-09-18T12:00:00Z", HEAD_12)])
         at_the_slack = FakeAnswer([pushed("claude/12", "2026-09-19T11:55:30Z", HEAD_12)])

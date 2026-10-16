@@ -707,12 +707,13 @@ def head_since_ignoring_the_run_s_event(api, branch, sha, refused=None, now=None
 def head_since_trusting_an_older_push(api, branch, sha, refused=None, now=None, started_by=""):
     """github.head_since as F8's follow-up first built it: in the run a
     branch's push started, a read that dates the head by an entry from
-    before the run began, an older push of the same head that an activity
-    two pushes behind lists newest where the branch was pushed back to a
-    head it had before, dates it by that entry, so the claim is released
-    in the run its own push started (SPEC["started by"]: "and so is one a
-    read dates by an entry that set it before the run began"; F8's
-    follow-up's second review, which found no lane catching it)."""
+    more than a few minutes before the run began, an older push of the
+    same head that an activity two pushes behind lists newest where the
+    branch was pushed back to a head it had before, dates it by that
+    entry, so the claim is released in the run its own push started
+    (SPEC["started by"]: "and so is one a read dates by an entry that set
+    it more than a few minutes before the run began"; F8's follow-up's
+    second review, which found no lane catching it)."""
     return head_since_copy(api, branch, sha, refused, now, started_by, older=False)
 
 
@@ -1453,9 +1454,10 @@ MUTANTS = {
               "run its own push started (F8's third review)"),
     "an older push trusted in the run its push started": Mutant(
         github, "head_since", head_since_trusting_an_older_push,
-        "G3", "in the run a branch's push started a head a read dates by an entry from before the run began, an "
-              "older push of the same head, is dated at the run's start, so a claim pushed back to a head it had "
-              "a day before is not released in the run its own push started (F8's follow-up's second review)"),
+        "G3", "in the run a branch's push started a head a read dates by an entry from more than a few minutes "
+              "before the run began, an older push of the same head, is dated at the run's start, so a claim "
+              "pushed back to a head it had a day before is not released in the run its own push started (F8's "
+              "follow-up's second review)"),
     "a kept head's old release taken for the lost comment": Mutant(
         github, "landed_release", landed_release_whenever_it_came,
         "G3L", "a release comment found after a post GitHub refused is this run's only when it is newer than the "
