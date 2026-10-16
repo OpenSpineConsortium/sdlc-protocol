@@ -251,14 +251,18 @@ class BoardLiveRun(unittest.TestCase):
     def test_pushed_branch_reads_a_pull_request_s_head_on_its_synchronize_alone(self):
         """A synchronize names the pull request's head branch when the head
         is this repository's; any other action, a fork's head, a missing
-        or unreadable payload and a head with no ref name none."""
-        def pushed(payload, event="pull_request", path=None):
+        or unreadable payload, a head with no ref and an environment that
+        names no repository, under which a head with no repository would
+        otherwise pass (the first review), name none."""
+        def pushed(payload, event="pull_request", path=None, repo=REPO):
             with tempfile.TemporaryDirectory() as folder:
                 where = Path(folder) / "event.json"
                 if payload is not None:
                     where.write_text(payload if isinstance(payload, str) else json.dumps(payload), encoding="utf-8")
-                return cli.pushed_branch({"GITHUB_EVENT_NAME": event, "GITHUB_REPOSITORY": REPO,
-                                          "GITHUB_EVENT_PATH": path or str(where)})
+                environ = {"GITHUB_EVENT_NAME": event, "GITHUB_EVENT_PATH": path or str(where)}
+                if repo is not None:
+                    environ["GITHUB_REPOSITORY"] = repo
+                return cli.pushed_branch(environ)
 
         head = {"ref": "claude/7", "repo": {"full_name": REPO}}
         self.assertEqual(pushed({"action": "synchronize", "pull_request": {"head": head}}), "claude/7")
@@ -268,6 +272,13 @@ class BoardLiveRun(unittest.TestCase):
         self.assertEqual(pushed({"action": "synchronize", "pull_request": {"head": dict(head, repo={"full_name": "f/w"})}}),
                          "")
         self.assertEqual(pushed({"action": "synchronize", "pull_request": {"head": dict(head, repo=None)}}), "")
+        for absent in (None, ""):
+            self.assertEqual(pushed({"action": "synchronize", "pull_request": {"head": head}}, repo=absent), "")
+            self.assertEqual(pushed({"action": "synchronize", "pull_request": {"head": dict(head, repo=None)}},
+                                    repo=absent), "")
+            self.assertEqual(pushed({"action": "synchronize",
+                                     "pull_request": {"head": dict(head, repo={"full_name": None})}}, repo=absent),
+                             "")
         self.assertEqual(pushed({"action": "synchronize", "pull_request": {"head": dict(head, ref=None)}}), "")
         self.assertEqual(pushed({"action": "synchronize", "pull_request": {}}), "")
         self.assertEqual(pushed({"action": "synchronize"}), "")
