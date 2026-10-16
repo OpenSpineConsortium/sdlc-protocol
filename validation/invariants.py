@@ -328,10 +328,11 @@ def first_half_checks(before, after, half, known=oracle.AS_BUILT):
     if not injected(half.fake.calls, but=WRITES_KEPT):
         expected = oracle.expected_effects(seen_before, half.event, half.ref_name, known,
                                            unsaid_branches(half.fake.calls))
-        problems += differences([e for e in expected if of_first_half(e)], actual)
+        problems += differences([e for e in expected if of_first_half(e)], actual, seen_before)
         problems += [Violation("G3L", f"a release no rule completes: #{n}") for n in oracle.half_released(seen_after)]
     problems += release_order(actual)
-    problems += releases_only_due(seen_before, actual)
+    problems += freeing_order(seen_before, actual)
+    problems += releases_only_due(as_freed(seen_before, actual), actual)
     problems += labels_put_back(before, after, half.fake.calls, actual)
     problems += unsettled_left_alone(half.fake.calls, actual, seen_before)
     problems += labels_name_the_holder(after, actual)
@@ -373,7 +374,8 @@ def cycle_checks(before, after, record, known=oracle.AS_BUILT):
             # is made and not owed, since the first half's share is judged
             # at its end by first_half_checks.
             expected = [e for e in expected if not of_first_half(e)]
-        problems += differences(expected, effects_of(record.calls[record.first_calls:] if split else record.calls))
+        problems += differences(expected, effects_of(record.calls[record.first_calls:] if split else record.calls),
+                                seen_start)
         if not split:
             problems += [Violation("G3L", f"a release no rule completes: #{n}")
                          for n in oracle.half_released(seen(after, dates))]
@@ -384,7 +386,8 @@ def cycle_checks(before, after, record, known=oracle.AS_BUILT):
     problems += unsettled_left_alone(record.calls, actual, seen_start)
     if not split:
         problems += release_order(actual)
-        problems += releases_only_due(seen_start, actual)
+        problems += freeing_order(seen_start, actual)
+        problems += releases_only_due(as_freed(seen_start, actual), actual)
         problems += labels_put_back(start, planned, record.calls, actual)
         problems += labels_name_the_holder(planned, actual)
         problems += board_renders_the_state(seen_planned, record, known)
@@ -394,18 +397,33 @@ def cycle_checks(before, after, record, known=oracle.AS_BUILT):
     return problems
 
 
-def differences(expected, actual):
+def differences(expected, actual, before=None):
     """The writes owed and not made, and made and not owed, as a
-    multiset, each under the guarantee its kind belongs to; a rename said
-    refused is judged by rename_refused_said."""
+    multiset, each under the guarantee its kind belongs to, or, given the
+    state the run read, a freeing's under G8 (freeing_guarantee); a rename
+    said refused is judged by rename_refused_said."""
     made = [e for e in actual if e != oracle.Effect("comment", e.target, "rename-refused")]
+    releasing = {e.target for e in expected + made if e == oracle.Effect("comment", e.target, "claim-released")}
     problems = []
     missing, extra = Counter(expected) - Counter(made), Counter(made) - Counter(expected)
     for effect in sorted(missing, key=repr):
-        problems.append(Violation(guarantee_of(effect), f"owed and not made: {tuple(effect)}"))
+        problems.append(Violation(freeing_guarantee(effect, before, releasing), f"owed and not made: {tuple(effect)}"))
     for effect in sorted(extra, key=repr):
-        problems.append(Violation(guarantee_of(effect), f"made and not owed: {tuple(effect)}"))
+        problems.append(Violation(freeing_guarantee(effect, before, releasing), f"made and not owed: {tuple(effect)}"))
     return problems
+
+
+def freeing_guarantee(effect, before, releasing):
+    """The guarantee a difference belongs to: a label put on or taken off a
+    reopened issue whose claim the run does not release, or in-review
+    taken off one whose claim it does, which only a freeing takes off, is
+    the freeing's, which keeps the labels naming the holder (G8; F22); any
+    other by its kind (guarantee_of)."""
+    issue = before.issues.get(effect.target) if before is not None and effect.kind in ("label-on", "label-off") \
+        else None
+    if issue is not None and issue.reopened and (effect.target not in releasing or effect.detail == oracle.IN_REVIEW):
+        return "G8"
+    return guarantee_of(effect)
 
 
 def kept_renames(expected, start, found):
@@ -481,9 +499,55 @@ def release_order(actual):
     return problems
 
 
+def freeing_order(before, actual):
+    """G8: a run frees a reopened issue whose claim ended in the spec's
+    order, todo on first and claimed off last, and puts nothing back, so a
+    run that fails partway leaves the issue carrying claimed or in-review
+    for the next run to free (SPEC["reopened free"]; F22). This holds
+    under faults too."""
+    problems = []
+    for number in wholly_freed(before):
+        made = [e for e in actual if e.target == number and e.kind in ("label-on", "label-off")]
+        taken = [at for at, e in enumerate(made) if e.kind == "label-off"]
+        if any(e.kind == "label-on" and at > min(taken, default=at) for at, e in enumerate(made)):
+            problems.append(Violation("G8", f"#{number}: a label went on after one came off"))
+        claimed = [at for at in taken if made[at].detail == oracle.CLAIMED]
+        if claimed and taken[-1] != claimed[0]:
+            problems.append(Violation("G8", f"#{number}: a label came off after claimed"))
+        if any((e.kind == "label-on" and e.detail != (oracle.TODO,)) or e == oracle.Effect("label-off", number,
+                                                                                            oracle.TODO)
+               for e in made):
+            problems.append(Violation("G8", f"#{number}: a freeing put a label back"))
+    return problems
+
+
+def wholly_freed(before):
+    """The reopened issues a run frees wholly, no claim branch nor released
+    branch standing for them, so every label it puts on or takes off them
+    is the freeing's (oracle.freeing; F22)."""
+    return [n for n in oracle.freed_numbers(before) if not oracle.branch_stands(before, n)]
+
+
+def as_freed(before, actual):
+    """The state a run's releases are judged from: before, with in-review
+    off each reopened issue the run took it off where the oracle frees it
+    of in-review, since that claim is then released in the same run once
+    due (SPEC["same run"]; F22); a release never takes in-review off, so
+    one taken off where the oracle frees none leaves the claim finished."""
+    taken = {e.target for e in actual if e == oracle.Effect("label-off", e.target, oracle.IN_REVIEW)
+             and oracle.IN_REVIEW in oracle.freeing(before, e.target)[1]}
+    if not taken:
+        return before
+    model = before.clone()
+    for number in taken:
+        model.issues[number].labels = model.issues[number].labels - {oracle.IN_REVIEW}
+    return model
+
+
 def releases_only_due(before, actual):
     """G2 and G6: every release comment the run posted is on a claim that
-    was due, and none on a finished claim."""
+    was due, and none on a finished claim, judged from the state the
+    run's freeing left (as_freed)."""
     problems = []
     for effect in actual:
         if effect.kind == "comment" and effect.detail == "claim-released":
@@ -508,11 +572,15 @@ def labels_put_back(before, after, calls, actual):
     release whole; and one that could not read the issue's comments to
     tell whether its comment stands puts back nothing either, leaving the
     labels as the release left them for the next run to settle
-    (SPEC["unsettled"], unread_releases; F20) (G3L)."""
+    (SPEC["unsettled"], unread_releases; F20) (G3L). A reopened issue the
+    run frees wholly is judged by freeing_order, and the in-review a
+    freeing takes off stays off whatever its release does (as_freed;
+    F22)."""
     problems = []
     unread = unread_releases(calls)
+    freed, wholly = as_freed(before, actual), set(wholly_freed(before))
     todo_on = {e.target for e in actual if e == oracle.Effect("label-on", e.target, (oracle.TODO,))}
-    for number in sorted({e.target for e in actual if e.kind == "label-off"} | todo_on):
+    for number in sorted(({e.target for e in actual if e.kind == "label-off"} | todo_on) - wholly):
         put_back = (oracle.Effect("label-off", number, oracle.TODO) in actual
                     or any(is_put_back(e, number) for e in actual))
         if oracle.Effect("comment", number, "claim-released") in actual:
@@ -525,7 +593,7 @@ def labels_put_back(before, after, calls, actual):
                 problems.append(Violation("G3L", f"#{number}: the run could not tell whether its release "
                                                  f"comment stands and put the labels back"))
             continue
-        if not put_back_refused(calls, number) and after.issues[number].labels != before.issues[number].labels:
+        if not put_back_refused(calls, number) and after.issues[number].labels != freed.issues[number].labels:
             problems.append(Violation("G3L", f"#{number}: the release failed and its labels were not put back"))
     return problems
 

@@ -123,6 +123,7 @@ ORIGINAL_OPEN_WORK = board.open_work
 ORIGINAL_DEAL_MOVES = team.deal_moves
 ORIGINAL_CLAIM_RELEASED = github.claim_released
 ORIGINAL_RELEASE_ONE = github.release_one
+ORIGINAL_FREEING = coordinator.freeing
 
 
 def comment_then_labels(api, snap, key, now):
@@ -1097,6 +1098,50 @@ def free_though_blocked(snap, issue):
     return issue["number"] not in snap.claimed and labels.CLAIMED not in labels.label_names(issue)
 
 
+def in_review_left_where_a_branch_stands(snapshot, number, names):
+    """coordinator.freeing taking nothing off a reopened issue whose claim
+    branch, or a released branch, stands, so in-review stays and the
+    claim, finished by its label, is never released (F22)."""
+    plan = ORIGINAL_FREEING(snapshot, number, names)
+    return coordinator.Freeing() if plan.branch_stands else plan
+
+
+def ready_pull_request_unread(snapshot, number, names):
+    """coordinator.freeing reading no pull request, so a reopened issue whose
+    claim's own pull request, marked ready, waits for review loses the
+    in-review that finishes it (F22)."""
+    return ORIGINAL_FREEING(dataclasses.replace(board.as_snapshot(snapshot), pulls=[]), number, names)
+
+
+def todo_put_on_last(api, snap, number):
+    """github.free_reopened taking the labels off before it puts todo on, so
+    a run that fails after claimed came off leaves an issue no section of
+    the board lists and no later run frees (F22)."""
+    issue = api.issue(number) or {}
+    if issue.get("state") != "open":
+        return f"#{number}: not freed"
+    plan = coordinator.freeing(snap, number, labels.label_names(issue))
+    if plan.taken_off and not plan.branch_stands and github.branch_sha(api, claims.branch_of(str(number))):
+        return f"#{number}: not freed"
+    for name in plan.taken_off:
+        github.take_label_off(api, number, name)
+    if plan.put_on:
+        api.post(f"/repos/{api.repo}/issues/{number}/labels", {"labels": list(plan.put_on)})
+    coordinator.after_labels(snap, str(number), plan.taken_off, plan.put_on)
+    return f"#{number}: freed"
+
+
+def releases_read_before_the_freeing(api, snapshot, now):
+    """github.coordinate reading which claims are due before it frees the
+    reopened issues, so a claim whose in-review the freeing takes off waits
+    for the next run, where the spec releases it in the same run (F22)."""
+    snap = board.as_snapshot(snapshot)
+    due = coordinator.releases_due(snap, now)
+    lines = [github.free_reopened(api, snap, number) for number in coordinator.reopened_due(snap)]
+    lines += [github.release_one(api, snap, key, now) for key in due]
+    return lines + github.tell_overlaps(api, snap)
+
+
 MUTANTS = {
     "idle at exactly 24 hours": Mutant(
         claims, "is_idle", lambda last, now, idle_after=claims.IDLE_AFTER: now - claims.parse_time(last) >= idle_after,
@@ -1541,6 +1586,34 @@ MUTANTS = {
         github, "claim_released", claim_released_ignoring_kept,
         "G14", "the clerk counts a release that kept a head for a branch pushed again at it, as the board does, "
                "so the claim is dealt as released (F8)"),
+    "a reopened issue left as it is": Mutant(
+        coordinator, "reopened_due", lambda snapshot: [],
+        "G8", "a reopened issue whose claim ended with its close loses claimed, in-review and the worker's labels, "
+              "and todo goes on, so the Queue lists it again (F22)"),
+    "a claim branch not read for a reopened issue": Mutant(
+        coordinator, "claim_stands",
+        lambda snap, key: any(name.startswith(claims.released_branch(key, "")) for name in snap.kept_names),
+        "G8", "a claim branch is a claim whatever the labels say, so a reopened issue whose claim branch stands "
+              "loses in-review alone (F22)"),
+    "a released branch not read for a reopened issue": Mutant(
+        github, "kept_names", lambda listed: [],
+        "G8", "a released branch beside the label claimed is a release being undone, so a reopened issue that "
+              "carries both loses no label (F22)"),
+    "in-review left on where a branch stands": Mutant(
+        coordinator, "freeing", in_review_left_where_a_branch_stands,
+        "G8", "a reopened issue whose claim branch stands loses in-review, so its claim is released once idle "
+              "(F22)"),
+    "a ready pull request's in-review taken off": Mutant(
+        coordinator, "freeing", ready_pull_request_unread,
+        "G8", "a claim's own pull request marked ready finishes it, so its reopened issue loses no label (F22)"),
+    "todo put on last": Mutant(
+        github, "free_reopened", todo_put_on_last,
+        "G8", "a freeing puts todo on first and takes claimed off last, so a run that fails partway leaves the issue "
+              "for the next run to free (F22)"),
+    "the releases due read before the freeing": Mutant(
+        github, "coordinate", releases_read_before_the_freeing,
+        "G3", "a claim whose in-review a freeing takes off is released in the same run where its branch has gone a "
+              "day without a commit (F22)"),
 }
 
 

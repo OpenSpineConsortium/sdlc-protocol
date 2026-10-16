@@ -78,7 +78,7 @@ SETTINGS = (("commit.gpgsign", "false"), ("init.defaultBranch", MAIN), ("gc.auto
 # a delete, a fetch).
 GIT_VERBS = frozenset({"claim", "claim-misnamed", "push-by-hand", "commit", "drop-claim-file", "merge-main",
                        "rebase-main", "lease-onto", "lease-elsewhere", "push-old-head", "drop-commits", "carry-on",
-                       "merge", "move-main"})
+                       "merge", "merge-keep", "move-main"})
 EPOCH = int(T0.timestamp())
 # How many conflicts a rebase may stop at before the store calls it stuck.
 MOST_CONFLICTS = 50
@@ -356,6 +356,8 @@ class GitStore:
             return self.carry_on(model, actor, number, args[1], when)
         if name == "merge":
             return self.merge(model, number, when)
+        if name == "merge-keep":
+            return self.merge(model, number, when, keep_head=True)
         if name == "move-main":
             return self.move_main(model, args[0] if args else "README.md", when)
         raise ValueError(f"the store has no verb {name}")
@@ -552,10 +554,12 @@ class GitStore:
             git(clone, "rm", "-q", "--cached", "--force", "--ignore-unmatch", "--", path, actor=worker)
             (clone / path).unlink(missing_ok=True)
 
-    def merge(self, model, number, when):
+    def merge(self, model, number, when, keep_head=False):
         """The owner merges a pull request on GitHub: a merge commit on
         main, the branch's text before main's where both changed a path,
-        the issue closed and the head deleted; the four events at once."""
+        the issue closed and the head deleted, unless the repository keeps
+        head branches (keep_head, F22); the four events at once, or three
+        with the head kept (verbs.merge)."""
         pull = model.pulls[number]
         self.fetch_refs(GITHUB, MAIN, pull.head)
         clone = self.start_from(GITHUB, MAIN, f"origin/{MAIN}")
@@ -567,13 +571,13 @@ class GitStore:
         git(clone, "push", "-q", "origin", f"{MAIN}:refs/heads/{MAIN}", actor=GITHUB)
         pull.state, pull.merged_at = "merged", model.now
         verbs.apply_pull_change(model, pull)
-        closed = oracle.claim_number(pull.head)
-        if closed in model.issues:
-            model.issues[closed].state = "closed"
+        verbs.close_issue(model, oracle.claim_number(pull.head))
+        if keep_head:
+            self.sync(model)
+            return Outcome(True, "merged, the head kept", events=verbs.MERGED_EVENTS[:3])
         model.delete_ref(pull.head)
         self.sync(model)
-        return Outcome(True, "merged", events=((cycle.PUSH, MAIN), (cycle.PULL_REQUEST, ""),
-                                               (cycle.ISSUES, ""), (cycle.DELETE, MAIN)))
+        return Outcome(True, "merged", events=verbs.MERGED_EVENTS)
 
     def move_main(self, model, path, when):
         self.fetch_refs(GITHUB, MAIN)

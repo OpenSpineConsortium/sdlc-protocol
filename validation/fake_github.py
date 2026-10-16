@@ -378,8 +378,12 @@ class FakeGitHub:
         raise Unserved(f"{method} /{'/'.join(s)}")
 
     def issue_json(self, issue):
+        """An issue as GitHub gives it, with its state_reason: reopened while
+        an issue closed and opened again stays open (F22), completed once
+        it is closed, and none for one never closed."""
+        reason = "reopened" if issue.reopened else "completed" if issue.state == "closed" else None
         return {"number": issue.number, "title": issue.title, "state": issue.state, "body": issue.body,
-                "labels": [{"name": n} for n in sorted(issue.labels)], "updated_at": iso(0)}
+                "labels": [{"name": n} for n in sorted(issue.labels)], "updated_at": iso(0), "state_reason": reason}
 
     def pull_as_issue(self, pull):
         return {"number": pull.number, "title": pull.title, "state": "open" if pull.state == "open" else "closed",
