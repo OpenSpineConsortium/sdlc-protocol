@@ -1208,9 +1208,13 @@ MUTANTS = {
         "G11a", "a push is judged in the clone git -C or env -C names, so a lease from another clone onto a claim "
                 "another worker holds is refused there (F21)"),
     "the guard does not follow the shell's moves": Mutant(
-        guard, "moved_to", lambda argv, shell: shell,
+        guard, "moved_to", lambda argv, shell, is_directory: shell,
         "G11a", "a push after cd, pushd or popd is judged in the clone the shell moved to, so a lease from there "
                 "onto a claim another worker holds is refused (F21)"),
+    "a cd to what is not a directory taken as made": Mutant(
+        guard, "reached", lambda shell, target, stack, is_directory: guard.Shell(target, stack),
+        "G11a", "a cd or pushd that fails leaves the shell where it stood, so a lease run after it from the session's "
+                "own clone onto a claim another worker holds is judged there and refused (F21)"),
     "dealing without its taken set": Mutant(
         team, "deal", deal_without_the_taken_set,
         "G14", "the workers of one run are dealt distinct issues"),

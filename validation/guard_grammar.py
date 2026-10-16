@@ -160,8 +160,9 @@ def guard_refuses(text):
     (guard.refused_push) from the scratch world's clone, which is on
     CURRENT, with DEFAULT its default branch, wherever the command's -C
     takes it, since every directory it names is that clone, and with no
-    claim-file reader."""
-    return guard.refused_push(text, HERE, lambda place: (CURRENT, DEFAULT), lambda place: None) is not None
+    claim-file reader; the grammar makes no cd."""
+    return guard.refused_push(text, HERE, lambda place: (CURRENT, DEFAULT), lambda place: None,
+                              lambda place: True) is not None
 
 
 class Disagreement(NamedTuple):

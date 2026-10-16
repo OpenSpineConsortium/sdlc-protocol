@@ -175,7 +175,8 @@ def refused_in_clone(model, actor, command):
     def branches_of(place):
         return (current_branch(model, actor) if verbs.clone_named(place) == actor else None), M.MAIN
 
-    return verbs.guard_says(command, verbs.clone_path(actor), branches_of, lambda place: None)
+    return verbs.guard_says(command, verbs.clone_path(actor), branches_of, lambda place: None,
+                            lambda place: verbs.clone_exists(model, place))
 
 
 # --- the expectations ---------------------------------------------------------

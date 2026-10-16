@@ -132,8 +132,9 @@ BUDGET_SECONDS = 10
 # let through; each again at its third, step 10, for b's comment GitHub
 # never wrote. F21's at b's first lease from its second clone, step 1,
 # by git -C, which is taken once the guard asks the session's own clone,
-# and at its second, step 2, by cd, taken once the guard does not follow
-# the shell's moves.
+# at its second, step 2, by cd, taken once the guard does not follow the
+# shell's moves, and at its third, step 3, from b's own clone after a cd
+# that fails, taken once the guard takes the cd as made.
 UNDONE = {
     "F1": [("the comment before the labels", 5, "G3L")],
     "F2": [("a piece of work named by the number it is shown by", 4, "G7"),
@@ -188,7 +189,8 @@ UNDONE = {
     "F20": [("an unsettled release put back", 8, "G3L"), ("an unsettled release counted", 8, "G3L"),
             ("an unsettled release failing the run", 8, "G15")],
     "F21": [("the guard asks the session's own clone", 1, "G11a"),
-            ("the guard does not follow the shell's moves", 2, "G11a")],
+            ("the guard does not follow the shell's moves", 2, "G11a"),
+            ("a cd to what is not a directory taken as made", 3, "G11a")],
 }
 # The twenty-one findings, every one settled since F21's fix: F1, F3,
 # F5, F6, F10 and F11 fixed in 0.4.1; F2, F4, F7, F8, F9, F12, F13, F14,

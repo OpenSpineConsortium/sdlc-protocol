@@ -485,19 +485,21 @@ class GitStore:
         return self.pushed(model, worker, ref, f"git push --force-with-lease origin {ref}", lease=True, allowed=False)
 
     def lease_elsewhere(self, model, worker, number, files, how, when):
-        """verbs.lease_elsewhere with git: the worker's second clone, made
-        the first time it is fetched into, fetches, makes the claim commit
-        and is pushed from with a lease, by a command run from the worker's
-        own clone (F21)."""
-        other = verbs.other_clone(worker)
-        model.fetch(other)
+        """verbs.lease_elsewhere with git: the clone verbs.leasing_clones
+        names, the worker's second made the first time it is fetched into,
+        fetches, makes the claim commit and is pushed from with a lease, by
+        a command run from the worker's own clone, which the guard reads as
+        the hook does, a directory that is not there being one a cd does not
+        reach (F21)."""
+        pusher, named = verbs.leasing_clones(worker, how)
+        model.fetch(pusher)
         ref = verbs.claim_ref(number)
-        clone = self.start_from(other, ref, f"origin/{MAIN}")
+        clone = self.start_from(pusher, ref, f"origin/{MAIN}")
         self.write(clone, f"{CLAIM_DIR}/{number}.md", claim_text(number, worker, files))
         git(clone, "add", "-A", CLAIM_DIR, actor=worker)
         git(clone, "commit", "-q", "-m", f"Claim #{number}", actor=worker, when=when)
-        command = verbs.ELSEWHERE[how].format(clone=other, push=f"push --force-with-lease origin {ref}")
-        return self.pushed(model, worker, ref, command, lease=True, allowed=False, clone=other)
+        command = verbs.ELSEWHERE[how].format(clone=named, push=f"push --force-with-lease origin {ref}")
+        return self.pushed(model, worker, ref, command, lease=True, allowed=False, clone=pusher)
 
     def drop_commits(self, model, worker, number):
         """Fetch, reset the clone to the claim commit, which the model read

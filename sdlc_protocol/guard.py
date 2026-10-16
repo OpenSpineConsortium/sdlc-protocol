@@ -41,8 +41,10 @@ later command, so "cd ../other && git push origin HEAD" pushes the other
 clone's branch, and its current and default branch, and its claim files,
 are that clone's. The module follows the shell's moves within one
 command (placed_commands), each part of a pipeline and each list run
-with & in a shell of its own, and joins each -C on in turn (push_place).
-Where it cannot tell the directory, after cd -, with a path that holds
+with & in a shell of its own, a cd or pushd to what is not a directory
+leaving the shell where it stood, as the shell does when it fails there;
+and it joins each -C on in turn as chdir reads it (push_place). Where it
+cannot tell the directory, after cd - or cd -P, with a path that holds
 what the shell expands, or with the repository named by --git-dir,
 --bare or GIT_DIR, the push is judged by what its words name, with no
 current branch and no claim files, so it passes where only those would
@@ -414,18 +416,22 @@ def assigns_repository(word):
     return word.split("=", 1)[0].rstrip("+") == GIT_REPOSITORY_VARIABLE
 
 
-def joined(place, path):
-    """The directory a path names from place, as cd and git -C read it: an
-    absolute path in place of it, a relative one joined on and normalised
-    as cd's logical path is, ~ the home directory, and an empty path, which
-    git -C and bash's cd both take as no change, place itself; None when
-    place is None or the path holds what the shell expands first
-    (EXPANDED)."""
+def joined(place, path, physical=False):
+    """The directory a path names from place: an absolute path in place of
+    it, a relative one joined on, ~ the home directory, and an empty path,
+    which git -C and bash's cd both take as no change, place itself; None
+    when place is None or the path holds what the shell expands first
+    (EXPANDED). A logical path, the one cd keeps, is normalised as the
+    shell normalises it, a .. taking back the step before it; a physical
+    one, as git -C and env -C change directory, is left as written for the
+    system to resolve, since there a .. after a symbolic link climbs from
+    where the link leads."""
     if place is None or EXPANDED & set(path):
         return None
     if not path:
         return place
-    return os.path.normpath(os.path.join(place, os.path.expanduser(path)))
+    whole = os.path.join(place, os.path.expanduser(path))
+    return whole if physical else os.path.normpath(whole)
 
 
 def env_directories(options):
@@ -460,7 +466,8 @@ def push_place(argv, here):
     """The directory the git push argv runs in, from here, the directory
     its shell runs it in (placed_commands): with the directory each of
     env's -C and --chdir names, then each -C git is given, joined on in
-    turn, as git and env read them; None when here is None, a path holds
+    turn as chdir reads them (joined, physical); None when here is None, a
+    path holds
     what the shell expands (joined), or the push names its repository by a
     path, with --git-dir, --bare or GIT_DIR, so it goes where this module
     does not look."""
@@ -470,14 +477,14 @@ def push_place(argv, here):
     place = here
     for name, options in found.wrappers:
         for directory in env_directories(options) if name == "env" else ():
-            place = joined(place, directory)
+            place = joined(place, directory, physical=True)
     i = found.start + 1
     while i < len(argv) and argv[i] != "push":
         word = argv[i]
         if word.split("=", 1)[0] in GIT_REPOSITORY_OPTIONS:
             return None
         if word == "-C":
-            place = joined(place, argv[i + 1] if i + 1 < len(argv) else "")
+            place = joined(place, argv[i + 1] if i + 1 < len(argv) else "", physical=True)
         i += 2 if word in GIT_VALUE_OPTIONS else 1
     return place
 
@@ -519,22 +526,40 @@ def rotates(word):
     return word[:1] in "+-" and word[1:].isascii() and word[1:].isdigit()
 
 
-def cd(shell, operands):
+def reached(shell, target, stack, is_directory):
+    """The shell after a move to target: there, with stack, when target is
+    a directory as the hook runs (is_directory), or one this module cannot
+    tell; where it stood when target is not, since cd and pushd fail there
+    and the shell runs what follows a ; or a newline from where it stood,
+    and before F21's second review such a push was judged in a directory
+    that holds nothing, so a lease from the clone the shell never left
+    went unjudged."""
+    if target is not None and not is_directory(target):
+        return shell
+    return Shell(target, stack)
+
+
+def cd(shell, operands, is_directory):
     """Where cd takes the shell: to its operand, the home directory with
-    none, and to the directory before for -, which this module does not
-    track; its options (-L, -P, -e, -@) change nothing here, the logical
-    path being joined's."""
+    none, along the logical path the shell keeps (joined), and where
+    reached says for a target that is not a directory; where this module
+    cannot tell for -, the directory before, which it does not track, and
+    with -P, which takes the shell along the physical path, so that a
+    later .. climbs from where a symbolic link led. -L, -e and -@ change
+    nothing here."""
     words = operands_of(operands)
+    options = operands[:len(operands) - len(words)]
     target = words[0] if words else "~"
-    if target == "-":
+    if target == "-" or any("P" in word[1:] for word in options):
         return Shell(None, shell.stack)
-    return Shell(joined(shell.directory, target), shell.stack)
+    return reached(shell, joined(shell.directory, target), shell.stack, is_directory)
 
 
-def pushd(shell, operands):
-    """pushd DIR moves the shell to DIR and stacks where it was; with -n it
-    stacks DIR and moves nothing, and with no operand, -, +N or -N it turns
-    the stack, which this module does not follow."""
+def pushd(shell, operands, is_directory):
+    """pushd DIR moves the shell to DIR and stacks where it was, where
+    reached says for a DIR that is not a directory; with -n it stacks DIR
+    and moves nothing, and with no operand, -, +N or -N it turns the
+    stack, which this module does not follow."""
     words, moves = list(operands), True
     while words and words[0] == "-n":
         words, moves = words[1:], False
@@ -545,7 +570,7 @@ def pushd(shell, operands):
     if not moves:
         return Shell(shell.directory, None)
     stack = None if shell.stack is None else shell.stack + (shell.directory,)
-    return Shell(joined(shell.directory, words[0]), stack)
+    return reached(shell, joined(shell.directory, words[0]), stack, is_directory)
 
 
 def popd(shell, operands):
@@ -560,10 +585,11 @@ def popd(shell, operands):
     return Shell(shell.stack[-1], shell.stack[:-1])
 
 
-def moved_to(argv, shell):
+def moved_to(argv, shell, is_directory):
     """Where the shell stands after the simple command argv: cd, pushd and
     popd, run by the shell itself, behind assignments, reserved words,
-    command or builtin, move it; GIT_DIR set alone or exported points git
+    command or builtin, move it, cd and pushd only to a directory
+    (reached); GIT_DIR set alone or exported points git
     at a repository this module does not follow, which puts the directory
     out of its reading; anything else, a cd another program runs among
     them, as env cd does, leaves it where it was."""
@@ -577,23 +603,27 @@ def moved_to(argv, shell):
         name, operands = operands[0], operands[1:]
     if name in ("export", "declare", "typeset", "readonly", "local"):
         return Shell(None, shell.stack) if any(assigns_repository(word) for word in operands) else shell
-    moves = {"cd": cd, "pushd": pushd, "popd": popd}.get(name)
-    return moves(shell, operands) if moves else shell
+    if name == "popd":
+        return popd(shell, operands)
+    moves = {"cd": cd, "pushd": pushd}.get(name)
+    return moves(shell, operands, is_directory) if moves else shell
 
 
-def placed_commands(command, here):
+def placed_commands(command, here, is_directory=os.path.isdir):
     """Each simple command in a shell command, with the directory the shell
     runs it in, from here, where the command starts: a move (moved_to)
     holds for what follows it in the same shell, a subshell's ends at its
     ), and each part of a pipeline, and a list run with & in the
     background, runs in a shell of its own, so its moves change nothing
-    after it. A directory this module cannot tell is None."""
+    after it. A cd or pushd to what is_directory does not take for a
+    directory, by default what is not one as the hook runs, leaves the
+    shell where it stood. A directory this module cannot tell is None."""
     placed, shell, opened, piped = [], Shell(here), [], False
     list_start = pipe_start = shell
     for part in shell_parts(command):
         if isinstance(part, list):
             placed.append((part, shell.directory))
-            shell = moved_to(part, shell)
+            shell = moved_to(part, shell, is_directory)
             continue
         for operator in operators(part):
             if operator in ("|", "|&"):
@@ -613,24 +643,25 @@ def placed_commands(command, here):
     return placed
 
 
-def refused_push(command, here, branches_of=None, reader_of=None):
+def refused_push(command, here, branches_of=None, reader_of=None, is_directory=None):
     """Why the first push of a shell command that this module refuses is
     refused, or None when it refuses none. Each push is judged in the
     clone it runs in, from here, the directory the command starts in
     (placed_commands, push_place), its current and default branch read
     there (branches_of, by default branches) and, for a lease, its claim
-    files (reader_of, by default claim_file_reader), each clone asked once
+    files (reader_of, by default claim_file_reader), each place asked once
     (F21: until the fix every push was judged in here's clone, so "git -C
     ../clone push" from a claim branch sent ../clone's main, and a lease
     from a clone that had fetched another's claim was judged in one that
     had not). A push whose clone this module cannot tell is judged with no
     current branch and no claim files, by what its words name, the default
     branch being here's, so a bare push there passes, as anything this
-    module cannot read does."""
+    module cannot read does. is_directory, by default os.path.isdir, says
+    which directories a cd or pushd can reach (placed_commands)."""
     branches_of = branches_of or branches
     reader_of = reader_of or claim_file_reader
     asked = {}
-    for argv, directory in placed_commands(command, here):
+    for argv, directory in placed_commands(command, here, is_directory or os.path.isdir):
         args = push_arguments(argv)
         if args is None:
             continue
@@ -911,10 +942,13 @@ def refusal(args, current_branch, default_branch, claim_file_at=None):
 
 
 def git_line(args, cwd):
-    """One line from git, or None when git cannot answer."""
+    """One line from git, or None when git cannot answer, as in a directory
+    or with an argument that holds a NUL byte, which subprocess refuses
+    with ValueError: the directory comes from the command since F21's fix,
+    and the ref of a lease came from it before."""
     try:
         done = subprocess.run(["git", *args], cwd=cwd, capture_output=True, timeout=10)
-    except (OSError, subprocess.TimeoutExpired):
+    except (OSError, ValueError, subprocess.TimeoutExpired):
         return None
     if done.returncode != 0:
         return None

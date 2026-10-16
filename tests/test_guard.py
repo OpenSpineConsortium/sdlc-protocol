@@ -314,6 +314,20 @@ class ParsingTest(unittest.TestCase):
         self.assertEqual(guard.push_arguments(["git", "--exec-path=/usr/lib/git-core", "push", "origin", "main"]),
                          ["origin", "main"])
 
+    def test_a_nul_byte_in_a_directory_or_a_ref_is_a_place_git_cannot_answer_in(self):
+        """subprocess refuses a NUL byte with ValueError, which git_line
+        takes as no answer, so the hook judges the push by its words and
+        never raises (F21's second review)."""
+        for command in ("git -C a\x00b push origin main", "cd a\x00b && git push origin main"):
+            with self.subTest(command=command):
+                self.assertEqual(guard.run({"tool_input": {"command": command}, "cwd": str(ROOT)}),
+                                 (guard.REFUSE, MAIN))
+        self.assertEqual(guard.git_line(["status"], "a\x00b"), None)
+        lease = {"tool_input": {"command": "git push --force-with-lease=claude/7:a\x00b origin claude/7"},
+                 "cwd": str(ROOT)}
+        with mock.patch.object(guard, "branches", return_value=("claude/7", "main")):
+            self.assertEqual(guard.run(lease)[0], guard.PASS)
+
     def test_an_empty_word_is_a_word(self):
         """'' and "" are words to the shell, and git -C takes the empty one
         as no change of directory, so the push is read whole (F21: an
@@ -386,10 +400,11 @@ class ParsingTest(unittest.TestCase):
 HOME = os.path.expanduser("~")
 
 
-def push_places(command, here="/w/s"):
+def push_places(command, here="/w/s", is_directory=lambda place: True):
     """The directory each push of a shell command runs in, in order, from
-    here (guard.placed_commands, guard.push_place)."""
-    return [guard.push_place(argv, where) for argv, where in guard.placed_commands(command, here)
+    here (guard.placed_commands, guard.push_place), every directory a cd
+    names being one unless is_directory says otherwise."""
+    return [guard.push_place(argv, where) for argv, where in guard.placed_commands(command, here, is_directory)
             if guard.push_arguments(argv) is not None]
 
 
@@ -400,19 +415,22 @@ class PlaceTest(unittest.TestCase):
     cannot tell, which the guard then judges by the push's words alone."""
 
     def test_git_and_env_name_the_directory_a_push_runs_in(self):
-        for command, place in (("git -C ../other push origin x", "/w/other"),
-                               ("git -C .. -C other push", "/w/other"),
+        """Joined as chdir reads them, left for the system to resolve, so a
+        .. after a symbolic link climbs from where the link leads, as git's
+        and env's own chdir does (OtherCloneTest has it over git)."""
+        for command, place in (("git -C ../other push origin x", "/w/s/../other"),
+                               ("git -C .. -C other push", "/w/s/../other"),
                                ("git -C /elsewhere push", "/elsewhere"),
                                ("git -C '' push", "/w/s"),
                                ("git -C ~ push", HOME),
-                               ("git -c user.name=x -C ../other push", "/w/other"),
-                               ("git --config-env user.name=HOME -C ../other push", "/w/other"),
+                               ("git -c user.name=x -C ../other push", "/w/s/../other"),
+                               ("git --config-env user.name=HOME -C ../other push", "/w/s/../other"),
                                ("git --work-tree=../other push", "/w/s"),
-                               ("env -C ../other git push", "/w/other"),
-                               ("env -C../other git push", "/w/other"),
-                               ("env -iC ../other git push", "/w/other"),
-                               ("env --chdir=../other git push", "/w/other"),
-                               ("env --chdir ../other git -C x push", "/w/other/x"),
+                               ("env -C ../other git push", "/w/s/../other"),
+                               ("env -C../other git push", "/w/s/../other"),
+                               ("env -iC ../other git push", "/w/s/../other"),
+                               ("env --chdir=../other git push", "/w/s/../other"),
+                               ("env --chdir ../other git -C x push", "/w/s/../other/x"),
                                ("env -u HOME git push", "/w/s")):
             with self.subTest(command=command):
                 self.assertEqual(push_places(command), [place])
@@ -431,7 +449,7 @@ class PlaceTest(unittest.TestCase):
                                 ("cd ../other || exit 1; git push", ["/w/other"]),
                                 ("cd /elsewhere && git -C sub push", ["/elsewhere/sub"]),
                                 ("cd && git push", [HOME]),
-                                ("cd -P -- ../other && git push", ["/w/other"]),
+                                ("cd -L -- ../other && git push", ["/w/other"]),
                                 ("builtin cd ../other && git push", ["/w/other"]),
                                 ("command cd ../other && git push", ["/w/other"]),
                                 ("if cd ../other; then git push; fi", ["/w/other"]),
@@ -446,11 +464,30 @@ class PlaceTest(unittest.TestCase):
                 self.assertEqual(push_places(command), places)
 
     def test_a_move_this_cannot_follow_leaves_the_directory_unknown(self):
-        for command in ("cd - && git push", "cd $X && git push", "cd ~/$X && git push", "pushd && git push",
+        for command in ("cd - && git push", "cd -P ../other && git push", "cd -LP ../other && git push",
+                        "cd $X && git push", "cd ~/$X && git push", "pushd && git push",
                         "pushd +1 && git push", "popd && git push", "export GIT_DIR=../o/.git; git push",
                         "GIT_DIR=../o/.git; git push", "declare -x GIT_DIR=../o/.git; git push"):
             with self.subTest(command=command):
                 self.assertEqual(push_places(command), [None])
+
+    def test_a_cd_or_pushd_to_what_is_not_a_directory_leaves_the_shell_where_it_stood(self):
+        """The shell runs what follows a failed cd from where it stood, so
+        the push is judged there; until F21's second review it was judged
+        in a directory that holds nothing, so a lease from the clone the
+        shell never left went unjudged."""
+        def there(place):
+            return place != "/w/nowhere"
+
+        for command, places in (("cd ../nowhere; git push", ["/w/s"]),
+                                ("cd ../nowhere\ngit push", ["/w/s"]),
+                                ("cd ../nowhere || true; git push", ["/w/s"]),
+                                ("pushd ../nowhere; git push", ["/w/s"]),
+                                ("cd ../nowhere; cd ../other; git push", ["/w/other"]),
+                                ("cd ../other; cd ../nowhere; git push", ["/w/other"]),
+                                ("git -C ../nowhere push", ["/w/s/../nowhere"])):
+            with self.subTest(command=command):
+                self.assertEqual(push_places(command, is_directory=there), places)
 
     def test_a_subshell_a_pipeline_and_a_background_list_keep_their_moves_to_themselves(self):
         for command, places in (("(cd ../other && git push); git push", ["/w/other", "/w/s"]),
@@ -479,14 +516,14 @@ class CloneTest(unittest.TestCase):
 
     def branches_of(self, place):
         self.asked.append(place)
-        return self.BRANCHES.get(place, (None, "main"))
+        return self.BRANCHES.get(os.path.normpath(place), (None, "main"))
 
     def reader_of(self, place):
         tables = {"/w/s": {}, "/w/other": {(ORIGIN_7, "7"): CLAIM_A, ("claude/7", "7"): CLAIM_B}}
-        return files_at(tables.get(place, {}))
+        return files_at(tables.get(os.path.normpath(place), {}))
 
     def refused(self, command, here="/w/s"):
-        return guard.refused_push(command, here, self.branches_of, self.reader_of)
+        return guard.refused_push(command, here, self.branches_of, self.reader_of, lambda place: True)
 
     def test_a_push_of_another_clone_s_current_branch_is_judged_by_that_branch(self):
         for command in ("git -C ../other push origin HEAD", "git -C ../other push", "cd ../other && git push",
@@ -508,9 +545,13 @@ class CloneTest(unittest.TestCase):
         self.assertIsNone(self.refused("git push --force-with-lease origin claude/7"),
                           "the session's own clone holds no claim file to judge by")
 
-    def test_each_clone_is_asked_once(self):
-        self.refused("git push origin claude/7; git -C ../other push origin x; cd ../other; git push origin y")
-        self.assertEqual(self.asked, ["/w/s", "/w/other"])
+    def test_each_place_is_asked_once(self):
+        """A place as the push names it: git -C's, joined as chdir reads it,
+        and the shell's own logical one may be one clone or two, and are
+        asked apart."""
+        self.refused("git push origin claude/7; git -C ../other push origin x; git -C ../other push origin y; "
+                     "cd ../other; git push origin z; git push origin w")
+        self.assertEqual(self.asked, ["/w/s", "/w/s/../other", "/w/other"])
 
     def test_a_push_whose_clone_this_cannot_tell_is_judged_by_its_words(self):
         self.assertEqual(self.refused("cd $X && git push origin main"), MAIN, "the session's own default branch")
@@ -778,8 +819,16 @@ class OtherCloneTest(unittest.TestCase):
     def tearDown(self):
         self.scratch.cleanup()
 
-    def hook(self, command):
-        return guard.run({"tool_input": {"command": command}, "cwd": str(self.session)})
+    def hook(self, command, where=None):
+        return guard.run({"tool_input": {"command": command}, "cwd": str(where or self.session)})
+
+    def claim_of_b_in_other(self):
+        """b's claim of #7 made in other, which fetched a's: git would take
+        a lease of it there."""
+        git(self.other, "switch", "-q", "-c", "claude/7", "main")
+        Path(self.other, "docs", "agents", "claims").mkdir(parents=True)
+        Path(self.other, "docs", "agents", "claims", "7.md").write_text(CLAIM_B)
+        git(self.other, "add", "."); git(self.other, "commit", "-q", "-m", "b claims 7")
 
     def test_a_push_of_the_other_clone_s_main_is_refused(self):
         for command in ("git -C ../other push origin HEAD", "cd ../other && git push origin HEAD"):
@@ -791,10 +840,7 @@ class OtherCloneTest(unittest.TestCase):
                              "as built until F21's fix: HEAD read as the session's claude/8")
 
     def test_a_lease_from_the_clone_that_fetched_another_s_claim_is_refused(self):
-        git(self.other, "switch", "-q", "-c", "claude/7", "main")
-        Path(self.other, "docs", "agents", "claims").mkdir(parents=True)
-        Path(self.other, "docs", "agents", "claims", "7.md").write_text(CLAIM_B)
-        git(self.other, "add", "."); git(self.other, "commit", "-q", "-m", "b claims 7")
+        self.claim_of_b_in_other()
         dry = subprocess.run(["git", "push", "--dry-run", "--porcelain", "--force-with-lease", "origin", "claude/7"],
                              cwd=self.other, env=GIT_ENV, capture_output=True, text=True)
         self.assertEqual(dry.returncode, 0, "git itself would take a's claim: the lease holds in other")
@@ -806,6 +852,32 @@ class OtherCloneTest(unittest.TestCase):
         with mock.patch.object(guard, "push_place", lambda argv, here: here):
             self.assertEqual(self.hook(lease), (guard.PASS, ""),
                              "as built until F21's fix: judged in s, which holds no claim file of #7")
+
+    def test_a_lease_after_a_cd_that_fails_is_judged_where_the_shell_stood(self):
+        self.claim_of_b_in_other()
+        lease = "cd ../nowhere; git push --force-with-lease origin claude/7"
+        ran = subprocess.run(["bash", "-c", "cd ../nowhere; git rev-parse --abbrev-ref HEAD"], cwd=self.other,
+                             env=GIT_ENV, capture_output=True, text=True)
+        self.assertEqual(ran.stdout.strip(), "claude/7", "bash runs what follows the failed cd from other")
+        code, reason = self.hook(lease, self.other)
+        self.assertEqual(code, guard.REFUSE)
+        self.assertIn("claude/7 on origin is a's claim", reason)
+        with mock.patch.object(guard, "reached", lambda shell, target, stack, is_directory: guard.Shell(target, stack)):
+            self.assertEqual(self.hook(lease, self.other), (guard.PASS, ""),
+                             "as built until F21's second review: judged in ../nowhere, which shows nothing")
+
+    def test_git_s_minus_c_climbs_from_where_a_link_leads_and_cd_does_not(self):
+        """s/peek leads into other: git -C peek/.. changes directory as the
+        system resolves it, into other, while bash's cd peek/.. takes the
+        step back along the path it keeps, into s."""
+        Path(self.other, "inner").mkdir()
+        Path(self.session, "peek").symlink_to(Path("..", "other", "inner"))
+        for command, branch in (("git -C peek/.. rev-parse --abbrev-ref HEAD", "main"),
+                                ("cd peek/.. && git rev-parse --abbrev-ref HEAD", "claude/8")):
+            ran = subprocess.run(["bash", "-c", command], cwd=self.session, env=GIT_ENV, capture_output=True, text=True)
+            self.assertEqual(ran.stdout.strip(), branch, command)
+        self.assertEqual(self.hook("git -C peek/.. push origin HEAD"), (guard.REFUSE, MAIN))
+        self.assertEqual(self.hook("cd peek/.. && git push origin HEAD"), (guard.PASS, ""))
 
 
 if __name__ == "__main__":
