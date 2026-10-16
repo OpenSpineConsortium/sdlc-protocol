@@ -1203,6 +1203,14 @@ MUTANTS = {
     "the guard passes a lease onto another's claim": Mutant(
         guard, "other_holder", lease_onto_any_claim,
         "G11a", "a lease onto a claim whose file on origin names another worker is refused (F7)"),
+    "the guard asks the session's own clone": Mutant(
+        guard, "push_place", lambda argv, here: here,
+        "G11a", "a push is judged in the clone git -C or env -C names, so a lease from another clone onto a claim "
+                "another worker holds is refused there (F21)"),
+    "the guard does not follow the shell's moves": Mutant(
+        guard, "moved_to", lambda argv, shell: shell,
+        "G11a", "a push after cd, pushd or popd is judged in the clone the shell moved to, so a lease from there "
+                "onto a claim another worker holds is refused (F21)"),
     "dealing without its taken set": Mutant(
         team, "deal", deal_without_the_taken_set,
         "G14", "the workers of one run are dealt distinct issues"),

@@ -1,0 +1,18 @@
+{
+  "finding": "F21",
+  "title": "the push guard judges a push in the session's clone, not the clone it runs in",
+  "status": "fixed after 0.5.0: the guard judges each push in the clone it runs in (DESIGN.md, 13)",
+  "breaks": ["G1", "G11a"],
+  "world": "memory; the git world runs it over real git (build step 6)",
+  "issues": {"1": ["todo"]},
+  "workers": ["a", "b"],
+  "careless": true,
+  "steps": [
+    {"verb": "claim", "actor": "a", "args": [1], "expect": {"holders": {"1": "a"}}},
+    {"verb": "lease-elsewhere", "actor": "b", "args": [1, "-C"], "expect": {"taken": false, "holders": {"1": "a"}},
+     "note": "b fetches in its second clone, b-other, makes a claim commit naming itself there, and runs git -C ../b-other push --force-with-lease origin claude/1 from its session's clone, which never fetched claude/1: git would take the lease from b-other, and the guard, judging the push in b-other, reads a's claim file on origin/claude/1 and b's on the branch pushed and refuses it; under the mutant that asks the session's own clone, which shows no claim file on origin/claude/1, the fence cannot judge, the lease is taken and G11a and G1 are red here"},
+    {"verb": "lease-elsewhere", "actor": "b", "args": [1, "cd"], "expect": {"taken": false, "holders": {"1": "a"}},
+     "note": "the same push by cd ../b-other && git push --force-with-lease origin claude/1: the guard follows the shell's cd into b-other and refuses it; under the mutant that does not follow the shell's moves the push is judged in the session's clone, taken, and G11a and G1 are red here"},
+    {"verb": "board", "expect": {"claims": {"claude/1": "a"}}}
+  ]
+}

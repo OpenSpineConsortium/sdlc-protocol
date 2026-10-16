@@ -77,8 +77,8 @@ SETTINGS = (("commit.gpgsign", "false"), ("init.defaultBranch", MAIN), ("gc.auto
 # alone, or reaches the store through the model's own methods (a rename,
 # a delete, a fetch).
 GIT_VERBS = frozenset({"claim", "claim-misnamed", "push-by-hand", "commit", "drop-claim-file", "merge-main",
-                       "rebase-main", "lease-onto", "push-old-head", "drop-commits", "carry-on", "merge",
-                       "move-main"})
+                       "rebase-main", "lease-onto", "lease-elsewhere", "push-old-head", "drop-commits", "carry-on",
+                       "merge", "move-main"})
 EPOCH = int(T0.timestamp())
 # How many conflicts a rebase may stop at before the store calls it stuck.
 MOST_CONFLICTS = 50
@@ -346,6 +346,8 @@ class GitStore:
             return self.rebase_main(model, actor, number, when)
         if name == "lease-onto":
             return self.lease_onto(model, actor, number, scope.files_of(number), when)
+        if name == "lease-elsewhere":
+            return self.lease_elsewhere(model, actor, number, scope.files_of(number), args[1], when)
         if name == "push-old-head":
             return self.push_old_head(model, actor, number, args[1])
         if name == "drop-commits":
@@ -358,22 +360,25 @@ class GitStore:
             return self.move_main(model, args[0] if args else "README.md", when)
         raise ValueError(f"the store has no verb {name}")
 
-    def pushed(self, model, worker, ref, command, allowed=True, guarded=True, lease=False, source=None):
-        """One push through the guard, then git. A push taken fires push,
-        and create when it made the branch; the model then reads the
-        repository back."""
-        clone = self.clone_of(worker)
-        # The guard reads the claim files a lease is judged by with the
-        # library's own reader over the worker's clone, as the template's
-        # hook hands it (F7's fence).
-        refused = guard_says(command, ref, guard.claim_file_reader(str(clone))) if guarded else None
+    def pushed(self, model, worker, ref, command, allowed=True, guarded=True, lease=False, source=None,
+               clone=None):
+        """One push through the guard, then git, from the clone the command
+        reaches, the worker's own unless clone names another (F21). A push
+        taken fires push, and create when it made the branch; the model
+        then reads the repository back."""
+        # The guard judges the command from the worker's own clone, as the
+        # template's hook does from the session's directory, with the
+        # library's own readers of the branches and the claim files of the
+        # clone each push runs in (F7's fence, F21's place).
+        refused = (guard_says(command, str(self.clone_of(worker)), guard.branches, guard.claim_file_reader)
+                   if guarded else None)
         if refused:
             return Outcome(False, "refused by the guard", command, refused, allowed_shape=allowed)
         created = ref not in model.refs
         before = model.refs.get(ref)
         spec = f"{source or ref}:refs/heads/{ref}"
-        done = git(clone, "push", "-q", *(["--force-with-lease"] if lease else []), "origin", spec, actor=worker,
-                   check=False)
+        done = git(self.clone_of(clone or worker), "push", "-q", *(["--force-with-lease"] if lease else []), "origin",
+                   spec, actor=worker, check=False)
         if done.returncode != 0:
             return Outcome(False, push_words(done), command, allowed_shape=allowed, guarded=guarded)
         self.sync(model)
@@ -382,7 +387,7 @@ class GitStore:
             model.made_by(ref, worker)
         if before != sha:
             model.pushed_now(ref, before, before is None or model.is_ancestor(before, sha))
-        model.tracking.setdefault(worker, {})[ref] = sha
+        model.tracking.setdefault(clone or worker, {})[ref] = sha
         events = ((cycle.PUSH, ref),) + (((cycle.CREATE, ref),) if created else ())
         return Outcome(True, "taken", command, allowed_shape=allowed, guarded=guarded, events=events)
 
@@ -478,6 +483,21 @@ class GitStore:
         git(clone, "add", "-A", CLAIM_DIR, actor=worker)
         git(clone, "commit", "-q", "-m", f"Claim #{number}", actor=worker, when=when)
         return self.pushed(model, worker, ref, f"git push --force-with-lease origin {ref}", lease=True, allowed=False)
+
+    def lease_elsewhere(self, model, worker, number, files, how, when):
+        """verbs.lease_elsewhere with git: the worker's second clone, made
+        the first time it is fetched into, fetches, makes the claim commit
+        and is pushed from with a lease, by a command run from the worker's
+        own clone (F21)."""
+        other = verbs.other_clone(worker)
+        model.fetch(other)
+        ref = verbs.claim_ref(number)
+        clone = self.start_from(other, ref, f"origin/{MAIN}")
+        self.write(clone, f"{CLAIM_DIR}/{number}.md", claim_text(number, worker, files))
+        git(clone, "add", "-A", CLAIM_DIR, actor=worker)
+        git(clone, "commit", "-q", "-m", f"Claim #{number}", actor=worker, when=when)
+        command = verbs.ELSEWHERE[how].format(clone=other, push=f"push --force-with-lease origin {ref}")
+        return self.pushed(model, worker, ref, command, lease=True, allowed=False, clone=other)
 
     def drop_commits(self, model, worker, number):
         """Fetch, reset the clone to the claim commit, which the model read

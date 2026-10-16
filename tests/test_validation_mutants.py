@@ -92,6 +92,8 @@ TRACES = {
     "the guard passes --force": "the guard grammar against git's answers",
     "the guard passes a lease outside claude/": "the guard grammar against git's answers",
     "the guard passes a lease onto another's claim": "the regression traces",
+    "the guard asks the session's own clone": "the regression traces",
+    "the guard does not follow the shell's moves": "the regression traces",
     "dealing without its taken set": "dealing at every look",
     "each leg dealt from its own look": "the regression traces",
     "given to workers needing the label todo": "the regression traces",
@@ -277,9 +279,10 @@ class TheLane(unittest.TestCase):
         widened to 120 and the count noted; its follow-up's second review
         one, an older push trusted in the run its push started; and F20's
         fix three, an unsettled release put back, counted, or failing the
-        run."""
+        run; and F21's fix two, the guard asking the session's own clone
+        and not following the shell's moves."""
         self.assertTrue(10 <= len(mutants.MUTANTS) <= 120)
-        self.assertEqual(len(mutants.MUTANTS), 117)
+        self.assertEqual(len(mutants.MUTANTS), 119)
         self.assertEqual(sorted(TRACES), sorted(mutants.MUTANTS))
 
     def test_every_mutant_names_a_rule_the_library_still_has(self):
