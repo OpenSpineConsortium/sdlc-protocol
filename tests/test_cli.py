@@ -5,6 +5,7 @@ fixture snapshot and its golden page, board's live run and team with the
 GitHub adapter replaced by fakes, check against an event file and a
 checkout, and guard against the hook's JSON on stdin."""
 
+import collections
 import io
 import json
 import os
@@ -112,11 +113,37 @@ class BoardDryRun(unittest.TestCase):
 
 class FakeBoardApi:
     """Stands in for the REST client; the adapter's own calls are tested in
-    test_github, so here only the wiring is."""
+    test_github, so here only the wiring is, with the count of the calls
+    GitHub answered as the client keeps it, set for the run's last line."""
 
     def __init__(self, token, repo):
         self.token, self.repo = token, repo
         self.posted = []
+        self.made = collections.Counter({"GET": 12, "POST": 3, "DELETE": 2})
+        self.limit = (962, 1000, 1760612400)
+
+
+class RefusedBoardApi(FakeBoardApi):
+    """The client of a run GitHub refused at its first read, the hour's
+    calls spent."""
+
+    def __init__(self, token, repo):
+        super().__init__(token, repo)
+        self.made = collections.Counter({"GET": 1})
+        self.limit = (0, 1000, 1760612400)
+
+
+class UncountedBoardApi(FakeBoardApi):
+    """A stand-in that keeps no count, as one written before the count was."""
+
+    def __init__(self, token, repo):
+        super().__init__(token, repo)
+        del self.made
+
+
+# The run's last line for the stand-in's count (github.calls_line).
+CALLS_LINE = ("GitHub's REST API: 17 calls in this run, 12 reads and 5 writes; GitHub last said the token had "
+              "962 of its 1000 calls an hour left, the hour ending at 11:00 UTC")
 
 
 class BoardLiveRun(unittest.TestCase):
@@ -173,9 +200,10 @@ class BoardLiveRun(unittest.TestCase):
             self.assertIsInstance(calls["released"], board.Snapshot)
             self.assertEqual(printed.splitlines(),
                              ["#7: claim released, idle since 2026-09-01T00:00:00Z", f"{out.as_posix()}: rewritten",
-                              "#12: claim released", "PR #40: posted", "PR #40: posted", "PR #41: posted"])
+                              "#12: claim released", "PR #40: posted", "PR #40: posted", "PR #41: posted",
+                              CALLS_LINE])
             (code, printed, _), _ = self.live(["--render-only", "--out", str(out)])
-            self.assertEqual(printed.splitlines(), [f"{out.as_posix()}: unchanged"])
+            self.assertEqual(printed.splitlines(), [f"{out.as_posix()}: unchanged", CALLS_LINE])
 
     def test_the_two_halves_apart_say_their_lines_and_the_second_acts_on_the_first_s_snapshot(self):
         """The validation harness runs the halves on its own clock with
@@ -295,9 +323,18 @@ class BoardLiveRun(unittest.TestCase):
         def refused(api, sha, default_branch, now, started_by=""):
             raise github.GitHubError("GET /repos/octo/widgets/issues: HTTP 403", 403)
 
-        with mock.patch.object(github, "GitHub", FakeBoardApi), mock.patch.object(github, "snapshot", refused):
-            code, _, err = run(["board", "--out", "/nonexistent/STATE.md"], environ=self.ENVIRON)
+        with mock.patch.object(github, "GitHub", RefusedBoardApi), mock.patch.object(github, "snapshot", refused):
+            code, out, err = run(["board", "--out", "/nonexistent/STATE.md"], environ=self.ENVIRON)
         self.assertEqual((code, err), (1, "board: GET /repos/octo/widgets/issues: HTTP 403\n"))
+        # A run GitHub refused says what it spent all the same, since a
+        # refusal for the hour's limit is the run whose count matters most.
+        self.assertEqual(out, "GitHub's REST API: 1 call in this run, 1 read and 0 writes; GitHub last said the "
+                              "token had 0 of its 1000 calls an hour left, the hour ending at 11:00 UTC\n")
+        # A client that keeps no count leaves the run as it ended: the
+        # refusal's one line and exit 1, not a traceback from the last line.
+        with mock.patch.object(github, "GitHub", UncountedBoardApi), mock.patch.object(github, "snapshot", refused):
+            self.assertEqual(run(["board", "--out", "/nonexistent/STATE.md"], environ=self.ENVIRON),
+                             (1, "", "board: GET /repos/octo/widgets/issues: HTTP 403\n"))
 
 
 class FakeClient:

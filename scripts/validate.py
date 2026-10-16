@@ -12,6 +12,8 @@
     python3 scripts/validate.py properties    the property lane
     python3 scripts/validate.py fast          every lane above but the recording
     python3 scripts/validate.py mutants       the mutation lane (minutes)
+    python3 scripts/validate.py cost          what a board run costs in calls to GitHub, on the fake: the
+                                              table of README.md, What a board run costs (validation/cost.py)
     python3 scripts/validate.py deep          the deep lane (hours): the searches, the soak, the gate,
                                               the git world, the guard recorded again, conformance
         --out DIR                             where the results and the counterexamples go (validation-out); not
@@ -36,9 +38,10 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from validation import cycle, dealing, explore, guard_grammar, known, lanes, model as M, mutants, oracle  # noqa: E402
-from validation import properties, replay, run, scenarios, verbs  # noqa: E402
+from validation import cost, properties, replay, run, scenarios, verbs  # noqa: E402
 
 LANES = ("scenarios", "traces", "explore", "guard", "deal", "properties")
+COMMANDS = LANES + ("fast", "mutants", "replay", "deep", "cost")
 
 
 def run_scenarios(out, world=run.MEMORY):
@@ -204,12 +207,15 @@ def run_deep(out, options):
 
 def main(argv=None, out=sys.stdout):
     args = list(sys.argv[1:] if argv is None else argv)
-    if not args or args[0] not in LANES + ("fast", "mutants", "replay", "deep") or (args[0] == "replay" and len(args) < 2):
+    if not args or args[0] not in COMMANDS or (args[0] == "replay" and len(args) < 2):
         print(__doc__, file=out)
         return 2
     lane, options = args[0], args[1:]
     if lane == "mutants":
         return mutants.main([])
+    if lane == "cost":
+        print(cost.table(), file=out, end="")
+        return 0
     if lane == "deep":
         return run_deep(out, options)
     if lane == "replay":

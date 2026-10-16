@@ -53,8 +53,11 @@ class FrozenClock:
 
 
 def through_cli(model, event, ref_name):
-    """cli.board_live_run against a fake over the model: its calls, STATE.md
-    and the lines it printed."""
+    """cli.board_live_run against a fake over the model: its calls, STATE.md,
+    the lines it printed but for the two the command line prints of its own,
+    where it wrote STATE.md and the calls GitHub answered it (adapters.
+    github.calls_line), which the harness's cycle keeps no copy of, and the
+    last of those two."""
     fake = FakeGitHub(model)
     real = github.GitHub
     with tempfile.TemporaryDirectory() as scratch, \
@@ -67,8 +70,9 @@ def through_cli(model, event, ref_name):
                    "GITHUB_REF_NAME": ref_name, "GITHUB_REF": f"refs/heads/{ref_name}" if ref_name else ""}
         code = cli.board_live_run(args, environ)
         page = out.read_text(encoding="ascii")
-    lines = [line for line in printed.getvalue().splitlines() if not line.endswith(("rewritten", "unchanged"))]
-    return code, fake.calls, page, lines
+    *lines, calls_line = [line for line in printed.getvalue().splitlines()
+                          if not line.endswith(("rewritten", "unchanged"))]
+    return code, fake.calls, page, lines, calls_line
 
 
 class SameOrderAsTheCli(unittest.TestCase):
@@ -77,7 +81,11 @@ class SameOrderAsTheCli(unittest.TestCase):
             with self.subTest(event=event):
                 one, two = busy(), busy()
                 record = cycle.board_run(one, event, ref_name)
-                code, calls, page, lines = through_cli(two, event, ref_name)
+                code, calls, page, lines, calls_line = through_cli(two, event, ref_name)
+                reads = sum(1 for call in calls if call[0] == "GET")
+                self.assertEqual(calls_line, f"GitHub's REST API: {len(calls)} calls in this run, {reads} reads "
+                                             f"and {len(calls) - reads} writes",
+                                 "the calls the command line counts are the calls the fake answered")
                 self.assertEqual(code, record.exit_code)
                 self.assertEqual([c[:5] for c in calls], [c[:5] for c in record.calls])
                 self.assertEqual(page, record.page)
