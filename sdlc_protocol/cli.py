@@ -154,9 +154,11 @@ def pushed_branch(environ):
     (GITHUB_REF), when it is a branch's and no tag's; on a pull request's
     synchronize, the head branch the push moved, read from the event's
     payload, when the head is this repository's, since a fork's branch is
-    no claim here; and nothing on any other event, a pull request opened,
-    reopened or closed among them, whose payload is not read, or on a
-    payload that cannot be read. A claim on that branch whose push no read
+    no claim here; and nothing on any other event, nor on a pull request
+    event whose action is not synchronize, whose payload is read all the
+    same, since the action is in it, nor on a payload that cannot be read
+    or where the environment does not name the repository the run is in
+    (GITHUB_REPOSITORY). A claim on that branch whose push no read
     of the activity dates is dated at the run's start, for that run alone
     (spec/PROTOCOL.md, Release; adapters.github.head_since): the push
     that started the run is the one the activity is likeliest not to list
@@ -173,7 +175,8 @@ def pushed_branch(environ):
     if payload is None or payload.get("action") != "synchronize":
         return ""
     head = (payload.get("pull_request") or {}).get("head") or {}
-    if (head.get("repo") or {}).get("full_name") != environ.get("GITHUB_REPOSITORY"):
+    repo = environ.get("GITHUB_REPOSITORY")
+    if not repo or (head.get("repo") or {}).get("full_name") != repo:
         return ""
     ref = head.get("ref")
     return ref if isinstance(ref, str) else ""
