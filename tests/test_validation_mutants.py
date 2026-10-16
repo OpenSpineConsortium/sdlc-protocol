@@ -100,6 +100,11 @@ TRACES = {
     "a relative -C after a move judged where it names alone": "the regression traces",
     "GIT_DIR forgotten once an absolute path names a place": "the regression traces",
     "a -C by ~ judged where it names alone": "the regression traces",
+    "a quote that never closes hiding the command": "the regression traces",
+    "no here-document's body told": "the regression traces",
+    "a here-document in a quoted substitution read as text": "the regression traces",
+    "an expanded body's substitutions cut out with it": "the regression traces",
+    "a body in a substitution ended only by its delimiter's own line": "the regression traces",
     "dealing without its taken set": "dealing at every look",
     "each leg dealt from its own look": "the regression traces",
     "given to workers needing the label todo": "the regression traces",
@@ -292,9 +297,14 @@ class TheLane(unittest.TestCase):
         judged by its words alone, so the bound is widened to 130, and its
         fourth review three, a relative -C after a move judged where it
         names alone, GIT_DIR forgotten once an absolute path names a place
-        and a -C by ~ judged where it names alone, 125 within that bound."""
+        and a -C by ~ judged where it names alone, 125 within that bound;
+        and F25's fix five, one for each rule of its reading: a quote that
+        never closes hiding the command, no here-document's body told, a
+        here-document in a quoted substitution read as text, an expanded
+        body's substitutions cut out with it, and a body in a substitution
+        ended only by its delimiter's own line, 130, the bound itself."""
         self.assertTrue(10 <= len(mutants.MUTANTS) <= 130)
-        self.assertEqual(len(mutants.MUTANTS), 125)
+        self.assertEqual(len(mutants.MUTANTS), 130)
         self.assertEqual(sorted(TRACES), sorted(mutants.MUTANTS))
 
     def test_every_mutant_names_a_rule_the_library_still_has(self):

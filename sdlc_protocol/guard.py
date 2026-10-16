@@ -83,7 +83,7 @@ do not name.
 
 The hook is the first fence and branch protection on GitHub the second,
 so anything this module cannot read it lets through rather than wedging
-the session: an unparseable command, a broken payload or a git that
+the session: a push in quoting it misreads, a broken payload or a git that
 answers nothing all pass, and GitHub still refuses what matters; a claim
 file git cannot show, on either side of a lease, as on a branch whose
 history never had one, is a claim the fence cannot judge, and the lease
@@ -120,21 +120,53 @@ with --no-track the first push made claude/7. A remote's push refspecs
 configuration.
 
 shlex reads a newline as whitespace, which would glue a line onto the one
-before it, so a small pass runs first: it turns each unquoted newline into
-the separator the shell reads it as, ends a comment at its newline, and
-removes a backslash-newline, the shell's line continuation. It tracks
-single quotes, double quotes and the backslash, and nothing else of the
-shell: the quoting inside a command substitution is read as the quoting
-around it. In particular a here-document body is read as commands like any
-other line: a body line that starts a push to main is refused, and the
-person rephrases it or puts the text in a file; and a cd in a body moves
-the shell as this module reads it, so a push after the body is judged
-also where the command starts, as if no move ran (push_places). Cutting
-bodies out was tried and dropped: telling a here-document from an
-arithmetic shift, a quoted marker or an opener inside a substitution
-takes more of the shell than this hook can read, each misreading cut real
-commands out of sight, and the one shape it bought is rare and answered
-by a rephrasing.
+before it, so a small pass runs first (plain_text): it turns each unquoted
+newline into the separator the shell reads it as, ends a comment at its
+newline, and removes a backslash-newline, the shell's line continuation.
+It tracks single quotes, double quotes and the backslash, and nothing else
+of the shell: the quoting inside a command substitution is read as the
+quoting around it, and bash's $'...' as a $ and a quoted span. bash runs
+a command text one complete command at a time, so a quote that never
+closes stops the line it opens on and what follows, and the commands
+before it run; and it reads a here-document's body as text, whose quotes
+it does not read. Until F25's fix this module read a command whole or not
+at all: a quote that never closed hid every push in the command, those
+bash ran before it among them, and an apostrophe in a body opened a quote
+bash never opens, which one in a later body could close around a push, as
+in the shape a session writes most, a commit message by here-document, a
+push, then a pull request's body by another. So the hook reads a command
+more than one way and judges every push any reading finds (readings,
+placed_commands): whole, as before, with a quote that never closes read as
+a character of its word, so the text on either side of it is read as
+commands (plain_text, lenient), which reads too much of a line bash
+refuses whole and never too little; and, where the command holds
+here-documents this module tells (here_document_bodies), with their bodies
+cut out, but for the command substitutions of a body the shell expands,
+which it runs. The whole reading still reads each body as commands: a body
+line that starts a push to main is refused, and the person rephrases it or
+puts the text in a file, and a cd in a body moves the shell as this module
+reads it, so a push after the body is judged also where the command
+starts, as if no move ran (push_places), where the second reading judges
+it too. Cutting bodies out in place of reading them was tried once and
+dropped: telling a here-document from an arithmetic shift, a quoted marker
+or an opener inside a substitution takes more of the shell than this hook
+can read, and each misreading cut real commands out of sight. As a second
+reading beside the whole, a body misread hides no command the whole
+reading shows, and refuses too much at worst. The bodies told are those of
+<< and <<- outside quotes and in a substitution, in double quotes or not,
+as in "$(cat <<'EOF' ... )", each starting at the first newline at its
+operator's level and ending past the line that is its word, where bash 5.2
+ends one in a substitution (closes_substitution), or at the end of the
+text; a <<< here-string, arithmetic, a comment and a quoted span open
+none. A third reading, of each line alone, was weighed and left out: with
+a quote that never closes read leniently it finds no push in F25's shapes
+that the two miss, and what it alone would read is text inside quotes
+that close, as a commit message given by -m "...", which it would refuse
+wherever a line starts with a push; what hides a push inside quotes that
+close is the quoting of a command substitution or $'...', which want
+readings of their own. So a push inside $'...', backquotes or a
+substitution in double quotes still passes, and branch protection stands
+behind it.
 """
 
 import os
@@ -262,8 +294,18 @@ TRAILING_NOTE = re.compile(r"\s*\(.*\)\s*$")
 REMOTE_REFS = "refs/remotes/"
 
 # What ends a word for the shell: a # right after one of these starts a
-# comment; anywhere else it is part of the word.
+# comment; anywhere else it is part of the word. A here-document's
+# delimiter word ends at one too.
 WORD_BREAKS = " \t\n;&|()<>"
+# A double-quoted span as the shell reads it, up to the first " that no
+# backslash escapes, a backslash and the character after it being one pair
+# wherever they stand; and such a pair.
+DOUBLE_QUOTED = re.compile(r'"(?:[^"\\]|\\.)*"', re.DOTALL)
+BACKSLASH_PAIR = re.compile(r"\\(.)", re.DOTALL)
+# The pairs whose backslash quote removal takes off inside double quotes,
+# as bash reads a here-document's delimiter written there; a backslash
+# before anything else is kept.
+DOUBLE_QUOTED_ESCAPE = re.compile(r'\\([$`"\\\n])')
 
 # The hook's exit codes: 0 lets the tool call run, 2 stops it and sends
 # stderr back into the session.
@@ -271,51 +313,377 @@ PASS = 0
 REFUSE = 2
 
 
-def plain_shell(command):
+def quote_end(command, i):
+    """Where the quoted span that opens at command[i], a ' or a ", ends,
+    past its closing quote: a single quote's at the next ', a double
+    quote's at the first " that no backslash escapes; None when it never
+    closes."""
+    if command[i] == "'":
+        end = command.find("'", i + 1)
+        return None if end == -1 else end + 1
+    match = DOUBLE_QUOTED.match(command, i)
+    return match.end() if match else None
+
+
+def as_quoted(span):
+    """A quoted span as shlex is handed it: a double-quoted one without its
+    backslash-newlines, the line continuation the shell removes there too,
+    every other pair kept; a single-quoted one as written."""
+    if not span.startswith('"'):
+        return span
+    return BACKSLASH_PAIR.sub(lambda pair: "" if pair.group(1) == "\n" else pair.group(0), span)
+
+
+def plain_text(command, lenient=False):
     """The command with each unquoted newline made a ; so that shlex, which
     reads a newline as whitespace, ends a command there as the shell does.
     A comment ends at its newline, which then separates; a backslash-newline
     is the line continuation the shell removes; a newline inside quotes
-    stays inside its word."""
-    out, quote, word_start, i = [], None, True, 0
+    stays inside its word. A quote that never closes leaves the rest of the
+    text as written, and a backslash that ends it stays alone, so shlex
+    refuses the whole (plain_shell); read leniently, each is a character of
+    its word, as if a backslash escaped it, and the text after the quote is
+    read as text no quote opened, so the commands on either side of it are
+    read (F25: bash runs each complete command before the line it cannot
+    read, and that line's own as it reads them)."""
+    out, word_start, i = [], True, 0
     while i < len(command):
         ch = command[i]
-        if ch == "\\" and quote != "'":
-            if command[i + 1:i + 2] != "\n":
-                out.append(command[i:i + 2])
+        if ch in "'\"":
+            end = quote_end(command, i)
+            if end is None and not lenient:
+                out.append(as_quoted(command[i:]))
+                break
+            out.append("\\" + ch if end is None else as_quoted(command[i:end]))
+            i, word_start = end or i + 1, False
+        elif ch == "\\":
+            pair = command[i:i + 2]
+            out.append("" if pair == "\\\n" else "\\\\" if pair == "\\" and lenient else pair)
             i, word_start = i + 2, False
-        elif quote:
-            if ch == quote:
-                quote = None
-            out.append(ch)
-            i, word_start = i + 1, False
         elif ch == "#" and word_start:
             end = command.find("\n", i)
             i = len(command) if end == -1 else end
         else:
-            if ch in "'\"":
-                quote = ch
             out.append(" ; " if ch == "\n" else ch)
             i, word_start = i + 1, ch in WORD_BREAKS
     return "".join(out)
 
 
+def plain_shell(command):
+    """The command made plain for shlex (plain_text), a quote that never
+    closes left for shlex to refuse whole, as shell_parts reads it."""
+    return plain_text(command)
+
+
+# --- here-documents ------------------------------------------------------------
+
+class HereDocument(NamedTuple):
+    """A here-document's operator as the shell reads it: the word whose line
+    ends its body, its quotes taken off; whether the body's lines lose their
+    leading tabs, as after <<-; whether the shell expands the body, as it
+    does where no part of the word is quoted; and the level the operator
+    stands at (level), where the first newline the shell reads after it
+    starts its body."""
+
+    delimiter: str
+    strip_tabs: bool
+    expands: bool
+    within: tuple
+
+
+class Body(NamedTuple):
+    """A here-document's body, as the span of the command from start to
+    end, and what of it the shell runs: the command substitutions of a body
+    it expands (substitutions_in)."""
+
+    start: int
+    end: int
+    runs: tuple = ()
+
+
+def takes_here_document(contexts):
+    """Whether a << that the scan of here_document_bodies meets in contexts,
+    the double quotes, substitutions and parentheses around it, opens a
+    here-document: outside quotes, and in a substitution inside double
+    quotes, as in "$(cat <<'EOF' ...)", the form a session writes a commit
+    message or a pull request's body in; in double quotes themselves it is
+    text."""
+    return not contexts or contexts[-1] != '"'
+
+
+def level(contexts):
+    """The double quotes and substitutions the scan stands in: a parenthesis
+    inside a substitution, which the scan counts to tell the ) that closes
+    the substitution, opens no level of its own, as a subshell's does not
+    at the top."""
+    return tuple(context for context in contexts if context != "(")
+
+
+def arithmetic_end(command, i):
+    """Where the arithmetic whose (( ends just before i ends, past the ))
+    that closes it, counting the parentheses inside; the end of the text
+    when none does."""
+    depth = 2
+    while i < len(command) and depth:
+        depth += {"(": 1, ")": -1}.get(command[i], 0)
+        i += 1
+    return i
+
+
+def delimiter_word(command, i):
+    """The word at command[i] that ends a here-document's body, its quotes
+    and backslashes taken off as bash takes them off, whether any part of it
+    was quoted, and where it ends: at the first character outside quotes
+    that ends a word (WORD_BREAKS). None for no word at all, an empty one
+    being a word only where quoted."""
+    word, quoted = [], False
+    while i < len(command) and command[i] not in WORD_BREAKS:
+        ch = command[i]
+        if ch == "\\":
+            escaped = command[i + 1:i + 2]
+            word.append("" if escaped == "\n" else escaped)
+            i, quoted = i + 2, quoted or escaped != "\n"
+        elif ch in "'\"":
+            end = quote_end(command, i)
+            inner = command[i + 1:end - 1] if end else command[i + 1:]
+            word.append(inner if ch == "'" else DOUBLE_QUOTED_ESCAPE.sub(
+                lambda pair: "" if pair.group(1) == "\n" else pair.group(1), inner))
+            i, quoted = end or len(command), True
+        else:
+            word.append(ch)
+            i += 1
+    text = "".join(word)
+    return (text if text or quoted else None), quoted, i
+
+
+def here_operator(command, i, contexts):
+    """Where the scan goes on past the << at command[i], and the
+    here-document it opens: past a <<< here-string, which opens none, past
+    a << the shell reads as text (takes_here_document), and past the word
+    after a << or <<- and the blanks before it, which is the
+    here-document's delimiter; None where it opens none, as where no word
+    follows, which is a syntax error."""
+    if command.startswith("<<<", i):
+        return i + 3, None
+    if not takes_here_document(contexts):
+        return i + 2, None
+    strip_tabs = command.startswith("<<-", i)
+    start = i + 2 + strip_tabs
+    while start < len(command) and command[start] in " \t":
+        start += 1
+    word, quoted, end = delimiter_word(command, start)
+    return end, None if word is None else HereDocument(word, strip_tabs, not quoted, level(contexts))
+
+
+def double_quoted_step(command, i, contexts):
+    """One step of the scan inside double quotes, from command[i], and the
+    contexts after it: a backslash pair, the closing quote, an arithmetic
+    expansion jumped over, a substitution opened, or one character."""
+    if command[i] == "\\":
+        return i + 2, contexts
+    if command[i] == '"':
+        return i + 1, contexts[:-1]
+    if command.startswith("$((", i):
+        return arithmetic_end(command, i + 3), contexts
+    if command.startswith("$(", i):
+        return i + 2, contexts + ("$(",)
+    return i + 1, contexts
+
+
+def unquoted_step(command, i, contexts, word_start):
+    """One step of the scan outside double quotes, at the top or inside a
+    substitution, from command[i]: where it goes on, the contexts after
+    it and whether a word starts there. A backslash pair, a single-quoted
+    span, a comment and arithmetic, (( )) or $(( )), are jumped over, a
+    comment to its newline; a double quote and a substitution open a
+    context, and a parenthesis inside a substitution one the ) after it
+    closes."""
+    ch = command[i]
+    if ch == "\\":
+        return i + 2, contexts, False
+    if ch == "'":
+        return quote_end(command, i) or len(command), contexts, False
+    if ch == "#" and word_start:
+        end = command.find("\n", i)
+        return (len(command) if end == -1 else end), contexts, False
+    if command.startswith("((", i) or command.startswith("$((", i):
+        return arithmetic_end(command, i + (3 if ch == "$" else 2)), contexts, False
+    if ch == '"':
+        return i + 1, contexts + ('"',), False
+    if command.startswith("$(", i):
+        return i + 2, contexts + ("$(",), True
+    if ch == "(" and contexts:
+        return i + 1, contexts + ("(",), True
+    if ch == ")" and contexts:
+        return i + 1, contexts[:-1], True
+    return i + 1, contexts, ch in WORD_BREAKS
+
+
+def scan_step(command, i, contexts, word_start):
+    """One step of the scan from command[i], inside double quotes or outside
+    them (double_quoted_step, unquoted_step): where it goes on, the contexts
+    after it and whether a word starts there."""
+    if contexts and contexts[-1] == '"':
+        return (*double_quoted_step(command, i, contexts), False)
+    return unquoted_step(command, i, contexts, word_start)
+
+
+def substitution_end(command, i):
+    """Where the command substitution whose $( stands at command[i] ends,
+    past the ) that closes it as the scan reads the text inside (scan_step);
+    the end of the text where none does."""
+    contexts, i, word_start = ("$(",), i + 2, True
+    while i < len(command) and contexts:
+        i, contexts, word_start = scan_step(command, i, contexts, word_start)
+    return min(i, len(command))
+
+
+def substitutions_in(command, start, end):
+    """The command substitutions, each $( ) whole, in the text of a body the
+    shell expands, from start to end: the shell runs each when it expands
+    the body, and none of the body's other text, whose quotes are text too
+    (F25: "It's $(git push ...) done" hid the push between two
+    apostrophes). A backslash keeps the $ after it, and $(( )) is
+    arithmetic."""
+    found, i = [], start
+    while i < end:
+        if command[i] == "\\":
+            i += 2
+        elif command.startswith("$((", i):
+            i = arithmetic_end(command, i + 3)
+        elif command.startswith("$(", i):
+            close = min(substitution_end(command, i), end)
+            found.append(command[i:close])
+            i = close
+        else:
+            i += 1
+    return tuple(found)
+
+
+def closes_substitution(line, delimiter):
+    """Whether a line of a body inside a substitution ends the body though
+    it is not the delimiter: one that starts with the delimiter and holds a
+    ) after it, as "EOF)" does, where bash 5.2 ends the body after the
+    delimiter, with a warning, and reads the rest of the line as the
+    substitution's own text."""
+    return line.startswith(delimiter) and ")" in line[len(delimiter):]
+
+
+def body_end(command, start, document):
+    """Where a here-document's body that starts at start ends: past the
+    first line that is its delimiter, that line's leading tabs taken off
+    after <<-, or, inside a substitution, right after the delimiter on a
+    line that ends the body there (closes_substitution); and at the end of
+    the text, where bash ends a body no line ends."""
+    i = start
+    while i < len(command):
+        newline = command.find("\n", i)
+        line_end = len(command) if newline == -1 else newline
+        line = command[i:line_end]
+        indent = len(line) - len(line.lstrip("\t")) if document.strip_tabs else 0
+        if line[indent:] == document.delimiter:
+            return min(line_end + 1, len(command))
+        if "$(" in document.within and closes_substitution(line[indent:], document.delimiter):
+            return i + indent + len(document.delimiter)
+        i = line_end + 1
+    return len(command)
+
+
+def bodies_from(command, start, documents):
+    """The bodies of documents, here-documents whose operators stand on one
+    line, read in order from start, the character after the newline that
+    ends that line: each starts where the one before it ends (body_end), and
+    what of it the shell runs is read where it expands the body
+    (substitutions_in)."""
+    bodies = []
+    for document in documents:
+        end = body_end(command, start, document)
+        runs = substitutions_in(command, start, end) if document.expands else ()
+        bodies.append(Body(start, end, runs))
+        start = end
+    return bodies
+
+
+def here_document_bodies(command):
+    """The bodies of a shell command's here-documents (Body), in order,
+    which the shell reads as text and not as commands (F25). A body starts
+    at the first newline after its operator that the shell reads at the
+    operator's own level (level), past a quote that spans lines, and ends
+    past the line that is its delimiter (body_end): a body inside a
+    substitution starts at a newline inside it, and one at the top at a
+    newline outside every substitution. A << is an operator outside quotes
+    and in a substitution, double-quoted or not (takes_here_document), and
+    none in a <<< here-string, in arithmetic, in a comment or in a quoted
+    span, which the scan steps over as the shell reads them (scan_step)."""
+    if "<<" not in command:
+        return []
+    bodies, pending, contexts, i, word_start = [], [], (), 0, True
+    while i < len(command):
+        due = [d for d in pending if d.within == level(contexts)] if command[i] == "\n" else []
+        if due:
+            found = bodies_from(command, i + 1, due)
+            bodies += found
+            pending = [d for d in pending if d not in due]
+            i, word_start = found[-1].end, True
+        elif command.startswith("<<", i):
+            i, document = here_operator(command, i, contexts)
+            pending += [document] if document else []
+            word_start = False
+        else:
+            i, contexts, word_start = scan_step(command, i, contexts, word_start)
+    return bodies
+
+
+def cut_out(command, bodies):
+    """The command with each body, in order and apart, taken out, and in
+    its place what of it the shell runs, each on a line of its own."""
+    kept, at = [], 0
+    for body in bodies:
+        kept += [command[at:body.start], *(run + "\n" for run in body.runs)]
+        at = body.end
+    return "".join(kept) + command[at:]
+
+
+def readings(command):
+    """The texts this module reads a shell command as, each made plain with
+    a quote that never closes read leniently (plain_text): the command
+    whole, its here-documents' bodies read as commands, as before F25's
+    fix; and, where it holds bodies this module tells
+    (here_document_bodies), the command with them cut out, but for what
+    the shell runs of them, since a body's quotes are none the shell reads.
+    Every push either finds is judged, so a body misread hides no command
+    the whole reading shows."""
+    texts = [plain_text(command, lenient=True)]
+    bodies = here_document_bodies(command)
+    if bodies:
+        texts.append(plain_text(cut_out(command, bodies), lenient=True))
+    return texts
+
+
 def shell_parts(command):
-    """A shell command as the shell's parts, in order: each simple command
-    as the list of its words, and each run of operators between them, such
-    as ;, && or ) |, as a string.
+    """A shell command as the shell's parts (parts_of), read whole and
+    strictly: a command shlex cannot read whole, as one with a quote that
+    never closes, yields nothing, which simple_commands, the template's
+    shim's reading, keeps. The hook's own reading reads such a command
+    leniently and more than one way (placed_commands, readings)."""
+    return parts_of(plain_shell(command))
+
+
+def parts_of(text):
+    """A text made plain (plain_text) as the shell's parts, in order: each
+    simple command as the list of its words, and each run of operators
+    between them, such as ;, && or ) |, as a string; nothing where shlex
+    cannot read it.
 
     shlex with punctuation_chars keeps the shell's operators as their own
     tokens: ;, &&, | and ( ) end one command, a redirection swallows its
     target and the file descriptor digit before it, and a parenthesis in a
     redirection's run, as in "(...)>log", still closes or opens its
-    subshell, after the command it ends. A command shlex cannot read (an
-    unclosed quote) yields nothing, and the caller lets it pass. Newlines
-    and comments are read by plain_shell first, so shlex's own comment
-    handling, which would read a # inside a word as a comment and swallow
-    the rest of the text, is off.
+    subshell, after the command it ends. Newlines and comments are read by
+    plain_text first, so shlex's own comment handling, which would read a #
+    inside a word as a comment and swallow the rest of the text, is off.
     """
-    lexer = shlex.shlex(plain_shell(command), posix=True, punctuation_chars=True)
+    lexer = shlex.shlex(text, posix=True, punctuation_chars=True)
     lexer.whitespace_split = True
     lexer.commenters = ""
     try:
@@ -350,8 +718,8 @@ def shell_parts(command):
 
 
 def simple_commands(command):
-    """The argument lists of the simple commands inside a shell command
-    (shell_parts)."""
+    """The argument lists of the simple commands inside a shell command,
+    read whole and strictly (shell_parts)."""
     return [part for part in shell_parts(command) if isinstance(part, list)]
 
 
@@ -719,16 +1087,30 @@ def moved_to(argv, shell, is_directory):
 
 def placed_commands(command, here, is_directory=os.path.isdir):
     """Each simple command in a shell command, with the shell that runs it
-    (Shell), from here, where the command starts: a move (moved_to) holds
-    for what follows it in the same shell, a subshell's ends at its ), and
-    each part of a pipeline, and a list run with & in the background, runs
-    in a shell of its own, so its moves change nothing after it. A cd or
-    pushd to what is_directory does not take for a directory, by default
-    what is not one as the hook runs, leaves the shell where it stood. A
-    directory this module cannot tell is None."""
+    (Shell), from here, where the command starts: those of the whole
+    command, then those of each other reading of it (readings) that no
+    reading before placed in the same shell (F25). A move (moved_to) holds
+    for what follows it in the same shell and the same reading, a
+    subshell's ends at its ), and each part of a pipeline, and a list run
+    with & in the background, runs in a shell of its own, so its moves
+    change nothing after it. A cd or pushd to what is_directory does not
+    take for a directory, by default what is not one as the hook runs,
+    leaves the shell where it stood. A directory this module cannot tell
+    is None."""
+    placed = []
+    for text in readings(command):
+        known = {(tuple(argv), shell) for argv, shell in placed}
+        placed += [(argv, shell) for argv, shell in placed_parts(parts_of(text), here, is_directory)
+                   if (tuple(argv), shell) not in known]
+    return placed
+
+
+def placed_parts(parts, here, is_directory):
+    """Each simple command among the parts of one reading of a command
+    (parts_of), with the shell that runs it, from here (placed_commands)."""
     placed, shell, opened, piped = [], Shell(here), [], False
     list_start = pipe_start = shell
-    for part in shell_parts(command):
+    for part in parts:
         if isinstance(part, list):
             placed.append((part, shell))
             shell = moved_to(part, shell, is_directory)
@@ -870,7 +1252,11 @@ def refused_push(command, here, branches_of=None, reader_of=None, is_directory=N
     module does not read, as the module's docstring says). A push judged by
     its words alone has no current branch and no claim files, the default
     branch being here's. is_directory, by default os.path.isdir, says which
-    directories a cd or pushd can reach (placed_commands)."""
+    directories a cd or pushd can reach (placed_commands). The pushes are
+    those any reading of the command finds, the whole command's first
+    (readings; F25: until its fix a quote that never closed hid every
+    push, and a quote in a here-document's body could hide one after it),
+    so a command this module read before that fix is refused as it was."""
     branches_of = branches_of or branches
     reader_of = reader_of or claim_file_reader
     asked = {}

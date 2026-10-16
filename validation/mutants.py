@@ -110,6 +110,7 @@ ORIGINAL_ISSUE_ROWS = board.issue_rows
 ORIGINAL_COMMENTS_DUE = board.comments_due
 ORIGINAL_OVERLAPS_DUE = coordinator.overlap_comments_due
 ORIGINAL_REFUSAL = guard.refusal
+ORIGINAL_PLAIN_TEXT = guard.plain_text
 ORIGINAL_TOLD = coordinator.told_numbers
 ORIGINAL_CLAIMS_MADE = coordinator.claims_made
 ORIGINAL_PUT_BACK = github.put_back
@@ -1242,6 +1243,30 @@ MUTANTS = {
         "G11a", "a push by a -C from a ~ is judged in the session's own clone too, since the shell reads the ~ "
                 "from a HOME the command may set, so a lease from there after HOME is set, onto a claim another "
                 "worker holds, is refused (F21's fourth review)"),
+    "a quote that never closes hiding the command": Mutant(
+        guard, "plain_text", lambda command, lenient=False: ORIGINAL_PLAIN_TEXT(command),
+        "G11a", "a quote that never closes is read as a character of its word, so a lease bash runs before the "
+                "line it cannot read, onto a claim another worker holds, is read and refused (F25)"),
+    "no here-document's body told": Mutant(
+        guard, "here_document_bodies", lambda command: [],
+        "G11a", "a command is read with its here-documents' bodies cut out too, since bash reads their quotes as "
+                "text, so a lease between two bodies whose apostrophes pair around it, onto a claim another worker "
+                "holds, is read and refused (F25)"),
+    "a here-document in a quoted substitution read as text": Mutant(
+        guard, "takes_here_document", lambda contexts: '"' not in contexts,
+        "G11a", "a << in a substitution inside double quotes opens a here-document, as in a commit message given "
+                "by \"$(cat <<'EOF' ... )\", so a lease between two such bodies, onto a claim another worker "
+                "holds, is read and refused (F25)"),
+    "an expanded body's substitutions cut out with it": Mutant(
+        guard, "substitutions_in", lambda command, start, end: (),
+        "G11a", "the command substitutions of a body the shell expands are read as commands, since the shell runs "
+                "them, so a lease in one, between two apostrophes of the body's text, onto a claim another worker "
+                "holds, is refused (F25)"),
+    "a body in a substitution ended only by its delimiter's own line": Mutant(
+        guard, "closes_substitution", lambda line, delimiter: False,
+        "G11a", "a body inside a substitution ends at a line that starts with its delimiter and holds a ), as "
+                "bash 5.2 ends it, so a lease after a body a line EOF)\" ends, onto a claim another worker holds, "
+                "is read and refused (F25)"),
     "dealing without its taken set": Mutant(
         team, "deal", deal_without_the_taken_set,
         "G14", "the workers of one run are dealt distinct issues"),

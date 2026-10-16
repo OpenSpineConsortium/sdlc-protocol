@@ -27,12 +27,13 @@ class TheGrammar(unittest.TestCase):
                       "bash -c 'git push origin main'", "git -c push.default=current push origin",
                       "git push --force-with-lease origin claude/7", "git push origin HEAD:claude/07",
                       "git -C . push origin main", "git --config-env user.name=HOME push origin +claude/7",
-                      "git --shallow-file x push origin main"):
+                      "git --shallow-file x push origin main",
+                      "git commit -F - <<'EOF'\nDon't stop\nEOF\ngit push origin main\ncat <<'EOF'\nIt's done\nEOF"):
             with self.subTest(shape=shape):
                 self.assertIn(shape, texts)
         self.assertEqual(len(set(texts)), len(texts))
         self.assertEqual(len(g.argument_lists()), 1398)
-        self.assertEqual(len(texts), 41940)
+        self.assertEqual(len(texts), 50328, "since F25's fix a sixth wrapper, the session's here-documents")
 
 
 class GitsAnswers(unittest.TestCase):
@@ -86,7 +87,7 @@ class TheGuardJudged(unittest.TestCase):
         self.assertLess(time.perf_counter() - began, BUDGET_SECONDS)
         self.assertEqual(judgement.missing, ())
         self.assertEqual(judgement.failures, {}, g.report(judgement))
-        self.assertEqual(judgement.commands, 41940)
+        self.assertEqual(judgement.commands, 50328)
         let_through = {d.why for d in judgement.classes if d.kind == "let through"}
         self.assertTrue(let_through)
         self.assertTrue(all("G11b" in why for why in let_through), let_through)

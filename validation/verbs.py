@@ -23,7 +23,8 @@ ref as that clone's last fetch or push left it, and the branch pushed.
 lease-elsewhere is F7's careless rebaser in a second clone of its own,
 reached from its session's clone by git -C, by cd, or by a cd that is
 made and one that fails, or in its session's own clone, reached by moves
-and names the guard cannot follow (ELSEWHERE, F21).
+and names the guard cannot follow (ELSEWHERE, F21), or written beside
+here-documents and quotes the guard misread until F25's fix.
 
 Actors: the workers of the scope, each a person's session that may write
 (author_association COLLABORATOR); the owner; carol, a collaborator; dana,
@@ -83,16 +84,32 @@ CLONES = "/clones"
 # shell, which the shell skips (F21's fourth review), with GIT_DIR
 # exported, which names it whatever -C comes after, or by a -C from a ~
 # after HOME is set, which the shell reads from that HOME and the guard
-# from the hook's own (the same review).
+# from the hook's own (the same review). Or its own clone, by a push the
+# guard read no push in until F25's fix: after a here-document whose body
+# holds an apostrophe, before a quote that never closes, between two
+# here-documents whose bodies' apostrophes pair around it, the form a
+# session writes a commit message and a pull request's body in, between
+# such bodies inside double-quoted substitutions that hold a double quote,
+# in a substitution in a body the shell expands, between two apostrophes
+# of the body's text, and after a body in a double-quoted substitution
+# that a line EOF)" ends, as bash 5.2 ends one.
 ELSEWHERE = {"-C": "git -C ../{clone} {push}", "cd": "cd ../{clone} && git {push}",
              "missing": "cd ../{clone}; cd ../{absent}; git {push}",
              "body": "cat > /dev/null <<'EOF'\ncd ..\nEOF\ngit {push}",
              "expanded": 'git -C "$(git rev-parse --show-toplevel)" {push}',
              "skipped": "cd ..; false && cd {clone}; git -C {own} {push}",
              "exported": "export GIT_DIR={root}/{own}/.git; git -C {root} {push}",
-             "home": "HOME={root}; git -C ~/{own} {push}"}
+             "home": "HOME={root}; git -C ~/{own} {push}",
+             "apostrophe": "cat <<'EOF' > /dev/null\nIt's done\nEOF\ngit {push}",
+             "unclosed": 'git {push}\necho "unclosed',
+             "paired": "git commit -F - <<'EOF'\nDon't stop\nEOF\ngit {push}\ncat <<'EOF'\nIt's done\nEOF",
+             "quoted-substitution": ('git commit -q -m "$(cat <<\'EOF\'\nSay "hi\nEOF\n)"\ngit {push}\n'
+                                     'gh pr create --body "$(cat <<\'EOF\'\nQuote" here\nEOF\n)"'),
+             "body-substitution": "cat <<EOF\nIt's $(git {push}) done, isn't it\nEOF",
+             "closing-line": 'msg="$(cat <<\'EOF\'\nSay "hi\nEOF)"\ngit {push}\ngh pr create --body "x"'}
 # The ways whose push runs in the worker's own clone (leasing_clone).
-FROM_OWN_CLONE = ("body", "expanded", "skipped", "exported", "home")
+FROM_OWN_CLONE = ("body", "expanded", "skipped", "exported", "home", "apostrophe", "unclosed", "paired",
+                  "quoted-substitution", "body-substitution", "closing-line")
 
 # A read of the activity with no type named: the read of the push that set
 # a claim's head (github.read_push), told from the reads of a
@@ -537,10 +554,13 @@ def lease_elsewhere(model, worker, number, files, how):
     expands, by a relative -C after a cd behind a test that fails, which
     the shell skips, with GIT_DIR exported, which names it whatever -C
     comes after, or by a -C from a ~ after HOME is set to the directory
-    that holds the clones, which the guard reads from the hook's own HOME.
-    Git would take it, so the guard must judge the push in the clone it
-    runs in and refuse it, as it refuses lease_onto's. No search offers
-    it; F21's trace plays it."""
+    that holds the clones, which the guard reads from the hook's own HOME;
+    or, for F25's ways, in its own clone beside here-documents and a quote
+    that never closes, which bash reads as text or as a line it runs
+    nothing of, after the push. Git would take it, so the guard must read
+    the push and judge it in the clone it runs in and refuse it, as it
+    refuses lease_onto's. No search offers it; F21's and F25's traces
+    play it."""
     pusher = leasing_clone(worker, how)
     model.fetch(pusher)
     ref = claim_ref(number)

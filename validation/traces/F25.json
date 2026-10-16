@@ -1,0 +1,26 @@
+{
+  "finding": "F25",
+  "title": "the push guard reads no push in a command it cannot read whole, or past a here-document's quotes",
+  "status": "fixed after 0.5.0: the guard reads each command more than one way and judges every push any reading finds (DESIGN.md, 13)",
+  "breaks": ["G1", "G11a"],
+  "world": "memory; the git world runs it over real git (build step 6)",
+  "issues": {"1": ["todo"]},
+  "workers": ["a", "b"],
+  "careless": true,
+  "steps": [
+    {"verb": "claim", "actor": "a", "args": [1], "expect": {"holders": {"1": "a"}}},
+    {"verb": "lease-elsewhere", "actor": "b", "args": [1, "apostrophe"], "expect": {"taken": false, "holders": {"1": "a"}},
+     "note": "b fetches claude/1 in its own clone, makes a claim commit naming itself there, and runs cat <<'EOF' > /dev/null, a body It's done, EOF, then git push --force-with-lease origin claude/1: bash reads the body as text and runs the push, which git takes; the guard as built until F25's fix read the body's apostrophe as a quote that never closes, could read nothing of the command and passed it, so the lease was taken and G11a and G1 were red here; the fix reads it two ways, a quote that never closes as a character of its word and the body cut out, and each finds the push, so no one mutant makes this step red"},
+    {"verb": "lease-elsewhere", "actor": "b", "args": [1, "unclosed"], "expect": {"taken": false, "holders": {"1": "a"}},
+     "note": "the same push followed by a line echo \"unclosed, whose quote never closes: bash runs the push, then stops at the line it cannot read; under the mutant that reads a quote that never closes as hiding the rest, the guard reads nothing of the command, the lease is taken and G11a and G1 are red here"},
+    {"verb": "lease-elsewhere", "actor": "b", "args": [1, "paired"], "expect": {"taken": false, "holders": {"1": "a"}},
+     "note": "the shape a session writes most: git commit -F - with a body Don't stop, the push, then cat with a body It's done; the two apostrophes pair around the push as quotes bash never reads, so the command reads whole with the push inside a quoted word; under the mutant that tells no body, the guard has only that reading, the lease is taken and G11a and G1 are red here"},
+    {"verb": "lease-elsewhere", "actor": "b", "args": [1, "quoted-substitution"], "expect": {"taken": false, "holders": {"1": "a"}},
+     "note": "the push between git commit -q -m \"$(cat <<'EOF' ... )\" and gh pr create --body \"$(cat <<'EOF' ... )\", whose bodies each hold a double quote: read whole, the two pair around the push; under the mutant that reads a << in a substitution inside double quotes as text, no body is cut out, the lease is taken and G11a and G1 are red here, as they are under the mutant that tells no body"},
+    {"verb": "lease-elsewhere", "actor": "b", "args": [1, "body-substitution"], "expect": {"taken": false, "holders": {"1": "a"}},
+     "note": "the push inside $( ) in a body whose word is unquoted, It's $(git push ...) done, isn't it: bash expands the body and runs the push; read whole, the body's two apostrophes pair around it, and cut out whole, the body takes it along; under the mutant that keeps none of an expanded body's substitutions, the lease is taken and G11a and G1 are red here"},
+    {"verb": "lease-elsewhere", "actor": "b", "args": [1, "closing-line"], "expect": {"taken": false, "holders": {"1": "a"}},
+     "note": "msg=\"$(cat <<'EOF' with a body Say \"hi and a line EOF)\", then the push and gh pr create --body \"x\": bash 5.2 ends the body at EOF on that line, with a warning, closes the substitution there and runs the push; under the mutant that ends a body in a substitution only at its delimiter's own line, the body runs to the end of the text, the push goes with it, the whole reading's quotes hide it, the lease is taken and G11a and G1 are red here"},
+    {"verb": "board", "expect": {"claims": {"claude/1": "a"}}}
+  ]
+}
