@@ -110,8 +110,13 @@ class HalfRun:
 
 
 def api_for(model, faults=()):
+    """The library's client over a fake answering from the model, with the
+    fake's sleep, which takes no time and keeps the client's waits for a
+    rate limit on the calls they come before, and the fake's clock, the
+    model's minute, which a rate limit's hour is told by (FakeGitHub.sleep,
+    clock)."""
     fake = FakeGitHub(model, faults)
-    return github.GitHub(TOKEN, REPO, opener=fake, sleep=lambda seconds: None), fake
+    return github.GitHub(TOKEN, REPO, opener=fake, sleep=fake.sleep, clock=fake.clock), fake
 
 
 def failed(half, problem, where):

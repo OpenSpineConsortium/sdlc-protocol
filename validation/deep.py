@@ -92,14 +92,20 @@ HELD = (CLAIM, Verb("label-on", "a", (1, "claimed")), Verb("label-on", "a", (1, 
 # E-activity meets it from two claims on one file. activity-500-all
 # refuses every read of the activity, and the board reads the push that
 # set a claim's head for every claim a release can be due on (F8), so it
-# fires in E-faults too, on that read, as do the faults on that read
-# alone: pushes-500 and the two pushes-lagging, which the run's second
-# read answers, pushes-403, which it does not, pushes-moved, a push
-# after the run read the branch, and, since F8's fix check,
-# pushes-moved-twice, two such pushes, pushes-500-then-moved, a refusal
-# the second read answers with such a push, and pushes-lagging-then-500,
-# a read a push behind whose floor the refused second keeps; E-activity
-# meets each of them as well.
+# fires in E-faults too, on that read, as do the thirteen faults on that
+# read alone: pushes-500 and pushes-lagging, which the run's second read
+# answers; pushes-lagging-twice and pushes-catching-up, whose second read
+# lags too; pushes-403, a refusal for good, and the two of a rate
+# limit's, pushes-429-for-the-run, refused on every try the client
+# makes, and pushes-limited-too-long, whose wait is longer than a run
+# waits, none of which the run reads again; pushes-moved, a push after
+# the run read the branch, and, since F8's fix check, pushes-moved-twice,
+# two such pushes, pushes-500-then-moved, a refusal the second read
+# answers with such a push, pushes-lagging-then-500, a read a push behind
+# whose floor the refused second keeps, pushes-500-then-lagging, a
+# refusal the second read answers a push behind, and pushes-deleted, the
+# branch's delete after the run read it; E-activity meets each of them as
+# well.
 # The two on posting an issue's labels, label-post-500 and
 # F15's label-post-lost, fire in no space here nor in the soak: the board
 # posts a label only to put todo on an issue that has none of todo, epic
