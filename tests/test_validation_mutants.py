@@ -92,6 +92,14 @@ TRACES = {
     "the guard passes --force": "the guard grammar against git's answers",
     "the guard passes a lease outside claude/": "the guard grammar against git's answers",
     "the guard passes a lease onto another's claim": "the regression traces",
+    "the guard ignores git's and env's -C": "the regression traces",
+    "the guard does not follow the shell's moves": "the regression traces",
+    "a cd to what is not a directory taken as made": "the regression traces",
+    "a push judged only where the shell's moves take it": "the regression traces",
+    "a push whose clone cannot be told judged by its words alone": "the regression traces",
+    "a relative -C after a move judged where it names alone": "the regression traces",
+    "GIT_DIR forgotten once an absolute path names a place": "the regression traces",
+    "a -C by ~ judged where it names alone": "the regression traces",
     "dealing without its taken set": "dealing at every look",
     "each leg dealt from its own look": "the regression traces",
     "given to workers needing the label todo": "the regression traces",
@@ -299,12 +307,19 @@ class TheLane(unittest.TestCase):
         widened to 120 and the count noted; its follow-up's second review
         one, an older push trusted in the run its push started; F20's fix
         three, an unsettled release put back, counted, or failing the run;
-        and one from the review of the client's waits for a rate limit, a
-        5xx retried as a rate limit, and eight from its second review, one
-        for each rule of the client's waits, so the bound is widened to
-        150."""
+        F21's fix three, the guard ignoring git's and env's -C, not
+        following the shell's moves, and taking a cd to what is not a
+        directory as made, and its third review two, a push judged only
+        where the shell's moves take it and a push whose clone cannot be
+        told judged by its words alone, so the bound is widened to 130, and
+        its fourth review three, a relative -C after a move judged where it
+        names alone, GIT_DIR forgotten once an absolute path names a place
+        and a -C by ~ judged where it names alone; and one from the review
+        of the client's waits for a rate limit, a 5xx retried as a rate
+        limit, and eight from its second review, one for each rule of the
+        client's waits, so the bound is widened to 150, 134 within it."""
         self.assertTrue(10 <= len(mutants.MUTANTS) <= 150)
-        self.assertEqual(len(mutants.MUTANTS), 126)
+        self.assertEqual(len(mutants.MUTANTS), 134)
         self.assertEqual(sorted(TRACES), sorted(mutants.MUTANTS))
 
     def test_every_mutant_names_a_rule_the_library_still_has(self):

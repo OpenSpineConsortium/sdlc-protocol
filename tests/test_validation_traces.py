@@ -1,4 +1,4 @@
-"""The regression traces of DESIGN.md 5.3, one per finding F1 to F20
+"""The regression traces of DESIGN.md 5.3, one per finding F1 to F21
 (validation/traces/, played by validation/replay.py), and known.json, the
 record of what is red on purpose: every trace loads and plays with no
 mismatch; its red results are exactly what known.json records, as built
@@ -130,7 +130,21 @@ BUDGET_SECONDS = 10
 # the branch is renamed in that run once the run takes the refused read
 # for the comment standing, and the run fails once the refused read is
 # let through; each again at its third, step 10, for b's comment GitHub
-# never wrote.
+# never wrote. F21's at b's first lease from its second clone, step 1,
+# by git -C, which is taken once the guard ignores git's and env's -C,
+# at its second, step 2, by cd, taken once the guard does not follow the
+# shell's moves, and at its third, step 3, after a cd that is made and one
+# that fails, taken once the guard takes the second cd as made; and at
+# b's leases from its own clone, step 4, after a here-document whose body
+# holds a cd, taken once a push is judged only where the shell's moves
+# take it, and step 5, by a -C the shell expands, taken once a push whose
+# clone cannot be told is judged by its words alone; and, from F21's
+# fourth review, step 6, by a -C relative to where a cd behind a test
+# that fails would have taken the shell, taken once such a -C is judged
+# where it names alone, step 7, with GIT_DIR exported before an absolute
+# -C, taken once GIT_DIR is forgotten when an absolute path names a place,
+# and step 8, by a -C from a ~ after HOME is set in the command, taken
+# once such a -C is judged where it names alone.
 UNDONE = {
     "F1": [("the comment before the labels", 5, "G3L")],
     "F2": [("a piece of work named by the number it is shown by", 4, "G7"),
@@ -184,14 +198,23 @@ UNDONE = {
             ("a stranger's pull request spoken to after its release", 7, "G10")],
     "F20": [("an unsettled release put back", 8, "G3L"), ("an unsettled release counted", 8, "G3L"),
             ("an unsettled release failing the run", 8, "G15")],
+    "F21": [("the guard ignores git's and env's -C", 1, "G11a"),
+            ("the guard does not follow the shell's moves", 2, "G11a"),
+            ("a cd to what is not a directory taken as made", 3, "G11a"),
+            ("a push judged only where the shell's moves take it", 4, "G11a"),
+            ("a push whose clone cannot be told judged by its words alone", 5, "G11a"),
+            ("a relative -C after a move judged where it names alone", 6, "G11a"),
+            ("GIT_DIR forgotten once an absolute path names a place", 7, "G11a"),
+            ("a -C by ~ judged where it names alone", 8, "G11a")],
 }
-# The twenty findings, every one settled since F20's fix: F1, F3, F5,
-# F6, F10 and F11 fixed in 0.4.1; F2, F4, F7, F8, F9, F12, F13, F14, F15,
-# F17, F18, F19 and F20 fixed on main after it (known.json's fixed_after); and
-# F16, fixed in the spec's words, which the library as built already
-# keeps, so known.json names no version for it.
+# The twenty-one findings, every one settled since F21's fix: F1, F3,
+# F5, F6, F10 and F11 fixed in 0.4.1; F2, F4, F7, F8, F9, F12, F13, F14,
+# F15, F17, F18, F19 and F20 fixed in 0.5.0, and F21 on main after it
+# (known.json's fixed_after); and F16, fixed in the spec's words, which
+# the library as built already keeps, so known.json names no version for
+# it.
 FIXED = ("F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12", "F13", "F14", "F15", "F16", "F17",
-         "F18", "F19", "F20")
+         "F18", "F19", "F20", "F21")
 # Findings red as built, which no rule of the library answers: none since
 # F4's fix; the test keeps the case for the next one.
 RED_AS_BUILT = ()
@@ -374,7 +397,7 @@ class KnownJson(unittest.TestCase):
         self.assertEqual(known.FIXED_AFTER,
                          {"F2": "0.4.1", "F4": "0.4.1", "F7": "0.4.1", "F8": "0.4.1", "F9": "0.4.1", "F12": "0.4.1",
                           "F13": "0.4.1", "F14": "0.4.1", "F15": "0.4.1", "F17": "0.4.1", "F18": "0.4.1",
-                          "F19": "0.4.1", "F20": "0.4.1"})
+                          "F19": "0.4.1", "F20": "0.4.1", "F21": "0.5.0"})
         current = known.version_key(sdlc_protocol.__version__)
         for finding, version in known.FIXED_AFTER.items():
             with self.subTest(finding=finding):
@@ -383,11 +406,12 @@ class KnownJson(unittest.TestCase):
                 self.assertIsNotNone(known.version_key(version))
                 self.assertLessEqual(known.version_key(version), current,
                                      "the last version with a finding is one main has stated, never a later one")
-        fixed_on_main = {"F2", "F4", "F7", "F8", "F9", "F12", "F13", "F14", "F15", "F17", "F18", "F19", "F20"}
-        self.assertEqual(known.as_built_for("0.4.1"), known.AS_BUILT | fixed_on_main)
-        self.assertEqual(known.as_built_for("0.4.0"), known.AS_BUILT | fixed_on_main)
-        self.assertEqual(known.as_built_for("0.4.2"), known.AS_BUILT, "the next release carries the fixes")
-        self.assertEqual(known.as_built_for("0.5.0"), known.AS_BUILT)
+        fixed_in_0_5_0 = {"F2", "F4", "F7", "F8", "F9", "F12", "F13", "F14", "F15", "F17", "F18", "F19", "F20"}
+        self.assertEqual(known.as_built_for("0.4.1"), known.AS_BUILT | fixed_in_0_5_0 | {"F21"})
+        self.assertEqual(known.as_built_for("0.4.0"), known.AS_BUILT | fixed_in_0_5_0 | {"F21"})
+        self.assertEqual(known.as_built_for("0.4.2"), known.AS_BUILT | {"F21"}, "the next release carries the fixes")
+        self.assertEqual(known.as_built_for("0.5.0"), known.AS_BUILT | {"F21"})
+        self.assertEqual(known.as_built_for("0.5.1"), known.AS_BUILT, "the release after 0.5.0 carries F21's fix")
         self.assertEqual(known.as_built_for("1.0.0"), known.AS_BUILT)
         for none in (None, "", "unknown", "0.4", "0.4.1-dirty", "1" * 10 + ".0.0"):
             self.assertEqual(known.as_built_for(none), known.AS_BUILT, none)

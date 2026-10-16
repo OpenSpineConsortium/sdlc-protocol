@@ -166,6 +166,19 @@ def current_branch(model, actor):
     return mine[0] if mine else M.MAIN
 
 
+def refused_in_clone(model, actor, command):
+    """The guard's refusal of a command the actor runs from its own clone,
+    on the branch current_branch names, with no claim files to read; a
+    push the command sends from another directory is judged with no
+    current branch, as the guard judges one in a clone it knows nothing
+    of."""
+    def branches_of(place):
+        return (current_branch(model, actor) if verbs.clone_named(place) == actor else None), M.MAIN
+
+    return verbs.guard_says(command, verbs.clone_path(actor), branches_of, lambda place: None,
+                            lambda place: verbs.clone_exists(model, place))
+
+
 # --- the expectations ---------------------------------------------------------
 
 def bot_comments(model, number):
@@ -231,7 +244,7 @@ def observed(model, expect, outcomes, scenario, step):
     if expect.picks is not None:
         yield "picks", expect.picks, {w: policies.free_issue(policies.view(model, w)) for w in expect.picks}
     if expect.refused is not None:
-        yield "refused", expect.refused, bool(verbs.guard_says(step.args[0], current_branch(model, step.actor)))
+        yield "refused", expect.refused, bool(refused_in_clone(model, step.actor, step.args[0]))
     if expect.kept is not None:
         yield "kept", expect.kept, {n: path if path in model.tree(model.refs.get(oracle.branch_of(n), ""))
                                     else None for n, path in expect.kept.items()}
