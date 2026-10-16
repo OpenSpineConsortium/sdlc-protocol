@@ -1,7 +1,7 @@
 {
   "finding": "F20",
   "title": "a release whose comment GitHub refused, and whose read of the issue's comments after it GitHub refused too, puts the labels back beside a comment that may stand, which holds the claim for good",
-  "status": "fixed after 0.4.1: a run that cannot read the issue's comments to tell whether its release comment stands leaves the labels as the release left them and counts no release, and the next run settles it (github.release_one, github.unsettled; DESIGN.md, 13)",
+  "status": "fixed after 0.4.1: a run that cannot read the issue's comments to tell whether its release comment stands leaves the labels as the release left them and counts no release of its own, and the next run settles it as it settles any claim whose labels are off, while on a head a release already kept the earlier release frees the claim in that run (github.release_one, github.unsettled; DESIGN.md, 13)",
   "breaks": ["G3L", "G15"],
   "world": "memory",
   "issues": {"1": ["todo"], "2": ["todo"]},

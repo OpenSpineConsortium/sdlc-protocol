@@ -1181,13 +1181,16 @@ def release_one(api, snap, key, now):
     beside a comment that stands would hold the claim for good: the
     comment tells every later coordinator the claim is released, and the
     label claimed tells the board it is held; the next run, reading the
-    comments, finds the release whole or releases the claim again, while
-    on a head a release already kept, whose latest release comment counts
-    whenever it came (board.release_counts), that earlier release frees
-    the claim in the same run once the labels are off. Only when GitHub
-    refuses the putting back too are the labels left off with no comment,
-    until a run releases the claim or a person puts them back. What was
-    done, in a line."""
+    comments, settles it as it settles any claim whose labels are off,
+    finding the release whole or releasing the claim again unless its
+    holder pushed or a person put the label claimed back in the meantime,
+    while on a head a release already kept, where a release comment that
+    counts stands, whenever it came (board.release_counts), that earlier
+    release frees the claim in the same run once the labels are off.
+    Where GitHub refuses the putting back too, the labels are left off
+    with no comment, as an unsettled release leaves them where GitHub
+    wrote none, until a run releases the claim or a person puts them
+    back. What was done, in a line."""
     release = snap.releases[key]
     names, put_on = coordinator.labels_released(snap, key), coordinator.labels_put_on(snap, key)
     taken_off = []
@@ -1280,10 +1283,12 @@ def unsettled(snap, key, names, put_on, problem, unread):
     with no release of this run's, since the run cannot tell whether one
     stands, so the page lists the claim as held and nothing is renamed
     this run; the next run, reading the comments, finds the comment and
-    the release is whole, or finds none and releases the claim again (F20;
-    until its fix the labels went back beside a comment that might stand,
-    which held the claim for good). A head a release already kept is the
-    exception: its latest release comment counts whenever it came
+    the release is whole, or finds none and releases the claim again,
+    unless its holder pushed since or a person put the label claimed back
+    beside the comment (F20; until its fix the labels went back beside a
+    comment that might stand, which held the claim for good). A head a
+    release already kept, where a release comment that counts stands, is
+    the exception: that comment counts whenever it came
     (board.release_counts), so with the labels off the snapshot counts
     that earlier release, and the same run lists the claim as released
     and deletes the branch, whose work is kept, with no word of this

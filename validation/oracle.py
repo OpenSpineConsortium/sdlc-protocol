@@ -88,10 +88,13 @@ SPEC = {
     "unsettled": "where the run cannot read the issue's comments to tell whether it is, it leaves the labels as "
                  "the release left them and counts no release of its own, so its page lists the claim as held and "
                  "the branch keeps its name",
-    "settled next": "the next run, reading the comments, finds the release whole or releases the claim again",
+    "settled next": "the next run, reading the comments, finds the release whole where GitHub wrote the comment, "
+                    "or releases the claim again where it wrote none, unless its holder pushed since, which keeps "
+                    "the claim, or a person put the label claimed back beside a comment GitHub wrote, which undoes "
+                    "that release (below)",
     "unsettled kept": "though a branch at a head a release already kept is released in that same run by its latest "
-                      "release comment, which counts for such a branch whenever it came, with no word on the issue "
-                      "of this run's release where GitHub wrote none",
+                      "release comment, where one that counts stands, which counts for such a branch whenever it "
+                      "came, with no word on the issue of this run's release where GitHub wrote none",
     "candidates": "It takes its candidates from the open issues that have a branch `claude/<issue>`, whatever "
                   "their labels, and skips a claim whose latest release comment came more than 24 hours after "
                   "the branch's last commit, which is a claim already released",

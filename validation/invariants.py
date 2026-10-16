@@ -545,9 +545,11 @@ def unsettling_reads(calls):
     said whether GitHub wrote the comment anyway, which the run does
     without, leaving the release for the next run to settle
     (SPEC["unsettled"]; F20). That re-read is the first read of the
-    issue's comments after the failed post, one page, since no trace
-    holds more comments on an issue than the fake gives in a page; a
-    later read of them in the run, for an overlap's markers or a
+    issue's comments after the failed post, and the refusal looked for is
+    of its first page, which both of F20's faults refuse
+    (comment-lost-then-unread, comment-500-then-unread), so a refusal of a
+    later page, which no fault makes, is not looked for; a later read of
+    them in the run, for an overlap's markers or a
     released branch's comment, is a read like any other, so one GitHub
     refuses is no reason for the labels to stay off (F20's review)."""
     failed, found = set(), {}
@@ -578,10 +580,10 @@ def unsettled_left_alone(calls, actual, start):
     """A run that could not tell whether its release comment stands counts
     no release of its own: it neither renames nor deletes the claim's
     branch nor says where the branch went, since the next run, reading the
-    comments, finds the release whole or releases the claim again
-    (SPEC["unsettled"], SPEC["settled next"]; F20) (G3L). A head a release
-    already kept, in start, the state the run started from, is the
-    exception: its latest release comment counts for it whenever it came,
+    comments, settles it (SPEC["unsettled"], SPEC["settled next"]; F20)
+    (G3L). A head a release already kept, in start, the state the run
+    started from, where a release comment that counts stands, is the
+    exception: that comment counts for it whenever it came,
     so once the labels are off that earlier release frees the claim in
     the same run, and the board deletes the branch, whose work is kept
     (SPEC["unsettled kept"], SPEC["kept deleted"]; F20's review)."""
