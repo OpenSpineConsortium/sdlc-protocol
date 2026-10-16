@@ -62,20 +62,24 @@ one whose clone git's or env's -C names by an absolute path, or a
 relative one with no cd, pushd or popd before it in the same shell,
 holding nothing the shell expands, and whose repository nothing names:
 that push is judged in the clone the -C names alone. That is the clone it
-runs in, save where the shell does what this module does not read. This
-module does not trust a ~ to name a clone: it reads one from the hook's
-own HOME, while a HOME the command sets before it sends the shell
-elsewhere, and quotes, which this module does not keep, leave a ~ as
-written, so a push by a -C from a ~ is judged where this module reads it
-and in the session's own clone too (from_a_tilde). And it does not follow
-a move or an export in a command handed to eval or trap or in a file run
-by source or ., nor what a function or alias the session's shell has
-before the command does, as one named git or cd may, nor a variable that
-names the repository given its value by read, printf -v or a for loop: it
-judges the push as if none of them ran. A refusal reads as it did before
-the fix, and ends with what the hook could not tell and how to have the
-push judged in its clone alone (UNMOVED, UNTOLD) only where the reading
-that refused it is one the command's words do not name.
+runs in, save where the shell does what this module does not read, as
+where the command first points a symbolic link on that path elsewhere
+(ln -sfn), makes a repository there (git init, git worktree add) or
+writes a .git file there, since the hook reads the path before the
+command runs. This module does not trust a ~ to name a clone: it reads
+one from the hook's own HOME, while a HOME the command sets before it
+sends the shell elsewhere, and quotes, which this module does not keep,
+leave a ~ as written, so a push by a -C from a ~ is judged where this
+module reads it and in the session's own clone too (from_a_tilde). And it
+does not follow a move or an export in a command handed to eval or trap
+or in a file run by source or ., nor what a function or alias the
+session's shell has before the command does, as one named git or cd may,
+nor a variable that names the repository given its value by read,
+printf -v or a for loop: it judges the push as if none of them ran. A
+refusal reads as it did before the fix, and ends with what the hook could
+not tell and how to have the push judged in its clone alone (UNMOVED,
+UNTOLD) only where the reading that refused it is one the command's words
+do not name.
 
 The hook is the first fence and branch protection on GitHub the second,
 so anything this module cannot read it lets through rather than wedging
