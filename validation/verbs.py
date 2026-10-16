@@ -70,12 +70,18 @@ CLAIM_DIR = "docs/agents/claims"
 # Where the memory world's clones stand, one a worker, each named by its
 # directory, so the guard asks the clone a push runs in (F21).
 CLONES = "/clones"
-# How F21's careless rebaser reaches its second clone from its session's:
-# git's -C, or the shell's cd before git.
-# Or in its session's own clone, after a cd into a directory that is not
-# there, which the shell runs the push after from where it stood.
+# How F21's careless rebaser reaches the clone its push runs in from its
+# session's: its second clone, by git's -C, by the shell's cd before git,
+# or by a cd the shell makes and then one into a directory that is not
+# there, which leaves the shell where it stood; or its session's own
+# clone, after a cd in a here-document's body, which the shell reads as
+# text, or by a -C through a path the shell expands, which names it.
 ELSEWHERE = {"-C": "git -C ../{clone} {push}", "cd": "cd ../{clone} && git {push}",
-             "missing": "cd ../{clone}; git {push}"}
+             "missing": "cd ../{clone}; cd ../{absent}; git {push}",
+             "body": "cat > /dev/null <<'EOF'\ncd ..\nEOF\ngit {push}",
+             "expanded": 'git -C "$(git rev-parse --show-toplevel)" {push}'}
+# The ways whose push runs in the worker's own clone (leasing_clone).
+FROM_OWN_CLONE = ("body", "expanded")
 
 # A read of the activity with no type named: the read of the push that set
 # a claim's head (github.read_push), told from the reads of a
@@ -274,10 +280,17 @@ def clone_named(place):
 
 def clone_exists(model, place):
     """Whether a directory is a clone the memory world holds: a writer's
-    own, or one a verb fetched into or pushed from (model.tracking); a cd
-    into any other fails, as into a directory that is not there (F21)."""
+    own, or one a verb fetched into or pushed from (model.tracking)."""
     name = clone_named(place)
     return name is not None and (name in model.writers or name in model.tracking)
+
+
+def is_directory(model, place):
+    """Whether a cd reaches a directory in the memory world: a clone it
+    holds (clone_exists), or the directory that holds the clones, which is
+    no clone; a cd into any other fails, as into a directory that is not
+    there (F21)."""
+    return clone_exists(model, place) or (bool(place) and os.path.normpath(place) == CLONES)
 
 
 def other_clone(worker):
@@ -302,18 +315,17 @@ def guard_says(command, here, branches_of, reader_of, is_directory=None):
 def git_shows(model, ref, sha):
     """What git in each clone shows the guard before a push of sha to ref,
     as guard.branches and guard.claim_file_reader read it there: a clone
-    is on the branch pushed, its default branch is main, and its claim
-    files are claim_files_in's for it; a directory that is no clone's
-    shows nothing, and only a clone the model holds is a directory a cd
-    reaches (clone_exists)."""
+    the model holds is on the branch pushed, its default branch is main,
+    and its claim files are claim_files_in's for it; a directory that is
+    no clone the model holds shows nothing, as git shows nothing outside
+    a repository; and a cd reaches what is_directory says."""
     def branches_of(place):
-        return (ref if clone_named(place) else None), MAIN
+        return (ref if clone_exists(model, place) else None), MAIN
 
     def reader_of(place):
-        name = clone_named(place)
-        return claim_files_in(model, name, ref, sha) if name else None
+        return claim_files_in(model, clone_named(place), ref, sha) if clone_exists(model, place) else None
 
-    return branches_of, reader_of, lambda place: clone_exists(model, place)
+    return branches_of, reader_of, lambda place: is_directory(model, place)
 
 
 def claim_file_at(model, head, number):
@@ -506,29 +518,35 @@ def lease_elsewhere(model, worker, number, files, how):
     there and makes its claim commit there, with a claim file naming
     itself, then leases onto a claim another worker holds by a command its
     session runs from its own clone, which has not fetched that claim,
-    reaching the second by git -C or by cd (ELSEWHERE); or, for missing,
-    it does all that in its own clone, after a cd into a directory that is
-    not there, which leaves the shell in its own clone. Git would take it,
-    so the guard must judge the push in the clone it runs in and refuse
-    it, as it refuses lease_onto's. No search offers it; F21's trace plays
-    it."""
-    pusher, named = leasing_clones(worker, how)
+    reaching the second by git -C, by cd, or by a cd and then one into a
+    directory that is not there, which leaves the shell in the second
+    (ELSEWHERE); or, for body and expanded, it does all that in its own
+    clone, after a cd in a here-document's body, which the shell does not
+    run, or naming its own clone by a -C the shell expands. Git would take
+    it, so the guard must judge the push in the clone it runs in and
+    refuse it, as it refuses lease_onto's. No search offers it; F21's
+    trace plays it."""
+    pusher = leasing_clone(worker, how)
     model.fetch(pusher)
     ref = claim_ref(number)
     tree = model.tree(model.refs[MAIN])
     tree[f"{CLAIM_DIR}/{number}.md"] = claim_text(number, worker, files)
     sha = model.commit((model.refs[MAIN],), worker, tree, f"Claim #{number}")
-    command = ELSEWHERE[how].format(clone=named, push=f"push --force-with-lease origin {ref}")
-    return pushed(model, worker, ref, sha, command, lease=True, allowed=False, clone=pusher)
+    return pushed(model, worker, ref, sha, leasing_command(worker, how, ref), lease=True, allowed=False,
+                  clone=pusher)
 
 
-def leasing_clones(worker, how):
-    """The clone lease_elsewhere's push runs in, and the one its command
-    names: the worker's second clone for both, or, after a cd that fails,
-    the worker's own and the absent one."""
-    if how == "missing":
-        return worker, absent_clone(worker)
-    return other_clone(worker), other_clone(worker)
+def leasing_clone(worker, how):
+    """The clone lease_elsewhere's push runs in: the worker's own for the
+    ways FROM_OWN_CLONE names, else its second."""
+    return worker if how in FROM_OWN_CLONE else other_clone(worker)
+
+
+def leasing_command(worker, how, ref):
+    """The command lease_elsewhere's session runs from the worker's own
+    clone (ELSEWHERE), naming the second clone and the absent one."""
+    return ELSEWHERE[how].format(clone=other_clone(worker), absent=absent_clone(worker),
+                                 push=f"push --force-with-lease origin {ref}")
 
 
 def claim_commit(model, number):

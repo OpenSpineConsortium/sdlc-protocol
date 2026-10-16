@@ -92,9 +92,11 @@ TRACES = {
     "the guard passes --force": "the guard grammar against git's answers",
     "the guard passes a lease outside claude/": "the guard grammar against git's answers",
     "the guard passes a lease onto another's claim": "the regression traces",
-    "the guard asks the session's own clone": "the regression traces",
+    "the guard ignores git's and env's -C": "the regression traces",
     "the guard does not follow the shell's moves": "the regression traces",
     "a cd to what is not a directory taken as made": "the regression traces",
+    "a push judged only where the shell's moves take it": "the regression traces",
+    "a push whose clone cannot be told judged by its words alone": "the regression traces",
     "dealing without its taken set": "dealing at every look",
     "each leg dealt from its own look": "the regression traces",
     "given to workers needing the label todo": "the regression traces",
@@ -280,11 +282,13 @@ class TheLane(unittest.TestCase):
         widened to 120 and the count noted; its follow-up's second review
         one, an older push trusted in the run its push started; and F20's
         fix three, an unsettled release put back, counted, or failing the
-        run; and F21's fix three, the guard asking the session's own
-        clone, not following the shell's moves, and taking a cd to what is
-        not a directory as made."""
-        self.assertTrue(10 <= len(mutants.MUTANTS) <= 120)
-        self.assertEqual(len(mutants.MUTANTS), 120)
+        run; and F21's fix three, the guard ignoring git's and env's -C,
+        not following the shell's moves, and taking a cd to what is not a
+        directory as made, and its third review two, a push judged only where
+        the shell's moves take it and a push whose clone cannot be told
+        judged by its words alone, so the bound is widened to 130."""
+        self.assertTrue(10 <= len(mutants.MUTANTS) <= 130)
+        self.assertEqual(len(mutants.MUTANTS), 122)
         self.assertEqual(sorted(TRACES), sorted(mutants.MUTANTS))
 
     def test_every_mutant_names_a_rule_the_library_still_has(self):

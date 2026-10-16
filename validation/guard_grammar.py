@@ -76,9 +76,11 @@ PREFIXES = ("", "FOO=1 ", "env ", "command ", "nice ", "time ")
 WRAPPERS = ("{}", "bash -c '{}'", "true && {}", "( {} )", "echo $({})")
 UNREADABLE = "bash -c '{}'"
 # git's own options before the verb: a directory, the empty one git -C
-# takes as no change, a setting, and a setting from the environment,
-# whose value is the next word (F21's review).
-GLOBALS = ("", " -C .", ' -C ""', " -c push.default=current", " --config-env user.name=HOME")
+# takes as no change, a setting, a setting from the environment, whose
+# value is the next word (F21's review), and a shallow file, whose value
+# is the next word too (its third review).
+GLOBALS = ("", " -C .", ' -C ""', " -c push.default=current", " --config-env user.name=HOME",
+           " --shallow-file x")
 PLAIN_OPTIONS = ("", " -u", " --no-verify")
 LEASE = " --force-with-lease"
 FORCE_OPTIONS = (" --force", " -f", " -fu")

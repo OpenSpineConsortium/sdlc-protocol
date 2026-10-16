@@ -1203,7 +1203,7 @@ MUTANTS = {
     "the guard passes a lease onto another's claim": Mutant(
         guard, "other_holder", lease_onto_any_claim,
         "G11a", "a lease onto a claim whose file on origin names another worker is refused (F7)"),
-    "the guard asks the session's own clone": Mutant(
+    "the guard ignores git's and env's -C": Mutant(
         guard, "push_place", lambda argv, here: here,
         "G11a", "a push is judged in the clone git -C or env -C names, so a lease from another clone onto a claim "
                 "another worker holds is refused there (F21)"),
@@ -1213,8 +1213,19 @@ MUTANTS = {
                 "onto a claim another worker holds is refused (F21)"),
     "a cd to what is not a directory taken as made": Mutant(
         guard, "reached", lambda shell, target, stack, is_directory: guard.Shell(target, stack),
-        "G11a", "a cd or pushd that fails leaves the shell where it stood, so a lease run after it from the session's "
-                "own clone onto a claim another worker holds is judged there and refused (F21)"),
+        "G11a", "a cd or pushd that fails leaves the shell where it stood, so a lease run after it from a clone a cd "
+                "reached, onto a claim another worker holds, is judged there and refused (F21)"),
+    "a push judged only where the shell's moves take it": Mutant(
+        guard, "push_places", lambda argv, directory, here: [guard.Reading(guard.push_place(argv, directory))],
+        "G11a", "a push after a move is judged also where the command starts, since a cd in a here-document's body "
+                "moves the shell only as the guard reads it, so a lease from the session's own clone onto a claim "
+                "another worker holds is refused there (F21's third review)"),
+    "a push whose clone cannot be told judged by its words alone": Mutant(
+        guard, "push_places", lambda argv, directory, here: [guard.Reading(guard.push_place(argv, directory)),
+                                                             guard.Reading(guard.push_place(argv, here))],
+        "G11a", "a push whose clone the guard cannot tell is judged in the session's own clone too, so a lease "
+                "through a path the shell expands onto a claim another worker holds is refused there "
+                "(F21's third review)"),
     "dealing without its taken set": Mutant(
         team, "deal", deal_without_the_taken_set,
         "G14", "the workers of one run are dealt distinct issues"),

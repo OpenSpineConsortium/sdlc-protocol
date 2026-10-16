@@ -3,6 +3,7 @@ everything else through, including what it cannot parse: the hook is the
 first fence, branch protection the second, so it fails open."""
 
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -317,12 +318,27 @@ class ParsingTest(unittest.TestCase):
     def test_a_nul_byte_in_a_directory_or_a_ref_is_a_place_git_cannot_answer_in(self):
         """subprocess refuses a NUL byte with ValueError, which git_line
         takes as no answer, so the hook judges the push by its words and
-        never raises (F21's second review)."""
+        never raises (F21's second review); and expanduser refuses a ~
+        before a NUL byte, or before a lone surrogate, which JSON's \\ud800
+        carries and no file name can hold, which joined takes as a place it
+        cannot tell (F21's third review: until then the hook raised)."""
         for command in ("git -C a\x00b push origin main", "cd a\x00b && git push origin main"):
             with self.subTest(command=command):
                 self.assertEqual(guard.run({"tool_input": {"command": command}, "cwd": str(ROOT)}),
                                  (guard.REFUSE, MAIN))
         self.assertEqual(guard.git_line(["status"], "a\x00b"), None)
+        with mock.patch.object(guard, "branches", return_value=("claude/7", "main")):
+            for place in ("~a\x00b", "~\ud800", "~/\ud800"):
+                for shape in ("cd {}; git push origin HEAD", "git -C {} push origin HEAD", "env -C {} git push",
+                              "pushd {}; git push", "cd {} && git -C {} push"):
+                    command = shape.format(place, place)
+                    with self.subTest(command=command):
+                        self.assertEqual(guard.run({"tool_input": {"command": command}, "cwd": str(ROOT)}),
+                                         (guard.PASS, ""))
+                        self.assertEqual(guard.run({"tool_input": {"command": command + " origin main"},
+                                                    "cwd": str(ROOT)})[0], guard.REFUSE)
+            self.assertIsNone(guard.joined("/w", "~a\x00b"))
+            self.assertIsNone(guard.joined("/w", "~\ud800"))
         lease = {"tool_input": {"command": "git push --force-with-lease=claude/7:a\x00b origin claude/7"},
                  "cwd": str(ROOT)}
         with mock.patch.object(guard, "branches", return_value=("claude/7", "main")):
@@ -431,9 +447,28 @@ class PlaceTest(unittest.TestCase):
                                ("env -iC ../other git push", "/w/s/../other"),
                                ("env --chdir=../other git push", "/w/s/../other"),
                                ("env --chdir ../other git -C x push", "/w/s/../other/x"),
-                               ("env -u HOME git push", "/w/s")):
+                               ("env -u HOME git push", "/w/s"),
+                               ("env -C sub -C ../other git push", "/w/s/../other"),
+                               ("env -C sub --chdir=../other git push", "/w/s/../other"),
+                               ("env -C a env -C b git push", "/w/s/a/b"),
+                               ("git --shallow-file x -C ../other push", "/w/s/../other")):
             with self.subTest(command=command):
                 self.assertEqual(push_places(command), [place])
+
+    def test_env_changes_directory_once_to_the_last_it_is_given(self):
+        """GNU env reads its options first and changes directory after, to
+        the last directory -C or --chdir gave it, from where it was run;
+        git's own -C, by contrast, are joined on in turn (F21's third review)."""
+        if shutil.which("env") is None or subprocess.run(["env", "-C", "/", "true"]).returncode != 0:
+            self.skipTest("no env that takes -C")
+        with tempfile.TemporaryDirectory() as scratch:
+            Path(scratch, "sub").mkdir()
+            Path(scratch, "other").mkdir()
+            ran = subprocess.run(["env", "-C", "sub", "-C", "other", "pwd"], cwd=Path(scratch, "sub").parent,
+                                 capture_output=True, text=True)
+            self.assertEqual(Path(ran.stdout.strip()).resolve(), Path(scratch, "other").resolve())
+        self.assertEqual(guard.env_directory(["-C", "sub", "-C", "../other"]), "../other")
+        self.assertEqual(guard.env_directory(["-u", "HOME"]), None)
 
     def test_a_push_that_names_its_repository_or_a_path_the_shell_expands_runs_where_this_cannot_tell(self):
         for command in ("git -C $DIR push", "git -C \"$DIR\" push", "git -C ../o* push", "git -C `pwd` push",
@@ -458,8 +493,22 @@ class PlaceTest(unittest.TestCase):
                                 ("pushd ../other && git push && popd && git push", ["/w/other", "/w/s"]),
                                 ("pushd -n ../other; git push", ["/w/s"]),
                                 ("env cd ../other; git push", ["/w/s"]),
+                                ("time cd ../other; git push", ["/w/other"]),
+                                ("time -p cd ../other; git push", ["/w/other"]),
+                                ("nice cd ../other; git push", ["/w/s"]),
                                 ("export FOO=1; git push", ["/w/s"]),
                                 ("git status; git push", ["/w/s"])):
+            with self.subTest(command=command):
+                self.assertEqual(push_places(command), places)
+
+    def test_an_absolute_path_is_a_place_wherever_the_shell_stood(self):
+        """After a move this module cannot follow, an absolute path still
+        names its directory (F21's third review: until then it stayed unknown, so
+        a lease through it went unjudged)."""
+        for command, places in (("cd $X && git -C /w/other push", ["/w/other"]),
+                                ("cd $X && cd /w/other && git push", ["/w/other"]),
+                                ("cd $X && cd ~ && git push", [HOME]),
+                                ("cd $X && git -C ../other push", [None])):
             with self.subTest(command=command):
                 self.assertEqual(push_places(command), places)
 
@@ -506,8 +555,11 @@ class PlaceTest(unittest.TestCase):
 class CloneTest(unittest.TestCase):
     """Each push is judged in the clone it runs in (guard.refused_push, F21):
     its current branch and its claim files are that clone's, each clone
-    asked once, and a push whose clone this module cannot tell is judged by
-    its words, the default branch being the session's own."""
+    asked once; a push after a move is judged also where the command
+    starts, as if no move ran, and a push whose clone this module cannot
+    tell by its words and in the session's own clone, so no push is judged
+    more leniently than before the fix, save that git's and env's -C send
+    it where they name (F21's third review)."""
 
     BRANCHES = {"/w/s": ("claude/7", "main"), "/w/other": ("main", "main")}
 
@@ -553,11 +605,41 @@ class CloneTest(unittest.TestCase):
                      "cd ../other; git push origin z; git push origin w")
         self.assertEqual(self.asked, ["/w/s", "/w/s/../other", "/w/other"])
 
-    def test_a_push_whose_clone_this_cannot_tell_is_judged_by_its_words(self):
+    def test_a_push_whose_clone_this_cannot_tell_is_judged_by_its_words_and_in_the_session_s_own_clone(self):
         self.assertEqual(self.refused("cd $X && git push origin main"), MAIN, "the session's own default branch")
-        self.assertIsNone(self.refused("cd $X && git push"), "no current branch to judge a bare push by")
-        self.assertEqual(self.asked, ["/w/s", "/w/s"], "only for the default branch")
+        self.assertIsNone(self.refused("cd $X && git push"), "the session's own claim branch, as before the fix")
+        self.assertEqual(self.asked, ["/w/s", "/w/s"], "once a command, for its words and as the push's clone")
         self.assertEqual(self.refused("cd $X && git push --force origin claude/7"), FORCE)
+        self.assertEqual(self.refused("cd $X && git push origin HEAD", "/w/other"), MAIN + guard.UNMOVED,
+                         "the session's own clone is on main, as the push may be")
+        self.assertEqual(self.refused('git -C "$(git rev-parse --show-toplevel)" push origin HEAD', "/w/other"),
+                         MAIN + guard.UNTOLD)
+        self.assertEqual(self.refused("GIT_DIR=../s/.git git push --force-with-lease origin claude/7", "/w/other"),
+                         self.refused("git push --force-with-lease origin claude/7", "/w/other") + guard.UNTOLD)
+
+    def test_a_push_after_a_move_is_judged_where_the_command_starts_too(self):
+        """A cd this module reads and the shell does not run, in a
+        here-document's body, after a test that fails, in a function never
+        called, sent the push to a clone that holds no claim file, which
+        passed a lease that git takes from the session's own (F21's third review:
+        a regression against 0.5.0, which judged every push there)."""
+        lease = "git push --force-with-lease origin claude/7"
+        held = self.refused(lease, "/w/other")
+        self.assertIn("claude/7 on origin is a's claim", held)
+        for moves in ("cat > /dev/null <<'EOF'\ncd ../s\nEOF\n", '[ -n "" ] && cd ../s; ', "f() { cd ../s; }; ",
+                      "true || cd ../s; ", "{ cd ../s; } | cat; ", "pushd ../s; popd; popd; ",
+                      "if false; then cd ../s; fi; ", "(case x in x) cd ../s;; esac); ", "cd ../s extra; ",
+                      "cd ../s/missing/..; ", 'cd "~"; '):
+            with self.subTest(moves=moves):
+                self.assertEqual(self.refused(moves + lease, "/w/other"), held + guard.UNMOVED)
+        self.assertEqual(self.refused("cd ../other && " + lease), held, "judged where the shell's cd takes it")
+        self.assertEqual(self.refused("cd ../s && git push origin HEAD", "/w/other"), MAIN + guard.UNMOVED,
+                         "what it costs: a cd the shell makes, refused for what the session's own clone shows")
+        self.assertIsNone(self.refused("git -C ../s push origin HEAD", "/w/other"), "git -C is judged where it runs")
+        with mock.patch.object(guard, "push_places", lambda argv, directory, here: [guard.Reading(
+                guard.push_place(argv, directory))]):
+            self.assertIsNone(self.refused("cat > /dev/null <<'EOF'\ncd ../s\nEOF\n" + lease, "/w/other"),
+                              "as built until F21's third review: judged in s alone, which shows no claim file")
 
 
 class RunTest(unittest.TestCase):
@@ -854,17 +936,46 @@ class OtherCloneTest(unittest.TestCase):
                              "as built until F21's fix: judged in s, which holds no claim file of #7")
 
     def test_a_lease_after_a_cd_that_fails_is_judged_where_the_shell_stood(self):
+        """From s, the shell's cd into other is made and the cd into nowhere
+        fails, so the push runs from other; judged in nowhere, which shows
+        nothing, and where the command starts, in s, which never fetched
+        a's claim, it passed."""
         self.claim_of_b_in_other()
-        lease = "cd ../nowhere; git push --force-with-lease origin claude/7"
-        ran = subprocess.run(["bash", "-c", "cd ../nowhere; git rev-parse --abbrev-ref HEAD"], cwd=self.other,
-                             env=GIT_ENV, capture_output=True, text=True)
+        lease = "cd ../other; cd ../nowhere; git push --force-with-lease origin claude/7"
+        ran = subprocess.run(["bash", "-c", "cd ../other; cd ../nowhere; git rev-parse --abbrev-ref HEAD"],
+                             cwd=self.session, env=GIT_ENV, capture_output=True, text=True)
         self.assertEqual(ran.stdout.strip(), "claude/7", "bash runs what follows the failed cd from other")
-        code, reason = self.hook(lease, self.other)
+        code, reason = self.hook(lease)
         self.assertEqual(code, guard.REFUSE)
         self.assertIn("claude/7 on origin is a's claim", reason)
+        self.assertEqual(self.hook("cd ../nowhere; git push --force-with-lease origin claude/7", self.other)[0],
+                         guard.REFUSE)
         with mock.patch.object(guard, "reached", lambda shell, target, stack, is_directory: guard.Shell(target, stack)):
-            self.assertEqual(self.hook(lease, self.other), (guard.PASS, ""),
+            self.assertEqual(self.hook(lease), (guard.PASS, ""),
                              "as built until F21's second review: judged in ../nowhere, which shows nothing")
+
+    def test_a_lease_after_a_cd_in_a_here_document_s_body_is_judged_where_the_shell_stands(self):
+        """bash reads the body as text, so the push runs from other, whose
+        lease git would take; this module reads the body's cd as one the
+        shell makes, into s, and judges the push in other too (F21's
+        third review: a regression against 0.5.0)."""
+        self.claim_of_b_in_other()
+        lease = "cat > /dev/null <<'EOF'\ncd ../s\nEOF\ngit push --force-with-lease origin claude/7"
+        ran = subprocess.run(["bash", "-c", lease.replace("git push --force-with-lease origin claude/7",
+                                                          "git rev-parse --show-toplevel")],
+                             cwd=self.other, env=GIT_ENV, capture_output=True, text=True)
+        self.assertEqual(Path(ran.stdout.strip()).resolve(), self.other.resolve())
+        code, reason = self.hook(lease, self.other)
+        self.assertEqual(code, guard.REFUSE)
+        self.assertTrue(reason.endswith(guard.UNMOVED), reason)
+        code, reason = self.hook('git -C "$(git rev-parse --show-toplevel)" push --force-with-lease origin claude/7',
+                                 self.other)
+        self.assertEqual(code, guard.REFUSE)
+        self.assertTrue(reason.endswith(guard.UNTOLD), reason)
+        self.assertEqual(self.hook("time cd ../other; git push --force-with-lease origin claude/7")[0], guard.REFUSE,
+                         "bash's time runs cd in the shell itself")
+        self.assertEqual(self.hook(f"cd $X; git -C {self.other} push --force-with-lease origin claude/7")[0],
+                         guard.REFUSE, "an absolute path after a place this module cannot tell")
 
     def test_git_s_minus_c_climbs_from_where_a_link_leads_and_cd_does_not(self):
         """s/peek leads into other: git -C peek/.. changes directory as the

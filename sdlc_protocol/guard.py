@@ -34,22 +34,30 @@ refused (other_holder). The file is read with git in the clone the push
 runs in, so the fence costs a few git calls on a lease push and nothing
 on any other command.
 
-Each push is judged in the clone it runs in (refused_push), since a
-session's shell is not always where its push goes: git -C and env -C
-name another directory, and cd, pushd and popd move the shell before a
-later command, so "cd ../other && git push origin HEAD" pushes the other
-clone's branch, and its current and default branch, and its claim files,
-are that clone's. The module follows the shell's moves within one
-command (placed_commands), each part of a pipeline and each list run
-with & in a shell of its own, a cd or pushd to what is not a directory
-leaving the shell where it stood, as the shell does when it fails there;
-and it joins each -C on in turn as chdir reads it (push_place). Where it
+Each push is judged in each clone it may run in (refused_push,
+push_places), since a session's shell is not always where its push
+goes: git -C and env -C name another directory, and cd, pushd and popd
+move the shell before a later command, so "cd ../other && git push
+origin HEAD" pushes the other clone's branch, and its current and
+default branch, and its claim files, are that clone's. The -C of git and
+env are exact, and are joined on as chdir reads them (push_place). The
+shell's moves are followed within one command (placed_commands), each
+part of a pipeline and each list run with & in a shell of its own, a cd
+or pushd to what is not a directory leaving the shell where it stood, as
+the shell does when it fails there; but this module cannot tell that
+the shell makes a move it reads, as one in a here-document's body, after
+a test that fails or in a function never called, so a push after a move
+is judged also where the command starts, as if no move ran. Where it
 cannot tell the directory, after cd - or cd -P, with a path that holds
 what the shell expands, or with the repository named by --git-dir,
---bare or GIT_DIR, the push is judged by what its words name, with no
-current branch and no claim files, so it passes where only those would
-refuse it, as anything this module cannot read does. Until F21's fix
-every push was judged in the session's own clone.
+--bare or GIT_DIR, the push is judged by what its words name and in the
+session's own clone. A push is refused when any of these judgements
+refuses it, so none is judged more leniently than before F21's fix, when
+every push was judged in the session's own clone, save that git's and
+env's -C now send it where they name; a push after a move the shell does
+make may be refused for what the session's own clone shows, as it was
+then, and the refusal says so: git -C with no cd before it has a push
+judged in the clone it names alone.
 
 The hook is the first fence and branch protection on GitHub the second,
 so anything this module cannot read it lets through rather than wedging
@@ -57,16 +65,16 @@ the session: an unparseable command, a broken payload or a git that
 answers nothing all pass, and GitHub still refuses what matters; a claim
 file git cannot show, on either side of a lease, as on a branch whose
 history never had one, is a claim the fence cannot judge, and the lease
-passes as it did before the fence. Git is
-found behind what the shell reads before a command: VAR=value
-assignments, the reserved words that open a compound command or negate a
-pipeline (!, {, if, then, else, elif, while, until, do, and function with
-its name), and the wrappers env, command, nice, time, exec, nohup and
-timeout, each with its own options, and git's own options before the
-verb, each with its value where it takes one (GIT_VALUE_OPTIONS), and a
-query after which git runs nothing (GIT_QUERIES). A push is read as git
-reads its arguments: short options in a bundle, as in -fu; a long one by any start
-of its name that names it alone, as --force-w, or taken back with --no-;
+passes as it did before the fence. Git is found behind what the shell
+reads before a command: VAR=value assignments, the reserved words that
+open a compound command or negate a pipeline (!, {, if, then, else, elif,
+while, until, do, and function with its name), and the wrappers env,
+command, nice, time, exec, nohup and timeout, each with its own options,
+and git's own options before the verb, each with its value where it takes
+one (GIT_VALUE_OPTIONS), and a query after which git runs nothing
+(GIT_QUERIES). A push is read as git reads its arguments: short options
+in a bundle, as in -fu; a long one by any start of its name that names it
+alone, as --force-w, or taken back with --no-;
 a value that is no refspec; the refspecs that write many branches, the
 matching refspec : and a pattern with a *; and each branch by the name
 git resolves, refs/heads/main and heads/main both being main, and @
@@ -97,11 +105,14 @@ single quotes, double quotes and the backslash, and nothing else of the
 shell: the quoting inside a command substitution is read as the quoting
 around it. In particular a here-document body is read as commands like any
 other line: a body line that starts a push to main is refused, and the
-person rephrases it or puts the text in a file. Cutting bodies out was
-tried and dropped: telling a here-document from an arithmetic shift, a
-quoted marker or an opener inside a substitution takes more of the shell
-than this hook can read, each misreading cut real commands out of sight,
-and the one shape it bought is rare and answered by a rephrasing.
+person rephrases it or puts the text in a file; and a cd in a body moves
+the shell as this module reads it, so a push after the body is judged
+also where the command starts, as if no move ran (push_places). Cutting
+bodies out was tried and dropped: telling a here-document from an
+arithmetic shift, a quoted marker or an opener inside a substitution
+takes more of the shell than this hook can read, each misreading cut real
+commands out of sight, and the one shape it bought is rare and answered
+by a rephrasing.
 """
 
 import os
@@ -136,10 +147,11 @@ WHOLESALE = ("all", "branches", "mirror")
 
 # Global options of git itself that take a separate value, between "git"
 # and the verb, as in "git -C clone push": git 2.43's (git.c,
-# handle_options), --config-env and --attr-source among them, whose value
-# was read as the verb until F21's fix, so "git --config-env
-# user.name=HOME push origin main" read as no push.
-GIT_VALUE_OPTIONS = {"-C", "-c", "--config-env", "--git-dir", "--work-tree", "--namespace", "--attr-source"}
+# handle_options), --config-env, --attr-source and --shallow-file among
+# them, whose value was read as the verb until F21's fix and its review,
+# so "git --config-env user.name=HOME push origin main" read as no push.
+GIT_VALUE_OPTIONS = {"-C", "-c", "--config-env", "--git-dir", "--work-tree", "--namespace", "--attr-source",
+                     "--shallow-file"}
 # Global options after which git prints what it is asked and exits, running
 # no command: "git --exec-path push origin main" pushes nothing. So does
 # --list-cmds=<group>.
@@ -418,27 +430,42 @@ def assigns_repository(word):
 
 def joined(place, path, physical=False):
     """The directory a path names from place: an absolute path in place of
-    it, a relative one joined on, ~ the home directory, and an empty path,
-    which git -C and bash's cd both take as no change, place itself; None
-    when place is None or the path holds what the shell expands first
-    (EXPANDED). A logical path, the one cd keeps, is normalised as the
-    shell normalises it, a .. taking back the step before it; a physical
-    one, as git -C and env -C change directory, is left as written for the
-    system to resolve, since there a .. after a symbolic link climbs from
-    where the link leads."""
-    if place is None or EXPANDED & set(path):
+    it, whatever place is, a relative one joined on, ~ the home directory,
+    and an empty path, which git -C and bash's cd both take as no change,
+    place itself; None when the path holds what the shell expands first
+    (EXPANDED), when it is relative and place is None, and when the system
+    cannot read it, as a ~ before a NUL byte or a character no file name
+    can hold, which expanduser refuses with ValueError (F21's third review:
+    until then such a path raised, and the hook with it, and an absolute
+    path after a place this module could not tell was one it could not tell
+    either). A logical path, the one cd keeps, is normalised as the shell
+    normalises it, a .. taking back the step before it; a physical one, as
+    git -C and env -C change directory, is left as written for the system
+    to resolve, since there a .. after a symbolic link climbs from where
+    the link leads."""
+    if EXPANDED & set(path):
         return None
     if not path:
         return place
-    whole = os.path.join(place, os.path.expanduser(path))
-    return whole if physical else os.path.normpath(whole)
+    try:
+        path = os.path.expanduser(path)
+    except ValueError:
+        return None
+    if not os.path.isabs(path):
+        if place is None:
+            return None
+        path = os.path.join(place, path)
+    return path if physical else os.path.normpath(path)
 
 
-def env_directories(options):
-    """The directories env's option words name for the command it runs, in
-    order, as GNU env reads -C DIR, -CDIR, a bundle that ends in C, and
-    --chdir with its value attached or as the next word."""
-    found, env, i = [], WRAPPERS["env"], 0
+def env_directory(options):
+    """The directory env's option words name for the command it runs, as
+    GNU env reads -C DIR, -CDIR, a bundle that ends in C, and --chdir with
+    its value attached or as the next word: the last one given, since env
+    changes directory once, to the last directory it was given, from where
+    it was run (F21's third review: "env -C sub -C ../other" runs in
+    ../other); None where none is given."""
+    found, env, i = None, WRAPPERS["env"], 0
     while i < len(options):
         word = options[i]
         i += 1
@@ -449,7 +476,7 @@ def env_directories(options):
             if not attached and name in env.long_values and i < len(options):
                 value, i = options[i], i + 1
             if name == "--chdir":
-                found.append(value)
+                found = value
             continue
         for at, letter in enumerate(word[1:], start=1):
             if letter in env.short_values:
@@ -457,26 +484,26 @@ def env_directories(options):
                 if not value and i < len(options):
                     value, i = options[i], i + 1
                 if letter == "C":
-                    found.append(value)
+                    found = value
                 break
     return found
 
 
 def push_place(argv, here):
     """The directory the git push argv runs in, from here, the directory
-    its shell runs it in (placed_commands): with the directory each of
-    env's -C and --chdir names, then each -C git is given, joined on in
-    turn as chdir reads them (joined, physical); None when here is None, a
-    path holds
-    what the shell expands (joined), or the push names its repository by a
-    path, with --git-dir, --bare or GIT_DIR, so it goes where this module
-    does not look."""
+    its shell runs it in (placed_commands): with the directory each env
+    before it names (env_directory), then each -C git is given, joined on
+    in turn as chdir reads them (joined, physical); None where joined
+    cannot tell, or where the push names its repository by a path, with
+    --git-dir, --bare or GIT_DIR, so it goes where this module does not
+    look."""
     found = launch(argv)
     if any(assigns_repository(word) for word in found.assignments):
         return None
     place = here
     for name, options in found.wrappers:
-        for directory in env_directories(options) if name == "env" else ():
+        directory = env_directory(options) if name == "env" else None
+        if directory is not None:
             place = joined(place, directory, physical=True)
     i = found.start + 1
     while i < len(argv) and argv[i] != "push":
@@ -585,18 +612,24 @@ def popd(shell, operands):
     return Shell(shell.stack[-1], shell.stack[:-1])
 
 
+# The words before a command that leave it run by the shell itself, so a
+# cd behind them moves the shell: command, and time, which bash reads as a
+# keyword that times what follows in the same shell.
+IN_THE_SHELL = ("command", "time")
+
+
 def moved_to(argv, shell, is_directory):
     """Where the shell stands after the simple command argv: cd, pushd and
     popd, run by the shell itself, behind assignments, reserved words,
-    command or builtin, move it, cd and pushd only to a directory
-    (reached); GIT_DIR set alone or exported points git
-    at a repository this module does not follow, which puts the directory
-    out of its reading; anything else, a cd another program runs among
-    them, as env cd does, leaves it where it was."""
+    command, time or builtin (IN_THE_SHELL), move it, cd and pushd only to
+    a directory (reached); GIT_DIR set alone or exported points git at a
+    repository this module does not follow, which puts the directory out
+    of its reading; anything else, a cd another program runs among them,
+    as env cd does, leaves it where it was."""
     found = launch(argv)
     if found.start is None:
         return Shell(None, shell.stack) if any(assigns_repository(word) for word in found.assignments) else shell
-    if any(name != "command" for name, _ in found.wrappers):
+    if any(name not in IN_THE_SHELL for name, _ in found.wrappers):
         return shell
     name, operands = argv[found.start], argv[found.start + 1:]
     if name == "builtin" and operands:
@@ -643,36 +676,81 @@ def placed_commands(command, here, is_directory=os.path.isdir):
     return placed
 
 
+# What a refusal adds when the push was refused in a clone other than the
+# one the shell's moves, as this module reads them, take it to
+# (push_places).
+UNMOVED = ("; the push was judged where the command starts, as if its cd, pushd and popd did not run, since "
+           "the hook cannot tell that the shell runs them: name the clone with git -C, and no cd before it, "
+           "to have the push judged there alone")
+UNTOLD = ("; the push was judged in the session's own clone, since the hook cannot tell which clone it runs "
+          "in: name the clone with git -C and a path that holds nothing the shell expands, to have the push "
+          "judged there alone")
+
+
+class Reading(NamedTuple):
+    """One clone a push may run in, None for its words alone, and what a
+    refusal there adds."""
+
+    place: object
+    added: str = ""
+
+
+def push_places(argv, directory, here):
+    """The clones the git push argv may run in, each to judge it in, from
+    directory, where the shell stands as this module follows its moves
+    (placed_commands), and here, where the command starts: the clone the
+    moves take it to (push_place), its words alone where this module cannot
+    tell which; then, where it differs, the clone it runs in if none of the
+    moves ran, since this module reads a cd in a here-document's body,
+    after a test that fails or in a function never called as one the shell
+    makes; and here, the session's own clone, where either cannot be told,
+    as every push was judged before F21's fix. git's and env's -C are
+    exact, and are joined on in each."""
+    followed, unmoved = push_place(argv, directory), push_place(argv, here)
+    found = [Reading(followed)]
+    if unmoved is not None and unmoved != followed:
+        found.append(Reading(unmoved, UNMOVED))
+    if (followed is None or unmoved is None) and here is not None and here not in (followed, unmoved):
+        found.append(Reading(here, UNTOLD))
+    return found
+
+
 def refused_push(command, here, branches_of=None, reader_of=None, is_directory=None):
     """Why the first push of a shell command that this module refuses is
-    refused, or None when it refuses none. Each push is judged in the
-    clone it runs in, from here, the directory the command starts in
-    (placed_commands, push_place), its current and default branch read
+    refused, or None when it refuses none. Each push is judged in each
+    clone it may run in, from here, the directory the command starts in
+    (placed_commands, push_places), its current and default branch read
     there (branches_of, by default branches) and, for a lease, its claim
-    files (reader_of, by default claim_file_reader), each place asked once
+    files (reader_of, by default claim_file_reader), each place asked once,
+    and refused when any judgement refuses it, with what that reading adds
     (F21: until the fix every push was judged in here's clone, so "git -C
     ../clone push" from a claim branch sent ../clone's main, and a lease
     from a clone that had fetched another's claim was judged in one that
-    had not). A push whose clone this module cannot tell is judged with no
-    current branch and no claim files, by what its words name, the default
-    branch being here's, so a bare push there passes, as anything this
-    module cannot read does. is_directory, by default os.path.isdir, says
-    which directories a cd or pushd can reach (placed_commands)."""
+    had not; and since its third review a push after a move is judged where
+    the command starts too, and one whose clone this module cannot tell in
+    here's, so that no push is judged more leniently than it was before the
+    fix, save that git's and env's -C send it where they name). A push
+    judged by its words alone has no current branch and no claim files, the
+    default branch being here's. is_directory, by default os.path.isdir,
+    says which directories a cd or pushd can reach (placed_commands)."""
     branches_of = branches_of or branches
     reader_of = reader_of or claim_file_reader
     asked = {}
+
+    def shown(place):
+        if place not in asked:
+            asked[place] = (branches_of(place), reader_of(place))
+        return asked[place]
+
     for argv, directory in placed_commands(command, here, is_directory or os.path.isdir):
         args = push_arguments(argv)
         if args is None:
             continue
-        place = push_place(argv, directory)
-        if place not in asked:
-            asked[place] = ((branches_of(place), reader_of(place)) if place is not None
-                            else ((None, branches_of(here)[1]), None))
-        (current, default), reader = asked[place]
-        reason = refusal(args, current, default, reader)
-        if reason:
-            return reason
+        for place, added in push_places(argv, directory, here):
+            (current, default), reader = shown(place) if place is not None else ((None, shown(here)[0][1]), None)
+            reason = refusal(args, current, default, reader)
+            if reason:
+                return reason + added
     return None
 
 
@@ -943,9 +1021,10 @@ def refusal(args, current_branch, default_branch, claim_file_at=None):
 
 def git_line(args, cwd):
     """One line from git, or None when git cannot answer, as in a directory
-    or with an argument that holds a NUL byte, which subprocess refuses
-    with ValueError: the directory comes from the command since F21's fix,
-    and the ref of a lease came from it before."""
+    or with an argument that holds a NUL byte or a character the system
+    cannot encode, which subprocess refuses with ValueError: the directory
+    comes from the command since F21's fix, and the ref of a lease came
+    from it before."""
     try:
         done = subprocess.run(["git", *args], cwd=cwd, capture_output=True, timeout=10)
     except (OSError, ValueError, subprocess.TimeoutExpired):
