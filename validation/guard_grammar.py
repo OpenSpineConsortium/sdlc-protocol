@@ -64,6 +64,9 @@ from sdlc_protocol import guard
 ANSWERS = Path(__file__).resolve().parent / "guard_git.json"
 
 CURRENT, DEFAULT, BOARD, OTHER, NO_CLAIM = "claude/7", "main", "board", "claude/8", "feature"
+# The directory the hook is run from: the scratch world's clone, which
+# git runs every argument list in.
+HERE = "/w"
 MISNAMED = ("claude/07", "claude/\u0667")  # a leading zero; an Arabic-Indic seven, a digit but no ASCII one
 CLAIM_NUMBER = re.compile(r"0|[1-9][0-9]{0,8}")
 
@@ -72,7 +75,12 @@ PREFIXES = ("", "FOO=1 ", "env ", "command ", "nice ", "time ")
 # the one the guard cannot read (G11b).
 WRAPPERS = ("{}", "bash -c '{}'", "true && {}", "( {} )", "echo $({})")
 UNREADABLE = "bash -c '{}'"
-GLOBALS = ("", " -C .", " -c push.default=current")
+# git's own options before the verb: a directory, the empty one git -C
+# takes as no change, a setting, a setting from the environment, whose
+# value is the next word (F21's review), and a shallow file, whose value
+# is the next word too (its third review).
+GLOBALS = ("", " -C .", ' -C ""', " -c push.default=current", " --config-env user.name=HOME",
+           " --shallow-file x")
 PLAIN_OPTIONS = ("", " -u", " --no-verify")
 LEASE = " --force-with-lease"
 FORCE_OPTIONS = (" --force", " -f", " -fu")
@@ -150,11 +158,13 @@ def rules_verdict(fresh, stale):
 
 
 def guard_refuses(text):
-    for argv in guard.simple_commands(text):
-        args = guard.push_arguments(argv)
-        if args is not None and guard.refusal(args, CURRENT, DEFAULT):
-            return True
-    return False
+    """Whether the guard refuses the command, run as the hook runs it
+    (guard.refused_push) from the scratch world's clone, which is on
+    CURRENT, with DEFAULT its default branch, wherever the command's -C
+    takes it, since every directory it names is that clone, and with no
+    claim-file reader; the grammar makes no cd."""
+    return guard.refused_push(text, HERE, lambda place: (CURRENT, DEFAULT), lambda place: None,
+                              lambda place: True) is not None
 
 
 class Disagreement(NamedTuple):

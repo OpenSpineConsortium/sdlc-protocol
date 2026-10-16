@@ -39,6 +39,10 @@ BOT = "github-actions[bot]"
 # deleted a branch.
 NO_HEAD = "0" * 40
 COMMIT = "438844fbaca69df9e38a59ce4aa09635e39baf09"
+# A release that carries every fix on main, so a copy of it knows no
+# finding: the release after 0.5.0, whose fixes stop at F20's and which
+# still has F21 (known.json's fixed_after).
+EVERY_FIX = "0.5.1"
 
 
 def page_text(fake):
@@ -870,7 +874,7 @@ class TheChecks(unittest.TestCase):
         """The first run of the check on a copy with F8's fix, with the
         board's release of the claim it holds queued for a later run; the
         fake, its record and the run's output."""
-        site = FakeSite(vendoring="0.5.0", **kwargs)
+        site = FakeSite(vendoring=EVERY_FIX, **kwargs)
         self.assertTrue(site.carries_f8)
         self.assertEqual(known_of(site), frozenset())
         if check == "C6":
@@ -1006,7 +1010,7 @@ class TheChecks(unittest.TestCase):
         its committer date, as where the activity had not listed the push
         by the second read: not known on such a copy, so the check fails,
         and the release is still followed end to end; nothing is held."""
-        site = FakeSite(vendoring="0.5.0", runs=[])
+        site = FakeSite(vendoring=EVERY_FIX, runs=[])
         site.reactions += [release(101, by_committer_date=True), delete_second_push(101)]
         seen, _ = run(site, "C6", known_of(site))
         self.assertEqual(seen.status, "failed", seen.as_dict())
@@ -1020,7 +1024,7 @@ class TheChecks(unittest.TestCase):
         """Not released is judged only once a board run that read the
         repository after the push is seen; a board that never lists the
         mark misses that expectation alone, and the claim is not held."""
-        site = FakeSite(vendoring="0.5.0")
+        site = FakeSite(vendoring=EVERY_FIX)
         site.board = lambda: page_text(site).split(board.QUEUE_HEADING)[0]
         seen, _ = run(site, "C6", known_of(site))
         self.assertEqual(seen.status, "failed", seen.as_dict())
@@ -1218,9 +1222,10 @@ class TheRecords(unittest.TestCase):
         self.assertIsNone(canary.vendored_version(None))
         self.assertEqual(canary.known_for(first_line),
                          canary.known.AS_BUILT | {"F2", "F4", "F7", "F8", "F9", "F12", "F13", "F14", "F15", "F17",
-                                                  "F18", "F19", "F20"})
+                                                  "F18", "F19", "F20", "F21"})
         self.assertEqual(canary.known.AS_BUILT, frozenset(), "no finding is read as built since F2's fix")
-        self.assertEqual(canary.known_for(f"sdlc-protocol 0.5.0 {COMMIT}"), canary.known.AS_BUILT)
+        self.assertEqual(canary.known_for(f"sdlc-protocol 0.5.0 {COMMIT}"), canary.known.AS_BUILT | {"F21"})
+        self.assertEqual(canary.known_for(f"sdlc-protocol {EVERY_FIX} {COMMIT}"), canary.known.AS_BUILT)
         self.assertEqual(canary.known_for("unreadable"), canary.known.AS_BUILT)
         self.assertEqual(canary.known_words(frozenset({"F12", "F2", "F13", "F99"})),
                          "F2 (fixed after 0.4.1); F12 (fixed after 0.4.1); F13 (fixed after 0.4.1); "
@@ -1234,12 +1239,16 @@ class TheRecords(unittest.TestCase):
             data = json.loads(path.read_text())
             self.assertEqual(data["known_for"],
                              ["F2", "F4", "F7", "F8", "F9", "F12", "F13", "F14", "F15", "F17", "F18", "F19",
-                              "F20"])
+                              "F20", "F21"])
             self.assertEqual(data["results"][0]["status"], "known")
             self.assertIn("F12 (fixed after 0.4.1)", out.getvalue())
             self.assertEqual(canary.run_site(FakeSite(vendoring="0.5.0"), ["C2"], path, None, out), 1)
             data = json.loads(path.read_text())
-            self.assertEqual(data["known_for"], [], "0.5.0 carries every fix, F20's the last")
+            self.assertEqual(data["known_for"], ["F21"], "0.5.0 carries every fix up to F20's")
+            self.assertEqual(data["results"][0]["status"], "failed")
+            self.assertEqual(canary.run_site(FakeSite(vendoring=EVERY_FIX), ["C2"], path, None, out), 1)
+            data = json.loads(path.read_text())
+            self.assertEqual(data["known_for"], [], "the release after 0.5.0 carries every fix, F21's the last")
             self.assertEqual(data["results"][0]["status"], "failed")
             text = canary.issue_text(data, None)
             self.assertNotIn("This run reads a missed expectation as known", text)
