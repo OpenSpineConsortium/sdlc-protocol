@@ -125,12 +125,16 @@ BUDGET_SECONDS = 10
 # rename closes, is listed or spoken to once the rename is read as
 # leaving it open. F20's at its first board run, step 8, where GitHub
 # writes a's release comment and loses its answer, then refuses the read
-# of the issue's comments after it: the labels go back beside the
-# comment once a refused read finds no comment, the release counts and
-# the branch is renamed in that run once the run takes the refused read
-# for the comment standing, and the run fails once the refused read is
-# let through; each again at its third, step 10, for b's comment GitHub
-# never wrote. F23's at its first board run, step 16, where GitHub writes
+# of the issue's comments after it: the release counts and the branch is
+# renamed in that run once the run takes the refused read for the comment
+# standing, and the run fails once the refused read is let through; each
+# again at its third, step 10, for b's comment GitHub never wrote; and at
+# its eighth, step 21, where GitHub refuses the comment on b's new claim
+# with a 422 and then the read after it: the labels go back once a
+# refused read finds no comment, where after the server errors of steps
+# 8 and 10 such a read leaves them off since F23's fix, as one that lists
+# none does, so a refusal is where that mutant differs (F23's review).
+# F23's at its first board run, step 16, where GitHub writes
 # a's release comment, answers 502 and lists it only after the run's read
 # of the issue's comments: the labels go back beside the comment once a
 # read that lists none is taken for one GitHub never wrote whatever it
@@ -189,7 +193,7 @@ UNDONE = {
             ("a stranger's pull request taken for a claim's work", 6, "G7"),
             ("a stranger's pull request listed after its release", 7, "G9"),
             ("a stranger's pull request spoken to after its release", 7, "G10")],
-    "F20": [("an unsettled release put back", 8, "G3L"), ("an unsettled release counted", 8, "G3L"),
+    "F20": [("an unsettled release put back", 21, "G3L"), ("an unsettled release counted", 8, "G3L"),
             ("an unsettled release failing the run", 8, "G15")],
     "F23": [("a late comment's labels put back", 16, "G3L"), ("no answer taken for a refusal", 18, "G3L"),
             ("a refusal taken for a late comment", 22, "G3L")],

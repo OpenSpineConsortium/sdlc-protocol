@@ -84,20 +84,27 @@ SPEC = {
              "epic and blocker, so the Queue lists it again even when a worker's label alone gave it to the "
              "worker, while a blocker is listed under Blockers without it; then it posts a comment on the issue "
              "whose first line is `<!-- sdlc-coordinator: claim-released -->`",
-    "whole": "A run that fails between the two reads the issue's comments, and the comment there after all, one "
-             "GitHub wrote and lost its answer to, makes the release whole.",
-    "put back": "Where they list none and GitHub refused the comment, with an answer from 400 to 499, which GitHub "
-                "gives in place of writing anything, the run puts back the labels it took off and takes off the todo "
-                "it put on",
-    "unsettled": "the run cannot tell whether the comment stands: it leaves the labels as the release left them and "
-                 "counts no release of its own, so its page lists the claim as held and the branch keeps its name",
-    "listed late": "or they list none after GitHub answered the comment with a server error or with no answer at "
-                   "all, either of which may come after GitHub wrote it, and GitHub may list a comment it wrote only "
-                   "later",
-    "settled next": "the next run, reading the comments, finds the release whole where GitHub wrote the comment, "
-                    "or releases the claim again where it wrote none, unless its holder pushed since, which keeps "
-                    "the claim, or a person put the label claimed back beside a comment GitHub wrote, which undoes "
-                    "that release (below)",
+    "put back": "A run that fails at the labels, taking one off or putting todo on, puts back the labels it took "
+                "off and takes off the todo it put on, even one whose putting on GitHub answered with an error, "
+                "since GitHub may have written it",
+    "whole": "A run whose comment fails reads the issue's comments, and the comment there after all, one GitHub "
+             "wrote and lost its answer to, makes the release whole.",
+    "refused": "Where they list none and GitHub refused the comment, with an answer from 400 to 499, which GitHub "
+               "gives in place of writing anything, the run puts back the labels it took off and takes off the todo "
+               "it put on",
+    "listed late": "Where they list none after any other answer to the comment, a server error, a redirect, an "
+                   "answer the run could not read or no answer at all, none of which says GitHub wrote nothing, and "
+                   "GitHub may list a comment it wrote only later",
+    "unread": "or where the run cannot read them, whatever GitHub answered the comment with",
+    "unsettled": "the run cannot tell whether a release comment stands, its own, an earlier run's or one someone "
+                 "else wrote: it leaves the labels as the release left them and counts no release of its own, so "
+                 "its page lists the claim as held and the branch keeps its name",
+    "settled next": "the next run, reading the comments, finds the release whole where a release comment that "
+                    "counts stands, or releases the claim again where none does, unless its holder pushed since, "
+                    "which keeps the claim, its labels as the release left them, naming no holder, until it "
+                    "finishes, a person puts them back or it goes a day without a commit and is released again, or "
+                    "a person put the label claimed back beside a comment that stands, which undoes that release "
+                    "(below)",
     "unsettled kept": "though a branch at a head a release already kept is released in that same run by its latest "
                       "release comment, where one that counts stands, which counts for such a branch whenever it "
                       "came, with no word on the issue of this run's release where GitHub wrote none",

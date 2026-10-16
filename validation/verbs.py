@@ -82,9 +82,18 @@ FAULTS = {
                                   retry_after="60"),
     # A release comment GitHub refuses with a 4xx, which it answers in
     # place of writing anything, so the run puts the labels back
-    # (SPEC["put back"]), where after a 500 it cannot tell whether GitHub
+    # (SPEC["refused"]), where after a 500 it cannot tell whether GitHub
     # wrote the comment and leaves them off (F23).
     "comment-422": Fault("POST", "/issues/*/comments", 422, message="Validation Failed"),
+    # The same refusal with the read of the issue's comments after it
+    # refused too: GitHub wrote no comment of this run's, but the run
+    # cannot read whether one an earlier run's post or someone else wrote
+    # stands, so it leaves the labels as the release left them
+    # (SPEC["unread"]). F23's review: since F23's fix the only fault
+    # under which F20's mutant, a refused read taken for one that lists
+    # none, puts back labels the library leaves off.
+    "comment-422-then-unread": Fault("POST", "/issues/*/comments", 422, message="Validation Failed",
+                                     then=Fault("GET", "/issues/*/comments", 500)),
     # A release comment GitHub writes and loses its answer to, with a 502
     # or with no answer at all, and lists only after the read of the
     # issue's comments that follows, which lists none of it, so the run

@@ -1974,7 +1974,9 @@ class Coordinate(unittest.TestCase):
         it was held;
         the labels now stay as the release left them, no release is counted
         and the page lists the claim as held until the next run settles it
-        (ReleaseAcrossRuns)."""
+        (ReleaseAcrossRuns). The line asks whether a release comment
+        stands, since F23's review, where it asked whether GitHub wrote the
+        run's own, which after a refusal it surely did not (below)."""
         answers = release_answers()
         answers["POST /repos/o/r/issues/12/comments"] = Refusal(502)
         answers[COMMENTS_12] = Refusal(502)
@@ -1982,8 +1984,33 @@ class Coordinate(unittest.TestCase):
         api, opener = client(answers)
         self.assertEqual(github.coordinate(api, snap, NOW), [
             "#12: release unsettled, the comment failed: POST /repos/o/r/issues/12/comments: HTTP 502; its issue's "
-            "comments could not be read to see whether GitHub wrote it anyway: GET /repos/o/r/issues/12/comments: "
+            "comments could not be read to see whether a release comment stands: GET /repos/o/r/issues/12/comments: "
             "HTTP 502; the labels stay as the release left them"])
+        self.assertEqual([c.get_method() for c in opener.calls], ["DELETE", "DELETE", "GET", "POST", "GET"])
+        self.assertEqual((snap.claim_issues["12"].labels, snap.issues[0].labels), (["todo"], ["todo"]))
+        self.assertEqual(snap.releases["12"].released_at, "")
+        self.assertEqual(board.released_keys(snap), set())
+        self.assertIn("| #12 | claude/12 | nightly | #40 |", board.render(snap))
+
+    def test_a_refusal_whose_read_github_refuses_too_leaves_the_labels_as_well(self):
+        """F23's review: after a 4xx GitHub wrote no comment of this run's,
+        but the run cannot read whether a release comment stands that an
+        earlier run's post or someone else wrote, and labels put back
+        beside one would hold the claim for good, so the labels stay as the
+        release left them, as after any failure whose read GitHub refuses
+        (F20); they go back after a refusal only where the comments, read
+        after it, list none (above). F20's mutant, a refused read taken
+        for one that lists none, puts them back here, and since F23's fix
+        here alone (validation/mutants.py)."""
+        answers = release_answers()
+        answers["POST /repos/o/r/issues/12/comments"] = Refusal(422, {"message": "Validation Failed"})
+        answers[COMMENTS_12] = Refusal(502)
+        snap = idle_snapshot()
+        api, opener = client(answers)
+        self.assertEqual(github.coordinate(api, snap, NOW), [
+            "#12: release unsettled, the comment failed: POST /repos/o/r/issues/12/comments: HTTP 422: Validation "
+            "Failed; its issue's comments could not be read to see whether a release comment stands: "
+            "GET /repos/o/r/issues/12/comments: HTTP 502; the labels stay as the release left them"])
         self.assertEqual([c.get_method() for c in opener.calls], ["DELETE", "DELETE", "GET", "POST", "GET"])
         self.assertEqual((snap.claim_issues["12"].labels, snap.issues[0].labels), (["todo"], ["todo"]))
         self.assertEqual(snap.releases["12"].released_at, "")

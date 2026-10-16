@@ -806,11 +806,16 @@ def pushed_by_but_a_delete(entry, sha, now):
 def landed_release_finding_none_unread(api, key, release):
     """github.landed_release as every build before F20's fix had it: a
     read of the issue's comments GitHub refuses finds no comment, as a
-    read that listed none does, so release_one, as built before F23's fix
-    too (release_one_as_before_f20), puts the labels back beside a comment
-    that may stand, which holds the claim for good, the comment telling
-    every later coordinator the claim is released and the label claimed
-    telling the board it is held (F20)."""
+    read that listed none does, so release_one puts the labels back beside
+    a comment that may stand, which holds the claim for good, the comment
+    telling every later coordinator the claim is released and the label
+    claimed telling the board it is held (F20). Since F23's fix
+    release_one leaves the labels off where a read that lists none
+    follows a server error, the answer both of F20's faults give the
+    post, so the mutant puts them back only where GitHub refused the
+    comment with a 4xx and then the read, where a release comment an
+    earlier run's post or someone else wrote may stand
+    (comment-422-then-unread, F23's review)."""
     try:
         comments = api.get_all(f"/repos/{api.repo}/issues/{key}/comments")
     except github.GitHubError:
@@ -819,19 +824,6 @@ def landed_release_finding_none_unread(api, key, release):
     if not released_at or not github.newer(released_at, release.released_at):
         return ""
     return released_at if board.release_counts(dataclasses.replace(release, released_at=released_at)) else ""
-
-
-def release_one_as_before_f20(api, snap, key, now):
-    """github.release_one as every build before F20's fix had it: a read of
-    the issue's comments GitHub refuses finds no comment
-    (landed_release_finding_none_unread), and a comment no read finds is
-    taken for one GitHub never wrote, whatever GitHub answered its post
-    with, as before F23's fix as well, which would otherwise leave the
-    labels off after a server error, so the labels go back beside a
-    comment that may stand (F20)."""
-    with mock.patch.object(github, "landed_release", landed_release_finding_none_unread), \
-            mock.patch.object(github, "wrote_nothing", lambda problem: True):
-        return ORIGINAL_RELEASE_ONE(api, snap, key, now)
 
 
 def wrote_nothing_unless_answered(problem):
@@ -844,8 +836,8 @@ def wrote_nothing_unless_answered(problem):
 def release_one_counting_unsettled(api, snap, key, now):
     """github.release_one counting a release it cannot tell stands: where
     GitHub refused the comment and then the read of the issue's comments
-    that would say whether it wrote it anyway, the snapshot counts the
-    release at the run's start, so the same run renames the branch and
+    that would say whether a release comment stands, the snapshot counts
+    the release at the run's start, so the same run renames the branch and
     says where it went, where the spec has the run count no release it
     cannot tell stands and the next run settle it (F20)."""
     def counted(snap, key, names, put_on, problem, unread):
@@ -1200,16 +1192,16 @@ MUTANTS = {
         github, "landed_release", lambda api, key, release: "",
         "G3L", "a comment GitHub wrote and lost its answer to makes the release whole"),
     "an unsettled release put back": Mutant(
-        github, "release_one", release_one_as_before_f20,
-        "G3L", "a run that cannot read whether its release comment stands leaves the labels as the release left "
-               "them (F20)"),
+        github, "landed_release", landed_release_finding_none_unread,
+        "G3L", "a run that cannot read whether a release comment stands leaves the labels as the release left "
+               "them, whatever GitHub answered its own with (F20)"),
     "an unsettled release counted": Mutant(
         github, "release_one", release_one_counting_unsettled,
-        "G3L", "a run that cannot read whether its release comment stands counts no release, the next run "
+        "G3L", "a run that cannot read whether a release comment stands counts no release, the next run "
                "settling it (F20)"),
     "an unsettled release failing the run": Mutant(
         github, "unsettled", unsettled_raising,
-        "G15", "a run that cannot read whether its release comment stands goes on and writes its page (F20)"),
+        "G15", "a run that cannot read whether a release comment stands goes on and writes its page (F20)"),
     "a late comment's labels put back": Mutant(
         github, "wrote_nothing", lambda problem: True,
         "G3L", "a run whose release comment GitHub answered with a server error, or with no answer at all, and "

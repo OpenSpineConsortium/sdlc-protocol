@@ -215,7 +215,7 @@ class TheFixesOf041Hold(unittest.TestCase):
         comment with a 4xx, which it answers in place of writing anything,
         so the run puts the labels back and the next run releases the claim
         whole; a comment GitHub wrote and lost its answer to, and lists,
-        makes the release whole in the run (SPEC["put back"],
+        makes the release whole in the run (SPEC["refused"],
         SPEC["whole"]). The secondary rate limit is held to no violation
         alone, since a client that retries it makes the release whole."""
         due = [Verb("claim", "a", (1,)), Verb("label-on", "a", (1, "claimed")), Verb("label-on", "a", (1, "worker:a")),
@@ -485,6 +485,23 @@ class TheOpenFindingsShow(unittest.TestCase):
             found = violations(steps + [board_with("pushes-moved")])
         self.assertIn(("G2", "the run read the push of claude/1's head 2 times, where its first read owes 1"),
                       [(v.guarantee, v.detail) for v in found])
+
+    def test_a_first_read_with_no_answer_at_all_may_tell_more(self):
+        """F23's review: since F23 a Fault may have no status, which the
+        fake answers with http.client's timeout and the library reads as a
+        call GitHub may answer later (github.may_answer_later), so the run
+        reads the push once more; the check reads a status None so too,
+        where it compared None with a number and raised. No fault of
+        verbs.FAULTS leaves a read of the activity unanswered, so the test
+        adds one for itself."""
+        ref = "claude/1"
+        unanswered = Call("GET", "/activity", (("ref", f"refs/heads/{ref}"),), None, None, False, True)
+        self.assertTrue(invariants.may_tell_more(unanswered, ref, "f" * 40, 0))
+        timed_out = verbs.Fault("GET", "/activity", None, message="timed out", query=verbs.PUSHES)
+        steps = [Verb("claim", "a", (1,)), Verb("label-on", "a", (1, "claimed")), Verb("wait", "clock", (2,)),
+                 board_with("pushes-unanswered")]
+        with mock.patch.dict(verbs.FAULTS, {"pushes-unanswered": timed_out}):
+            self.assertEqual(violations(steps), [])
 
     def test_f8_a_stale_entry_off_the_head_owes_a_second_read_and_dates_nothing(self):
         """F8's second review: an entry that names another head, one that
@@ -798,14 +815,19 @@ class AReleaseThatPutsTodoOn(unittest.TestCase):
 
 class AReleaseThatCannotReadItsComment(unittest.TestCase):
     """F20: GitHub answers the release comment with an error and refuses
-    the read of the issue's comments after it, which would say whether it
-    wrote the comment anyway; the run leaves the labels as the release
-    left them, counts no release and goes on, and the next run settles it
-    (SPEC["unsettled"], SPEC["settled next"])."""
+    the read of the issue's comments after it, which would say whether a
+    release comment stands, the run's own or, whatever GitHub answered,
+    one an earlier run's post or someone else wrote; the run leaves the
+    labels as the release left them, counts no release and goes on, and
+    the next run settles it (SPEC["unread"], SPEC["unsettled"],
+    SPEC["settled next"])."""
 
     DUE = [Verb("claim", "a", (1,)), Verb("label-on", "a", (1, "claimed")), Verb("label-on", "a", (1, "worker:a")),
            Verb("wait", "clock", (25,))]
-    FAULTS = ("comment-lost-then-unread", "comment-500-then-unread")
+    # The comment written and its answer lost, nothing written after a
+    # 500, and nothing written after a refusal, a 4xx, where a release
+    # comment someone else wrote may still stand (F23's review).
+    FAULTS = ("comment-lost-then-unread", "comment-500-then-unread", "comment-422-then-unread")
 
     def test_the_labels_stay_as_the_release_left_them_and_the_next_run_settles_it(self):
         for fault in self.FAULTS:
@@ -813,12 +835,24 @@ class AReleaseThatCannotReadItsComment(unittest.TestCase):
                 self.assertEqual(violations(self.DUE + [board_with(fault), BOARD]), [])
 
     def test_putting_the_labels_back_counting_the_release_or_failing_the_run_is_caught(self):
+        """Counting the release or failing the run under each fault; putting
+        the labels back, F20's mutant as built until its fix, a refused read
+        taken for one that lists none, under the refusal alone: since F23's
+        fix a read that lists none after a server error, the answer F20's
+        first two faults give the post, leaves the labels off too, so there
+        the mutant does what the library does, and only after a refusal
+        does it put them back (F23's review, which found the refusal
+        untested)."""
         for fault in self.FAULTS:
-            for mutant, guarantee in (("an unsettled release put back", "G3L"),
-                                      ("an unsettled release counted", "G3L"),
+            for mutant, guarantee in (("an unsettled release counted", "G3L"),
                                       ("an unsettled release failing the run", "G15")):
                 with self.subTest(fault=fault, mutant=mutant), mutants.switched_on(mutants.MUTANTS[mutant]):
                     self.assertEqual(guarantees(violations(self.DUE + [board_with(fault), BOARD])), [guarantee])
+        with mutants.switched_on(mutants.MUTANTS["an unsettled release put back"]):
+            for fault in self.FAULTS:
+                with self.subTest(fault=fault, mutant="an unsettled release put back"):
+                    found = guarantees(violations(self.DUE + [board_with(fault), BOARD]))
+                    self.assertEqual(found, ["G3L"] if fault == "comment-422-then-unread" else [])
 
     def test_a_holder_who_pushes_before_the_next_run_keeps_the_claim_with_its_labels_off(self):
         """F20's review: the holder pushes between the unsettled run and the
@@ -844,6 +878,11 @@ class AReleaseThatCannotReadItsComment(unittest.TestCase):
                        True, True)
         self.assertEqual(invariants.unread_releases([posted, unread]), {1})
         self.assertEqual(invariants.unread_releases([unread, posted]), set())
+        # A refusal wrote nothing, but the read after it would still have
+        # said whether a release comment stands (F23's review).
+        refused = Call("POST", "/issues/1/comments", (), {"body": oracle.RELEASE_MARKER + "\nreleased"}, 422, False,
+                       True)
+        self.assertEqual(invariants.unread_releases([refused, unread]), {1})
         answered = Call("GET", "/issues/1/comments", (), None, 200, False)
         self.assertEqual(invariants.unread_releases([posted, answered, unread]), set())
         self.assertEqual(invariants.unread_releases([overlap, unread]), set())
