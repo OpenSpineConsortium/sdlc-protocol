@@ -122,9 +122,14 @@ def guarantee_of(effect):
 
 def reads_failed(calls):
     """Whether GitHub refused a read the run needs, which excuses a run that
-    fails; a refused read the run does without excuses nothing."""
+    fails; a refused read the run does without excuses nothing: one of
+    READS_DONE_WITHOUT, or the read of an issue's comments after its
+    release comment failed, which leaves the release for the next run to
+    settle (unsettling_reads, F20)."""
+    done_without = unsettling_reads(calls)
     return any(c.method == "GET" and (c.status >= FAILED_READ or c.status in (403, 429))
-               and not c.path.startswith(READS_DONE_WITHOUT) for c in calls)
+               and not c.path.startswith(READS_DONE_WITHOUT) and at not in done_without
+               for at, c in enumerate(calls))
 
 
 # --- state ----------------------------------------------------------------------
@@ -317,7 +322,7 @@ def first_half_checks(before, after, half, known=oracle.AS_BUILT):
     actual = effects_of(half.fake.calls)
     started_by = oracle.pushed_branch(half.event, half.ref_name)
     dates = push_dates(half.fake.calls, before, started_by)
-    seen_before, seen_after = seen(before, dates), seen(after, dates)
+    seen_before, seen_after = seen(before, dates), seen(after, dates, unread_releases(half.fake.calls), before.now)
     problems = (pushes_read_again(half.fake.calls, before)
                 + pushes_logged(half.fake.calls, before, half.lines, started_by))
     if not injected(half.fake.calls, but=WRITES_KEPT):
@@ -328,6 +333,7 @@ def first_half_checks(before, after, half, known=oracle.AS_BUILT):
     problems += release_order(actual)
     problems += releases_only_due(seen_before, actual)
     problems += labels_put_back(before, after, half.fake.calls, actual)
+    problems += unsettled_left_alone(half.fake.calls, actual)
     problems += labels_name_the_holder(after, actual)
     problems += board_renders_the_state(seen_after, half, known)
     return problems
@@ -351,7 +357,8 @@ def cycle_checks(before, after, record, known=oracle.AS_BUILT):
     planned = record.planned if split else after
     started_by = oracle.pushed_branch(record.event, record.ref_name)
     dates = push_dates(record.calls, start, started_by)
-    seen_start, seen_planned = seen(start, dates), seen(planned, dates)
+    unread = unread_releases(record.calls)
+    seen_start, seen_planned = seen(start, dates), seen(planned, dates, unread, start.now)
     # A run made in two halves had its reads of the pushes judged, and its
     # log, when its first half was made (first_half_checks).
     problems = [] if split else (pushes_read_again(record.calls, start)
@@ -374,6 +381,7 @@ def cycle_checks(before, after, record, known=oracle.AS_BUILT):
             problems += quiet_second_run(after, record)
     actual = effects_of(record.calls)
     problems += rename_refused_said(before, record, actual)
+    problems += unsettled_left_alone(record.calls, actual)
     if not split:
         problems += release_order(actual)
         problems += releases_only_due(seen_start, actual)
@@ -495,20 +503,84 @@ def is_put_back(effect, number):
 def labels_put_back(before, after, calls, actual):
     """A run that fails between the labels and the comment puts back what it
     took off and takes off the todo it put on (spec, Release), unless GitHub
-    refused the putting back too; and one whose comment was written, its
+    refused the putting back too; one whose comment was written, its
     answer lost or not, puts back nothing, since the comment makes the
-    release whole (G3L)."""
+    release whole; and one that could not read the issue's comments to
+    tell whether its comment stands puts back nothing either, leaving the
+    labels as the release left them for the next run to settle
+    (SPEC["unsettled"], unread_releases; F20) (G3L)."""
     problems = []
+    unread = unread_releases(calls)
     todo_on = {e.target for e in actual if e == oracle.Effect("label-on", e.target, (oracle.TODO,))}
     for number in sorted({e.target for e in actual if e.kind == "label-off"} | todo_on):
+        put_back = (oracle.Effect("label-off", number, oracle.TODO) in actual
+                    or any(is_put_back(e, number) for e in actual))
         if oracle.Effect("comment", number, "claim-released") in actual:
-            taken_back = oracle.Effect("label-off", number, oracle.TODO) in actual
-            if taken_back or any(is_put_back(e, number) for e in actual):
+            if put_back:
                 problems.append(Violation("G3L", f"#{number}: the release comment stands and its labels "
                                                  f"were put back"))
             continue
+        if number in unread:
+            if put_back:
+                problems.append(Violation("G3L", f"#{number}: the run could not tell whether its release "
+                                                 f"comment stands and put the labels back"))
+            continue
         if not put_back_refused(calls, number) and after.issues[number].labels != before.issues[number].labels:
             problems.append(Violation("G3L", f"#{number}: the release failed and its labels were not put back"))
+    return problems
+
+
+def unread_releases(calls):
+    """The issues whose release the run could not settle: GitHub answered
+    the post of the release comment with an error and refused the read of
+    the issue's comments after it, which would have said whether it wrote
+    the comment anyway (SPEC["unsettled"]; F20)."""
+    return frozenset(unsettling_reads(calls).values())
+
+
+def unsettling_reads(calls):
+    """The refused reads of an issue's comments that came after GitHub
+    answered the post of its release comment with an error, each by its
+    place among the calls, with the issue: the read that would have said
+    whether GitHub wrote the comment anyway, which the run does without,
+    leaving the release for the next run to settle (SPEC["unsettled"];
+    F20)."""
+    failed, found = set(), {}
+    for at, c in enumerate(calls):
+        number = comments_of(c.path)
+        if number is None or c.status < 400:
+            continue
+        if c.method == "POST" and oracle.comment_kind(c.body["body"]) == "claim-released":
+            failed.add(number)
+        elif c.method == "GET" and number in failed:
+            found[at] = number
+    return found
+
+
+def comments_of(path):
+    """The issue whose comments a path names, /issues/<n>/comments, or
+    None for any other path."""
+    parts = path.strip("/").split("/")
+    if len(parts) == 3 and parts[0] == "issues" and parts[2] == "comments" and parts[1].isascii() \
+            and parts[1].isdigit():
+        return int(parts[1])
+    return None
+
+
+def unsettled_left_alone(calls, actual):
+    """A run that could not tell whether its release comment stands counts
+    no release: it neither renames nor deletes the claim's branch nor says
+    where the branch went, since the next run, reading the comments, finds
+    the release whole or releases the claim again (SPEC["settled next"];
+    F20) (G3L)."""
+    problems = []
+    for number in sorted(unread_releases(calls)):
+        ref = oracle.branch_of(number)
+        for effect in actual:
+            if (effect.kind in ("rename", "delete-ref") and effect.target == ref) \
+                    or effect == oracle.Effect("comment", number, "released"):
+                problems.append(Violation("G3L", f"#{number}: the run could not tell whether its release "
+                                                 f"comment stands and counted the release: {tuple(effect)}"))
     return problems
 
 
@@ -902,14 +974,34 @@ def pushes_read_again(calls, model):
     return problems
 
 
-def seen(model, dates):
+def seen(model, dates, unread=frozenset(), began=0):
     """The model as a run saw it that read the pushes of the claims' heads
     as dates says (push_dates, from the state the run started from):
     oracle.dated, with the branches it dated by their committer dates
     undated, and each it dated by a push or by the floor dated by that
-    minute."""
+    minute; and, on the issues unread names, without the release comment
+    the run posted since began and could not read back, since the run
+    cannot tell it stands (unread_releases, SPEC["unsettled"]), so its
+    page shows such a claim held, with the labels the release left,
+    until the next run (F20). oracle.dated gives the model itself when
+    nothing differs, so the comments are taken out of a copy."""
     undated = frozenset(branch for branch, minute in dates.items() if minute is None)
-    return oracle.dated(model, undated, {branch: m for branch, m in dates.items() if m is not None})
+    view = oracle.dated(model, undated, {branch: m for branch, m in dates.items() if m is not None})
+    if not unread:
+        return view
+    view = view.clone()
+    for number in unread:
+        issue = view.issues.get(number)
+        if issue is not None:
+            issue.comments = tuple(c for c in issue.comments if not is_release_since(c, began))
+    return view
+
+
+def is_release_since(comment, began):
+    """Whether a comment is a release comment by the board's bot made at
+    or after the minute began."""
+    return comment.author == oracle.BOT and oracle.first_line(comment.body) == oracle.RELEASE_MARKER \
+        and comment.at >= began
 
 
 def quiet_second_run(after, record):

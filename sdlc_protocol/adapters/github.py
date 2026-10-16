@@ -1155,11 +1155,12 @@ def release_one(api, snap, key, now):
     after all, one GitHub wrote and lost its answer to, which makes the
     release whole. A run that cannot read the issue's comments to see
     whether it is there leaves the labels as the release left them
-    (unsettled), since labels put back beside a comment that stands would
-    hold the claim for good: the comment tells every later coordinator the
-    claim is released, and the label claimed tells the board it is held.
-    Only when GitHub refuses the putting back too, or the run cannot tell,
-    are the labels left off with no comment, until a run releases the
+    (unsettled; F20), since labels put back beside a comment that stands
+    would hold the claim for good: the comment tells every later run the
+    claim is released, and the label claimed tells the board it is held;
+    the next run, reading the comments, finds the release whole or
+    releases the claim again. Only when GitHub refuses the putting back
+    too are the labels left off with no comment, until a run releases the
     claim or a person puts them back. What was done, in a line."""
     release = snap.releases[key]
     names, put_on = coordinator.labels_released(snap, key), coordinator.labels_put_on(snap, key)
@@ -1250,13 +1251,17 @@ def unsettled(snap, key, names, put_on, problem, unread):
     """The line of a release whose comment failed and whose issue's
     comments could not be read to see whether GitHub wrote it anyway: the
     labels stay as the release left them, and the snapshot shows them so,
-    with no release, since the run cannot tell whether one stands; the next
+    with no release, since the run cannot tell whether one stands, so the
+    page lists the claim as held and nothing is renamed this run; the next
     run, reading the comments, finds the comment and the release is whole,
-    or finds none and releases the claim again."""
+    or finds none and releases the claim again (F20; until its fix the
+    labels went back beside a comment that might stand, which held the
+    claim for good)."""
     coordinator.after_labels(snap, key, names, put_on)
     return (f"#{key}: release unsettled, the comment failed: {problem}{github_words(problem)}; its issue's "
             f"comments could not be read to see whether GitHub wrote it anyway: {unread}{github_words(unread)}; "
-            f"the labels stay off, and the next run finds the comment or releases the claim again")
+            f"the labels stay as the release left them, and the next run finds the comment or releases the "
+            f"claim again")
 
 
 def landed_release(api, key, release):

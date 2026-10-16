@@ -22,7 +22,10 @@ can carry the work on or start over, and the board renames the branch in
 the same run. The board counts a release only once both are done, and a
 run that fails between them puts back the labels it took off and takes off
 the todo it put on, so the issue is as it was and the next run starts the
-release over. Like the board, this module only decides and words;
+release over, unless it cannot read the issue's comments to tell whether
+GitHub wrote the comment after all, when it leaves the labels as the
+release left them for the next run to settle (adapters/github.py,
+unsettled; F20). Like the board, this module only decides and words;
 adapters/github.py makes the calls.
 """
 

@@ -752,6 +752,51 @@ class AReleaseThatPutsTodoOn(unittest.TestCase):
         self.assertFalse(invariants.put_back_refused([not_there], 1))
 
 
+class AReleaseThatCannotReadItsComment(unittest.TestCase):
+    """F20: GitHub answers the release comment with an error and refuses
+    the read of the issue's comments after it, which would say whether it
+    wrote the comment anyway; the run leaves the labels as the release
+    left them, counts no release and goes on, and the next run settles it
+    (SPEC["unsettled"], SPEC["settled next"])."""
+
+    DUE = [Verb("claim", "a", (1,)), Verb("label-on", "a", (1, "claimed")), Verb("label-on", "a", (1, "worker:a")),
+           Verb("wait", "clock", (25,))]
+    FAULTS = ("comment-lost-then-unread", "comment-500-then-unread")
+
+    def test_the_labels_stay_as_the_release_left_them_and_the_next_run_settles_it(self):
+        for fault in self.FAULTS:
+            with self.subTest(fault=fault):
+                self.assertEqual(violations(self.DUE + [board_with(fault), BOARD]), [])
+
+    def test_putting_the_labels_back_counting_the_release_or_failing_the_run_is_caught(self):
+        for fault in self.FAULTS:
+            for mutant, guarantee in (("an unsettled release put back", "G3L"),
+                                      ("an unsettled release counted", "G3L"),
+                                      ("an unsettled release failing the run", "G15")):
+                with self.subTest(fault=fault, mutant=mutant), mutants.switched_on(mutants.MUTANTS[mutant]):
+                    self.assertEqual(guarantees(violations(self.DUE + [board_with(fault), BOARD])), [guarantee])
+
+    def test_the_read_after_a_failed_release_comment_is_one_the_run_does_without(self):
+        """A refused read excuses a run that fails, but not this one, which
+        the run does without; nor a refused read after another kind of
+        comment, or of another issue's comments."""
+        posted = Call("POST", "/issues/1/comments", (), {"body": oracle.RELEASE_MARKER + "\nreleased"}, 502, True,
+                      True)
+        unread = Call("GET", "/issues/1/comments", (), None, 500, False, True)
+        another = Call("GET", "/issues/2/comments", (), None, 500, False, True)
+        overlap = Call("POST", "/issues/1/comments", (), {"body": "<!-- sdlc-coordinator: overlap 2 -->"}, 502,
+                       True, True)
+        self.assertEqual(invariants.unread_releases([posted, unread]), {1})
+        self.assertEqual(invariants.unread_releases([unread, posted]), set())
+        self.assertEqual(invariants.unread_releases([overlap, unread]), set())
+        self.assertFalse(invariants.reads_failed([posted, unread]))
+        self.assertTrue(invariants.reads_failed([posted, unread, another]))
+        self.assertTrue(invariants.reads_failed([overlap, unread]))
+        self.assertEqual(invariants.comments_of("/issues/12/comments"), 12)
+        for path in ("/issues/12/labels", "/issues/12", "/pulls/12/comments", "/issues/\u00b2/comments"):
+            self.assertIsNone(invariants.comments_of(path), path)
+
+
 class TheChecksHoldUnderAFaultThatNeverFires(unittest.TestCase):
     """The review of this step found the whole effects comparison skipped
     for any board verb that named a fault, fired or not."""

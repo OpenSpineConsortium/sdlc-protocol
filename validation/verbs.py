@@ -70,6 +70,14 @@ PUSHES = (("activity_type", None),)
 FAULTS = {
     "comment-500": Fault("POST", "/issues/*/comments", 500),
     "comment-lost": Fault("POST", "/issues/*/comments", 502, applied=True),
+    # A release comment GitHub writes and loses its answer to, and the
+    # read of the issue's comments after it, which would show the
+    # comment, refused too, so the run cannot tell whether its comment
+    # stands; and the same after a comment GitHub never wrote (F20).
+    "comment-lost-then-unread": Fault("POST", "/issues/*/comments", 502, applied=True,
+                                      then=Fault("GET", "/issues/*/comments", 500)),
+    "comment-500-then-unread": Fault("POST", "/issues/*/comments", 500,
+                                     then=Fault("GET", "/issues/*/comments", 500)),
     "comment-rate-limited": Fault("POST", "/issues/*/comments", 403, message="You have exceeded a secondary rate limit",
                                   retry_after="60"),
     "label-delete-500": Fault("DELETE", "/issues/*/labels/*", 500),

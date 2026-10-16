@@ -82,6 +82,9 @@ SPEC = {
              "worker, while a blocker is listed under Blockers without it; then it posts a comment on the issue "
              "whose first line is `<!-- sdlc-coordinator: claim-released -->`",
     "put back": "A run that fails between the two puts back the labels it took off and takes off the todo it put on",
+    "unsettled": "where the run cannot read the issue's comments to tell whether it is, it leaves the labels as "
+                 "the release left them",
+    "settled next": "the next run, reading the comments, finds the release whole or releases the claim again",
     "candidates": "It takes its candidates from the open issues that have a branch `claude/<issue>`, whatever "
                   "their labels, and skips a claim whose latest release comment came more than 24 hours after "
                   "the branch's last commit, which is a claim already released",

@@ -16,4 +16,4 @@ standard library. The protocol in prose is spec/PROTOCOL.md in the
 sdlc-protocol repository.
 """
 
-__version__ = "0.4.1"
+__version__ = "0.5.0"

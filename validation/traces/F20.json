@@ -1,0 +1,31 @@
+{
+  "finding": "F20",
+  "title": "a release whose comment GitHub refused, and whose read of the issue's comments after it GitHub refused too, puts the labels back beside a comment that may stand, which holds the claim for good",
+  "status": "fixed after 0.4.1: a run that cannot read the issue's comments to tell whether its release comment stands leaves the labels as the release left them and counts no release, and the next run settles it (github.release_one, github.unsettled; DESIGN.md, 13)",
+  "breaks": ["G3L", "G15"],
+  "world": "memory",
+  "issues": {"1": ["todo"], "2": ["todo"]},
+  "workers": ["a", "b"],
+  "steps": [
+    {"verb": "claim", "actor": "a", "args": [1], "expect": {"holders": {"1": "a"}}},
+    {"verb": "announce", "actor": "a", "args": [1]},
+    {"at": 1, "verb": "claim", "actor": "b", "args": [2], "expect": {"holders": {"2": "b"}}},
+    {"verb": "announce", "actor": "b", "args": [2]},
+    {"at": 25, "verb": "board", "faults": ["comment-lost-then-unread"],
+     "expect": {"labels": {"1": ["todo"], "2": ["claimed", "todo", "worker:b"]}, "comments": {"1": {"claim-released": 1}},
+                "refs": {"claude/1": true}, "claims": {"claude/1": "a", "claude/2": "b"}, "queue": []},
+     "note": "a's claim has had no commit for 25 hours, so the coordinator releases it: the labels come off, GitHub writes the release comment and answers 502, then refuses the read of the issue's comments that would show it, so the run cannot tell whether the comment stands; it leaves the labels as the release left them, counts no release and renames nothing, and the page lists the claim as held. Until the fix the labels went back beside the comment that stands, which held the claim for good: the comment told every later run the claim was released, and the label claimed told the board it was held"},
+    {"verb": "board",
+     "expect": {"labels": {"1": ["todo"]}, "comments": {"1": {"claim-released": 1, "released": 1}}, "refs": {"claude/1": false},
+                "released": {"1": 1}, "claims": {"claude/2": "b"}, "queue": [1]},
+     "note": "the next run reads the comment GitHub wrote, counts the release and renames the branch, so #1 is in the Queue again; b's claim, idle 24 hours, is held"},
+    {"at": 26, "verb": "board", "faults": ["comment-500-then-unread"],
+     "expect": {"labels": {"2": ["todo"]}, "comments": {"2": {}}, "refs": {"claude/2": true}, "claims": {"claude/2": "b"},
+                "queue": [1]},
+     "note": "b's claim has had no commit for 25 hours: GitHub refuses the release comment, having written nothing, and the read of the issue's comments after it, so again the run leaves the labels as the release left them and counts no release"},
+    {"verb": "board",
+     "expect": {"labels": {"2": ["todo"]}, "comments": {"2": {"claim-released": 1, "released": 1}}, "refs": {"claude/2": false},
+                "released": {"2": 1}, "claims": {}, "queue": [1, 2]},
+     "note": "the next run finds no release comment on #2 and releases the claim again, its labels already off counting as taken off, then renames the branch"}
+  ]
+}

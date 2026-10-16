@@ -1792,13 +1792,38 @@ class Coordinate(unittest.TestCase):
     def test_labels_github_will_not_put_back_are_said(self):
         answers = release_answers()
         answers["POST /repos/o/r/issues/12/comments"] = Refusal(502)
-        answers[COMMENTS_12] = Refusal(502)
+        answers[COMMENTS_12] = FakeAnswer([])
         answers[LABELS_12] = Refusal(403, {"message": "Resource not accessible"})
         api, _ = client(answers)
         self.assertEqual(github.coordinate(api, idle_snapshot(), NOW), [
             "#12: not released, the comment failed: POST /repos/o/r/issues/12/comments: HTTP 502; putting claimed, "
             "worker:nightly back failed too, so they may still be off: POST /repos/o/r/issues/12/labels: HTTP 403: "
             "Resource not accessible"])
+
+    def test_a_release_that_cannot_read_whether_its_comment_stands_leaves_the_labels_and_counts_nothing(self):
+        """F20: GitHub refuses the release comment and then the read of the
+        issue's comments that would say whether it wrote it anyway. Until
+        the fix the run put the labels back, and where the comment stood
+        the claim was held for good, the comment telling every later run it
+        was released and the label claimed telling the board it was held;
+        the labels now stay as the release left them, no release is counted
+        and the page lists the claim as held until the next run settles it
+        (ReleaseAcrossRuns)."""
+        answers = release_answers()
+        answers["POST /repos/o/r/issues/12/comments"] = Refusal(502)
+        answers[COMMENTS_12] = Refusal(502)
+        snap = idle_snapshot()
+        api, opener = client(answers)
+        self.assertEqual(github.coordinate(api, snap, NOW), [
+            "#12: release unsettled, the comment failed: POST /repos/o/r/issues/12/comments: HTTP 502; its issue's "
+            "comments could not be read to see whether GitHub wrote it anyway: GET /repos/o/r/issues/12/comments: "
+            "HTTP 502; the labels stay as the release left them, and the next run finds the comment or releases the "
+            "claim again"])
+        self.assertEqual([c.get_method() for c in opener.calls], ["DELETE", "DELETE", "GET", "POST", "GET"])
+        self.assertEqual((snap.claim_issues["12"].labels, snap.issues[0].labels), (["todo"], ["todo"]))
+        self.assertEqual(snap.releases["12"].released_at, "")
+        self.assertEqual(board.released_keys(snap), set())
+        self.assertIn("| #12 | claude/12 | nightly | #40 |", board.render(snap))
 
     def given_snapshot(self, names=("claimed", "worker:nightly")):
         """idle_snapshot with issue 12 given to nightly by its label alone,
@@ -2146,6 +2171,29 @@ class Repository(FakeOpener):
         return [c for c in self.comments if claims.is_release_comment(c)]
 
 
+class UnreadAfterTheComment(Repository):
+    """A Repository whose read of issue 12's comments GitHub refuses once,
+    the first read after a post of a comment there, as when it fails the
+    post and then the read that would say whether the post wrote the
+    comment anyway (F20). The reads before the post, the snapshot's among
+    them, are answered."""
+
+    def __init__(self, refuse=None, lose=None):
+        super().__init__(refuse, lose)
+        self.posted = self.unread = False
+
+    def open(self, call, timeout=None):
+        asked = call.selector if call.get_method() == "GET" else f"{call.get_method()} {call.selector}"
+        if asked == COMMENTS_12 and self.posted and not self.unread:
+            self.unread = True
+            send_line(call)
+            self.calls.append(call)
+            raise Refusal(502).raised(call.full_url)
+        if asked == "POST /repos/o/r/issues/12/comments":
+            self.posted = True
+        return super().open(call, timeout)
+
+
 def board_run(api, repository, now):
     """One board run as cli.board_live_run makes it: the snapshot, the
     coordinator, the page, then the renames; the snapshot, the page and
@@ -2230,6 +2278,45 @@ class ReleaseAcrossRuns(unittest.TestCase):
             "#12: claim released, idle since 2026-09-18T12:00:00Z (GitHub's answer to the comment was lost, "
             "POST /repos/o/r/issues/12/comments: HTTP 502, but the comment is there)",
             "#12: claim released; claude/12 renamed to released/12-aaaaaaa"])
+        self.assert_released(repository, snap, page)
+
+    def unsettled_first(self, repository):
+        """The first run, whose release cannot tell whether its comment
+        stands: the labels as the release left them, no release counted and
+        no rename, the page listing the claim as held."""
+        api = github.GitHub("t", "o/r", opener=repository, sleep=lambda seconds: None)
+        snap, page, first = board_run(api, repository, NOW)
+        self.assertEqual(len(first), 1)
+        self.assertTrue(first[0].startswith("#12: release unsettled, the comment failed"), first)
+        self.assertEqual(repository.labels, ["todo"])
+        self.assertEqual(board.released_keys(snap), set())
+        self.assertIn("claude/12", repository.branches)
+        self.assertIn("| #12 | claude/12 | nightly |", page)
+        return api
+
+    def test_a_comment_github_wrote_and_could_not_read_back_is_counted_by_the_next_run(self):
+        """F20: GitHub writes the release comment and loses its answer, then
+        refuses the read that would show it. Until the fix the labels went
+        back beside the comment, and the claim was held for good; the next
+        run now reads the comment, counts the release and renames the
+        branch, releasing nothing again."""
+        repository = UnreadAfterTheComment(lose={"POST /repos/o/r/issues/12/comments": Refusal(502)})
+        api = self.unsettled_first(repository)
+        self.assertEqual(len(repository.release_comments()), 1)
+        snap, page, second = board_run(api, repository, NOW + timedelta(hours=1))
+        self.assertEqual(second, ["#12: claim released; claude/12 renamed to released/12-aaaaaaa"])
+        self.assert_released(repository, snap, page)
+
+    def test_a_comment_github_refused_and_could_not_read_back_is_made_by_the_next_run(self):
+        """F20: GitHub writes no release comment and refuses the read after
+        it; the next run finds none and releases the claim again, its labels
+        already off counting as taken off."""
+        repository = UnreadAfterTheComment(refuse={"POST /repos/o/r/issues/12/comments": Refusal(502)})
+        api = self.unsettled_first(repository)
+        self.assertEqual(repository.release_comments(), [])
+        snap, page, second = board_run(api, repository, NOW + timedelta(hours=1))
+        self.assertEqual(second, ["#12: claim released, idle since 2026-09-18T12:00:00Z",
+                                  "#12: claim released; claude/12 renamed to released/12-aaaaaaa"])
         self.assert_released(repository, snap, page)
 
     def test_an_earlier_release_of_a_kept_head_is_not_taken_for_a_comment_the_failed_post_wrote(self):

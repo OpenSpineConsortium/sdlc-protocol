@@ -267,6 +267,21 @@ class ReleaseText(unittest.TestCase):
         self.assertEqual(board.released_keys(snap), {"12"})
         self.assertIn("| #12 | Describe the board | todo |", board.render(snap).split(board.QUEUE_HEADING)[1])
 
+    def test_after_the_labels_alone_the_board_counts_no_release_and_lists_the_claim_held(self):
+        """F20: a release that cannot tell whether its comment stands leaves
+        the labels as it left them, and the snapshot shows them so with no
+        release counted, so the page lists the claim as held and the Queue
+        leaves it out until the next run settles it."""
+        snap = idle_claim()
+        coordinator.after_labels(snap, "12", ["claimed", "worker:nightly"])
+        self.assertEqual(snap.claim_issues["12"].labels, ["todo"])
+        self.assertEqual(snap.issues[0].labels, ["todo"])
+        self.assertEqual(snap.releases["12"].released_at, "")
+        self.assertEqual(board.released_keys(snap), set())
+        page = board.render(snap)
+        self.assertIn("| #12 | claude/12 | nightly |", page)
+        self.assertNotIn("#12", page.split(board.QUEUE_HEADING)[1].split("## ")[0])
+
     def test_a_release_puts_todo_on_an_issue_that_carries_none_of_todo_epic_and_blocker(self):
         """F15: the Queue lists only an issue labelled todo, and a task a
         worker's label alone gave carries none, so until the fix its
