@@ -172,6 +172,13 @@ TRACES = {
     "the floor of the last read alone": "the regression traces",
     "the second read judged with no moment of the run": "the regression traces",
     "a floor at the committer date taken for later": "the regression traces",
+    # F8's third review: an activity catching up, a refusal then a read a
+    # push behind, the branch's delete after the run read it, and the run a
+    # claim's first push started, at the end of F8's trace.
+    "the floor of the first read alone": "the regression traces",
+    "the earlier floor": "the regression traces",
+    "a fresh delete dates nothing": "the regression traces",
+    "the run's event ignored": "the regression traces",
     # F8's second review: a's claim commit, dated two days ahead, pushed
     # back with a lease a day after a commit moved the branch off it, the
     # activity a push behind; and a kept head pushed again, its release
@@ -260,10 +267,12 @@ class TheLane(unittest.TestCase):
         its fix check five: a fresh entry dating only where it moved the
         branch off the head, the floor dropped, the floor of the last read
         alone, the second read judged with no moment of the run, and a
-        floor at the committer date taken for later, so the bound is
+        floor at the committer date taken for later, and its third review
+        four: the floor of the first read alone, the earlier floor, a fresh
+        delete dating nothing, and the run's event ignored, so the bound is
         widened to 120 and the count noted."""
         self.assertTrue(10 <= len(mutants.MUTANTS) <= 120)
-        self.assertEqual(len(mutants.MUTANTS), 109)
+        self.assertEqual(len(mutants.MUTANTS), 113)
         self.assertEqual(sorted(TRACES), sorted(mutants.MUTANTS))
 
     def test_every_mutant_names_a_rule_the_library_still_has(self):
@@ -307,8 +316,8 @@ class TheLane(unittest.TestCase):
         each of one copy (mutants.head_since_copy), which would test an
         older library once the rest fell behind; so each line of its body,
         the module's name taken off, is one of the library's but for the
-        four lines that take the rules as arguments, and the library's
-        lines it lacks are those four as the library writes them. With
+        five lines that take the rules as arguments, and the library's
+        lines it lacks are those five as the library writes them. With
         every argument left as it is, the copy plays F8's trace green, as
         the library does."""
         lines = [line.replace("github.", "") for line in body_lines(mutants.head_since_copy)]
@@ -316,15 +325,17 @@ class TheLane(unittest.TestCase):
         self.assertEqual([line for line in lines if line not in library],
                          ["if first.again and again:",
                           "read = read_push(api, branch, sha, now if now_again else None)",
-                          "floor, why = floor_of(read, first), read.why or first.why",
+                          "floor, why = floor_of(read, first), read.why or (first.why if first.floor else \"\")",
+                          "if branch == started_by and by_the_run:",
                           "if floor and later(floor, committed):"])
         self.assertEqual([line for line in library if line not in lines],
                          ["if first.again:", "read = read_push(api, branch, sha, now)",
-                          "floor, why = latest(read.floor, first.floor), read.why or first.why",
+                          "floor, why = latest(read.floor, first.floor), read.why or (first.why if first.floor else \"\")",
+                          "if branch == started_by:",
                           "if floor and latest(committed, floor) != committed:"])
 
-        def as_built(api, branch, sha, refused=None, now=None):
-            return mutants.head_since_copy(api, branch, sha, refused, now)
+        def as_built(api, branch, sha, refused=None, now=None, started_by=""):
+            return mutants.head_since_copy(api, branch, sha, refused, now, started_by)
 
         with mock.patch.object(github, "head_since", as_built):
             record = replay.replay(replay.traces()["F8"])

@@ -63,7 +63,7 @@ MERGEABLE_RETRY_SECONDS = 3
 # one more read after a pause before a claim is dated by its committer
 # date (head_since, F8).
 PUSH_RETRY_SECONDS = 3
-NO_PUSH_LISTED = "the repository's activity, read twice, lists no push that set the branch's head"
+NO_PUSH_LISTED = "the repository's activity lists no push that set the branch's head"
 # An entry of a branch's activity that names another head dates the claim
 # only when it came after the run began, a push after the run read the
 # branch; this much earlier still counts, for a runner's clock ahead of
@@ -613,7 +613,7 @@ def committed_at(api, sha):
     return (commit.get("committer") or {}).get("date") or ""
 
 
-def head_since(api, branch, sha, refused=None, now=None):
+def head_since(api, branch, sha, refused=None, now=None, started_by=""):
     """When the branch's last commit came, as (pushed_at, committed_at),
     the one read and the other "" (board.Release.last_commit): when GitHub
     received the push that set the head, from the repository's activity
@@ -635,13 +635,23 @@ def head_since(api, branch, sha, refused=None, now=None):
     than the newest entry either read listed for the branch, since the
     push that set the head came no sooner than that, so an activity that
     lags still dates a claim no earlier than the push it lists last
-    (latest). refused records why, by branch, for the run's log
+    (latest). In the run that a push to this branch started, started_by,
+    which the workflow's event names (cli.pushed_branch), a head no read
+    dates is dated at the run's start instead, for that run alone, since
+    that push came just before the run, whatever the two reads list: a
+    fresh branch's activity that lags both reads is an empty list, with no
+    floor, so the committer date would have a claim commit dated back
+    released in the run its own push started (F8's third review); the
+    next run reads the activity again, so no claim is held for good.
+    refused records why, by branch, for the run's log
     (pushed_refused_lines), except for a repository GitHub keeps no
-    activity of (a 404), whose committer dates were always the rule. It
-    costs one call where the first read dates the push; two where it does
-    not and the read is not made again, a refusal for good or a 404, the
-    second the commit; and up to three with a pause where it is made
-    again."""
+    activity of (a 404), whose committer dates were always the rule, and
+    the second read's 404 after a first that listed nothing, which says
+    the same. It costs one call where the first read dates the push; two
+    where it does not and the read is not made again, a refusal for good
+    or a 404, the second the commit; and up to three with a pause where it
+    is made again; in the run the branch's push started, the commit is
+    not read."""
     now = now or datetime.now(timezone.utc)
     read = first = read_push(api, branch, sha, now)
     if first.again:
@@ -649,16 +659,27 @@ def head_since(api, branch, sha, refused=None, now=None):
         read = read_push(api, branch, sha, now)
     if read.pushed:
         return read.pushed, ""
-    floor, why = latest(read.floor, first.floor), read.why or first.why
+    floor, why = latest(read.floor, first.floor), read.why or (first.why if first.floor else "")
+    if branch == started_by:
+        began = github_time(now)
+        if why and refused is not None:
+            refused[branch] = f"{why}, so its idleness is read from the start of this run, {began}, which its push started"
+        return began, ""
     committed = committed_at(api, sha)
     if floor and latest(committed, floor) != committed:
         if refused is not None:
             refused[branch] = (f"{why}, so its idleness is read from its newest entry's time, {floor}, "
-                               f"later than its committer date")
+                               + ("later than its committer date" if committed else "GitHub not showing its commit"))
         return floor, ""
     if why and refused is not None:
         refused[branch] = f"{why}, so its idleness is read from its committer date"
     return "", committed
+
+
+def github_time(moment):
+    """A moment as GitHub writes a time, ISO 8601 in UTC to the second, so
+    a run's start can stand where the activity's times do."""
+    return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 class PushRead(NamedTuple):
@@ -781,10 +802,12 @@ def latest(first, second):
 
 def pushed_refused_lines(snapshot):
     """A line for each claim branch whose head the run could not date by
-    the push that set it, saying why and what it read in its place, for
-    the workflow's log, since the page says nothing of it: a token that
-    may not read the repository's activity would otherwise have every
-    claim's idleness read from its committer date on every run unseen."""
+    the push that set it, saying why and what it read in its place, the
+    committer date, the newest entry listed or the start of the run its
+    push started, for the workflow's log, since the page says nothing of
+    it: a token that may not read the repository's activity would
+    otherwise have every claim's idleness read from its committer date on
+    every run unseen."""
     snap = board.as_snapshot(snapshot)
     return [f"{branch}: {why}" for branch, why in sorted(snap.pushed_refused.items())]
 
@@ -832,7 +855,7 @@ def finished_draft(api, pull):
     return claims.said_finished(api.get_all(f"/repos/{api.repo}/issues/{pull['number']}/comments"), author)
 
 
-def releases(api, heads, found_issues, pulls, now=None, asked=None, every_head=None, refused=None):
+def releases(api, heads, found_issues, pulls, now=None, asked=None, every_head=None, refused=None, started_by=""):
     """What the release rule reads about each claim that has gone more than
     a day without a commit, or whose head a release kept, by key, as a
     board.Release's JSON shape: the branch's head commit with the time its
@@ -866,11 +889,13 @@ def releases(api, heads, found_issues, pulls, now=None, asked=None, every_head=N
     same commit (board.Release.kept), which is read whatever its time, so
     the board frees the name of a branch pushed again at such a head;
     refused gathers, for the run's log, why each claim whose head no read
-    dated by its push was dated by its committer date or by the newest
-    entry listed: GitHub's refusal, or an activity that, read twice, lists
-    no push of the head. now is when the run began, taken before it read
-    the branches, so a push after that read is told from a stale entry
-    (pushed_by)."""
+    dated by its push was dated by its committer date, by the newest
+    entry listed or by the run's start: GitHub's refusal, or an activity
+    that lists no push of the head. now is when the run began, taken
+    before it read the branches, so a push after that read is told from a
+    stale entry (pushed_by); started_by is the branch whose push started
+    the run, "" for none, whose head is dated at the run's start where no
+    read dates its push (head_since)."""
     now = now or datetime.now(timezone.utc)
     ready, trusted = ready_branches(pulls), may_write(api, asked)
     drafts = {(p.get("head") or {}).get("ref"): p for p in pulls if p.get("draft") and is_claims(p)}
@@ -881,7 +906,7 @@ def releases(api, heads, found_issues, pulls, now=None, asked=None, every_head=N
         if not sha or branch in ready or not may_be_due(found_issues.get(key)):
             continue
         kept = every_head.get(claims.released_branch(key, sha)) == sha
-        pushed, committed = head_since(api, branch, sha, refused, now)
+        pushed, committed = head_since(api, branch, sha, refused, now, started_by)
         release = board.Release(sha=sha, committed_at=committed, pushed_at=pushed, kept=kept)
         if not kept and (not release.last_commit or not claims.is_idle(release.last_commit, now)):
             continue
@@ -895,12 +920,13 @@ def releases(api, heads, found_issues, pulls, now=None, asked=None, every_head=N
     return found
 
 
-def collect(api, sha, default_branch, now=None):
+def collect(api, sha, default_branch, now=None, started_by=""):
     """Everything the board renders, in the shape a --dry-run fixture has,
     so a live run's answers can be saved and rendered again offline; now is
     the moment a claim's idleness is measured from, the wall clock unless
     given, taken before the branches are read, so a push after that read
-    dates its claim (pushed_by)."""
+    dates its claim (pushed_by); started_by is the branch whose push
+    started the run, "" for none (releases)."""
     now = now or datetime.now(timezone.utc)
     repo = api.repo
     asked = getattr(api, "asked", None) or permissions(api)
@@ -921,7 +947,7 @@ def collect(api, sha, default_branch, now=None):
         "claim_issues": found_issues,
         "merged": recent_merged(api),
         "releases": releases(api, claim_heads(listed), found_issues, pulls, now, asked, branch_heads(listed),
-                             undated),
+                             undated, started_by),
     }
     if undated:
         found["pushed_refused"] = undated
@@ -1040,9 +1066,11 @@ def undated_words(branch, opened, own):
     return UNDATED_STRANGER if branch in opened else UNDATED_CLAIM
 
 
-def snapshot(api, sha, default_branch, now=None):
-    """The board's Snapshot of the repository as GitHub knows it now."""
-    return board.Snapshot.from_dict(collect(api, sha, default_branch, now))
+def snapshot(api, sha, default_branch, now=None, started_by=""):
+    """The board's Snapshot of the repository as GitHub knows it now;
+    started_by is the branch whose push started the run, "" for none
+    (collect)."""
+    return board.Snapshot.from_dict(collect(api, sha, default_branch, now, started_by))
 
 
 def has_marker(api, number, marker):

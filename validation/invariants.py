@@ -43,7 +43,7 @@ from sdlc_protocol import board, claims, protocol_check, team
 
 from . import cycle, oracle, page
 from .fake_github import head_repo
-from .model import BOT, REPO, T0
+from .model import BOT, REPO, T0, iso
 
 GUARANTEES = {
     "G1": "state", "G2": "cycle", "G3": "cycle", "G3L": "cycle", "G4": "cycle", "G5": "cycle", "G6": "cycle",
@@ -315,9 +315,11 @@ def first_half_checks(before, after, half, known=oracle.AS_BUILT):
     if half.raised is not None:
         return [] if reads_failed(half.fake.calls) else [Violation("G15", f"the run's first half raised: {half.raised}")]
     actual = effects_of(half.fake.calls)
-    dates = push_dates(half.fake.calls, before)
+    started_by = oracle.pushed_branch(half.event, half.ref_name)
+    dates = push_dates(half.fake.calls, before, started_by)
     seen_before, seen_after = seen(before, dates), seen(after, dates)
-    problems = pushes_read_again(half.fake.calls, before) + pushes_logged(half.fake.calls, before, half.lines)
+    problems = (pushes_read_again(half.fake.calls, before)
+                + pushes_logged(half.fake.calls, before, half.lines, started_by))
     if not injected(half.fake.calls, but=WRITES_KEPT):
         expected = oracle.expected_effects(seen_before, half.event, half.ref_name, known,
                                            unsaid_branches(half.fake.calls))
@@ -347,12 +349,13 @@ def cycle_checks(before, after, record, known=oracle.AS_BUILT):
         return [Violation("G15", f"the run exited {record.exit_code}: {record.raised}")]
     start = record.started_from if split else before
     planned = record.planned if split else after
-    dates = push_dates(record.calls, start)
+    started_by = oracle.pushed_branch(record.event, record.ref_name)
+    dates = push_dates(record.calls, start, started_by)
     seen_start, seen_planned = seen(start, dates), seen(planned, dates)
     # A run made in two halves had its reads of the pushes judged, and its
     # log, when its first half was made (first_half_checks).
     problems = [] if split else (pushes_read_again(record.calls, start)
-                                 + pushes_logged(record.calls, start, record.lines))
+                                 + pushes_logged(record.calls, start, record.lines, started_by))
     if not injected(record.calls, but=WRITES_KEPT):
         unsaid = unsaid_branches(record.calls)
         expected = kept_renames(oracle.expected_effects(seen_start, record.event, record.ref_name, known, unsaid),
@@ -637,17 +640,18 @@ def unsaid_branches(calls):
     return refused_activity(calls, "branch_creation")
 
 
-def undated_branches(calls, model):
+def undated_branches(calls, model, started_by=""):
     """The claim branches whose push of their head a run could not date,
     which it then dated by their committer dates (SPEC["undated push"],
     F8): those whose last read in the run GitHub refused or answered with
     a list that names no push of the head the run read from the model,
     and whose floor, the newest entry either read listed, came no later
     than the head's committer date (SPEC["floor"]); a first read answered
-    by the second leaving the branch dated by its push, and a floor later
+    by the second leaving the branch dated by its push, a floor later
     than the committer date dating it by the floor, which the run's log
-    still says (pushes_logged)."""
-    return frozenset(branch for branch, minute in push_dates(calls, model).items() if minute is None)
+    still says (pushes_logged), and the branch whose push started the run,
+    started_by, dated at the run's start (SPEC["started by"])."""
+    return frozenset(branch for branch, minute in push_dates(calls, model, started_by).items() if minute is None)
 
 
 def refused_activity(calls, kind):
@@ -677,14 +681,17 @@ class PushReading(NamedTuple):
     claim's head say, by the spec's words: the minute the run dates the
     claim's last commit at, None where the committer date stands in; what
     dates it, "push" where the last read dated the push (SPEC["last
-    commit"], SPEC["moved off"]), "floor" where no read did and the newest
-    entry the reads listed came later than the head's committer date
-    (SPEC["floor"]), and "committer date" where neither; why no read dated
-    the push, by its key in oracle.LOG_WORDS ("listed none" or "refused"),
-    "" where nothing is to be said, a read having dated the push or GitHub
-    keeping no activity of the repository (a 404); and the floor's time as
-    GitHub wrote it, which the run's log quotes, "" where the floor dates
-    nothing."""
+    commit"], SPEC["moved off"]), "run start" where no read did and the
+    branch's own push started the run (SPEC["started by"]), "floor" where
+    neither and the newest entry the reads listed came later than the
+    head's committer date (SPEC["floor"]), and "committer date" where
+    none of those; why no read dated the push, by its key in
+    oracle.LOG_WORDS ("listed none" or "refused"), "" where nothing is to
+    be said, a read having dated the push, GitHub keeping no activity of
+    the repository (a 404), or the second read saying so after a first
+    that listed nothing; and the time the run's log quotes, the floor's
+    as GitHub wrote it or the run's start as GitHub would write it, ""
+    where neither dates the claim."""
 
     minute: int | None
     by: str
@@ -692,16 +699,22 @@ class PushReading(NamedTuple):
     stamp: str = ""
 
 
-def push_readings(calls, model):
+def push_readings(calls, model, started_by=""):
     """Each claim branch's PushReading, by branch name, from the reads of
     its head's push a run made (activity_reads), the heads the run read in
     the model and the minute it began, the model's clock, which the run is
-    handed as its now (cycle.start_run, clerk.ModelClient.released): the
-    last read dates the push; or else the floor, the later of the newest
+    handed as its now (cycle.start_run, clerk.ModelClient.released), and
+    the branch whose push started the run, started_by, "" for none
+    (oracle.pushed_branch): the last read dates the push; or else the
+    run's start dates the branch whose push started the run
+    (SPEC["started by"]); or else the floor, the later of the newest
     entries the reads listed, dates the claim where it came later than the
     head's committer date (oracle.floor_dates); or else the committer date
-    stands in. Until F8's fix check the harness read the last read alone,
-    and the committer date stood in wherever it dated no push."""
+    stands in. Why nothing dated the push is the last read's reason, or
+    the first's where the last said nothing and the first listed an entry
+    (github.head_since). Until F8's fix check the harness read the last
+    read alone, and the committer date stood in wherever it dated no
+    push."""
     found = {}
     for branch, reads in activity_reads(calls, None).items():
         head = model.refs.get(branch)
@@ -709,7 +722,10 @@ def push_readings(calls, model):
         if pushed is not None:
             found[branch] = PushReading(pushed, "push")
             continue
-        why = read_why(reads[-1]) or read_why(reads[0])
+        why = read_why(reads[-1]) or (read_why(reads[0]) if read_floor(reads[0], branch) is not None else "")
+        if branch == started_by:
+            found[branch] = PushReading(model.now, "run start", why, iso(model.now))
+            continue
         floor = max((f for f in (read_floor(read, branch) for read in reads) if f is not None), default=None,
                     key=lambda f: f[0])
         committed = model.commits[head].committed_at if head in model.commits else None
@@ -719,13 +735,14 @@ def push_readings(calls, model):
     return found
 
 
-def push_dates(calls, model):
+def push_dates(calls, model, started_by=""):
     """What a run read of when each claim branch's last commit came, by
     branch name (push_readings): the minute its reads date it at, by the
-    push the last of them dates or by the floor (SPEC["floor"]), or None
-    where neither dates it, so the run dates the branch by its committer
-    date (SPEC["undated push"])."""
-    return {branch: reading.minute for branch, reading in push_readings(calls, model).items()}
+    push the last of them dates, by the run's start for the branch whose
+    push started the run (SPEC["started by"]) or by the floor
+    (SPEC["floor"]), or None where none dates it, so the run dates the
+    branch by its committer date (SPEC["undated push"])."""
+    return {branch: reading.minute for branch, reading in push_readings(calls, model, started_by).items()}
 
 
 def read_dates(call, branch, head, began):
@@ -771,25 +788,26 @@ def read_why(call):
     return "" if call.status == 404 else "refused"
 
 
-def pushes_logged(calls, model, lines):
+def pushes_logged(calls, model, lines, started_by=""):
     """G2's log: the run says in its log, for each claim whose idleness it
     read from something other than the push that set its head, why and
-    what it read it from, the floor where the newest entry either read
-    listed came later than the head's committer date and the committer
-    date where not (SPEC["undated push"], SPEC["floor"]), in its own words
-    (oracle.LOG_WORDS); and it says nothing of a claim a read dated by its
-    push, nor of one GitHub keeps no activity of. The page says none of
-    it, so the log is where a token that may not read the activity shows;
-    and since the floor dates a claim at the minute a push after the run
-    began would, a run that reads such a push as none, or takes a floor at
-    the committer date's own minute for a later one, shows here alone
-    (F8's fix check)."""
+    what it read it from, the start of the run where the claim's own push
+    started it (SPEC["started by"]), else the floor where the newest entry
+    either read listed came later than the head's committer date and the
+    committer date where not (SPEC["undated push"], SPEC["floor"]), in its
+    own words (oracle.LOG_WORDS); and it says nothing of a claim a read
+    dated by its push, nor of one GitHub keeps no activity of. The page
+    says none of it, so the log is where a token that may not read the
+    activity shows; and since the floor dates a claim at the minute a push
+    after the run began would, a run that reads such a push as none, or
+    takes a floor at the committer date's own minute for a later one,
+    shows here alone (F8's fix check)."""
     said = {}
     for line in lines:
         if oracle.LOG_WORDS["read from"] in line:
             said.setdefault(line.split(": ", 1)[0], []).append(line)
     problems = []
-    for branch, reading in sorted(push_readings(calls, model).items()):
+    for branch, reading in sorted(push_readings(calls, model, started_by).items()):
         found, owed = said.pop(branch, []), owed_line(branch, reading)
         if owed is None and found:
             problems.append(Violation("G2", f"the run's log says {branch}'s idleness is read from "
@@ -814,6 +832,7 @@ def owed_line(branch, reading):
         return None
     start = f"{branch}: {oracle.LOG_WORDS[reading.why]}"
     end = (oracle.LOG_WORDS["floor"].format(floor=reading.stamp) if reading.by == "floor"
+           else oracle.LOG_WORDS["run start"].format(at=reading.stamp) if reading.by == "run start"
            else oracle.LOG_WORDS["committer date"])
     return start, end
 
@@ -834,16 +853,17 @@ def line_reads(line):
     minutes is one violation."""
     why = ("a refusal" if oracle.LOG_WORDS["refused"] in line
            else "a list naming no push" if oracle.LOG_WORDS["listed none"] in line else "words not the run's")
-    floor_end = oracle.LOG_WORDS["floor"].split("{floor}")[1]
+    floor_end, start_end = oracle.LOG_WORDS["floor"].split("{floor}")[1], oracle.LOG_WORDS["run start"].split("{at}")[1]
     by = ("its committer date" if line.endswith(oracle.LOG_WORDS["committer date"])
-          else "its newest entry's time" if line.endswith(floor_end) else "nothing the run says")
+          else "its newest entry's time" if line.endswith(floor_end)
+          else "the start of this run" if line.endswith(start_end) else "nothing the run says")
     return f"{by}, after {why}"
 
 
 def floor_differs(line, owed):
-    """", the floor's time differing" where a line reads the floor after
-    the reason owed but quotes another time than the newest entry the
-    reads listed."""
+    """", the floor's time differing" where a line reads the floor, or the
+    run's start, after the reason owed but quotes another time than the
+    newest entry the reads listed, or than the run's start."""
     return ", the floor's time differing" if line_reads(line) == line_reads("".join(owed)) else ""
 
 
