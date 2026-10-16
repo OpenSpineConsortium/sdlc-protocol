@@ -62,14 +62,16 @@ class RawAnswer(FakeAnswer):
 
 
 class Refusal:
-    """An HTTP error GitHub would answer, with its JSON body."""
+    """An HTTP error GitHub would answer, with its JSON body and its
+    headers, a dict standing in for http.client's, whose names the adapter
+    reads in any case as http.client matches them (github.header)."""
 
-    def __init__(self, code, body=None):
-        self.code, self.body = code, body
+    def __init__(self, code, body=None, headers=None):
+        self.code, self.body, self.headers = code, body, headers or {}
 
     def raised(self, url):
         raw = json.dumps(self.body).encode() if self.body is not None else b""
-        return urllib.error.HTTPError(url, self.code, "refused", {}, io.BytesIO(raw))
+        return urllib.error.HTTPError(url, self.code, "refused", dict(self.headers), io.BytesIO(raw))
 
 
 class CutBody(io.BytesIO):
@@ -84,7 +86,7 @@ class CutRefusal(Refusal):
     raising IncompleteRead when the body is read for GitHub's words."""
 
     def raised(self, url):
-        return urllib.error.HTTPError(url, self.code, "refused", {}, CutBody())
+        return urllib.error.HTTPError(url, self.code, "refused", dict(self.headers), CutBody())
 
 
 def send_line(call):
@@ -524,6 +526,9 @@ class Calls(unittest.TestCase):
                                          dict(self.LIMIT, **{"x-ratelimit-remaining": "0"}), io.BytesIO(b""))
         opener = mock.Mock()
         opener.open.side_effect = [FakeAnswer({}, self.LIMIT), FakeAnswer({}, partial), FakeAnswer({}), refused]
+        # A 403 that names no rate limit is the call's answer whatever its
+        # headers say of the hour (rate_limited), so the client waits for
+        # nothing and asks nothing again.
         api = github.GitHub("t", "o/r", opener=opener, sleep=lambda seconds: None)
         api.get("/repos/o/r")
         self.assertEqual(api.limit, (962, 1000, 1760612400))
@@ -551,6 +556,228 @@ class Calls(unittest.TestCase):
         self.assertEqual(github.calls_line(api),
                          "GitHub's REST API: 45 calls in this run, 41 reads and 4 writes; GitHub last said the "
                          "token had 962 of its 1000 calls an hour left, the hour ending at 11:00 UTC")
+
+
+class RateLimits(unittest.TestCase):
+    """A call GitHub refuses for a rate limit, a 429 or a 403 that says so
+    (rate_limited), is made again after the longest of the waits GitHub
+    asks for, as its documentation says ("Exceeding the rate limit"),
+    while the wait is one a run takes (rate_wait): the seconds retry-after
+    names and the hour's end where the token has no call left, else a
+    minute and then two; at most twice for one call, never a wait over two
+    minutes, and three minutes in all for one client."""
+
+    PATH = "/repos/o/r/issues/7"
+    SECONDARY = {"message": "You have exceeded a secondary rate limit. Please wait a few minutes before you try again."}
+    PRIMARY = {"message": "API rate limit exceeded for installation ID 1."}
+
+    def asked(self, answers, clock=1760612400):
+        """A client over InTurn's answers, the waits it made and its opener;
+        the clock stands still at clock."""
+        waits = []
+        opener = InTurn(answers)
+        return github.GitHub("t", "o/r", opener=opener, sleep=waits.append, clock=lambda: clock), waits, opener
+
+    def calls_to(self, opener, path):
+        return len([c for c in opener.calls if c.selector == path])
+
+    def test_a_429_is_asked_again_after_the_seconds_retry_after_names(self):
+        api, waits, opener = self.asked({self.PATH: Turns(Refusal(429, headers={"retry-after": "7"}),
+                                                          FakeAnswer({"number": 7}))})
+        self.assertEqual(api.get(self.PATH), {"number": 7})
+        self.assertEqual((waits, api.waited, self.calls_to(opener, self.PATH)), ([7], [7], 2))
+        self.assertEqual(dict(api.made), {"GET": 2}, "the refusal is a call GitHub answered")
+
+    def test_a_secondary_limit_naming_no_wait_is_asked_again_after_a_minute_then_two(self):
+        for refusal in (Refusal(403, self.SECONDARY), Refusal(429)):
+            with self.subTest(status=refusal.code):
+                api, waits, _ = self.asked({self.PATH: Turns(refusal, refusal, FakeAnswer({"number": 7}))})
+                self.assertEqual(api.get(self.PATH), {"number": 7})
+                self.assertEqual(waits, [60, 120])
+
+    def test_a_call_refused_a_third_time_fails_with_github_s_words(self):
+        api, waits, opener = self.asked({self.PATH: Refusal(403, self.SECONDARY)})
+        with self.assertRaises(github.GitHubError) as raised:
+            api.get(self.PATH)
+        self.assertEqual((raised.exception.status, raised.exception.detail), (403, self.SECONDARY["message"]))
+        self.assertEqual((waits, self.calls_to(opener, self.PATH)), ([60, 120], 3))
+
+    def test_the_primary_limit_is_waited_for_only_when_its_hour_ends_soon(self):
+        spent = {"x-ratelimit-remaining": "0", "x-ratelimit-limit": "1000", "x-ratelimit-reset": "1760612400"}
+        for clock, made in ((1760612400 - 30, [31]), (1760612400 + 5, [1]), (1760612400 - 119, [120]),
+                            (1760612400 - 120, []), (1760612400 - 3600, [])):
+            with self.subTest(clock=clock):
+                api, waits, opener = self.asked({self.PATH: Turns(Refusal(403, self.PRIMARY, spent),
+                                                                  FakeAnswer({"number": 7}))}, clock)
+                if made:
+                    self.assertEqual(api.get(self.PATH), {"number": 7})
+                else:
+                    with self.assertRaises(github.GitHubError):
+                        api.get(self.PATH)
+                self.assertEqual((waits, self.calls_to(opener, self.PATH)), (made, len(made) + 1))
+
+    def test_a_spent_hour_whose_end_is_not_said_fails_at_once(self):
+        """GitHub asks for no call before the hour's end where the token has
+        none left, and an answer that does not say when the hour ends gives
+        no wait to make: a minute's guess would only be refused again."""
+        for refusal in (Refusal(403, self.PRIMARY, {"x-ratelimit-remaining": "0"}),
+                        Refusal(429, headers={"x-ratelimit-remaining": "0", "x-ratelimit-reset": "soon"}),
+                        Refusal(429, headers={"retry-after": "10", "x-ratelimit-remaining": "0"})):
+            with self.subTest(status=refusal.code, headers=refusal.headers):
+                api, waits, opener = self.asked({self.PATH: Turns(refusal, FakeAnswer({"number": 7}))})
+                with self.assertRaises(github.GitHubError):
+                    api.get(self.PATH)
+                self.assertEqual((waits, self.calls_to(opener, self.PATH)), ([], 1))
+
+    def test_a_header_s_name_is_read_in_any_case(self):
+        """HTTP reads a header's name in any case, as urllib's answers do;
+        a stand-in's plain mapping, as a consumer's test may give, is read
+        the same way, for the wait a rate limit asks, for the limit the
+        run's line says and for the next page a Link names."""
+        limit = {"X-RateLimit-Remaining": "962", "X-RateLimit-Limit": "1000", "X-RateLimit-Reset": "1760612400"}
+        api, _, _ = self.asked({self.PATH: FakeAnswer({"number": 7}, limit)})
+        api.get(self.PATH)
+        self.assertEqual(api.limit, (962, 1000, 1760612400))
+        page = '<https://api.github.com/repos/o/r/issues?page=2>; rel="next"'
+        for name in ("Link", "link", "LINK"):
+            with self.subTest(name=name):
+                self.assertEqual(github.next_link({name: page}), "https://api.github.com/repos/o/r/issues?page=2")
+        spent = {"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": "1760612400"}
+        for refusal, clock, made in ((Refusal(429, headers={"Retry-After": "7"}), 1760612400, [7]),
+                                     (Refusal(403, self.PRIMARY, spent), 1760612400 - 30, [31])):
+            with self.subTest(status=refusal.code):
+                api, waits, _ = self.asked({self.PATH: Turns(refusal, FakeAnswer({"number": 7}))}, clock)
+                self.assertEqual(api.get(self.PATH), {"number": 7})
+                self.assertEqual(waits, made)
+        api, waits, opener = self.asked({self.PATH: Refusal(403, self.PRIMARY, {"X-RateLimit-Remaining": "0"})})
+        with self.assertRaises(github.GitHubError):
+            api.get(self.PATH)
+        self.assertEqual((waits, self.calls_to(opener, self.PATH)), ([], 1), "a spent hour, its end not said")
+
+    def test_a_403_that_is_no_rate_limit_fails_at_once(self):
+        """A 403 that names no rate limit, by its message or a retry-after,
+        is a token without the right or a rule, whatever its headers say of
+        the hour: every answer counts against the hour, so the hour's last
+        call is answered with none left, whatever GitHub answers it with,
+        and waiting out the hour would only ask again for the same refusal
+        (rate_limited)."""
+        no_right = {"message": "Resource not accessible by integration"}
+        last_call = {"x-ratelimit-remaining": "0", "x-ratelimit-limit": "1000", "x-ratelimit-reset": "1760612430"}
+        for refusal in (Refusal(403, no_right, {"x-ratelimit-remaining": "4999"}), Refusal(403, no_right, last_call),
+                        Refusal(403, headers=last_call), Refusal(403), Refusal(401), Refusal(404), Refusal(422),
+                        Refusal(500), Refusal(502)):
+            with self.subTest(status=refusal.code, body=refusal.body, headers=refusal.headers):
+                api, waits, opener = self.asked({self.PATH: refusal})
+                with self.assertRaises(github.GitHubError):
+                    api.get(self.PATH)
+                self.assertEqual((waits, self.calls_to(opener, self.PATH)), ([], 1))
+                self.assertNotIn("waited", github.calls_line(api))
+
+    def test_a_403_that_names_its_wait_is_a_rate_limit_s(self):
+        """A 403 that carries retry-after is waited out whatever its message
+        says. That is this project's assumption, not GitHub's word: its
+        documentation says that for a secondary rate limit "you will
+        receive a `403` or `429` response and an error message that
+        indicates that you exceeded a secondary rate limit. If the
+        `retry-after` response header is present, you should not retry
+        your request until after that many seconds has elapsed" ("Exceeding
+        the rate limit"), and never says that no other refusal sends one
+        (validation/DESIGN.md, 3.2)."""
+        api, waits, opener = self.asked({self.PATH: Turns(Refusal(403, headers={"retry-after": "7"}),
+                                                          FakeAnswer({"number": 7}))})
+        self.assertEqual(api.get(self.PATH), {"number": 7})
+        self.assertEqual((waits, self.calls_to(opener, self.PATH)), ([7], 2))
+
+    def test_the_longest_of_the_waits_github_asks_for_is_waited(self):
+        """Where an answer names the seconds to wait and says the hour is
+        spent, GitHub asks for no call before either has passed ("Exceeding
+        the rate limit"), so the client waits the longer, and fails at once
+        where the longer is more than a run waits."""
+        clock = 1760612400
+        for headers, body, made in (({"retry-after": "10", "x-ratelimit-reset": str(clock + 100)}, None, [101]),
+                                    ({"retry-after": "90", "x-ratelimit-reset": str(clock + 30)}, None, [90]),
+                                    ({"retry-after": "10", "x-ratelimit-reset": str(clock + 200)}, self.SECONDARY,
+                                     [])):
+            with self.subTest(headers=headers):
+                refusal = Refusal(429 if body is None else 403, body,
+                                  dict(headers, **{"x-ratelimit-remaining": "0"}))
+                api, waits, opener = self.asked({self.PATH: Turns(refusal, FakeAnswer({"number": 7}))}, clock)
+                if made:
+                    self.assertEqual(api.get(self.PATH), {"number": 7})
+                else:
+                    with self.assertRaises(github.GitHubError):
+                        api.get(self.PATH)
+                self.assertEqual((waits, self.calls_to(opener, self.PATH)), (made, len(made) + 1))
+
+    def test_a_wait_longer_than_a_run_takes_fails_at_once(self):
+        for after in (str(github.RATE_LONGEST_WAIT + 1), "86400"):
+            with self.subTest(after=after):
+                api, waits, opener = self.asked({self.PATH: Refusal(429, headers={"retry-after": after})})
+                with self.assertRaises(github.GitHubError):
+                    api.get(self.PATH)
+                self.assertEqual((waits, self.calls_to(opener, self.PATH)), ([], 1))
+
+    def test_a_retry_after_written_otherwise_is_read_as_no_wait_named(self):
+        for after in ("Wed, 21 Oct 2026 07:28:00 GMT", "-1", "1.5", "9" * 5000):
+            with self.subTest(after=after[:20]):
+                api, waits, _ = self.asked({self.PATH: Turns(Refusal(429, headers={"retry-after": after}),
+                                                             FakeAnswer({"number": 7}))})
+                self.assertEqual(api.get(self.PATH), {"number": 7})
+                self.assertEqual(waits, [60])
+
+    def test_a_write_is_made_again_with_the_same_body(self):
+        """On the assumption that GitHub refuses a rate limit's call before
+        it does anything with it, which its documentation does not say and
+        a canary check would settle (validation/DESIGN.md, 3.2), a comment
+        refused is not written, and asking again writes it once."""
+        post = "POST /repos/o/r/issues/7/comments"
+        api, waits, opener = self.asked({post: Turns(Refusal(403, self.SECONDARY), FakeAnswer({"id": 1}))})
+        self.assertEqual(api.post("/repos/o/r/issues/7/comments", {"body": "x"}), {"id": 1})
+        self.assertEqual((waits, opener.sent("POST")), ([60], [{"body": "x"}, {"body": "x"}]))
+
+    def test_a_client_waits_three_minutes_in_all_at_most(self):
+        """Each call may wait twice, but a client stops waiting once its
+        waits would pass RATE_WAIT_BUDGET, so a run GitHub refuses again and
+        again ends in minutes, inside a job's limit of five."""
+        after = {"retry-after": "90"}
+        answers = {f"/repos/o/r/issues/{n}": Turns(Refusal(429, headers=after), FakeAnswer({"number": n}))
+                   for n in (1, 2, 3)}
+        api, waits, opener = self.asked(answers)
+        self.assertEqual(api.get("/repos/o/r/issues/1"), {"number": 1})
+        self.assertEqual(api.get("/repos/o/r/issues/2"), {"number": 2})
+        with self.assertRaises(github.GitHubError):
+            api.get("/repos/o/r/issues/3")
+        self.assertEqual((waits, sum(api.waited)), ([90, 90], github.RATE_WAIT_BUDGET))
+        self.assertEqual(self.calls_to(opener, "/repos/o/r/issues/3"), 1)
+
+    def test_the_run_s_line_says_how_many_times_and_how_long_it_waited(self):
+        """Each wait is one call made again; a refusal the client did not
+        wait out, the last of a call's tries among them, is a call like any
+        other, so three refusals of one call are two waits."""
+        api, _, _ = self.asked({self.PATH: Turns(Refusal(429), Refusal(429), FakeAnswer({}))})
+        api.get(self.PATH)
+        self.assertEqual(github.calls_line(api), "GitHub's REST API: 3 calls in this run, 3 reads and 0 writes; it "
+                                                 "waited for GitHub's rate limits 2 times, 180 s in all")
+        api.limit = (962, 1000, 1760612400)
+        self.assertTrue(github.calls_line(api).endswith(
+            "2 times, 180 s in all; GitHub last said the token had 962 of its 1000 calls an hour left, the hour "
+            "ending at 11:00 UTC"))
+        api, _, _ = self.asked({self.PATH: Refusal(403, self.SECONDARY)})
+        with self.assertRaises(github.GitHubError):
+            api.get(self.PATH)
+        self.assertEqual(github.calls_line(api), "GitHub's REST API: 3 calls in this run, 3 reads and 0 writes; it "
+                                                 "waited for GitHub's rate limits 2 times, 180 s in all")
+        api, _, _ = self.asked({self.PATH: Turns(Refusal(429, headers={"retry-after": "0"}), FakeAnswer({}))})
+        api.get(self.PATH)
+        self.assertEqual(github.calls_line(api), "GitHub's REST API: 2 calls in this run, 2 reads and 0 writes; it "
+                                                 "waited for GitHub's rate limits 1 time, 0 s in all")
+
+    def test_a_stand_in_that_keeps_no_waits_waited_for_none(self):
+        """A stand-in written before the client waited, as a consumer's test
+        may hold, keeps the count and the limit alone: its line is as it
+        was, not dropped by the run's last line for want of the waits."""
+        stand_in = types.SimpleNamespace(made={"GET": 2, "POST": 1}, limit=None)
+        self.assertEqual(github.calls_line(stand_in), "GitHub's REST API: 3 calls in this run, 2 reads and 1 write")
 
 
 def fixture_answers(name="board.json"):
@@ -811,7 +1038,10 @@ class Collect(unittest.TestCase):
         # A refused comment, a secondary rate limit or a server error, ended
         # the board's run with exit 1 after STATE.md was written, and the
         # workflow writes the board to its branch only after a run that
-        # succeeded; a comment GitHub refuses for good froze the branch.
+        # succeeded; a comment GitHub refuses for good froze the branch. The
+        # client asks again after each of the two waits a secondary limit
+        # asks (rate_wait), so the comment is asked three times before its
+        # refusal is the line.
         api, opener = client({
             "/repos/o/r/issues/40/comments?per_page=100": FakeAnswer([]),
             "POST /repos/o/r/issues/40/comments": Refusal(403, {"message": "You have exceeded a secondary rate limit"}),
@@ -830,7 +1060,7 @@ class Collect(unittest.TestCase):
         # 41's comments could not be read, so whether it was told is not
         # known, and nothing is posted to it: the next run tells it once.
         self.assertEqual([c.full_url.replace(github.API, "") for c in opener.calls if c.get_method() == "POST"],
-                         ["/repos/o/r/issues/40/comments", "/repos/o/r/issues/42/comments"])
+                         ["/repos/o/r/issues/40/comments"] * 3 + ["/repos/o/r/issues/42/comments"])
 
     def test_a_comment_whose_answer_was_cut_short_is_a_line_and_the_next_comment_is_still_tried(self):
         # http.client raises IncompleteRead, which is no OSError, for an
@@ -1126,7 +1356,6 @@ class Releases(unittest.TestCase):
         path, commit = pushes_path("claude/12"), f"/repos/o/r/git/commits/{HEAD_12}"
         listed = FakeAnswer([pushed("claude/12", "2026-09-19T12:00:00Z", HEAD_12)])
         older = FakeAnswer([pushed("claude/12", "2026-09-17T12:00:00Z", "bbbbbbb2222222")])
-        limited = {"message": "You have exceeded a secondary rate limit."}
         # The branch moved off the head a day before the run, and a push the
         # first read does not list brought it back; one moved off it after
         # the run began; and, after two pushes since the run read the
@@ -1153,8 +1382,6 @@ class Releases(unittest.TestCase):
             (Turns(Refusal(502), fresh_twice), ("2026-09-19T12:02:00Z", ""), 2, None),
             (Turns(FakeAnswer([]), listed), ("2026-09-19T12:00:00Z", ""), 2, None),
             (Turns(Refusal(502), listed), ("2026-09-19T12:00:00Z", ""), 2, None),
-            (Turns(Refusal(429), listed), ("2026-09-19T12:00:00Z", ""), 2, None),
-            (Turns(Refusal(403, limited), listed), ("2026-09-19T12:00:00Z", ""), 2, None),
             (Turns(stale_off, stale_off), ("2026-09-18T12:00:00Z", ""), 2,
              (github.NO_PUSH_LISTED, by_floor("2026-09-18T12:00:00Z"))),
             (Turns(older, older), ("2026-09-17T12:00:00Z", ""), 2,
@@ -1196,6 +1423,41 @@ class Releases(unittest.TestCase):
                  (None, ("2026-09-17T12:00:00Z", ""), no_commit))
         for dated, expected, floored in later:
             self.assert_head_since(Turns(older, older), dated, began, expected, 2, (github.NO_PUSH_LISTED, floored))
+
+    def test_a_rate_limit_on_the_first_read_is_waited_out_by_the_client(self):
+        """A 429, or a 403 that says a secondary rate limit was reached, is
+        waited out by the client as GitHub asks and asked again (rate_wait),
+        so head_since sees the answer after it, with no pause of its own; a
+        limit the client's tries do not outlast, or whose wait is longer
+        than a run waits, is a refusal like any other once the client has
+        made its waits: head_since does not read it again after its pause,
+        which would ask while GitHub still asks for no call, and the
+        committer date stands in (may_answer_later)."""
+        path, commit = pushes_path("claude/12"), f"/repos/o/r/git/commits/{HEAD_12}"
+        listed = FakeAnswer([pushed("claude/12", "2026-09-19T12:00:00Z", HEAD_12)])
+        limited = {"message": "You have exceeded a secondary rate limit."}
+        spent = {"x-ratelimit-remaining": "0", "x-ratelimit-reset": "9999999999"}
+        began = datetime(2026, 9, 19, 12, 0, tzinfo=timezone.utc)
+        committed = "2026-09-16T12:00:00Z"
+        first, second = github.RATE_FIRST_WAIT, 2 * github.RATE_FIRST_WAIT
+        cases = (
+            (Turns(Refusal(429), listed), ("2026-09-19T12:00:00Z", ""), 2, [first]),
+            (Turns(Refusal(403, limited), listed), ("2026-09-19T12:00:00Z", ""), 2, [first]),
+            (Turns(Refusal(429, headers={"retry-after": "7"}), listed), ("2026-09-19T12:00:00Z", ""), 2, [7]),
+            (Refusal(429), ("", committed), 3, [first, second]),
+            (Refusal(403, limited, {"retry-after": "30"}), ("", committed), 3, [30, 30]),
+            (Refusal(403, {"message": "API rate limit exceeded for installation ID 1."}, spent), ("", committed), 1,
+             []),
+        )
+        for answer, expected, reads, waits_made in cases:
+            with self.subTest(answer=answer):
+                waits, refused = [], {}
+                opener = InTurn({path: answer, commit: FakeAnswer({"committer": {"date": committed}})})
+                api = github.GitHub("t", "o/r", opener=opener, sleep=waits.append)
+                self.assertEqual(github.head_since(api, "claude/12", HEAD_12, refused, began), expected)
+                self.assertEqual(len([c for c in opener.calls if c.selector == path]), reads)
+                self.assertEqual(waits, waits_made)
+                self.assertEqual(bool(refused), expected[0] == "")
 
     def test_in_the_run_a_branch_s_push_started_an_undated_head_is_dated_at_the_run_s_start(self):
         """F8's third review: a fresh branch's activity that lags both reads
@@ -1623,6 +1885,29 @@ class Releases(unittest.TestCase):
                 f"HTTP {status}"])
             asked = [c.full_url.replace(github.API, "") for c in opener.calls]
             self.assertFalse(any("/rules/" in path or "/comments" in path for path in asked), asked)
+
+    def test_a_rename_refused_for_a_rate_limit_is_left_for_the_next_run_unsaid(self):
+        """A secondary rate limit that outlasts the client's tries refuses
+        the rename with a 403, the status GitHub gives a rule or a token
+        without the right too, but it is neither: the issue hears nothing
+        and the next run tries again (explain_refusal, rate_limited), since
+        a comment would send the owner after a rule or a right that is not
+        missing, and its marker would keep a later refusal for good unsaid."""
+        waits = []
+        api, opener = client({
+            REF + "claude/12": FakeAnswer({"object": {"sha": HEAD_12}}),
+            RENAME_12: Refusal(403, {"message": "You have exceeded a secondary rate limit."}),
+            RULES_12: FakeAnswer([]),
+            RULES_RELEASED_12: FakeAnswer([]),
+            COMMENTS_12: FakeAnswer([RELEASE_COMMENT]),
+            "POST /repos/o/r/issues/12/comments": FakeAnswer({}),
+        }, waits)
+        self.assertEqual(github.release_claims(api, released()), [
+            "claude/12: not renamed to released/12-aaaaaaa: POST /repos/o/r/branches/claude%2F12/rename: "
+            "HTTP 403: You have exceeded a secondary rate limit."])
+        self.assertEqual((waits, opener.sent("POST")), ([60, 120], [{"new_name": "released/12-aaaaaaa"}] * 3))
+        asked = [c.full_url.replace(github.API, "") for c in opener.calls]
+        self.assertFalse(any("/rules/" in path or "/comments" in path for path in asked), asked)
 
     def test_a_comment_github_refuses_after_a_refused_rename_is_a_line(self):
         api, _ = client({

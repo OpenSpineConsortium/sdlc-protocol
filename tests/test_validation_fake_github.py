@@ -345,15 +345,58 @@ class TheTransport(unittest.TestCase):
 class Faults(unittest.TestCase):
     def test_a_fault_answers_its_status_the_times_it_is_given(self):
         model = M.seeded()
-        api, fake = cycle.api_for(model, (Fault("POST", "/issues/*/comments", 403, times=1,
-                                                message="You have exceeded a secondary rate limit", retry_after="60"),))
+        api, fake = cycle.api_for(model, (Fault("POST", "/issues/*/comments", 500, times=1, message="Server Error"),))
         with self.assertRaises(github.GitHubError) as caught:
             api.post(f"/repos/{M.REPO}/issues/1/comments", {"body": "one"})
-        self.assertEqual((caught.exception.status, caught.exception.detail),
-                         (403, "You have exceeded a secondary rate limit"))
+        self.assertEqual((caught.exception.status, caught.exception.detail), (500, "Server Error"))
         self.assertEqual(model.issues[1].comments, ())
         api.post(f"/repos/{M.REPO}/issues/1/comments", {"body": "two"})
         self.assertEqual([c.body for c in model.issues[1].comments], ["two"])
+
+    def test_a_secondary_rate_limit_asks_its_wait_and_the_client_waits_it_out(self):
+        """The fault's 403 says a secondary rate limit was reached and names
+        the seconds to wait in retry-after, as GitHub does; the library's
+        client waits as asked and posts again (adapters.github.rate_wait),
+        so the comment is written once, by the second call."""
+        model = M.seeded()
+        api, fake = cycle.api_for(model, (Fault("POST", "/issues/*/comments", 403, times=1,
+                                                message="You have exceeded a secondary rate limit", retry_after="7"),))
+        api.post(f"/repos/{M.REPO}/issues/1/comments", {"body": "one"})
+        self.assertEqual([(c.status, c.injected, c.waited) for c in fake.calls], [(403, True, None), (200, False, 7)])
+        self.assertEqual(api.waited, [7])
+        self.assertEqual([c.body for c in model.issues[1].comments], ["one"])
+
+    def test_a_spent_hour_ends_by_the_model_s_clock_and_is_waited_out_to_its_end(self):
+        """reset_after says the token's hour is spent, x-ratelimit-remaining
+        0, and ends that many seconds on by the client's clock, the model's
+        minute (FakeGitHub.clock), so the wait the hour asks for is the
+        fault's own whatever the minute: the client waits a second past its
+        end, longer than the ten seconds retry-after names, and the try it
+        makes after keeps that wait."""
+        model = M.seeded()
+        model.now = 7 * M.HOUR
+        spent = Fault("GET", "/branches", 403, retry_after="10", reset_after=100)
+        api, fake = cycle.api_for(model, (spent,))
+        self.assertEqual(fake.clock(), M.moment(model.now).timestamp())
+        headers = fake.fault_answer("https://api.github.com/x", spent).headers
+        self.assertEqual((headers["x-ratelimit-remaining"], headers["x-ratelimit-reset"]),
+                         ("0", str(int(fake.clock()) + 100)))
+        api.get_all(f"/repos/{M.REPO}/branches")
+        self.assertEqual([(c.status, c.waited) for c in fake.calls], [(403, None), (200, 101)])
+        self.assertEqual(api.waited, [101])
+
+    def test_a_pause_of_the_library_s_own_is_kept_as_no_wait(self):
+        """The client's sleep is the fake's, and so is the library's own
+        pause before it reads again, head_since's after a 500 on the read
+        of a push; that read is no try of the one before it, so the fake
+        keeps no wait on it and the harness reads it as a read of its own
+        (invariants.answered)."""
+        model = claimed()
+        api, fake = cycle.api_for(model, (Fault("GET", "/activity", 500, query=(("activity_type", None),)),))
+        github.head_since(api, "claude/1", model.refs["claude/1"], now=M.moment(model.now))
+        self.assertEqual([(c.status, c.waited) for c in fake.calls if c.path == "/activity"],
+                         [(500, None), (200, None)])
+        self.assertEqual(api.waited, [])
 
     def test_an_applied_fault_makes_the_write_and_loses_the_answer(self):
         model = M.seeded()
