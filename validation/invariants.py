@@ -705,9 +705,11 @@ def push_readings(calls, model, started_by=""):
     the model and the minute it began, the model's clock, which the run is
     handed as its now (cycle.start_run, clerk.ModelClient.released), and
     the branch whose push started the run, started_by, "" for none
-    (oracle.pushed_branch): the last read dates the push; or else the
-    run's start dates the branch whose push started the run
-    (SPEC["started by"]); or else the floor, the later of the newest
+    (oracle.pushed_branch): the last read dates the push, unless it dates
+    the branch whose push started the run by an entry from before the run
+    began (oracle.own_push_dates); or else the run's start dates the
+    branch whose push started the run (SPEC["started by"]), the why then
+    "older push" where the last read dated it so; or else the floor, the later of the newest
     entries the reads listed, dates the claim where it came later than the
     head's committer date (oracle.floor_dates); or else the committer date
     stands in. Why nothing dated the push is the last read's reason, or
@@ -719,12 +721,12 @@ def push_readings(calls, model, started_by=""):
     for branch, reads in activity_reads(calls, None).items():
         head = model.refs.get(branch)
         pushed = read_dates(reads[-1], branch, head, model.now)
-        if pushed is not None:
+        if pushed is not None and (branch != started_by or oracle.own_push_dates(pushed, model.now)):
             found[branch] = PushReading(pushed, "push")
             continue
         why = read_why(reads[-1]) or (read_why(reads[0]) if read_floor(reads[0], branch) is not None else "")
         if branch == started_by:
-            found[branch] = PushReading(model.now, "run start", why, iso(model.now))
+            found[branch] = PushReading(model.now, "run start", why if pushed is None else "older push", iso(model.now))
             continue
         floor = max((f for f in (read_floor(read, branch) for read in reads) if f is not None), default=None,
                     key=lambda f: f[0])
@@ -852,7 +854,9 @@ def line_reads(line):
     what, in words that name no time and no answer, so a fault met at many
     minutes is one violation."""
     why = ("a refusal" if oracle.LOG_WORDS["refused"] in line
-           else "a list naming no push" if oracle.LOG_WORDS["listed none"] in line else "words not the run's")
+           else "a list naming no push" if oracle.LOG_WORDS["listed none"] in line
+           else "a list naming only an older push" if oracle.LOG_WORDS["older push"] in line
+           else "words not the run's")
     floor_end, start_end = oracle.LOG_WORDS["floor"].split("{floor}")[1], oracle.LOG_WORDS["run start"].split("{at}")[1]
     by = ("its committer date" if line.endswith(oracle.LOG_WORDS["committer date"])
           else "its newest entry's time" if line.endswith(floor_end)

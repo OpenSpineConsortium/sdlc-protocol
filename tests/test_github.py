@@ -1136,8 +1136,16 @@ class Releases(unittest.TestCase):
         read dates is dated at the run's start, whatever the reads listed
         and without reading the commit, the log saying so where there is a
         why; a read that dates the push dates it as ever, and another
-        branch is read as before."""
+        branch is read as before. Since F8's follow-up's second review an
+        entry that set the head but came more than PUSH_SINCE_SLACK before
+        the run began, an older push of the same head, dates nothing in
+        that run either: the head is dated at the run's start and the log
+        says the activity lists only an older push that set it; another
+        branch is still dated by such an entry."""
         listed = FakeAnswer([pushed("claude/12", "2026-09-19T12:00:00Z", HEAD_12)])
+        older_head = FakeAnswer([pushed("claude/12", "2026-09-18T12:00:00Z", HEAD_12)])
+        at_the_slack = FakeAnswer([pushed("claude/12", "2026-09-19T11:55:30Z", HEAD_12)])
+        within_it = FakeAnswer([pushed("claude/12", "2026-09-19T11:55:31Z", HEAD_12)])
         older = FakeAnswer([pushed("claude/12", "2026-09-17T12:00:00Z", "bbbbbbb2222222")])
         fresh_off = FakeAnswer([dict(pushed("claude/12", "2026-09-19T12:01:00Z", "bbbbbbb2222222"), before=HEAD_12)])
         began = datetime(2026, 9, 19, 12, 0, 30, 500000, tzinfo=timezone.utc)
@@ -1156,10 +1164,17 @@ class Releases(unittest.TestCase):
                 (None, (start, ""), 1, None),
                 (Turns(FakeAnswer([]), Refusal(404)), (start, ""), 2, None),
                 (Turns(FakeAnswer([]), listed), ("2026-09-19T12:00:00Z", ""), 2, None),
-                (fresh_off, ("2026-09-19T12:01:00Z", ""), 1, None)):
+                (fresh_off, ("2026-09-19T12:01:00Z", ""), 1, None),
+                (older_head, (start, ""), 1, (github.OLDER_PUSH_LISTED, by_start)),
+                (at_the_slack, (start, ""), 1, (github.OLDER_PUSH_LISTED, by_start)),
+                (within_it, ("2026-09-19T11:55:31Z", ""), 1, None),
+                (Turns(Refusal(500), older_head), (start, ""), 2, (github.OLDER_PUSH_LISTED, by_start)),
+                (Turns(FakeAnswer([]), older_head), (start, ""), 2, (github.OLDER_PUSH_LISTED, by_start))):
             self.assert_head_since(answer, committed, began, expected, reads, why, started_by="claude/12")
         self.assert_head_since(Turns(FakeAnswer([]), FakeAnswer([])), committed, began, ("", committed), 2,
                                (github.NO_PUSH_LISTED, by_commit), started_by="claude/13")
+        self.assert_head_since(older_head, committed, began, ("2026-09-18T12:00:00Z", ""), 1, None,
+                               started_by="claude/13")
         self.assertEqual(github.github_time(began), start)
         self.assertEqual(github.github_time(datetime(2026, 9, 19, 14, 0, 30, tzinfo=timezone(timedelta(hours=2)))),
                          start)
@@ -1185,7 +1200,7 @@ class Releases(unittest.TestCase):
             start, end = why
             line = refused["claude/12"]
             self.assertTrue(line.startswith(start) and line.endswith(end), line)
-            if start == github.NO_PUSH_LISTED:
+            if start in (github.NO_PUSH_LISTED, github.OLDER_PUSH_LISTED):
                 self.assertEqual(line, start + end)
         # The commit is read only where no read dated the push and the run
         # was not started by the branch's push: where the committer date

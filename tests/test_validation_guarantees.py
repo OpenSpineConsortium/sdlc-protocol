@@ -146,6 +146,7 @@ class TheOracleSpeaksTheSpec(unittest.TestCase):
         model.now = M.HOUR
         verbs.apply(model, Verb("commit", "b", (1, -48 * M.HOUR)))
         self.assertEqual(oracle.LOG_WORDS["listed none"], github.NO_PUSH_LISTED)
+        self.assertEqual(oracle.LOG_WORDS["older push"], github.OLDER_PUSH_LISTED)
         self.assertTrue(oracle.LOG_WORDS["committer date"].startswith(oracle.LOG_WORDS["read from"]))
         self.assertTrue(oracle.LOG_WORDS["floor"].startswith(oracle.LOG_WORDS["read from"]))
         self.assertTrue(oracle.LOG_WORDS["run start"].startswith(oracle.LOG_WORDS["read from"]))
