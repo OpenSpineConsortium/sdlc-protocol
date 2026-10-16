@@ -22,7 +22,10 @@ can carry the work on or start over, and the board renames the branch in
 the same run. The board counts a release only once both are done, and a
 run that fails between them puts back the labels it took off and takes off
 the todo it put on, so the issue is as it was and the next run starts the
-release over. Like the board, this module only decides and words;
+release over, unless it cannot read the issue's comments to tell whether
+GitHub wrote the comment after all, when it leaves the labels as the
+release left them for the next run to settle (adapters/github.py,
+unsettled; F20). Like the board, this module only decides and words;
 adapters/github.py makes the calls.
 """
 
@@ -223,8 +226,22 @@ def after_release(snapshot, key, released_at, taken_off, put_on=()):
     issue and put on it in both places the board reads them, so the same
     run renders the release and renames the branch without asking GitHub
     again. A Snapshot given is changed in place, and returned."""
-    snap = board.as_snapshot(snapshot)
+    snap = after_labels(snapshot, key, taken_off, put_on)
     snap.releases[key] = dataclasses.replace(snap.releases[key], released_at=released_at)
+    return snap
+
+
+def after_labels(snapshot, key, taken_off, put_on=()):
+    """The snapshot as GitHub knows it once a release has taken taken_off
+    off the issue with this key and put put_on on it, in both places the
+    board reads them, with no new release comment known: after_release's
+    labels, and all of an unsettled release (adapters.github.unsettled),
+    whose comment the run cannot tell stands. The release comment the
+    snapshot held stays, so a head a release already kept, whose latest
+    release comment counts whenever it came (board.release_counts), is
+    released by it once the labels are off. A Snapshot given is changed
+    in place, and returned."""
+    snap = board.as_snapshot(snapshot)
     issue = snap.claim_issues[key]
     issue.labels = relabelled(issue.labels, taken_off, put_on)
     for listed in snap.issues:

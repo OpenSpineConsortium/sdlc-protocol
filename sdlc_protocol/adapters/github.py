@@ -1175,10 +1175,22 @@ def release_one(api, snap, key, now):
     the todo it put on, so the issue is as the run found it and the next
     run starts the release over, unless the comment turns out to be there
     after all, one GitHub wrote and lost its answer to, which makes the
-    release whole. Only when GitHub refuses the putting back too are the
-    labels left as the failure left them with no comment, until a run
-    releases the claim or a person puts them back. What was done, in a
-    line."""
+    release whole. A run that cannot read the issue's comments to see
+    whether it is there leaves the labels as the release left them and
+    counts no release of its own (unsettled; F20), since labels put back
+    beside a comment that stands would hold the claim for good: the
+    comment tells every later coordinator the claim is released, and the
+    label claimed tells the board it is held; the next run, reading the
+    comments, settles it as it settles any claim whose labels are off,
+    finding the release whole or releasing the claim again unless its
+    holder pushed or a person put the label claimed back in the meantime,
+    while on a head a release already kept, where a release comment that
+    counts stands, whenever it came (board.release_counts), that earlier
+    release frees the claim in the same run once the labels are off.
+    Where GitHub refuses the putting back too, the labels are left off
+    with no comment, as an unsettled release leaves them where GitHub
+    wrote none, until a run releases the claim or a person puts them
+    back. What was done, in a line."""
     release = snap.releases[key]
     names, put_on = coordinator.labels_released(snap, key), coordinator.labels_put_on(snap, key)
     taken_off = []
@@ -1197,7 +1209,10 @@ def release_one(api, snap, key, now):
     try:
         released_at = (api.post(f"/repos/{api.repo}/issues/{key}/comments", {"body": text}) or {}).get("created_at")
     except GitHubError as problem:
-        released_at = landed_release(api, key, release)
+        try:
+            released_at = landed_release(api, key, release)
+        except GitHubError as unread:
+            return unsettled(snap, key, names, put_on, problem, unread)
         if not released_at:
             return (f"#{key}: not released, the comment failed: {problem}{github_words(problem)}"
                     + put_back(api, key, taken_off, put_on))
@@ -1261,17 +1276,39 @@ def put_back(api, key, names, put_on=()):
     return said
 
 
+def unsettled(snap, key, names, put_on, problem, unread):
+    """The line of a release whose comment failed and whose issue's
+    comments could not be read to see whether GitHub wrote it anyway: the
+    labels stay as the release left them, and the snapshot shows them so,
+    with no release of this run's, since the run cannot tell whether one
+    stands, so the page lists the claim as held and nothing is renamed
+    this run; the next run, reading the comments, finds the comment and
+    the release is whole, or finds none and releases the claim again,
+    unless its holder pushed since or a person put the label claimed back
+    beside the comment (F20; until its fix the labels went back beside a
+    comment that might stand, which held the claim for good). A head a
+    release already kept, where a release comment that counts stands, is
+    the exception: that comment counts whenever it came
+    (board.release_counts), so with the labels off the snapshot counts
+    that earlier release, and the same run lists the claim as released
+    and deletes the branch, whose work is kept, with no word of this
+    release on the issue where GitHub wrote none (F20's review). So the
+    line says what was done and nothing of what comes next."""
+    coordinator.after_labels(snap, key, names, put_on)
+    return (f"#{key}: release unsettled, the comment failed: {problem}{github_words(problem)}; its issue's "
+            f"comments could not be read to see whether GitHub wrote it anyway: {unread}{github_words(unread)}; "
+            f"the labels stay as the release left them")
+
+
 def landed_release(api, key, release):
     """When the comment that releases this claim was made, by the rule the
     next run reads it with (claims.was_released), or "" when none stands:
     a call that GitHub answered with an error, a 502 or a timeout, may
     still have written the comment, and once it stands the release is done;
     only a comment newer than the latest the run held is this run's
-    (newer). A read GitHub refuses finds none."""
-    try:
-        comments = api.get_all(f"/repos/{api.repo}/issues/{key}/comments")
-    except GitHubError:
-        return ""
+    (newer). A read GitHub refuses raises GitHubError, since the run then
+    cannot tell whether the comment stands (release_one)."""
+    comments = api.get_all(f"/repos/{api.repo}/issues/{key}/comments")
     released_at = claims.latest_release(comments, may_write(api))
     if not released_at or not newer(released_at, release.released_at):
         return ""

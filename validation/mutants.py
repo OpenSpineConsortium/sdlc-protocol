@@ -122,6 +122,7 @@ ORIGINAL_CLAIM_ROWS = board.claim_rows
 ORIGINAL_OPEN_WORK = board.open_work
 ORIGINAL_DEAL_MOVES = team.deal_moves
 ORIGINAL_CLAIM_RELEASED = github.claim_released
+ORIGINAL_RELEASE_ONE = github.release_one
 
 
 def comment_then_labels(api, snap, key, now):
@@ -135,7 +136,10 @@ def comment_then_labels(api, snap, key, now):
     try:
         released_at = (api.post(f"/repos/{api.repo}/issues/{key}/comments", {"body": text}) or {}).get("created_at")
     except github.GitHubError as problem:
-        released_at = github.landed_release(api, key, release)
+        try:
+            released_at = github.landed_release(api, key, release)
+        except github.GitHubError as unread:
+            return f"#{key}: release unsettled, the comment failed: {problem}; the comments unread: {unread}"
         if not released_at:
             return f"#{key}: not released, the comment failed: {problem}"
     try:
@@ -214,7 +218,10 @@ def relabelled_before_the_comment(api, snap, key, now):
     try:
         released_at = (api.post(f"/repos/{api.repo}/issues/{key}/comments", {"body": text}) or {}).get("created_at")
     except github.GitHubError as problem:
-        released_at = github.landed_release(api, key, release)
+        try:
+            released_at = github.landed_release(api, key, release)
+        except github.GitHubError as unread:
+            return github.unsettled(snap, key, names, put_on, problem, unread)
         if not released_at:
             return f"#{key}: not released, the comment failed: {problem}" + github.put_back(api, key, taken_off, put_on)
     coordinator.after_release(snap, key, released_at or now.isoformat(), names, put_on)
@@ -790,18 +797,58 @@ def pushed_by_but_a_delete(entry, sha, now):
     return ""
 
 
-def landed_release_whenever_it_came(api, key, release):
-    """github.landed_release as F8's review left it: after a post of the
-    release comment that GitHub answered with an error, the latest release
-    comment found counts by the rule the next run reads it with, for a
-    kept head whenever it came, so an earlier release of that head passes
-    for the comment this run's post would have written, the labels are
-    not put back and the release counts whole with no comment of its own
-    (F8's second review)."""
+def landed_release_finding_none_unread(api, key, release):
+    """github.landed_release as every build before F20's fix had it: a
+    read of the issue's comments GitHub refuses finds no comment, as a
+    read that listed none does, so release_one puts the labels back
+    beside a comment that may stand, which holds the claim for good, the
+    comment telling every later coordinator the claim is released and the
+    label claimed telling the board it is held (F20)."""
     try:
         comments = api.get_all(f"/repos/{api.repo}/issues/{key}/comments")
     except github.GitHubError:
         return ""
+    released_at = claims.latest_release(comments, github.may_write(api))
+    if not released_at or not github.newer(released_at, release.released_at):
+        return ""
+    return released_at if board.release_counts(dataclasses.replace(release, released_at=released_at)) else ""
+
+
+def release_one_counting_unsettled(api, snap, key, now):
+    """github.release_one counting a release it cannot tell stands: where
+    GitHub refused the comment and then the read of the issue's comments
+    that would say whether it wrote it anyway, the snapshot counts the
+    release at the run's start, so the same run renames the branch and
+    says where it went, where the spec has the run count no release it
+    cannot tell stands and the next run settle it (F20)."""
+    def counted(snap, key, names, put_on, problem, unread):
+        coordinator.after_release(snap, key, github.github_time(now), names, put_on)
+        return f"#{key}: claim released, the comment failed and its issue's comments unread: {problem}; {unread}"
+    with mock.patch.object(github, "unsettled", counted):
+        return ORIGINAL_RELEASE_ONE(api, snap, key, now)
+
+
+def unsettled_raising(snap, key, names, put_on, problem, unread):
+    """github.unsettled letting the refused read through, as release_one
+    would without the catch F20's fix put around landed_release, which
+    raises where GitHub refuses the read: the board's run fails, its page
+    unwritten and every claim after this one left unreleased, where the
+    coordinator never raises (coordinate) and the next run settles the
+    release (F20)."""
+    raise unread
+
+
+def landed_release_whenever_it_came(api, key, release):
+    """github.landed_release without the newer check, as F8's review left
+    it: after a post of the release comment that GitHub answered with an
+    error, the latest release comment found counts by the rule the next
+    run reads it with, for a kept head whenever it came, so an earlier
+    release of that head passes for the comment this run's post would
+    have written, the labels are not put back and the release counts
+    whole with no comment of its own (F8's second review). A read GitHub
+    refuses raises, as the library's does since F20's fix, so the newer
+    check is the one rule changed."""
+    comments = api.get_all(f"/repos/{api.repo}/issues/{key}/comments")
     released_at = claims.latest_release(comments, github.may_write(api))
     return released_at if board.release_counts(dataclasses.replace(release, released_at=released_at)) else ""
 
@@ -1124,6 +1171,17 @@ MUTANTS = {
     "a lost comment's release not seen": Mutant(
         github, "landed_release", lambda api, key, release: "",
         "G3L", "a comment GitHub wrote and lost its answer to makes the release whole"),
+    "an unsettled release put back": Mutant(
+        github, "landed_release", landed_release_finding_none_unread,
+        "G3L", "a run that cannot read whether its release comment stands leaves the labels as the release left "
+               "them (F20)"),
+    "an unsettled release counted": Mutant(
+        github, "release_one", release_one_counting_unsettled,
+        "G3L", "a run that cannot read whether its release comment stands counts no release, the next run "
+               "settling it (F20)"),
+    "an unsettled release failing the run": Mutant(
+        github, "unsettled", unsettled_raising,
+        "G15", "a run that cannot read whether its release comment stands goes on and writes its page (F20)"),
     "a writer's release not vouched for": Mutant(
         github, "may_write", nobody_vouched_for,
         "G5", "anyone who may write may release, whatever author_association GitHub shows"),

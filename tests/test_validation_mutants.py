@@ -78,6 +78,9 @@ TRACES = {
     "overlaps told on every run": ([CLAIM, Verb("claim", "b", (2,)), BOARD], SHARED),
     "the labels not put back": (HELD + [WAIT, board_with("comment-500")], Scope()),
     "a lost comment's release not seen": (HELD + [WAIT, board_with("comment-lost")], Scope()),
+    "an unsettled release put back": "the regression traces",
+    "an unsettled release counted": "the regression traces",
+    "an unsettled release failing the run": "the regression traces",
     "a writer's release not vouched for": (HELD + [WAIT, Verb("marker", DANA, (1,)), BOARD], Scope()),
     "a claim number with leading zeros": ([CLAIM, CLAIMED, Verb("push-by-hand", M.OWNER, (1, "claude/01"))],
                                           Scope(careless=True)),
@@ -271,10 +274,12 @@ class TheLane(unittest.TestCase):
         floor at the committer date taken for later, and its third review
         four: the floor of the first read alone, the earlier floor, a fresh
         delete dating nothing, and the run's event ignored, so the bound is
-        widened to 120 and the count noted, and its follow-up's second
-        review one, an older push trusted in the run its push started."""
+        widened to 120 and the count noted; its follow-up's second review
+        one, an older push trusted in the run its push started; and F20's
+        fix three, an unsettled release put back, counted, or failing the
+        run."""
         self.assertTrue(10 <= len(mutants.MUTANTS) <= 120)
-        self.assertEqual(len(mutants.MUTANTS), 114)
+        self.assertEqual(len(mutants.MUTANTS), 117)
         self.assertEqual(sorted(TRACES), sorted(mutants.MUTANTS))
 
     def test_every_mutant_names_a_rule_the_library_still_has(self):

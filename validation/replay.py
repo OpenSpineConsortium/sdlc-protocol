@@ -1,7 +1,7 @@
 """One replayable regression trace per finding (DESIGN.md, 5.3 and 14, step 5).
 
 Each file under validation/traces/, <finding>.json, is the trace of
-DESIGN.md's table in 5.3 for one finding F1 to F19: the repository it
+DESIGN.md's table in 5.3 for one finding F1 to F20: the repository it
 starts from (its issues with their labels, its workers, the people beside
 them, the files each claim lists, whether the workers are careless, the
 events the board hears and whether a run is made in two halves) and its
@@ -13,7 +13,7 @@ mismatches and a timeline a person reads; scripts/validate.py replay
 <file> prints it.
 
 A trace of a fixed finding (F1, F3, F5, F6, F10 and F11 in 0.4.1; F2,
-F4, F7, F8, F9, F12, F13, F14, F15, F17, F18 and F19 after it; F16 in
+F4, F7, F8, F9, F12, F13, F14, F15, F17, F18, F19 and F20 after it; F16 in
 the spec's words, which the library already kept) is green, and the mutant
 that undoes its fix turns it red at the step where the finding showed,
 for the guarantee the table names, which tests/test_validation_traces.py
@@ -47,7 +47,7 @@ from .model import HOUR, OWNER
 from .scenarios import Expect, Scenario, Step
 
 TRACES = Path(__file__).resolve().parent / "traces"
-FINDINGS = tuple(f"F{n}" for n in range(1, 20))
+FINDINGS = tuple(f"F{n}" for n in range(1, 21))
 SET_FIELDS = ("labels", "told")
 BOARD_VERBS = ("board", "board-start", "board-finish")
 
