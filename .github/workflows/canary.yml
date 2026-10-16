@@ -11,6 +11,10 @@ name: Canary
 # Monthly, and by hand with the checks named; C0 and C7 run only by hand,
 # C7 from a clone with a token that administers the canary, since the
 # ruleset it makes is an administrator's (scripts/canary.py's docstring).
+# Once the canary vendors F8's fix, C6 and C7 each leave one claim held in
+# review for their next run at least 25 hours on, which releases it, since
+# a claim is released after a day without a push and a run's token lives
+# an hour; the monthly schedule gives C6 that day.
 #
 # The driver writes there with a token of the GitHub App SymphonyBoard
 # minted for the canary repository alone, from the sync's SDLC_APP_ID and

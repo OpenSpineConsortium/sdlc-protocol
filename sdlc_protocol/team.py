@@ -115,11 +115,12 @@ class Client(Protocol):
     def released(self, branch: str) -> bool:
         """Whether a release comment counts for the claim on a claude/<issue>
         branch, by its issue's comments and the branch's head
-        (claims.was_released): the latest by an author the repository
+        (board.release_counts): the latest by an author the repository
         trusts came after the branch had gone more than a day without a
-        commit, and nothing was committed since. The clerk asks it only of
-        a claim whose labels and pull request leave a release possible
-        (Snapshot.released)."""
+        commit, as GitHub dates the push of its head (F8), and nothing was
+        committed since, or the head is one a release already kept. The
+        clerk asks it only of a claim whose labels and pull request leave a
+        release possible (Snapshot.released)."""
 
     def create_label(self, name: str, colour: str) -> None:
         """Make the label; one that exists already is left as it is, since
@@ -324,11 +325,11 @@ class Snapshot:
         board's rule (board.released_keys): its issue is labelled neither
         claimed nor in-review, its own pull request, if any, is still a
         draft, and a release comment that counts came after its branch had
-        gone more than a day without a commit, with none since
-        (Client.released). A claim whose issue is labelled claimed or
-        in-review costs no call, and any other one its pull request, read
-        once a look (open_pull), and what Client.released costs; the answer
-        is kept for the look."""
+        gone more than a day without a commit, with none since, or its head
+        is one a release already kept (Client.released). A claim whose
+        issue is labelled claimed or in-review costs no call, and any other
+        one its pull request, read once a look (open_pull), and what
+        Client.released costs; the answer is kept for the look."""
         number = issue["number"]
         if number not in self.releases:
             self.releases[number] = self.is_released(issue)

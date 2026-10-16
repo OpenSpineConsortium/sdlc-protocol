@@ -14,8 +14,8 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from sdlc_protocol import board, claims  # noqa: E402
-from validation import deep, invariants, lanes, model as M, oracle, replay, shrink, soak  # noqa: E402
+from sdlc_protocol import board, claims, coordinator  # noqa: E402
+from validation import deep, invariants, lanes, model as M, mutants, oracle, replay, shrink, soak  # noqa: E402
 
 LEADS = ROOT / "validation" / "runs" / "2026-10-14-partial" / "traces"
 
@@ -73,9 +73,11 @@ class TheSoak(unittest.TestCase):
         """The lane shortens a walk's violation before it writes it, and
         taking a wait out moves the clock a released branch's name is made
         from; each file names the detail a replay of it meets, sha and
-        all, not the one the walk met."""
+        all, not the one the walk met. The seed is one whose walk meets
+        such a detail; it was 9 until F8's fault pushes-500 joined the
+        kinds a walk draws from, which moved every walk."""
         with tempfile.TemporaryDirectory() as folder, mock.patch.object(claims, "is_idle", at_exactly_24_hours):
-            result = lanes.run_soak([9], 12, folder)
+            result = lanes.run_soak([22], 12, folder)
             self.assertTrue(any("released/" in v["detail"] for v in result["violations"]), result["violations"])
             for v in result["violations"]:
                 with self.subTest(file=Path(v["file"]).name):
@@ -117,7 +119,13 @@ class TheFirstRunsLeads(unittest.TestCase):
         the Worker cell once the claim file is gone (G1, seeds 585 and
         959) and a deleted branch's open pull request (G9, seed 427).
         With the two fixes taken back, each lead shows the violation its
-        file names, so the leads reach their faults; with them, none."""
+        file names, so the leads reach their faults; with them, none. The
+        library is taken back too, to the coordinator's first reading of
+        a kept head's release (F8's review): seed 427's branch, pushed
+        again at a kept head with the label claimed put back, is released
+        again a day later since that review, and deleted before its pull
+        request is opened, so the lead reaches its fault only as the
+        library was when the soak met it."""
         files = sorted(LEADS.glob("*.json"))
         self.assertEqual([f.stem for f in files], ["G1-soak-585-161", "G1-soak-959-184", "G9-soak-427-159"])
         for file in files:
@@ -126,7 +134,8 @@ class TheFirstRunsLeads(unittest.TestCase):
                 self.assertEqual(guarantee, file.stem.split("-")[0])
                 trace = replay.load(file)
                 with mock.patch.object(M.RepoModel, "delete_ref", delete_ref_keeping_pulls), \
-                        mock.patch.object(invariants, "one_name_one_holder", holder_whatever_the_file):
+                        mock.patch.object(invariants, "one_name_one_holder", holder_whatever_the_file), \
+                        mock.patch.object(coordinator, "kept_released", mutants.kept_released_by_the_comment):
                     before = replay.replay(trace)
                 self.assertIn((guarantee, detail), [(v.guarantee, v.detail) for _, v in before.violations],
                               "\n".join(before.timeline))

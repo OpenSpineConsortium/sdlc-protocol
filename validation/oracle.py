@@ -58,8 +58,18 @@ SPEC = {
     "todo": "An issue labelled todo and shown unclaimed on the board is free to take as Pick says.",
     "epic": "The board's Queue leaves an epic out, since nobody takes one whole.",
     "blockers": "The board lists every open issue labelled blocker under Blockers, claimed or not",
-    "idle": "A claim whose branch has had no commit for more than 24 hours, by the committer date of its head, is "
-            "released by the coordinator, unless it is finished",
+    "idle": "A claim whose branch has had no commit for more than 24 hours is released by the coordinator, unless "
+            "it is finished",
+    "last commit": "When a branch's last commit came, here and below, is when GitHub received the push that set its "
+                   "head, as the repository's activity records that push, so no worker's clock decides it",
+    "moved off": "an entry that set the branch to another head, or deleted it, dates it too when it came after the "
+                 "run began, a push after the run read the branch, while an older one is stale and lists no push "
+                 "that set the head",
+    "undated push": "the head's committer date stands in where the activity, read once more after a pause when the "
+                    "first read lists no push that set the head or GitHub gives it no answer that holds, still lists "
+                    "none, or where GitHub refuses to read it",
+    "floor": "but never earlier than the newest entry either read listed for the branch, which the push that set the "
+             "head came no sooner than.",
     "finished": "an issue labelled in-review, a pull request marked ready, or a draft whose author's latest comment "
                 "on it starts with \"finished; ready to mark\" waits for review however long it takes.",
     "order": "The coordinator first takes the label claimed and every worker's label off the issue, a label "
@@ -79,8 +89,12 @@ SPEC = {
                "workflow someone who may write put there can write as), or by anyone else who may write to the "
                "repository.",
     "rename": "renames the branch to `released/<issue>-<short sha of its head>`",
-    "pushed again": "A branch pushed again at the head a release already kept is deleted instead, since its work "
-                    "is already kept.",
+    "pushed again": "A branch pushed again at the head a release already kept, one a branch "
+                    "`released/<issue>-<short sha>` stands at, brings nothing new: its latest release comment counts "
+                    "for it whenever it came, before that push or after",
+    "kept deleted": "so the board deletes it instead of renaming it, since its work is already kept, and the "
+                    "coordinator releases it only where the board counts no release of it, no release comment "
+                    "counting or the label claimed put back, once it has gone a day without a commit.",
     "overlap": "the coordinator tells each piece of open work about the work it meets, once, in a comment whose "
                "first line is `<!-- sdlc-coordinator: overlap <numbers> -->` naming every piece it told of",
     "told again": "tells it again only when work it has not been told of starts to meet it",
@@ -169,6 +183,14 @@ WORKER_SPELLINGS = ("worker:", "account:", "agent:")
 WORKER_LINES = ("- Worker:", "- Account:")
 NOTE = re.compile(r"\([^()]*\)\s*$")
 IDLE_MINUTES = 24 * HOUR
+# How long before a run began an entry that set a branch to another head
+# may come and still count as having come after (SPEC["moved off"]), in
+# minutes: the allowance the library makes for a runner's clock ahead of
+# GitHub's, which the spec does not spell and
+# tests/test_validation_guarantees.py pins to github.PUSH_SINCE_SLACK. The
+# model's pushes come at whole hours, so only an entry at the run's own
+# minute is let in by it.
+MOVED_SLACK_MINUTES = 5
 # Where work whose beginning nothing says stands, as the newest
 # (SPEC["oldest"]): after every minute the model counts.
 NOTHING_SAYS = float("inf")
@@ -193,6 +215,24 @@ BOARD_MARKERS = {
     "idle": "<!-- sdlc-board: idle -->",
     "released": "<!-- sdlc-board: released {branch} -->",
     "rename-refused": "<!-- sdlc-board: rename-refused {branch} -->",
+}
+
+# The run's own words in its log for a claim whose head no read dated by
+# the push that set it (SPEC["undated push"], SPEC["floor"]), which the
+# spec does not spell: why, the activity read twice listing no push of the
+# head or GitHub refusing the read (its answer follows in parentheses), and
+# what the run read the claim's idleness from in its place, the committer
+# date or the floor, the newest entry's time as GitHub wrote it. Each line
+# is the branch's name, ": ", the why and the clause. They are the
+# library's interface, as the board's markers are, and
+# tests/test_validation_guarantees.py pins them to github.py's lines;
+# which clause a line owes is the oracle's (floor_dates).
+LOG_WORDS = {
+    "listed none": "the repository's activity, read twice, lists no push that set the branch's head",
+    "refused": "GitHub refused to say when the push that set the branch's head came (",
+    "read from": ", so its idleness is read from ",
+    "committer date": ", so its idleness is read from its committer date",
+    "floor": ", so its idleness is read from its newest entry's time, {floor}, later than its committer date",
 }
 
 # The answers GitHub gives a rename it refuses for good (DESIGN.md, G10): a
@@ -276,7 +316,89 @@ def trusted(model, comment):
 
 
 def head_time(model, ref):
-    return model.commits[model.refs[ref]].committed_at
+    """SPEC["last commit"]: the minute GitHub received the push that set
+    the branch's head (model.pushed, F8); its committer date where the
+    model holds no push that set it, or for a branch whose push the run
+    could not date and whose floor is no later, which a view of the model
+    leaves out (dated, SPEC["undated push"], SPEC["floor"])."""
+    head, pushed = model.refs[ref], model.pushed.get(ref)
+    if pushed is not None and pushed[1] == head:
+        return pushed[0]
+    return model.commits[head].committed_at
+
+
+def entry_dates(sets_head, minute, began):
+    """The minute one entry of a branch's activity, the newest a read
+    lists, dates the push of the head the run read at, or None: an entry
+    that set that head dates it (SPEC["last commit"]: "when GitHub
+    received the push that set its head"), and so does every other entry
+    of the branch, one that set the branch to another head or deleted it,
+    whatever heads it names, when it came after the run began, a push
+    after the run read the branch (SPEC["moved off"]), MOVED_SLACK_MINUTES
+    before allowed: one that moved the branch off the head, and one that
+    names that head on neither side, as the second of two pushes since the
+    run read the branch does (F8's fix check, which found the library
+    dating nothing by it). An older one is stale, a later push the
+    activity does not list yet having set the head the run read, and, as
+    any other entry, "lists no push that set the head", which owes a
+    second read and, read so last, leaves the committer date to stand in,
+    no earlier than the floor (SPEC["undated push"], floor_dates)."""
+    if sets_head or minute >= began - MOVED_SLACK_MINUTES:
+        return minute
+    return None
+
+
+def floor_dates(floor, committed):
+    """The minute a claim's last commit came at where the run's last read
+    of its push dates none, by the floor (SPEC["floor"]: "never earlier
+    than the newest entry either read listed for the branch, which the push
+    that set the head came no sooner than"): floor, the minute of the later
+    of the newest entries the run's reads listed for the branch (None where
+    neither listed one), where it is later than committed, the head's
+    committer date; None where it is not, so the committer date stands in
+    (SPEC["undated push"]), a floor at the committer date's own minute
+    among them, which is no later and so dates nothing the committer date
+    does not. Until F8's fix check the committer date stood in whatever the
+    reads listed, so where both lagged a commit dated back had its claim
+    released in the run its own push started."""
+    return floor if floor is not None and floor > committed else None
+
+
+def dated(model, undated, pushed_at=None):
+    """The model as a run saw it that read when the claims' heads were
+    pushed so: the undated branches, whose push no read the run made last
+    dates and whose floor is no later than the head's committer date,
+    GitHub refusing the read or listing no push of the head, a stale entry
+    among them, dated by their committer dates (SPEC["undated push"]);
+    each branch pushed_at names dated by the minute it gives, the push the
+    run read where the model holds another, as an entry after the run
+    began that set the branch to a commit the model never took, a push
+    after the run read the branch, says the branch had a commit then
+    (SPEC["moved off"]; the faults pushes-moved, pushes-moved-twice and
+    pushes-500-then-moved), or the floor where no read dated a push and
+    the newest entry listed came later than the head's committer date
+    (SPEC["floor"], floor_dates; the faults pushes-lagging-twice and
+    pushes-lagging-then-500); the model itself when nothing differs. A
+    first read answered by the second dates the branch by its push, so it
+    is in neither (invariants.push_dates, which reads each entry by
+    entry_dates and each floor by floor_dates)."""
+    moved = {ref: minute for ref, minute in (pushed_at or {}).items()
+             if ref in model.refs and ref not in undated and head_time(model, ref) != minute}
+    gone = [ref for ref in undated if ref in model.pushed]
+    if not moved and not gone:
+        return model
+    view = model.clone()
+    view.pushed = {ref: push for ref, push in view.pushed.items() if ref not in undated}
+    for ref, minute in moved.items():
+        view.pushed[ref] = (minute, view.refs[ref], "push", view.refs[ref])
+    return view
+
+
+def kept(model, ref):
+    """SPEC["pushed again"]: a released branch of the claim's issue stands
+    at the claim branch's head."""
+    number, head = claim_number(ref), model.refs.get(ref)
+    return number is not None and head is not None and model.refs.get(released_name(number, head)) == head
 
 
 def idle(since, now):
@@ -298,9 +420,11 @@ def latest_release(model, number):
 
 def already_released(model, number):
     """SPEC["candidates"]: the latest release comment came more than 24
-    hours after the branch's last commit."""
-    latest = latest_release(model, number)
-    return latest is not None and idle(head_time(model, branch_of(number)), latest)
+    hours after the branch's last commit; or, for a head a release already
+    kept, any release comment that counts (SPEC["pushed again"],
+    SPEC["kept deleted"])."""
+    latest, ref = latest_release(model, number), branch_of(number)
+    return latest is not None and (kept(model, ref) or idle(head_time(model, ref), latest))
 
 
 def finished(model, number):
@@ -318,12 +442,22 @@ def finished(model, number):
 
 def due(model, number, now=None):
     """Whether the coordinator owes this claim a release now (SPEC["idle"],
-    SPEC["candidates"])."""
+    SPEC["candidates"]): its branch has gone a day without a commit and no
+    release comment came more than a day after its last commit; and, for
+    a head a release kept, the board counts no release of it, no release
+    comment counting or the label claimed put back (SPEC["kept deleted"]),
+    so a kept head is not released twice for the same work and a release
+    the label undid is made again once the branch has gone a day without
+    a commit, where until F8's review any release comment that counts
+    held such a claim for good."""
     now = model.now if now is None else now
     ref, issue = branch_of(number), model.issues.get(number)
     if ref not in model.refs or issue is None or issue.state != "open" or finished(model, number):
         return False
-    return idle(head_time(model, ref), now) and not already_released(model, number)
+    if kept(model, ref) and released(model, number):
+        return False
+    last, latest = head_time(model, ref), latest_release(model, number)
+    return idle(last, now) and not (latest is not None and idle(last, latest))
 
 
 def released(model, number):

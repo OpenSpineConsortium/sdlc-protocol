@@ -86,10 +86,21 @@ class Space(NamedTuple):
 
 CLAIM = Verb("claim", "a", (1,))
 HELD = (CLAIM, Verb("label-on", "a", (1, "claimed")), Verb("label-on", "a", (1, "worker:a")))
-# The board reads the repository's activity only for the work in the
-# Overlaps (F13), which E-faults' one issue never has, so the faults on
-# that read never fired there; E-activity meets them from two claims on
-# one file. The two on posting an issue's labels, label-post-500 and
+# The board reads a branch's making from the repository's activity only
+# for the work in the Overlaps (F13), which E-faults' one issue never
+# has, so activity-500, the fault on that read alone, never fires there;
+# E-activity meets it from two claims on one file. activity-500-all
+# refuses every read of the activity, and the board reads the push that
+# set a claim's head for every claim a release can be due on (F8), so it
+# fires in E-faults too, on that read, as do the faults on that read
+# alone: pushes-500 and the two pushes-lagging, which the run's second
+# read answers, pushes-403, which it does not, pushes-moved, a push
+# after the run read the branch, and, since F8's fix check,
+# pushes-moved-twice, two such pushes, pushes-500-then-moved, a refusal
+# the second read answers with such a push, and pushes-lagging-then-500,
+# a read a push behind whose floor the refused second keeps; E-activity
+# meets each of them as well.
+# The two on posting an issue's labels, label-post-500 and
 # F15's label-post-lost, fire in no space here nor in the soak: the board
 # posts a label only to put todo on an issue that has none of todo, epic
 # and blocker, or to put back what a release whose next step failed took
@@ -427,6 +438,14 @@ def guard_recorded_again(scratch):
 
 # --- conformance ----------------------------------------------------------------
 
+def shown_name(ref):
+    """The ref's name with a released branch's sha read as any sha, which
+    differs between the worlds."""
+    if ref.startswith(RELEASED_PREFIX):
+        return f"{RELEASED_PREFIX}{ref[len(RELEASED_PREFIX):].split('-')[0]}-*"
+    return ref
+
+
 def observe(model, outcomes):
     """What a step left that both worlds must agree on: whether the step
     was taken and, when not, whether the guard or git refused it (git's
@@ -435,20 +454,27 @@ def observe(model, outcomes):
     changes, the issues' labels and states, the pull requests, the bot's
     comments by kind, and the board's sections, the Claims section's rows
     whole, since the files a branch changes fill its Files column and the
-    overlaps and differ where the trees agree. The shas themselves differ
-    between the worlds, so none is compared."""
+    overlaps and differ where the trees agree, and the push that last set
+    each branch, which a release dates a claim by (F8): its minute, its
+    kind, whether the head it set is the branch's head and whether it made
+    the branch, and whether the push that made the branch set the head
+    the branch has now, and the entry the activity lists before that push
+    by its minute and kind (model.earlier, F8's second review). The shas
+    themselves differ between the worlds, so none is compared."""
     shown = model.board_text
     named = {}
     for ref in sorted(model.refs):
-        key = ref
-        if ref.startswith(RELEASED_PREFIX):
-            key = f"{RELEASED_PREFIX}{ref[len(RELEASED_PREFIX):].split('-')[0]}-*"
-        named[key] = named.get(key, 0) + 1
+        named[shown_name(ref)] = named.get(shown_name(ref), 0) + 1
     trees = {ref: tuple(sorted(model.tree(sha).items())) for ref, sha in sorted(model.refs.items())
              if not ref.startswith(RELEASED_PREFIX)}
+    pushed = sorted((shown_name(ref), at, kind, head == model.refs.get(ref), before is None,
+                     model.made_heads.get(ref) == model.refs.get(ref))
+                    for ref, (at, head, kind, before) in model.pushed.items())
     return {
         "taken": [(o.taken, o.refused_by_guard is not None) for o in outcomes],
         "refs": named,
+        "pushed": pushed,
+        "earlier": sorted((shown_name(ref), at, kind) for ref, (at, kind, _, _) in model.earlier.items()),
         "trees": trees,
         "standing": {ref: model.standing(ref) for ref in sorted(model.refs) if ref.startswith(oracle.CLAIM_PREFIX)},
         "files": {ref: tuple(model.files_changed(ref)) for ref in sorted(model.refs) if ref.startswith(oracle.CLAIM_PREFIX)},

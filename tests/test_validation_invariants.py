@@ -414,6 +414,224 @@ class TheOpenFindingsShow(unittest.TestCase):
         self.assertEqual(invariants.unsaid_branches(calls), {"claude/1", "claude/3"})
         self.assertEqual(invariants.unsaid_branches(calls[:1]), set())
 
+    def test_f8_a_claim_is_released_by_its_push_and_by_its_committer_date_where_github_will_not_date_it(self):
+        """Fixed after 0.4.1: a's claim commit is dated 72 hours ahead, and
+        GitHub received it 25 hours before the run, which releases it; the
+        mutant that reads the committer date holds it. A first read GitHub
+        gives no answer that holds, or answers before it lists the push,
+        is answered by the second, so the run releases the claim by its
+        push there too; with every read refused for good, or both reads
+        answered before the activity lists the push, which then lists no
+        entry of the branch, its making being its only one, so no floor
+        either, the run dates the head by its committer date and holds it,
+        which the oracle reads from the run's calls, so the run is green
+        there too; and where a read lists a push after the run read the
+        branch, the claim is dated by it and held."""
+        steps = [Verb("claim", "a", (1, 72 * M.HOUR)), Verb("label-on", "a", (1, "claimed")),
+                 Verb("label-on", "a", (1, "worker:a")), Verb("wait", "clock", (25,))]
+        for faults in ((), ("pushes-500",), ("pushes-lagging",), ("pushes-403",), ("pushes-lagging-twice",),
+                       ("activity-500-all",), ("pushes-moved-twice",), ("pushes-500-then-moved",),
+                       ("pushes-lagging-then-500",)):
+            with self.subTest(faults=faults):
+                self.assertEqual(violations(steps + [board_with(*faults)]), [])
+        with mutants.switched_on(mutants.MUTANTS["idleness by the committer date"]):
+            found = violations(steps + [BOARD])
+        self.assertIn(("G3", "owed and not made: ('comment', 1, 'claim-released')"),
+                      [(v.guarantee, v.detail) for v in found])
+
+    def test_f8_a_first_read_that_may_tell_more_is_made_again_and_only_then(self):
+        """F8's review: the run reads the push once more where its first
+        read may tell more, a 500 or a list that does not show the push
+        yet, and once where it dates the push or GitHub refuses for good;
+        the mutant that reads once breaks G2 under the first, and the one
+        that reads only the after side of an entry under a push after the
+        run read the branch."""
+        steps = [Verb("claim", "a", (1,)), Verb("label-on", "a", (1, "claimed")), Verb("wait", "clock", (2,))]
+        for faults in ((), ("pushes-500",), ("pushes-lagging",), ("pushes-403",), ("pushes-moved",),
+                       ("pushes-moved-twice",), ("pushes-500-then-moved",), ("pushes-lagging-then-500",)):
+            with self.subTest(faults=faults):
+                self.assertEqual(violations(steps + [board_with(*faults)]), [])
+        with mutants.switched_on(mutants.MUTANTS["the push read once"]):
+            found = violations(steps + [board_with("pushes-500")])
+        self.assertIn(("G2", "the run read the push of claude/1's head 1 times, where its first read owes 2"),
+                      [(v.guarantee, v.detail) for v in found])
+        with mutants.switched_on(mutants.MUTANTS["the before side ignored"]):
+            found = violations(steps + [board_with("pushes-moved")])
+        self.assertIn(("G2", "the run read the push of claude/1's head 2 times, where its first read owes 1"),
+                      [(v.guarantee, v.detail) for v in found])
+
+    def test_f8_a_stale_entry_off_the_head_owes_a_second_read_and_dates_nothing(self):
+        """F8's second review: an entry that names another head, one that
+        moved the branch off the head or, since the fix check, one that
+        names it on neither side or deleted the branch, dates it only when
+        it came after the run began (SPEC["moved off"]): an older one lists
+        no push that set the head, so the first read owes a second, and
+        read so last it leaves the floor, that entry's time, to date the
+        claim where it is later than the committer date, and the committer
+        date to stand in where not (SPEC["floor"]). a's claim commit, dated
+        two days ahead, is pushed back a day after a commit moved the
+        branch off it, and the activity a push behind lists that commit's
+        push newest: the run reads once more and holds the claim, and the
+        mutant that dates the head by the stale entry reads once and
+        releases it in the run its own push started, where even the
+        committer date, which a run that read once must fall back to,
+        holds it."""
+        model = M.seeded()
+        ref = "claude/1"
+        model.set_ref(ref, model.refs[M.MAIN])
+        head, model.now = model.refs[ref], 25 * M.HOUR
+
+        def read(minute, before=head):
+            answered = [{"ref": f"refs/heads/{ref}", "timestamp": M.iso(minute), "after": "f" * 40, "before": before}]
+            return Call("GET", "/activity", (("ref", f"refs/heads/{ref}"),), None, 200, False, True, None, answered)
+
+        for minute, dates in ((M.HOUR, None), (model.now - 6, None), (model.now - 5, model.now - 5),
+                              (model.now, model.now)):
+            for before in (head, "e" * 40, "0" * 40):
+                with self.subTest(minute=minute, before=before):
+                    self.assertEqual(invariants.read_dates(read(minute, before), ref, head, model.now), dates)
+                    self.assertEqual(invariants.may_tell_more(read(minute, before), ref, head, model.now),
+                                     dates is None)
+        # Read twice so, the stale entry is the floor, later than the head's
+        # committer date, the seeded main's at minute 0 (SPEC["floor"]).
+        self.assertEqual(invariants.push_readings([read(M.HOUR), read(M.HOUR)], model),
+                         {ref: invariants.PushReading(M.HOUR, "floor", "listed none", M.iso(M.HOUR))})
+        self.assertEqual(invariants.pushes_read_again([read(M.HOUR)], model)[0].detail,
+                         "the run read the push of claude/1's head 1 times, where its first read owes 2")
+        self.assertEqual(invariants.pushes_read_again([read(model.now)], model), [])
+        steps = [Verb("claim", "a", (1, 48 * M.HOUR)), Verb("label-on", "a", (1, "claimed")),
+                 Verb("wait", "clock", (1,)), Verb("commit", "a", (1,)), Verb("wait", "clock", (25,)),
+                 Verb("drop-commits", "a", (1,)),
+                 board_with("pushes-lagging")]
+        self.assertEqual(violations(steps), [])
+        with mutants.switched_on(mutants.MUTANTS["a stale entry off the head dates it"]):
+            found = [(v.guarantee, v.detail) for v in violations(steps)]
+        self.assertIn(("G2", "the run read the push of claude/1's head 1 times, where its first read owes 2"), found)
+        self.assertIn(("G3", "made and not owed: ('comment', 1, 'claim-released')"), found)
+
+    def test_undated_branches_are_those_whose_last_read_of_their_head_s_push_dates_none(self):
+        """A first read refused and the second answered dates the branch by
+        its push; a branch whose last read GitHub refused, or answered with
+        no push of its head, is dated by its committer date where no read
+        listed an entry of it later than that date, and by that entry, the
+        floor, where one did (SPEC["floor"]); a read of a branch's making
+        says nothing of its push. The run began a day after the entries
+        listed, so an entry naming another head is stale."""
+        model = M.seeded((1, 2, 3, 4, 5))
+        model.now = 25 * M.HOUR
+        heads = {}
+        for number in (1, 2, 3, 4, 5):
+            ref = f"claude/{number}"
+            model.set_ref(ref, model.refs[M.MAIN])
+            heads[ref] = model.refs[ref]
+
+        def read(status, ref, kind=None, after=None, minute=60):
+            query = ((("activity_type", kind),) if kind else ()) + (("ref", f"refs/heads/{ref}"),)
+            answered = [{"ref": f"refs/heads/{ref}", "timestamp": M.iso(minute), "after": after,
+                         "before": "0" * 40}] if after else []
+            return Call("GET", "/activity", query, None, status, False, True, None, answered)
+
+        committed = model.commits[heads["claude/5"]].committed_at
+        calls = [read(500, "claude/1"), read(500, "claude/2", "branch_creation"),
+                 read(200, "claude/2", after=heads["claude/2"]), read(200, "claude/3", after="f" * 40),
+                 read(200, "claude/3", after="f" * 40),
+                 read(500, "claude/4"), read(200, "claude/4", after=heads["claude/4"]),
+                 read(200, "claude/5", after="f" * 40, minute=committed), read(200, "claude/5")]
+        self.assertEqual(invariants.undated_branches(calls, model), {"claude/1", "claude/5"})
+        self.assertEqual(invariants.unsaid_branches(calls), {"claude/2"})
+        self.assertEqual(invariants.push_dates(calls, model),
+                         {"claude/1": None, "claude/2": 60, "claude/3": 60, "claude/4": 60, "claude/5": None})
+        self.assertEqual([(r.by, r.why) for _, r in sorted(invariants.push_readings(calls, model).items())],
+                         [("committer date", "refused"), ("push", ""), ("floor", "listed none"), ("push", ""),
+                          ("committer date", "listed none")])
+
+    def test_f8_s_fix_check_the_floor_dates_a_claim_both_reads_leave_undated(self):
+        """F8's fix check: where both reads of b's push are a push behind,
+        the newest entry listed is the making of b's branch, stale, a day
+        before the push of b's commit dated two days back; the floor, the
+        making's time, is later than that commit's date and dates the
+        claim, so the run holds it, and the oracle reads it so. Where the
+        floor is the commit's own minute it is no later, and the committer
+        date stands in. The mutant that drops the floor releases b's claim;
+        the one that takes a floor at the committer date for later says so
+        in the log alone."""
+        back = [Verb("claim", "b", (2,)), Verb("label-on", "b", (2, "claimed")), Verb("wait", "clock", (20,)),
+                Verb("commit", "b", (2, -48 * M.HOUR)), board_with("pushes-lagging-twice")]
+        self.assertEqual(violations(back, issues=(1, 2)), [])
+        with mutants.switched_on(mutants.MUTANTS["the floor dropped"]):
+            found = [(v.guarantee, v.detail) for v in violations(back, issues=(1, 2))]
+        self.assertIn(("G2", "released #2, which was not due"), found)
+        self.assertIn(("G2", "the run's log says claude/2's idleness is read from its committer date, after a list "
+                             "naming no push, where its reads owe its newest entry's time, after a list naming no "
+                             "push"), found)
+        at_the_floor = [Verb("claim", "b", (2,)), Verb("label-on", "b", (2, "claimed")), Verb("wait", "clock", (2,)),
+                        Verb("commit", "b", (2, -2 * M.HOUR)), Verb("wait", "clock", (1,)),
+                        board_with("pushes-lagging-twice")]
+        self.assertEqual(violations(at_the_floor, issues=(1, 2)), [])
+        with mutants.switched_on(mutants.MUTANTS["a floor at the committer date taken for later"]):
+            found = [(v.guarantee, v.detail) for v in violations(at_the_floor, issues=(1, 2))]
+        self.assertEqual(found, [("G2", "the run's log says claude/2's idleness is read from its newest entry's "
+                                        "time, after a list naming no push, where its reads owe its committer date, "
+                                        "after a list naming no push")])
+
+    def test_f8_s_fix_check_each_read_s_floor_and_moment_count(self):
+        """F8's fix check: a first read a push behind and a second GitHub
+        refuses keep the first read's floor; a first read refused and a
+        second listing a push after the run read the branch date the claim
+        by that push, the second judged by when the run began as the first
+        is; and the newest of two pushes since the run read the branch,
+        which names the head on neither side, dates the claim at the first
+        read. Each mutant that undoes one of them is red."""
+        held = [Verb("claim", "b", (2,)), Verb("label-on", "b", (2, "claimed")), Verb("wait", "clock", (20,)),
+                Verb("commit", "b", (2, -48 * M.HOUR))]
+        for fault, mutant, shown in (
+                ("pushes-lagging-then-500", "the floor of the last read alone",
+                 ("G2", "released #2, which was not due")),
+                ("pushes-500-then-moved", "the second read judged with no moment of the run",
+                 ("G2", "the run's log says claude/2's idleness is read from its newest entry's time, after a list "
+                        "naming no push, where its reads owe no line")),
+                ("pushes-moved-twice", "a fresh entry dating only off the head",
+                 ("G2", "the run read the push of claude/2's head 2 times, where its first read owes 1"))):
+            with self.subTest(fault=fault):
+                self.assertEqual(violations(held + [board_with(fault)], issues=(1, 2)), [])
+                with mutants.switched_on(mutants.MUTANTS[mutant]):
+                    found = [(v.guarantee, v.detail) for v in violations(held + [board_with(fault)], issues=(1, 2))]
+                self.assertIn(shown, found)
+
+    def test_the_run_s_log_line_is_held_to_what_its_reads_owe(self):
+        """G2's log (pushes_logged): one line for a claim no read dated by
+        its push, its start the run's words for why and its end the clause
+        the floor rule picks, GitHub's answer in parentheses after a
+        refusal; none for a claim dated by its push or a 404; and none for
+        a branch whose push the run never read."""
+        model = M.seeded((1,))
+        model.now = 25 * M.HOUR
+        ref = "claude/1"
+        model.set_ref(ref, model.refs[M.MAIN])
+        query = (("ref", f"refs/heads/{ref}"),)
+        stale = [{"ref": f"refs/heads/{ref}", "timestamp": M.iso(M.HOUR), "after": "f" * 40, "before": "0" * 40}]
+        lagging = Call("GET", "/activity", query, None, 200, False, True, None, stale)
+        refused = Call("GET", "/activity", query, None, 500, False, True)
+        missing = Call("GET", "/activity", query, None, 404, False)
+        floor = oracle.LOG_WORDS["floor"].format(floor=M.iso(M.HOUR))
+        listed = f"{ref}: {oracle.LOG_WORDS['listed none']}"
+        said = f"{ref}: {oracle.LOG_WORDS['refused']}500 injected)"
+        self.assertEqual(invariants.pushes_logged([lagging, lagging], model, [listed + floor]), [])
+        self.assertEqual(invariants.pushes_logged([lagging, refused], model, [said + floor]), [])
+        self.assertEqual(invariants.pushes_logged([refused, refused], model,
+                                                  [said + oracle.LOG_WORDS["committer date"]]), [])
+        self.assertEqual(invariants.pushes_logged([missing], model, []), [])
+        for calls, lines in (([lagging, lagging], [listed + oracle.LOG_WORDS["committer date"]]),
+                             ([lagging, lagging], [said + floor]),
+                             ([lagging, lagging], [listed + floor.replace("01:00", "02:00")]),
+                             ([lagging, lagging], []),
+                             ([lagging, lagging], [listed + floor] * 2),
+                             ([lagging, refused], [f"{ref}: {oracle.LOG_WORDS['refused']}500 injected" + floor]),
+                             ([missing], [listed + oracle.LOG_WORDS["committer date"]]),
+                             ([], [listed + floor])):
+            with self.subTest(calls=[c.status for c in calls], lines=lines):
+                self.assertEqual([v.guarantee for v in invariants.pushes_logged(calls, model, lines)], ["G2"])
+
     def test_f14_an_issue_a_worker_s_label_names_is_shown_under_given_to_workers(self):
         """Found by this step, fixed after 0.4.1: an issue a worker's label
         names, with no todo, is shown under Given to workers as the spec

@@ -115,6 +115,43 @@ class ReleasesDue(unittest.TestCase):
         ready.pulls.insert(0, stranger_pull())
         self.assertEqual(coordinator.releases_due(ready, NOW), [])
 
+    def test_a_claim_is_due_by_when_github_received_the_push_of_its_head(self):
+        """F8: a head dated back but pushed within the day holds the claim,
+        and one dated ahead but pushed more than a day ago does not."""
+        back = idle_claim(releases={"12": {"released_at": "", "sha": HEAD, "committed_at": "2026-09-10T12:00:00Z",
+                                           "pushed_at": "2026-09-20T01:00:00Z"}})
+        self.assertEqual(coordinator.releases_due(back, NOW), [])
+        ahead = idle_claim(releases={"12": {"released_at": "", "sha": HEAD, "committed_at": "2026-09-23T12:00:00Z",
+                                            "pushed_at": "2026-09-18T12:00:00Z"}})
+        self.assertEqual(coordinator.releases_due(ahead, NOW), ["12"])
+        self.assertIn("has had no commit on claude/12 since 2026-09-18T12:00:00Z,",
+                      coordinator.release_text(ahead, "12", coordinator.Holding()))
+
+    def test_a_branch_pushed_again_at_a_kept_head_is_released_once(self):
+        """F8: a release comment counts for a head a release kept whenever
+        it came, so the coordinator adds none while the board counts the
+        claim released; with no release comment, or with the label claimed
+        put back, which undoes the release, such a branch is due as any idle
+        claim is, by its push, so a person's undoing never holds it for
+        good."""
+        kept = {"sha": HEAD, "committed_at": "2026-09-10T12:00:00Z", "kept": True}
+        freed = {"12": {"state": "open", "labels": ["todo"]}}
+        counted = idle_claim(releases={"12": dict(kept, released_at="2026-09-19T13:00:00Z",
+                                                  pushed_at="2026-09-20T11:00:00Z")}, claim_issues=freed)
+        self.assertEqual(board.released_keys(counted), {"12"})
+        self.assertEqual(coordinator.releases_due(counted, NOW), [])
+        fresh = idle_claim(releases={"12": dict(kept, released_at="", pushed_at="2026-09-20T11:00:00Z")})
+        self.assertEqual(coordinator.releases_due(fresh, NOW), [])
+        idle = idle_claim(releases={"12": dict(kept, released_at="", pushed_at="2026-09-18T11:00:00Z")})
+        self.assertEqual(coordinator.releases_due(idle, NOW), ["12"])
+        undone = idle_claim(releases={"12": dict(kept, released_at="2026-09-17T13:00:00Z",
+                                                 pushed_at="2026-09-18T11:00:00Z")})
+        self.assertEqual(board.released_keys(undone), set())
+        self.assertEqual(coordinator.releases_due(undone, NOW), ["12"])
+        undone_fresh = idle_claim(releases={"12": dict(kept, released_at="2026-09-17T13:00:00Z",
+                                                       pushed_at="2026-09-20T11:00:00Z")})
+        self.assertEqual(coordinator.releases_due(undone_fresh, NOW), [])
+
 
 class ReleaseText(unittest.TestCase):
     def test_the_release_says_why_whose_what_and_how_to_carry_on(self):

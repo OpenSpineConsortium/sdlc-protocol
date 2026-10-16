@@ -276,27 +276,48 @@ class ClaimIssue:
 class Release:
     """What the release rule reads about one claim: when the latest release
     comment on its issue was made (claims.latest_release), "" when none
-    stands, and the head of its branch, the commit and when it was
-    committed. An adapter fills it for every claim a release can be due on
-    or can have freed (adapters.github.releases): one gone more than a day
-    without a commit, whose issue is open and not labelled in-review, and
-    whose pull request, if it has one, is a draft its author has not called
-    finished, or one its author called finished that a person has released.
-    The coordinator releases those that no release comment has released yet
+    stands; the head of its branch and when its last commit came
+    (last_commit), which is when GitHub received the push that set the
+    head, as the repository's activity records it (pushed_at), so no
+    worker's clock decides it (F8), or, where the activity records no such
+    push, when the head was committed, as its committer date says
+    (committed_at), one of the two read and the other ""; and whether a
+    release already kept that head, a branch released/<issue>-<short sha>
+    standing at it (kept), so the branch was pushed again with nothing a
+    release has not kept. An adapter fills it for every claim a release can
+    be due on or can have freed (adapters.github.releases): one gone more
+    than a day without a commit, or whose head a release kept, whose issue
+    is open and not labelled in-review, and whose pull request, if it has
+    one, is a draft its author has not called finished, or one its author
+    called finished that a person has released. The coordinator releases
+    those that no release comment has released yet
     (coordinator.releases_due), and the board counts a release once the
     label claimed is off too (released_keys)."""
 
     released_at: str = ""
     sha: str = ""
     committed_at: str = ""
+    pushed_at: str = ""
+    kept: bool = False
+
+    @property
+    def last_commit(self):
+        """When the branch's last commit came: GitHub's time of the push
+        that set the head, else the head's committer date, "" when neither
+        is known."""
+        return self.pushed_at or self.committed_at
 
     @classmethod
     def from_dict(cls, data):
         return cls(released_at=data.get("released_at") or "", sha=data.get("sha") or "",
-                   committed_at=data.get("committed_at") or "")
+                   committed_at=data.get("committed_at") or "", pushed_at=data.get("pushed_at") or "",
+                   kept=data.get("kept") is True)
 
     def to_dict(self):
-        return {"released_at": self.released_at, "sha": self.sha, "committed_at": self.committed_at}
+        """Its JSON shape; pushed_at and kept only when set, so a snapshot
+        read before F8 is written back as it was."""
+        return {"released_at": self.released_at, "sha": self.sha, "committed_at": self.committed_at} \
+            | ({"pushed_at": self.pushed_at} if self.pushed_at else {}) | ({"kept": True} if self.kept else {})
 
 
 @dataclass
@@ -311,7 +332,11 @@ class Snapshot:
     by its branch: when GitHub says the push that made the branch came, as
     the adapter reads it for the overlaps' landing order (began_at), with
     GitHub's answer for each branch it refused to date, which the run's log
-    names (adapters.github.began_refused_lines)."""
+    names (adapters.github.began_refused_lines); and why each claim
+    branch whose head no read dated by its push was dated otherwise, by
+    its committer date or by the newest entry listed, GitHub's refusal or
+    an activity that lists no push of the head, with what was read in its
+    place (adapters.github.pushed_refused_lines)."""
 
     sha: str = ""
     default_branch: str = "main"
@@ -324,6 +349,7 @@ class Snapshot:
     releases: dict = field(default_factory=dict)
     began: dict = field(default_factory=dict)
     began_refused: dict = field(default_factory=dict)
+    pushed_refused: dict = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, data):
@@ -341,6 +367,7 @@ class Snapshot:
             releases={str(k): Release.from_dict(v or {}) for k, v in (data.get("releases") or {}).items()},
             began={str(k): str(v) for k, v in (data.get("began") or {}).items() if v},
             began_refused={str(k): str(v) for k, v in (data.get("began_refused") or {}).items()},
+            pushed_refused={str(k): str(v) for k, v in (data.get("pushed_refused") or {}).items()},
         )
 
     def to_dict(self):
@@ -355,7 +382,8 @@ class Snapshot:
             "merged": [m.to_dict() for m in self.merged],
             "releases": {k: v.to_dict() for k, v in self.releases.items()},
             "began": dict(self.began),
-        } | ({"began_refused": dict(self.began_refused)} if self.began_refused else {})
+        } | ({"began_refused": dict(self.began_refused)} if self.began_refused else {}) \
+            | ({"pushed_refused": dict(self.pushed_refused)} if self.pushed_refused else {})
 
     @classmethod
     def from_json(cls, text):
@@ -450,7 +478,10 @@ def released_keys(snapshot, idle_after=IDLE_AFTER):
     write, by issue key: a claim branch whose issue is open and no longer
     labelled claimed, whose latest release comment came after the branch
     had gone without a commit for more than idle_after, and which nothing
-    has been committed to since (claims.was_released). It takes both acts
+    has been committed to since (claims.was_released), or whose head a
+    release already kept, whenever its comment came (release_counts); the
+    last commit is when GitHub received the push that set the head, else
+    its committer date (Release.last_commit, F8). It takes both acts
     of a release, the comment and the label claimed taken off, so a stray
     comment frees nothing; a commit after the release, its holder's or a
     new claim's, ends it; and putting the label claimed back undoes it. A
@@ -477,7 +508,20 @@ def is_released(snap, key, idle_after=IDLE_AFTER):
         return False
     if any(of_claim(p, key) and not p.draft for p in snap.pulls):
         return False
-    return was_released(release.released_at, release.committed_at, idle_after)
+    return release_counts(release, idle_after)
+
+
+def release_counts(release, idle_after=IDLE_AFTER):
+    """Whether the latest release comment that counts released the claim
+    as its branch stands: it came after the branch had gone more than
+    idle_after without a commit, with none since (was_released), or the
+    head is one a release already kept (Release.kept), since a branch
+    pushed again at it brings nothing new, and its time, when GitHub
+    received that push, says nothing of the work, which the release that
+    kept the head already judged idle."""
+    if not release.released_at:
+        return False
+    return release.kept or was_released(release.released_at, release.last_commit, idle_after)
 
 
 def claim_of(pull):
