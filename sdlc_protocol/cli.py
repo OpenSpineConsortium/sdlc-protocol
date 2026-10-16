@@ -187,10 +187,11 @@ def pushed_branch(environ):
 def say_what_it_cost(api):
     """The board run's last line (adapters.github.calls_line), which never
     takes the place of the run's own outcome: a client that keeps no count,
-    as a stand-in may not, or a time no clock writes, says nothing."""
+    or keeps one in another shape, as a stand-in may, or a time no clock
+    writes, says nothing."""
     try:
         print(github_adapter().calls_line(api))
-    except (AttributeError, TypeError, ValueError, OverflowError, OSError):
+    except (AttributeError, LookupError, TypeError, ValueError, OverflowError, OSError):
         return
 
 

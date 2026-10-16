@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from validation import cost, cycle, verbs  # noqa: E402
+from validation.model import HOUR  # noqa: E402
 
 README = ROOT / "README.md"
 
@@ -81,6 +82,39 @@ class TheCost(unittest.TestCase):
         cycle.board_run(model)
         verbs.move_main(model)
         self.assertEqual(cost.cost_of(cycle.board_run(model)), moved)
+
+    def runs(self, case, hours):
+        """The cost of a board run after each wait of hours, on one model."""
+        model = cost.seeded(case)
+        found = []
+        for wait in hours:
+            model.now += wait * HOUR
+            found.append(cost.cost_of(cycle.board_run(model)))
+        return found
+
+    def test_a_pull_request_nobody_touched_for_a_day_costs_a_read_of_its_comments_a_run(self):
+        """The board asks it once whether it is parked (board.comments_due),
+        its question putting the next read off by a day, and reads its
+        comments in every run after: a ready pull request waiting for
+        review costs one call a run more than the rule's from a day after
+        the board asked."""
+        case = cost.Case("", claims=1, drafts=1, ready=1)
+        rule = nothing_due(case)
+        self.assertEqual(self.runs(case, (0, 25, 0, 25, 0)),
+                         [cost.Cost(rule, rule, 0), cost.Cost(rule + 2, rule + 1, 1), cost.Cost(rule, rule, 0),
+                          cost.Cost(rule + 1, rule + 1, 0), cost.Cost(rule + 1, rule + 1, 0)])
+
+    def test_a_draft_said_finished_costs_a_read_of_its_comments_a_run_once_a_day_passes(self):
+        """Its claim is dated as any draft's, and once its branch has gone a
+        day without a commit the coordinator reads its comments in every
+        run for the word that keeps it from a release, beside the idle
+        read every pull request untouched for a day costs."""
+        case = cost.Case("", claims=1, drafts=1, finished=1)
+        rule = nothing_due(case)
+        self.assertEqual(self.runs(case, (0, 24, 0, 25, 0)),
+                         [cost.Cost(rule, rule, 0), cost.Cost(rule + 3, rule + 2, 1),
+                          cost.Cost(rule + 1, rule + 1, 0), cost.Cost(rule + 2, rule + 2, 0),
+                          cost.Cost(rule + 2, rule + 2, 0)])
 
 
 if __name__ == "__main__":

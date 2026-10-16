@@ -496,12 +496,15 @@ class Calls(unittest.TestCase):
     LIMIT = {"x-ratelimit-remaining": "962", "x-ratelimit-limit": "1000", "x-ratelimit-reset": "1760612400"}
 
     def test_every_call_github_answered_is_counted_by_its_method_and_none_it_never_answered(self):
-        # Answered, a 404 that is an answer and a 403 count; a call
-        # http.client will not send and one whose connection is refused
-        # do not, since GitHub said nothing of them.
+        # Answered, one whose body was cut short, a 404 that is an answer
+        # and a 403 count; a call http.client will not send and one whose
+        # connection is refused do not, since GitHub said nothing of them.
         api, _ = client({"/repos/o/r/issues?per_page=100": FakeAnswer([]),
+                         "/repos/o/r/issues/1": CutAnswer({}),
                          "POST /repos/o/r/issues/7/comments": Refusal(403, {"message": "nope"})})
         api.get_all("/repos/o/r/issues")
+        with self.assertRaises(github.GitHubError, msg="an answer whose body was cut short is an answer"):
+            api.get("/repos/o/r/issues/1")
         self.assertIsNone(api.get("/repos/o/r/contents/x", missing_ok=True))
         with self.assertRaises(github.GitHubError):
             api.post("/repos/o/r/issues/7/comments", {"body": "x"})
@@ -512,7 +515,7 @@ class Calls(unittest.TestCase):
         lost = github.GitHub("t", "o/r", opener=opener, sleep=lambda seconds: None)
         with self.assertRaises(github.GitHubError):
             lost.delete("/repos/o/r/issues/7/labels/claimed")
-        self.assertEqual((dict(api.made), dict(lost.made)), ({"GET": 2, "POST": 1}, {}))
+        self.assertEqual((dict(api.made), dict(lost.made)), ({"GET": 3, "POST": 1}, {}))
         self.assertEqual((api.limit, lost.limit), (None, None))
 
     def test_the_limit_is_the_latest_answer_s_that_says_all_of_it_refusals_included(self):

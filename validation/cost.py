@@ -16,11 +16,14 @@ cost more than the fake: a run reads the activity of a claim's push once
 more after a pause where GitHub has not listed it yet, and the head's
 committer date where it lists none then either (F8); a pull request a
 rule holds, which GitHub calls blocked, takes a comparison with the
-default branch (F9); and a release comment whose author GitHub's
+default branch (F9); a release comment whose author GitHub's
 author_association does not vouch for takes a read of that author's
-permission, where on the fake every author is a collaborator. The run's
-last log line counts the calls on GitHub itself (adapters.github.
-calls_line).
+permission, where in these cases every release comment is the
+coordinator's own; and a claim's own pull request whose opener
+author_association does not vouch for there takes a read of the
+opener's permission, where every worker here is a collaborator. The
+run's last log line counts the calls on GitHub itself (adapters.
+github.calls_line).
 """
 
 from typing import NamedTuple
@@ -36,7 +39,8 @@ CLAIMED_AT, BUSY_AT, IDLE_AT = 0, 1, 25
 
 class Case(NamedTuple):
     """A repository: claims, how many of them have a draft pull request and
-    how many of those drafts are marked ready, how many of the claims
+    how many of those drafts are marked ready, how many of the rest their
+    authors said are finished, how many of the claims
     without one have a pull request a stranger opened from the claim's
     branch, which is no claim's, and how many of the rest have their issue
     closed; issues queued with no claim; whether the claims have gone a
@@ -47,6 +51,7 @@ class Case(NamedTuple):
     claims: int = 0
     drafts: int = 0
     ready: int = 0
+    finished: int = 0
     strangers: int = 0
     closed: int = 0
     queued: int = 0
@@ -76,9 +81,10 @@ CASES = (
 
 def steps(case):
     """The trace file's steps that make the case's repository: the claims
-    in order, the first of them with their drafts, then the ready ones, the
-    strangers' pull requests and the closed issues among the claims that
-    follow, so no claim is two of these at once."""
+    in order, the first of them with their drafts, then the ready ones and
+    the finished ones among the drafts, the strangers' pull requests and
+    the closed issues among the claims that follow, so no claim is two of
+    these at once."""
     made = []
     for number in range(1, case.claims + 1):
         worker = WORKERS[(number - 1) % len(WORKERS)]
@@ -87,6 +93,8 @@ def steps(case):
         if number <= case.drafts:
             made.append({"verb": "open-draft", "actor": worker, "args": [number]})
     made += [{"verb": "mark-ready", "actor": "owner", "args": [FIRST_PULL + n]} for n in range(case.ready)]
+    made += [{"verb": "finished", "actor": WORKERS[n % len(WORKERS)], "args": [FIRST_PULL + n]}
+             for n in range(case.ready, case.ready + case.finished)]
     strangers = range(case.drafts + 1, case.drafts + case.strangers + 1)
     made += [{"verb": "stranger-pull", "actor": "sam", "args": [number, False]} for number in strangers]
     closed = range(case.drafts + case.strangers + 1, case.drafts + case.strangers + case.closed + 1)
