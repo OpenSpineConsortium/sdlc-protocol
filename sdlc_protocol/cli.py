@@ -184,19 +184,38 @@ def pushed_branch(environ):
     return ref if isinstance(ref, str) else ""
 
 
+def say_what_it_cost(api):
+    """The board run's last line (adapters.github.calls_line), which never
+    takes the place of the run's own outcome: a client that keeps no count,
+    or keeps one in another shape, as a stand-in may, or a time no clock
+    writes, says nothing."""
+    try:
+        print(github_adapter().calls_line(api))
+    except (AttributeError, LookupError, TypeError, ValueError, OverflowError, OSError):
+        return
+
+
 def board_live_run(args, environ):
+    """A board run on GitHub: the two halves, the page written between
+    them, and last, whether the run ended or GitHub refused it on the way,
+    the calls GitHub answered and what the token had left (say_what_it_cost),
+    the one figure of what a board run costs taken in the repository
+    itself."""
     token, repo = environ.get("GITHUB_TOKEN"), environ.get("GITHUB_REPOSITORY")
     if not token or not repo:
         raise CommandError("GITHUB_TOKEN and GITHUB_REPOSITORY must be set")
     api = github_adapter().GitHub(token, repo)
     now = datetime.now(timezone.utc)
-    snap, page = plan_board(api, args.sha or default_head_sha(environ, args.default_branch), args.default_branch,
-                            now, args.render_only, started_by=pushed_branch(environ))
-    out = Path(args.out) if args.out else board.STATE_PATH
-    changed = board.write_if_changed(out, page)
-    print(f"{out.as_posix()}: {'rewritten' if changed else 'unchanged'}")
-    if not args.render_only:
-        act_on_board(api, snap, environ.get("GITHUB_EVENT_NAME", ""), environ.get("GITHUB_REF_NAME", ""), now)
+    try:
+        snap, page = plan_board(api, args.sha or default_head_sha(environ, args.default_branch), args.default_branch,
+                                now, args.render_only, started_by=pushed_branch(environ))
+        out = Path(args.out) if args.out else board.STATE_PATH
+        changed = board.write_if_changed(out, page)
+        print(f"{out.as_posix()}: {'rewritten' if changed else 'unchanged'}")
+        if not args.render_only:
+            act_on_board(api, snap, environ.get("GITHUB_EVENT_NAME", ""), environ.get("GITHUB_REF_NAME", ""), now)
+    finally:
+        say_what_it_cost(api)
     return 0
 
 

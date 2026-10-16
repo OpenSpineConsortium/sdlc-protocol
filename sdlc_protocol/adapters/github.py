@@ -19,6 +19,7 @@ apart, on the exception, for a caller that wants to say why.
 """
 
 import base64
+import collections
 import dataclasses
 import http.client
 import json
@@ -79,6 +80,17 @@ OLDER_PUSH_LISTED = "the newest push the repository's activity lists of the bran
 # push only when it came as late as this too (OLDER_PUSH_LISTED).
 PUSH_SINCE_SLACK = timedelta(minutes=5)
 RECENT_MERGED = board.RECENT_MERGED
+# The headers GitHub answers a REST call with that say what the token's
+# rate limit has left: the calls left, the calls an hour allows and when
+# the hour ends, in seconds since the epoch. A workflow's GITHUB_TOKEN is
+# allowed 1,000 calls an hour per repository, shared by every workflow of
+# the repository that uses it, the board's among them (calls_line).
+LIMIT_HEADERS = ("x-ratelimit-remaining", "x-ratelimit-limit", "x-ratelimit-reset")
+# The most digits a header of the rate limit is read with: a count or a
+# time GitHub writes never comes near it, a time of ten digits is before
+# the year 2287, which datetime writes, and int() of a longer string
+# spends time no answer is worth (count_in).
+LIMIT_DIGITS = 10
 
 # GitHub's mergeable_state words that say only that something besides the
 # branch stops the merge, a rule, a review or the draft itself: how the
@@ -131,6 +143,38 @@ def error_detail(problem):
     return str(body.get("message") or "") if isinstance(body, dict) else ""
 
 
+def count_in(text):
+    """The whole number a header of the rate limit says, or None for one
+    missing or written otherwise: ASCII digits, at most LIMIT_DIGITS of
+    them, around which GitHub may leave spaces."""
+    text = text.strip() if isinstance(text, str) else ""
+    if not 0 < len(text) <= LIMIT_DIGITS or not (text.isascii() and text.isdigit()):
+        return None
+    return int(text)
+
+
+def many(count, word):
+    return f"{count} {word}{'' if count == 1 else 's'}"
+
+
+def calls_line(api):
+    """The run's last log line: how many of the run's calls to GitHub's
+    REST API GitHub answered, its reads and its writes, and what the
+    token's rate limit had left by the latest answer that said it, so
+    whoever reads the run's log sees what a board run costs and how near
+    the hour's limit it ran (LIMIT_HEADERS)."""
+    reads = api.made["GET"]
+    writes = sum(api.made.values()) - reads
+    line = f"GitHub's REST API: {many(reads + writes, 'call')} in this run, {many(reads, 'read')} and " \
+           f"{many(writes, 'write')}"
+    if api.limit is None:
+        return line
+    left, allowed, reset = api.limit
+    until = datetime.fromtimestamp(reset, timezone.utc).strftime("%H:%M UTC")
+    return f"{line}; GitHub last said the token had {left} of its {allowed} calls an hour left, the hour " \
+           f"ending at {until}"
+
+
 def quoted(name):
     """A branch or label name made safe for a URL path, slashes kept, since
     GitHub reads a ref's slashes as part of its name."""
@@ -172,6 +216,12 @@ class GitHub:
         self.opener = opener or urllib.request.build_opener()
         self.sleep = sleep
         self.asked = permissions(self)
+        # The calls GitHub answered this client, by method, and the rate
+        # limit as the latest answer that said it left it: the calls left,
+        # the calls an hour allows and when the hour ends (LIMIT_HEADERS),
+        # for the run's log (calls_line).
+        self.made = collections.Counter()
+        self.limit = None
 
     def headers(self):
         return {
@@ -206,8 +256,10 @@ class GitHub:
         where = f"{method} {urllib.parse.urlsplit(url).path}"
         try:
             with self.opener.open(call, timeout=TIMEOUT) as answer:
+                self.count_answer(method, answer.headers)
                 raw, answered = answer.read(), answer.headers
         except urllib.error.HTTPError as problem:
+            self.count_answer(method, problem.headers)
             if problem.code == 404 and missing_ok:
                 return None, problem.headers
             raise GitHubError(f"{where}: HTTP {problem.code}", problem.code, error_detail(problem)) from None
@@ -221,6 +273,18 @@ class GitHub:
             return (json.loads(raw) if raw else None), answered
         except ValueError:
             raise GitHubError(f"{where}: the answer was not JSON") from None
+
+    def count_answer(self, method, headers):
+        """Count a call GitHub answered, whatever it answered, and keep the
+        rate limit its headers say, where they say all of it, for the run's
+        log (calls_line). A call never sent, or one the connection lost
+        before any answer, is not counted, as GitHub said nothing of it; a
+        redirect urllib follows, which GitHub answers a renamed repository's
+        old name with, is two calls counted as one."""
+        self.made[method] += 1
+        limit = tuple(count_in(headers.get(name) if headers is not None else None) for name in LIMIT_HEADERS)
+        if None not in limit:
+            self.limit = limit
 
     def get(self, path, params=None, missing_ok=False):
         data, _ = self.request("GET", self.url(path, params), missing_ok=missing_ok)

@@ -83,3 +83,7 @@ Holding the oracle to the spec's words found two readings where the library and 
 - The canary repository is OpenSpineConsortium/symphony-protocol-canary, which the owner made from scratch on 2026-10-13; the design's old test repository is replaced throughout. The first run waits on the owner's adoption of it through the front door; the library is unchanged, so no version bump, sync or release follows.
 
 The next step is the report (DESIGN.md, section 14, step 8).
+
+## Beside the steps: what a board run costs
+
+- cost.py: what one board run costs in calls to GitHub's REST API, reads and writes apart, on seven repositories the model seeds as a trace seeds one (nothing claimed, a claim with and without its draft, ten claims and their drafts, a release, main moved under ten drafts, two claims on one file), each run twice, the first doing what is due and the second finding it done. `python3 scripts/validate.py cost` prints the table README.md's section What a board run costs holds, and tests/test_validation_cost.py holds the README to it and to its rules: what a run with nothing due costs, at every size up to four claims with drafts, ready pull requests, strangers' pull requests and closed issues among them, and past a page of a hundred; what a release costs with a draft and without; and that each move of main under a draft owes it a comment more. The figures on GitHub itself come from the board run's last log line (adapters.github.calls_line).

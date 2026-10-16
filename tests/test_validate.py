@@ -26,6 +26,12 @@ class TheScript(unittest.TestCase):
                 self.assertEqual(validate.main([lane], out), 0)
                 self.assertIn(f"{lane}: ok in", out.getvalue())
 
+    def test_cost_prints_the_table_of_what_a_board_run_costs(self):
+        out = io.StringIO()
+        self.assertEqual(validate.main(["cost"], out), 0)
+        self.assertEqual(out.getvalue(), validate.cost.table())
+        self.assertIn("| ten claims with their drafts | 54 (54, 0) | 54 (54, 0) |", out.getvalue())
+
     def test_replay_takes_one_trace_file_and_prints_its_timeline(self):
         out = io.StringIO()
         self.assertEqual(validate.main(["replay", str(ROOT / "validation" / "traces" / "F4.json")], out), 0)
