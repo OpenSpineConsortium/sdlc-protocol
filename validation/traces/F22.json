@@ -29,7 +29,7 @@
     {"verb": "merge-keep", "actor": "owner", "args": [101], "expect": {"pulls": [], "refs": {"claude/1": true}}},
     {"at": 2, "verb": "reopen-issue", "actor": "owner", "args": [1]},
     {"verb": "board", "expect": {"labels": {"1": ["claimed", "worker:b"]}, "claims": {"claude/1": "b"}, "queue": []},
-     "note": "the repository keeps head branches, so claude/1 stands after the merge, and the owner reopens #1 an hour after b's last commit: a claim branch is a claim whatever the labels say, so the coordinator takes in-review alone off; under the mutant that reads no claim branch for the issue it frees it wholly, and under the one that leaves in-review on where a branch stands, nothing comes off, G8 red here for each"},
+     "note": "the repository keeps head branches, so claude/1 stands after the merge, and the owner reopens #1 an hour after b's last commit: a claim branch is a claim whatever the labels say, so the coordinator takes in-review alone off; under the mutant that reads no claim branch for the issue the coordinator plans to free it wholly and, reading claude/1 again, frees nothing, and under the one that leaves in-review on where a branch stands nothing comes off either, G8 red here for each"},
     {"at": 26, "verb": "board",
      "expect": {"labels": {"1": ["todo"]}, "queue": [1], "refs": {"claude/1": false}, "released": {"1": 1},
                 "comments": {"1": {"claim-released": 1, "released": 1}}},
@@ -49,6 +49,6 @@
     {"verb": "close-issue", "actor": "owner", "args": [1]},
     {"verb": "reopen-issue", "actor": "owner", "args": [1]},
     {"verb": "board", "expect": {"labels": {"1": ["claimed", "todo"]}, "queue": []},
-     "note": "the owner put claimed back to undo the release, so the released branch beside it is a release being undone, and the coordinator takes nothing off; under the mutant that reads no released branch for the issue, it frees it, claimed and all, G8 red here"}
+     "note": "the owner put claimed back to undo the release, so the released branch beside it is a release being undone, and the coordinator takes nothing off; under the mutant that reads no released branch for the issue, it frees it, taking claimed off, G8 red here"}
   ]
 }

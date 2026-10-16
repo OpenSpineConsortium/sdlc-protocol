@@ -1,4 +1,4 @@
-"""The regression traces of DESIGN.md 5.3, one per finding F1 to F21
+"""The regression traces of DESIGN.md 5.3, one per finding F1 to F22
 (validation/traces/, played by validation/replay.py), and known.json, the
 record of what is red on purpose: every trace loads and plays with no
 mismatch; its red results are exactly what known.json records, as built
@@ -144,7 +144,22 @@ BUDGET_SECONDS = 10
 # where it names alone, step 7, with GIT_DIR exported before an absolute
 # -C, taken once GIT_DIR is forgotten when an absolute path names a place,
 # and step 8, by a -C from a ~ after HOME is set in the command, taken
-# once such a -C is judged where it names alone.
+# once such a -C is judged where it names alone. F22's at its first board
+# run, step 10, after #1 was reopened once a's pull request merged and
+# the repository deleted claude/1: claimed, in-review and worker:a stay on
+# once the coordinator leaves a reopened issue as it is, and a label goes
+# on after one came off once todo is put on last; at its second, step 21,
+# where b's pull request, marked ready, finishes the claim on #1 closed
+# and reopened, its in-review comes off once a ready pull request is not
+# read; at its third, step 24, where b's merged branch is kept and #1
+# reopened, in-review stays once the claim branch is not read, the
+# coordinator then planning to free #1 wholly and, reading claude/1 again,
+# freeing nothing, or once in-review is left on where a branch stands; at
+# its fifth, step 36, where a's merged branch, kept a day after its last
+# commit, is not released in the run that takes its in-review off once
+# the releases due are read before the freeing; and at its last, step 40,
+# where the owner put claimed back to undo a release before closing and
+# reopening #1, claimed comes off once the released branch is not read.
 UNDONE = {
     "F1": [("the comment before the labels", 5, "G3L")],
     "F2": [("a piece of work named by the number it is shown by", 4, "G7"),
@@ -206,15 +221,21 @@ UNDONE = {
             ("a relative -C after a move judged where it names alone", 6, "G11a"),
             ("GIT_DIR forgotten once an absolute path names a place", 7, "G11a"),
             ("a -C by ~ judged where it names alone", 8, "G11a")],
+    "F22": [("a reopened issue left as it is", 10, "G8"), ("todo put on last", 10, "G8"),
+            ("a ready pull request's in-review taken off", 21, "G8"),
+            ("a claim branch not read for a reopened issue", 24, "G8"),
+            ("in-review left on where a branch stands", 24, "G8"),
+            ("the releases due read before the freeing", 36, "G3"),
+            ("a released branch not read for a reopened issue", 40, "G8")],
 }
-# The twenty-one findings, every one settled since F21's fix: F1, F3,
+# The twenty-two findings, every one settled since F22's fix: F1, F3,
 # F5, F6, F10 and F11 fixed in 0.4.1; F2, F4, F7, F8, F9, F12, F13, F14,
-# F15, F17, F18, F19 and F20 fixed in 0.5.0, and F21 on main after it
-# (known.json's fixed_after); and F16, fixed in the spec's words, which
+# F15, F17, F18, F19 and F20 fixed in 0.5.0, and F21 and F22 on main after
+# it (known.json's fixed_after); and F16, fixed in the spec's words, which
 # the library as built already keeps, so known.json names no version for
 # it.
 FIXED = ("F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12", "F13", "F14", "F15", "F16", "F17",
-         "F18", "F19", "F20", "F21")
+         "F18", "F19", "F20", "F21", "F22")
 # Findings red as built, which no rule of the library answers: none since
 # F4's fix; the test keeps the case for the next one.
 RED_AS_BUILT = ()
@@ -397,7 +418,7 @@ class KnownJson(unittest.TestCase):
         self.assertEqual(known.FIXED_AFTER,
                          {"F2": "0.4.1", "F4": "0.4.1", "F7": "0.4.1", "F8": "0.4.1", "F9": "0.4.1", "F12": "0.4.1",
                           "F13": "0.4.1", "F14": "0.4.1", "F15": "0.4.1", "F17": "0.4.1", "F18": "0.4.1",
-                          "F19": "0.4.1", "F20": "0.4.1", "F21": "0.5.0"})
+                          "F19": "0.4.1", "F20": "0.4.1", "F21": "0.5.0", "F22": "0.5.0"})
         current = known.version_key(sdlc_protocol.__version__)
         for finding, version in known.FIXED_AFTER.items():
             with self.subTest(finding=finding):
@@ -407,11 +428,14 @@ class KnownJson(unittest.TestCase):
                 self.assertLessEqual(known.version_key(version), current,
                                      "the last version with a finding is one main has stated, never a later one")
         fixed_in_0_5_0 = {"F2", "F4", "F7", "F8", "F9", "F12", "F13", "F14", "F15", "F17", "F18", "F19", "F20"}
-        self.assertEqual(known.as_built_for("0.4.1"), known.AS_BUILT | fixed_in_0_5_0 | {"F21"})
-        self.assertEqual(known.as_built_for("0.4.0"), known.AS_BUILT | fixed_in_0_5_0 | {"F21"})
-        self.assertEqual(known.as_built_for("0.4.2"), known.AS_BUILT | {"F21"}, "the next release carries the fixes")
-        self.assertEqual(known.as_built_for("0.5.0"), known.AS_BUILT | {"F21"})
-        self.assertEqual(known.as_built_for("0.5.1"), known.AS_BUILT, "the release after 0.5.0 carries F21's fix")
+        fixed_after_0_5_0 = {"F21", "F22"}
+        self.assertEqual(known.as_built_for("0.4.1"), known.AS_BUILT | fixed_in_0_5_0 | fixed_after_0_5_0)
+        self.assertEqual(known.as_built_for("0.4.0"), known.AS_BUILT | fixed_in_0_5_0 | fixed_after_0_5_0)
+        self.assertEqual(known.as_built_for("0.4.2"), known.AS_BUILT | fixed_after_0_5_0,
+                         "the next release carries the fixes")
+        self.assertEqual(known.as_built_for("0.5.0"), known.AS_BUILT | fixed_after_0_5_0)
+        self.assertEqual(known.as_built_for("0.5.1"), known.AS_BUILT,
+                         "the release after 0.5.0 carries F21's and F22's fixes")
         self.assertEqual(known.as_built_for("1.0.0"), known.AS_BUILT)
         for none in (None, "", "unknown", "0.4", "0.4.1-dirty", "1" * 10 + ".0.0"):
             self.assertEqual(known.as_built_for(none), known.AS_BUILT, none)

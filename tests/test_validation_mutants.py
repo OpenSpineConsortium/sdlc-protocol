@@ -100,6 +100,16 @@ TRACES = {
     "a relative -C after a move judged where it names alone": "the regression traces",
     "GIT_DIR forgotten once an absolute path names a place": "the regression traces",
     "a -C by ~ judged where it names alone": "the regression traces",
+    # F22's seven: a reopened issue freed, or left, as its claim branch, a
+    # released branch, a ready pull request and the run's order say; no
+    # search reopens an issue, so F22's trace is their catcher.
+    "a reopened issue left as it is": "the regression traces",
+    "todo put on last": "the regression traces",
+    "a ready pull request's in-review taken off": "the regression traces",
+    "a claim branch not read for a reopened issue": "the regression traces",
+    "in-review left on where a branch stands": "the regression traces",
+    "the releases due read before the freeing": "the regression traces",
+    "a released branch not read for a reopened issue": "the regression traces",
     "dealing without its taken set": "dealing at every look",
     "each leg dealt from its own look": "the regression traces",
     "given to workers needing the label todo": "the regression traces",
@@ -292,9 +302,14 @@ class TheLane(unittest.TestCase):
         judged by its words alone, so the bound is widened to 130, and its
         fourth review three, a relative -C after a move judged where it
         names alone, GIT_DIR forgotten once an absolute path names a place
-        and a -C by ~ judged where it names alone, 125 within that bound."""
-        self.assertTrue(10 <= len(mutants.MUTANTS) <= 130)
-        self.assertEqual(len(mutants.MUTANTS), 125)
+        and a -C by ~ judged where it names alone, 125 within that bound;
+        and F22's fix seven, a reopened issue left as it is, todo put on
+        last, a ready pull request's in-review taken off, a claim branch
+        and a released branch not read for a reopened issue, in-review
+        left on where a branch stands, and the releases due read before
+        the freeing, which pass the bound, so it is widened to 140."""
+        self.assertTrue(10 <= len(mutants.MUTANTS) <= 140)
+        self.assertEqual(len(mutants.MUTANTS), 132)
         self.assertEqual(sorted(TRACES), sorted(mutants.MUTANTS))
 
     def test_every_mutant_names_a_rule_the_library_still_has(self):
