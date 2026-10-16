@@ -100,6 +100,9 @@ TRACES = {
     "a relative -C after a move judged where it names alone": "the regression traces",
     "GIT_DIR forgotten once an absolute path names a place": "the regression traces",
     "a -C by ~ judged where it names alone": "the regression traces",
+    "a long option read only in full": "the regression traces",
+    "env's abbreviated --chdir not read": "the regression traces",
+    "an optional value taken from the next word": "the regression traces",
     "dealing without its taken set": "dealing at every look",
     "each leg dealt from its own look": "the regression traces",
     "given to workers needing the label todo": "the regression traces",
@@ -292,9 +295,12 @@ class TheLane(unittest.TestCase):
         judged by its words alone, so the bound is widened to 130, and its
         fourth review three, a relative -C after a move judged where it
         names alone, GIT_DIR forgotten once an absolute path names a place
-        and a -C by ~ judged where it names alone, 125 within that bound."""
+        and a -C by ~ judged where it names alone, 125 within that bound;
+        and F26's fix three, a long option read only in full, env's
+        abbreviated --chdir not read and an optional value taken from the
+        next word, 128."""
         self.assertTrue(10 <= len(mutants.MUTANTS) <= 130)
-        self.assertEqual(len(mutants.MUTANTS), 125)
+        self.assertEqual(len(mutants.MUTANTS), 128)
         self.assertEqual(sorted(TRACES), sorted(mutants.MUTANTS))
 
     def test_every_mutant_names_a_rule_the_library_still_has(self):

@@ -1,0 +1,24 @@
+{
+  "finding": "F26",
+  "title": "the push guard reads a wrapper's long option only by its whole name",
+  "status": "fixed after 0.5.0: the guard reads a wrapper's long option by any start of its name that names it alone, as GNU's getopt_long does (DESIGN.md, 13)",
+  "breaks": ["G1", "G11a"],
+  "world": "memory; the git world runs it over real git (build step 6)",
+  "issues": {"1": ["todo"]},
+  "workers": ["a", "b"],
+  "careless": true,
+  "steps": [
+    {"verb": "claim", "actor": "a", "args": [1], "expect": {"holders": {"1": "a"}}},
+    {"verb": "guard", "actor": "a", "args": ["env --uns FOO git push origin main"], "expect": {"refused": true},
+     "note": "each guard step is one of the guard grammar's commands, so the guard's answer is also judged by git's recorded one: env reads --uns as --unset, which takes FOO as its value, and runs git push origin main; under the mutant that reads a long option only by its whole name, FOO is read as the command env runs, the push passes and G11a is red here"},
+    {"verb": "guard", "actor": "a", "args": ["nice --adj 5 git push origin +claude/7"], "expect": {"refused": true},
+     "note": "nice reads --adj as --adjustment, which takes 5; under the same mutant 5 is read as the command and the forced push passes"},
+    {"verb": "guard", "actor": "a", "args": ["timeout --sig KILL 60 git push origin HEAD:board"], "expect": {"refused": true},
+     "note": "timeout reads --sig as --signal, which takes KILL, then 60 as its duration; under the same mutant KILL is read as the duration and 60 as the command, and the push to board passes"},
+    {"verb": "guard", "actor": "a", "args": ["env --def git push origin main"], "expect": {"refused": true},
+     "note": "env reads --def as --default-signal, whose value it takes only attached, so it runs git push origin main; under the mutant that takes such a value from the next word, git is read as the value and push as the command, the push passes and G11a is red here"},
+    {"verb": "lease-elsewhere", "actor": "b", "args": [1, "env"], "expect": {"taken": false, "holders": {"1": "a"}},
+     "note": "b fetches in its second clone, b-other, makes a claim commit naming itself there, and runs env --ch ../b-other git push --force-with-lease origin claude/1 from its session's clone, which never fetched claude/1: env reads --ch as --chdir and runs git in b-other, where git would take the lease, and the guard, judging the push there, reads a's claim file on origin/claude/1 and b's on the branch pushed and refuses it; under the mutant that reads env's --chdir only by its whole name the push is judged in the session's own clone, where no claim file shows on origin/claude/1, so the fence cannot judge, and under the one that reads every long option so, ../b-other is read as the command and the push is not judged at all: either way the lease is taken and G11a and G1 are red here"},
+    {"verb": "board", "expect": {"claims": {"claude/1": "a"}}}
+  ]
+}

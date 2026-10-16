@@ -414,6 +414,147 @@ class ParsingTest(unittest.TestCase):
         self.assertEqual(guard.simple_commands("echo 'unclosed\ngit push origin main"), [])
 
 
+# Each GNU coreutils wrapper's words before a command, as a person may
+# write them: a long option by a start of its name, its value attached or
+# the next word, a value it may take attached or left off, a flag, nice's
+# --5, which nice reads as an adjustment before its options, and a start
+# of more than one option's name or of none, which the wrapper refuses
+# (F26). env's --split-string is left out: what it splits is one word to
+# the guard (RunTest).
+WRAPPER_WORDS = (
+    ["env", "--uns", "HOME"], ["env", "--u", "HOME"], ["env", "--unset=HOME"], ["env", "--ch", "/"], ["env", "--c=/"],
+    ["env", "--chdir", "/", "--uns", "HOME"], ["env", "--def"], ["env", "--def=TERM"],
+    ["env", "--default-signal", "TERM"], ["env", "--ignore-e"], ["env", "--deb"], ["env", "--l"], ["env", "--b=PIPE"],
+    ["env", "--d"], ["env", "--i"], ["env", "--x"], ["nice", "--adj", "5"], ["nice", "--a", "5"],
+    ["nice", "--adjustment=5"], ["nice", "-n", "5"], ["nice", "-5"], ["nice", "--5"], ["nice", "--x"],
+    ["timeout", "--sig", "KILL", "60"], ["timeout", "--s", "TERM", "--k", "5", "60"], ["timeout", "--kill=5", "60"],
+    ["timeout", "--f", "60"], ["timeout", "--p", "60"], ["timeout", "--verb", "60"], ["timeout", "--v", "60"],
+    ["nohup", "--"], ["nohup", "--x"],
+)
+# What a GNU coreutils program exits with when it refuses its own words
+# and runs nothing.
+CANCELED = 125
+# An option line of a GNU program's --help: "-u, --unset=NAME", "--block-
+# signal[=SIG]" or "--null", the short letter, the long name and what the
+# long one takes.
+HELP_OPTION = re.compile(r"^\s+(?:-(\S), )?--([a-z][a-z0-9-]*)(\[=|=)?", re.M)
+TAKES = {"=": guard.VALUE, "[=": guard.OPTIONAL, None: guard.FLAG}
+
+
+def named_in_full(word, wrapper):
+    """guard.long_option_of as the guard read a wrapper's long option until
+    F26's fix: by its whole name alone."""
+    name = word[2:].partition("=")[0]
+    return name if name in wrapper.long_options else None
+
+
+def gnu_coreutils(name):
+    """Whether name runs GNU coreutils' program of that name here."""
+    try:
+        shown = subprocess.run([name, "--version"], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return "GNU coreutils" in shown.stdout
+
+
+class WrapperTest(unittest.TestCase):
+    """F26: a wrapper's long option is read as GNU's getopt_long reads it,
+    by its full name or a start of it that names no other option, with a
+    value as the option takes one: the guard compared it with the names
+    that take a value, in full, so the value after "env --uns" or "nice
+    --adj" or "timeout --sig" was read as the command, and the push
+    behind it passed."""
+
+    def test_a_long_option_is_read_by_any_start_of_its_name_that_names_it_alone(self):
+        for command in ("env --uns HOME git push origin main", "env --u HOME git push origin main",
+                        "env --unset=HOME git push origin main", "env --ch .. git push origin main",
+                        "env --sp -i --uns HOME git push origin main", "env --a pusher git push origin main",
+                        "env -a pusher git push origin main", "env --env0 file git push origin main",
+                        "env --q literal git push origin main", "nice --adj 5 git push origin main",
+                        "nice --a 5 git push origin main", "timeout --sig KILL 60 git push origin main",
+                        "timeout --s TERM --k 5 60 git push origin main",
+                        "timeout --kill=5 --si=TERM 60 git push origin main",
+                        "time --output-file x git push origin main", "time --output x git push origin main",
+                        "time --o x --fo %e --a git push origin main", "time --f %e --verb git push origin main"):
+            with self.subTest(command=command):
+                self.assertEqual([guard.push_arguments(argv) for argv in guard.simple_commands(command)],
+                                 [["origin", "main"]])
+
+    def test_an_exact_name_wins_and_a_start_of_more_than_one_or_of_none_names_nothing(self):
+        env, timeout = guard.WRAPPERS["env"], guard.WRAPPERS["timeout"]
+        for word, wrapper, option in (("--unset", env, "unset"), ("--uns", env, "unset"), ("--ch=..", env, "chdir"),
+                                      ("--def", env, "default-signal"), ("--deb", env, "debug"),
+                                      ("--d", env, None), ("--i", env, None), ("--ignore-", env, None),
+                                      ("--x", env, None), ("--=x", env, None), ("--verb", timeout, "verbose"),
+                                      ("--vers", timeout, "version"), ("--ver", timeout, None),
+                                      ("--5", guard.WRAPPERS["nice"], None),
+                                      ("--help", guard.WRAPPERS["command"], None)):
+            with self.subTest(word=word):
+                self.assertEqual(guard.long_option_of(word, wrapper), option)
+        shared = guard.Wrapper("", {"out": guard.VALUE, "output": guard.FLAG})
+        self.assertEqual(guard.long_option_of("--out", shared), "out", "an exact name wins over a longer one")
+        self.assertEqual(guard.long_option_of("--outp", shared), "output")
+        self.assertEqual(guard.long_option_of("--ou", shared), None)
+
+    def test_a_value_is_the_next_word_only_where_the_option_needs_one(self):
+        """A value the option may take is taken only attached, so env runs
+        the word after --default-signal, here TERM, and no push; a flag
+        takes none; and a word the wrapper refuses, which runs nothing, is
+        read as taking none, so the push after it is judged as though the
+        wrapper ran it."""
+        for command, pushes in (("env --default-signal TERM git push origin main", [None]),
+                                ("env --default-signal git push origin main", [["origin", "main"]]),
+                                ("env --def=TERM git push origin main", [["origin", "main"]]),
+                                ("env --ignore-e git push origin main", [["origin", "main"]]),
+                                ("timeout --f 60 git push origin main", [["origin", "main"]]),
+                                ("timeout --p --verb 60 git push origin main", [["origin", "main"]]),
+                                ("env --d git push origin main", [["origin", "main"]]),
+                                ("env --i git push origin main", [["origin", "main"]]),
+                                ("timeout --v 60 git push origin main", [["origin", "main"]]),
+                                ("nohup --x git push origin main", [["origin", "main"]]),
+                                ("command --help git push origin main", [["origin", "main"]])):
+            with self.subTest(command=command):
+                self.assertEqual([guard.push_arguments(argv) for argv in guard.simple_commands(command)], pushes)
+
+    def test_each_installed_gnu_wrapper_s_options_are_in_its_table_as_its_help_lists_them(self):
+        """The table holds each option coreutils' env, nice, nohup and
+        timeout list in their --help where they are installed, each long
+        one resolving to an option that takes what the help says, and each
+        short one that takes a value among the short values. GNU time,
+        seldom installed, is read as its src/time.c reads its options
+        (WRAPPERS), which the first test holds."""
+        for name in ("env", "nice", "nohup", "timeout"):
+            if not gnu_coreutils(name):
+                continue
+            wrapper = guard.WRAPPERS[name]
+            listed = HELP_OPTION.findall(subprocess.run([name, "--help"], capture_output=True, text=True).stdout)
+            self.assertIn("help", [long for _, long, _ in listed], name)
+            for short, long, takes in listed:
+                with self.subTest(wrapper=name, option=long):
+                    self.assertEqual(wrapper.long_options.get(guard.long_option_of(f"--{long}", wrapper)),
+                                     TAKES[takes or None])
+                    if short:
+                        self.assertEqual(short in wrapper.short_values, TAKES[takes or None] == guard.VALUE)
+
+    def test_the_guard_reads_the_command_each_installed_gnu_wrapper_runs(self):
+        """Run with printf after its words, each wrapper runs printf where
+        the guard reads printf as the command, and something else where the
+        guard reads something else; where the wrapper refuses its own words
+        and runs nothing, the guard reads on to printf."""
+        for words in WRAPPER_WORDS:
+            if not gnu_coreutils(words[0]):
+                continue
+            argv = words + ["printf", "%s", "ran"]
+            with self.subTest(argv=argv):
+                done = subprocess.run(argv, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=30)
+                start = guard.command_start(argv)
+                read = start is not None and argv[start] == "printf"
+                if done.returncode == CANCELED:
+                    self.assertTrue(read, "a word the wrapper refuses is read as taking no value")
+                else:
+                    self.assertEqual(read, done.stdout == "ran", done.stderr)
+
+
 HOME = os.path.expanduser("~")
 
 
@@ -472,6 +613,30 @@ class PlaceTest(unittest.TestCase):
             self.assertEqual(Path(ran.stdout.strip()).resolve(), Path(scratch, "other").resolve())
         self.assertEqual(guard.env_directory(["-C", "sub", "-C", "../other"]), "../other")
         self.assertEqual(guard.env_directory(["-u", "HOME"]), None)
+
+    def test_env_s_chdir_is_read_by_any_start_of_its_name_that_names_it_alone(self):
+        """GNU env reads --ch, --c=DIR and --chd as --chdir, each start of it
+        that names no other option, and a value the option before it needs,
+        attached or the next word, as that option's, so "env --uns --ch"
+        unsets a variable named --ch and changes no directory (F26: a push
+        after --c=DIR was judged where env was run, and one after --ch DIR
+        not at all, DIR read as the command). Each place is where env 9.4
+        runs pwd."""
+        for command, place in (("env --ch ../other git push", "/w/s/../other"),
+                               ("env --c=../other git push", "/w/s/../other"),
+                               ("env --chd ../other git -C x push", "/w/s/../other/x"),
+                               ("env --uns HOME --ch ../other git push", "/w/s/../other"),
+                               ("env --def --ch ../other git push", "/w/s/../other"),
+                               ("env --ch sub -C ../other git push", "/w/s/../other"),
+                               ("env -C sub --c ../other git push", "/w/s/../other"),
+                               ("env --ch=../other --chdir sub git push", "/w/s/sub"),
+                               ("env --uns --ch git push", "/w/s"),
+                               ("env --u=--ch git push", "/w/s")):
+            with self.subTest(command=command):
+                self.assertEqual(push_places(command), [place])
+        self.assertEqual(guard.env_directory(["--ch", "a", "--c=b"]), "b")
+        self.assertEqual(guard.env_directory(["--uns", "--ch"]), None)
+        self.assertEqual(guard.env_directory(["--debug", "--d"]), None)
 
     def test_a_push_that_names_its_repository_or_a_path_the_shell_expands_runs_where_this_cannot_tell(self):
         for command in ("git -C $DIR push", "git -C \"$DIR\" push", "git -C ../o* push", "git -C `pwd` push",
@@ -1109,6 +1274,33 @@ class OtherCloneTest(unittest.TestCase):
         with mock.patch.object(guard, "push_place", lambda argv, here: here):
             self.assertEqual(self.hook(lease), (guard.PASS, ""),
                              "as built until F21's fix: judged in s, which holds no claim file of #7")
+
+    def test_a_push_through_env_s_abbreviated_options_is_judged_in_the_clone_env_runs_it_in(self):
+        """env reads --ch as --chdir and --uns as --unset, each with its
+        value, so from s these run git in other, which pushes its main and,
+        once b has claimed #7 there, takes a's claim; until F26's fix the
+        hook read --ch and --uns as flags and the word after each as the
+        command, and passed them, and read --c=../other as no move, judging
+        the push in s, on its own claim claude/8."""
+        main = "env --uns HOME --c=../other git push origin HEAD"
+        self.assertIn("refs/heads/main", dry_run(main, self.session), "env runs git in other")
+        self.assertEqual(self.hook(main), (guard.REFUSE, MAIN))
+        self.claim_of_b_in_other()
+        lease = "env --ch ../other git push --force-with-lease origin claude/7"
+        self.assertIn("(forced update)", dry_run(lease, self.session), "git would take a's claim from other")
+        code, reason = self.hook(lease)
+        self.assertEqual(code, guard.REFUSE)
+        self.assertIn("claude/7 on origin is a's claim", reason)
+        with mock.patch.object(guard, "long_option_of", named_in_full):
+            for command in (main, lease):
+                with self.subTest(command=command):
+                    self.assertEqual(self.hook(command), (guard.PASS, ""),
+                                     "as built until F26's fix: the word after --uns or --ch read as the command")
+        with mock.patch.object(guard, "names_chdir", lambda word: word.partition("=")[0] == "--chdir"):
+            for command in (main, lease):
+                with self.subTest(command=command):
+                    self.assertEqual(self.hook(command), (guard.PASS, ""),
+                                     "--c= and --ch read as no move: judged in s, on its own claim")
 
     def test_a_lease_after_a_cd_that_fails_is_judged_where_the_shell_stood(self):
         """From s, the shell's cd into other is made and the cd into nowhere
