@@ -153,9 +153,13 @@ BUDGET_SECONDS = 10
 # of the issue's comments: the labels go back beside the comment once a
 # read that lists none is taken for one GitHub never wrote whatever it
 # answered; at its third, step 18, where the post of b's comment has no
-# answer at all, once no answer is taken for a refusal; and at its
-# seventh, step 22, where GitHub refuses d's comment with a 422, the
-# labels stay off once a refusal is taken for a comment listed late.
+# answer at all, once no answer is taken for a refusal; at its seventh,
+# step 22, where GitHub refuses d's comment with a 422, the labels stay
+# off once a refusal is taken for a comment listed late; and, from its
+# review, at its ninth, step 28, where GitHub refuses the comment on d's
+# second claim for a rate limit having written it and lists it late, the
+# labels go back beside the comment once a rate limit's refusal is taken
+# for one that wrote nothing.
 UNDONE = {
     "F1": [("the comment before the labels", 5, "G3L")],
     "F2": [("a piece of work named by the number it is shown by", 4, "G7"),
@@ -218,7 +222,8 @@ UNDONE = {
             ("GIT_DIR forgotten once an absolute path names a place", 7, "G11a"),
             ("a -C by ~ judged where it names alone", 8, "G11a")],
     "F23": [("a late comment's labels put back", 16, "G3L"), ("no answer taken for a refusal", 18, "G3L"),
-            ("a refusal taken for a late comment", 22, "G3L")],
+            ("a refusal taken for a late comment", 22, "G3L"),
+            ("a rate limit's refusal taken for one that wrote nothing", 28, "G3L")],
 }
 # The findings of this branch, F1 to F21 and F23 (F22 is another pull
 # request's), every one settled since F23's fix: F1, F3, F5, F6, F10 and

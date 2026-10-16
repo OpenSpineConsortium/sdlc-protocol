@@ -841,11 +841,11 @@ class AReleaseThatCannotReadItsComment(unittest.TestCase):
     DUE = [Verb("claim", "a", (1,)), Verb("label-on", "a", (1, "claimed")), Verb("label-on", "a", (1, "worker:a")),
            Verb("wait", "clock", (25,))]
     # The comment written and its answer lost, nothing written after a
-    # 500, and nothing written after a refusal, a 4xx, where a release
-    # comment someone else wrote may still stand (F23's review), whether
-    # GitHub refused it for the comment, a 422, or for a rate limit on
-    # each of the client's tries, after which the read is refused for a
-    # rate limit the client, its waits spent, does not wait out.
+    # 500, nothing written after a refusal, a 422, where a release comment
+    # someone else wrote may still stand (F23's review), and nothing
+    # written after a rate limit's refusal on each of the client's tries,
+    # after which the read is refused for a rate limit the client, its
+    # waits spent, does not wait out.
     FAULTS = ("comment-lost-then-unread", "comment-500-then-unread", "comment-422-then-unread",
               "comment-limited-then-unread")
 
@@ -857,12 +857,13 @@ class AReleaseThatCannotReadItsComment(unittest.TestCase):
     def test_putting_the_labels_back_counting_the_release_or_failing_the_run_is_caught(self):
         """Counting the release or failing the run under each fault; putting
         the labels back, F20's mutant as built until its fix, a refused read
-        taken for one that lists none, under the refusal alone: since F23's
-        fix a read that lists none after a server error, the answer F20's
-        first two faults give the post, leaves the labels off too, so there
-        the mutant does what the library does, and only after a refusal
-        does it put them back (F23's review, which found the refusal
-        untested)."""
+        taken for one that lists none, under the 422 alone: since F23's fix
+        a read that lists none after a server error, the answer F20's first
+        two faults give the post, leaves the labels off too, and since its
+        review one after a rate limit's refusal does, so there the mutant
+        does what the library does, and only after a refusal that says
+        GitHub wrote nothing does it put them back (F23's review, which
+        found the refusal untested)."""
         for fault in self.FAULTS:
             for mutant, guarantee in (("an unsettled release counted", "G3L"),
                                       ("an unsettled release failing the run", "G15")):
@@ -872,8 +873,7 @@ class AReleaseThatCannotReadItsComment(unittest.TestCase):
             for fault in self.FAULTS:
                 with self.subTest(fault=fault, mutant="an unsettled release put back"):
                     found = guarantees(violations(self.DUE + [board_with(fault), BOARD]))
-                    refused = fault in ("comment-422-then-unread", "comment-limited-then-unread")
-                    self.assertEqual(found, ["G3L"] if refused else [])
+                    self.assertEqual(found, ["G3L"] if fault == "comment-422-then-unread" else [])
 
     def test_a_holder_who_pushes_before_the_next_run_keeps_the_claim_with_its_labels_off(self):
         """F20's review: the holder pushes between the unsettled run and the
@@ -916,19 +916,21 @@ class AReleaseThatCannotReadItsComment(unittest.TestCase):
 
 
 class AReleaseThatCannotTellWhetherItsCommentStands(unittest.TestCase):
-    """F23: GitHub answers the release comment with a server error or with
-    no answer at all, either of which may come after it wrote the comment,
-    and the read of the issue's comments after it lists none, the comment
-    written and listed late or never written; the run leaves the labels as
-    the release left them, counts no release and goes on, and the next run
-    settles it (SPEC["listed late"], SPEC["unsettled"], SPEC["settled
-    next"])."""
+    """F23: GitHub answers the release comment with a server error, with
+    no answer at all or, since its review, with a rate limit's refusal,
+    any of which may come after it wrote the comment, and the read of the
+    issue's comments after it lists none, the comment written and listed
+    late or never written; the run leaves the labels as the release left
+    them, counts no release and goes on, and the next run settles it
+    (SPEC["listed late"], SPEC["unsettled"], SPEC["settled next"])."""
 
     DUE = [Verb("claim", "a", (1,)), Verb("label-on", "a", (1, "claimed")), Verb("label-on", "a", (1, "worker:a")),
            Verb("wait", "clock", (25,))]
-    # Written and listed late after a 502 or no answer, and never written
-    # after a 500.
-    FAULTS = (("comment-late", 1), ("comment-unanswered-late", 1), ("comment-500", 0))
+    # Written and listed late after a 502, no answer or a rate limit's
+    # refusal the client makes no second try of, and never written after a
+    # 500 or after a rate limit's refusal on each of the client's tries.
+    FAULTS = (("comment-late", 1), ("comment-unanswered-late", 1), ("comment-500", 0), ("comment-limited-late", 1),
+              ("comment-limited-for-the-run", 0))
 
     def test_the_labels_stay_off_and_the_next_run_settles_it(self):
         for fault, written in self.FAULTS:
@@ -943,12 +945,16 @@ class AReleaseThatCannotTellWhetherItsCommentStands(unittest.TestCase):
                 self.assertEqual(release_comments(model, 1), 1, "the next run counts the comment or makes one")
 
     def test_each_of_f23_s_mutants_is_caught_under_its_fault(self):
-        """The rule as built until the fix, under each of the three faults;
-        no answer read as a refusal, under the fault that has none; and a
-        refusal read as a failure that may have written, under a 422."""
+        """The rule as built until the fix, under each of the faults; no
+        answer read as a refusal, under the fault that has none; a refusal
+        read as a failure that may have written, under a 422; and, from
+        the review, a rate limit's refusal read as one that wrote nothing,
+        under both rate limits, the comment written and not."""
         cases = [(fault, "a late comment's labels put back") for fault, _ in self.FAULTS]
         cases += [("comment-unanswered-late", "no answer taken for a refusal"),
-                  ("comment-422", "a refusal taken for a late comment")]
+                  ("comment-422", "a refusal taken for a late comment"),
+                  ("comment-limited-late", "a rate limit's refusal taken for one that wrote nothing"),
+                  ("comment-limited-for-the-run", "a rate limit's refusal taken for one that wrote nothing")]
         for fault, mutant in cases:
             with self.subTest(fault=fault, mutant=mutant), mutants.switched_on(mutants.MUTANTS[mutant]):
                 self.assertEqual(guarantees(violations(self.DUE + [board_with(fault), BOARD])), ["G3L"])
@@ -965,10 +971,12 @@ class AReleaseThatCannotTellWhetherItsCommentStands(unittest.TestCase):
 
     def test_unlisted_releases_are_read_from_the_calls(self):
         """A failed post of the release comment that may have written it, a
-        server error or no answer, with a re-read GitHub answered without
-        the comment that post wrote, or with none since it wrote none; a
-        refusal, a re-read that lists the comment, one GitHub refused,
-        which is F20's, or a read before the post, is none."""
+        server error, no answer or a rate limit's refusal, read from the
+        fault, with a re-read GitHub answered without the comment that post
+        wrote, or with none since it wrote none; a refusal of any other
+        kind, a 403 that names no rate limit among them, a re-read that
+        lists the comment, one GitHub refused, which is F20's, or a read
+        before the post, is none."""
         release = {"body": oracle.RELEASE_MARKER + "\nreleased"}
         late = verbs.FAULTS["comment-late"].then
 
@@ -992,6 +1000,17 @@ class AReleaseThatCannotTellWhetherItsCommentStands(unittest.TestCase):
         self.assertEqual(invariants.unread_releases([post(None, True), listed_late]), {1})
         self.assertTrue(invariants.failed(post(None, True)))
         self.assertFalse(invariants.may_have_written(post(422, False)))
+        # F23's review: a rate limit's refusal, a 429 or a 403 whose fault
+        # says it is one, may come after GitHub wrote too; a 403 that names
+        # no rate limit is a refusal like a 422.
+        limited = post(403, True)._replace(fault=verbs.FAULTS["comment-limited-late"])
+        unlimited = post(403, False)._replace(fault=Fault("POST", "/issues/*/comments", 403,
+                                                          message="Resource not accessible by integration"))
+        self.assertEqual(invariants.unlisted_releases([limited, listed_late]), {1})
+        self.assertEqual(invariants.unlisted_releases([post(429, False), listed]), {1})
+        self.assertEqual(invariants.unlisted_releases([unlimited, listed]), set())
+        self.assertTrue(invariants.may_have_written(limited))
+        self.assertFalse(invariants.may_have_written(unlimited))
 
 
 class TheClientsWaitsForARateLimit(unittest.TestCase):
@@ -1106,20 +1125,25 @@ class TheClientsWaitsForARateLimit(unittest.TestCase):
         with mutants.switched_on(mutants.MUTANTS["a refused comment stops the run"]):
             self.assertEqual(guarantees(violations(steps)), ["G15"])
 
-    def test_a_release_comment_refused_on_every_try_is_a_refused_write(self):
+    def test_a_release_comment_refused_on_every_try_is_left_for_the_next_run(self):
         """comment-limited-for-the-run: the release comment is refused on
-        each of the client's three tries, its waits spent, a 4xx, so the
-        release fails as under comment-422, its labels go back and the next
-        run releases the claim (SPEC["refused"]); with the read after it
-        refused too, comment-limited-then-unread, the run cannot tell
-        whether a release comment stands and leaves the release to the
-        next run (F20)."""
+        each of the client's three tries, its waits spent, and a rate
+        limit's refusal does not say GitHub wrote nothing, so where the
+        read after it lists none the run leaves the labels as the release
+        left them and the next run releases the claim (SPEC["listed
+        late"]; F23's review, until which the labels went back as under
+        comment-422); with the read after it refused too,
+        comment-limited-then-unread, the run cannot tell whether a release
+        comment stands either and leaves the release to the next run
+        (F20)."""
         self.assertEqual(violations(self.DUE + [board_with("comment-limited-for-the-run"), BOARD]), [])
-        for fault, unread in (("comment-limited-for-the-run", set()), ("comment-limited-then-unread", {1})):
+        for fault in ("comment-limited-for-the-run", "comment-limited-then-unread"):
             with self.subTest(fault=fault):
-                record = self.record_of(fault)
+                model = self.due_model()
+                record = cycle.board_run(model, faults=(verbs.FAULTS[fault],))
                 posted = [c.status for c in record.calls if c.method == "POST" and c.path == "/issues/1/comments"]
-                self.assertEqual((posted, invariants.unread_releases(record.calls)), ([403] * 3, unread))
+                self.assertEqual((posted, invariants.unread_releases(record.calls)), ([403] * 3, {1}))
+                self.assertEqual((model.issues[1].labels, "claude/1" in model.refs), ({"todo"}, True))
 
     def test_a_push_read_refused_on_every_try_is_one_read_and_the_committer_date_stands_in(self):
         """pushes-429-for-the-run: three tries of one read, a minute and

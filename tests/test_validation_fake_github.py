@@ -12,7 +12,7 @@ sys.path.insert(0, str(ROOT))
 
 from sdlc_protocol import board  # noqa: E402
 from sdlc_protocol.adapters import github  # noqa: E402
-from validation import cycle, model as M  # noqa: E402
+from validation import cycle, model as M, verbs  # noqa: E402
 from validation.fake_github import DELETED, LAGGING, LAGGING_BY_TWO, LISTED_LATE, MOVED, MOVED_TWICE, NO_SHA, Fault, \
     FakeGitHub, Unserved  # noqa: E402
 
@@ -437,6 +437,26 @@ class Faults(unittest.TestCase):
         self.assertEqual((fake.calls[-1].status, fake.calls[-1].fault), (200, late))
         everything = api.get_all(f"/repos/{M.REPO}/issues/1/comments")
         self.assertEqual([c["body"] for c in everything], ["before", "lost", "after"])
+
+    def test_a_rate_limit_s_refusal_of_a_comment_github_wrote_is_one_try(self):
+        """F23's review: comment-limited-late refuses the release comment for
+        a secondary rate limit having written it, as GitHub would were
+        canary C4 to find it acting on a call it refuses so, and asks a wait
+        longer than a run waits, so the client makes one try and the
+        comment is written once; the library reads the refusal as one that
+        may have written, the read after it lists none of it, and the next
+        read lists it."""
+        model = M.seeded()
+        api, fake = cycle.api_for(model, (verbs.FAULTS["comment-limited-late"],))
+        with self.assertRaises(github.GitHubError) as caught:
+            api.post(f"/repos/{M.REPO}/issues/1/comments", {"body": "limited"})
+        refused = caught.exception
+        self.assertTrue(github.rate_limited(refused.status, refused.headers, refused.detail))
+        self.assertFalse(github.wrote_nothing(refused))
+        self.assertEqual([(c.status, c.applied, c.waited) for c in fake.calls], [(403, True, None)])
+        self.assertEqual(api.waited, [])
+        self.assertEqual(api.get_all(f"/repos/{M.REPO}/issues/1/comments"), [])
+        self.assertEqual([c["body"] for c in api.get_all(f"/repos/{M.REPO}/issues/1/comments")], ["limited"])
 
     def test_a_change_to_an_issue_s_body_is_unserved_not_a_fake_s_error(self):
         api, _ = cycle.api_for(M.seeded())

@@ -332,7 +332,9 @@ class GitHub:
         on an assumption: that GitHub refuses a rate limit's call before it
         acts on it, which its documentation does not say, and which the
         validation harness's fake assumes until a canary check settles it
-        (validation/DESIGN.md, 3.2 and section 11, C4)."""
+        (validation/DESIGN.md, 3.2 and section 11, C4). The labels a
+        release puts back after its comment failed do not rest on it
+        (wrote_nothing)."""
         tries = 0
         while True:
             try:
@@ -1373,12 +1375,13 @@ def release_one(api, snap, key, now):
     comment fails reads the issue's comments, and the comment there after
     all, one GitHub wrote and lost its answer to, makes the release
     whole. Where they list none and GitHub refused the comment with a
-    4xx, which says it wrote nothing (wrote_nothing), the run puts the
-    labels back as a run that fails at the labels does. Where they list
-    none after any other answer, a server error, a redirect, an answer
-    that was not JSON or no answer at all, none of which says GitHub
-    wrote nothing, and GitHub may list a comment it wrote only later
-    (not_listed; F23), or where the run cannot read them, whatever GitHub
+    4xx other than a rate limit's, which says it wrote nothing
+    (wrote_nothing), the run puts the labels back as a run that fails at
+    the labels does. Where they list none after any other answer, a rate
+    limit's refusal, a server error, a redirect, an answer that was not
+    JSON or no answer at all, none of which says GitHub wrote nothing,
+    and GitHub may list a comment it wrote only later (not_listed; F23
+    and its review), or where the run cannot read them, whatever GitHub
     answered the comment with (unsettled; F20), the run cannot tell
     whether a release comment stands, its own, an earlier run's or one
     someone else wrote, so it leaves the labels as the release left them
@@ -1486,13 +1489,14 @@ def put_back(api, key, names, put_on=()):
 def unsettled(snap, key, names, put_on, problem, unread):
     """The line of a release whose comment failed and whose issue's
     comments could not be read to see whether a release comment stands:
-    the run's own, which GitHub may have written unless it refused it, or,
-    whatever GitHub answered, a refusal among them, one an earlier run's
-    post or someone else wrote; so the labels stay as the release left
-    them (labels_left; F20, until whose fix the labels went back beside a
-    comment that might stand, which held the claim for good). Until F23's
-    review the line asked whether GitHub wrote the run's own comment,
-    which after a refusal it surely did not."""
+    the run's own, which GitHub may have written unless its refusal says
+    it wrote nothing (wrote_nothing), or, whatever GitHub answered, a
+    refusal among them, one an earlier run's post or someone else wrote;
+    so the labels stay as the release left them (labels_left; F20, until
+    whose fix the labels went back beside a comment that might stand,
+    which held the claim for good). Until F23's review the line asked
+    whether GitHub wrote the run's own comment, which after a refusal
+    that says it wrote nothing it surely did not."""
     return labels_left(snap, key, names, put_on, problem,
                        f"its issue's comments could not be read to see whether a release comment stands: "
                        f"{unread}{github_words(unread)}")
@@ -1500,13 +1504,17 @@ def unsettled(snap, key, names, put_on, problem, unread):
 
 def not_listed(snap, key, names, put_on, problem):
     """The line of a release whose comment GitHub answered with anything
-    but a refusal, a server error, a redirect, an answer that was not JSON
-    or no answer at all, and whose issue's comments, read after it, list
-    none: none of those says GitHub wrote nothing, and it may list a
+    but a refusal that says it wrote nothing (wrote_nothing), a rate
+    limit's refusal, a server error, a redirect, an answer that was not
+    JSON or no answer at all, and whose issue's comments, read after it,
+    list none: none of those says GitHub wrote nothing, and it may list a
     comment it wrote only later, so the read does not tell whether the
     comment stands, and the labels stay as the release left them
     (labels_left; F23, until whose fix the labels went back, which held
-    the claim for good where GitHub had written the comment)."""
+    the claim for good where GitHub had written the comment, and until
+    whose review they went back after a rate limit's refusal too). The
+    line says the same of a rate limit's refusal as of a server error,
+    since GitHub may have acted on the call before it refused it."""
     return labels_left(snap, key, names, put_on, problem,
                        "its issue's comments list none yet, though GitHub may have written it before that failure "
                        "and list it only later")
@@ -1541,7 +1549,16 @@ def wrote_nothing(problem):
     that finds nothing then tells nothing (F23); a redirect of the post, a
     307 or a 308, which urllib does not follow for a POST, and an answer
     that was not JSON, which has no status either, say nothing of whether
-    GitHub made it, so neither is a refusal (F23's review)."""
+    GitHub made it, so neither is a refusal (F23's review). Nor is a rate
+    limit's refusal, a 429 or a 403 that says it is one (rate_limited),
+    though it is a 4xx: GitHub's documentation says how long to wait and
+    when to stop asking, never that GitHub refuses such a call before it
+    acts on it, which the client's making a write again assumes
+    (GitHub.request) and canary C4 would settle and is not run, so the
+    labels a release puts back rest on no such assumption (F23's review;
+    validation/DESIGN.md, 3.2 and 11)."""
+    if rate_limited(problem.status, problem.headers, problem.detail):
+        return False
     return problem.status is not None and 400 <= problem.status < 500
 
 

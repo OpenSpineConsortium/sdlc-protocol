@@ -658,18 +658,19 @@ def is_put_back(effect, number):
 def labels_put_back(before, after, calls, actual):
     """A run that fails at the labels puts back what it took off and takes
     off the todo it put on (SPEC["put back"]), and so does one whose
-    comment GitHub refused and whose read of the issue's comments after
-    it lists none (SPEC["refused"]), unless GitHub refused the putting
-    back too; one whose comment was written, its answer lost or not, puts
-    back nothing, since the comment makes the release whole
-    (SPEC["whole"]); and one that cannot tell whether a release comment
-    stands, having no read of the issue's comments to tell it, whatever
-    GitHub answered its own with (SPEC["unread"]; F20, and a refusal
-    since F23's review), or one that lists none after an answer that says
-    nothing of whether GitHub wrote the comment (SPEC["listed late"];
-    F23), puts back nothing either, leaving the labels as the release
-    left them for the next run to settle (SPEC["unsettled"],
-    unread_releases) (G3L)."""
+    comment GitHub refused, for any reason but a rate limit, and whose
+    read of the issue's comments after it lists none (SPEC["refused"]),
+    unless GitHub refused the putting back too; one whose comment was
+    written, its answer lost or not, puts back nothing, since the comment
+    makes the release whole (SPEC["whole"]); and one that cannot tell
+    whether a release comment stands, having no read of the issue's
+    comments to tell it, whatever GitHub answered its own with
+    (SPEC["unread"]; F20, and a refusal since F23's review), or one that
+    lists none after an answer that says nothing of whether GitHub wrote
+    the comment, a rate limit's refusal among them since F23's review
+    (SPEC["listed late"]; F23), puts back nothing either, leaving the
+    labels as the release left them for the next run to settle
+    (SPEC["unsettled"], unread_releases) (G3L)."""
     problems = []
     unread = unread_releases(calls)
     todo_on = {e.target for e in actual if e == oracle.Effect("label-on", e.target, (oracle.TODO,))}
@@ -698,10 +699,11 @@ def unread_releases(calls):
     and refused the read of the issue's comments after it, which would
     have said whether the run's comment, an earlier run's or one someone
     else wrote stands (SPEC["unread"], unsettling_reads; F20); or it
-    answered the post with a server error or with no answer at all,
-    either of which may come after it wrote the comment, and answered the
-    read after it with no comment that post wrote, which it may list only
-    later (SPEC["listed late"], unlisted_releases; F23)."""
+    answered the post with a server error, with no answer at all or with
+    a rate limit's refusal, any of which may come after it wrote the
+    comment, and answered the read after it with no comment that post
+    wrote, which it may list only later (SPEC["listed late"],
+    unlisted_releases; F23 and its review)."""
     return frozenset(unsettling_reads(calls).values()) | unlisted_releases(calls)
 
 
@@ -717,12 +719,13 @@ def unsettling_reads(calls):
 
 
 def unlisted_releases(calls):
-    """The issues whose release comment GitHub answered with a server error
-    or with no answer at all, which may come after it wrote the comment,
-    and whose read of the comments after it GitHub answered without a
-    comment that post wrote, the comment written and listed late
-    (LISTED_LATE) or never written, which the run cannot tell apart
-    (SPEC["listed late"]; F23)."""
+    """The issues whose release comment GitHub answered with a server
+    error, with no answer at all or with a rate limit's refusal, any of
+    which may come after it wrote the comment (may_have_written), and
+    whose read of the comments after it GitHub answered without a comment
+    that post wrote, the comment written and listed late (LISTED_LATE) or
+    never written, which the run cannot tell apart (SPEC["listed late"];
+    F23 and its review)."""
     return frozenset(number for number, post, _, read in release_rereads(calls)
                      if may_have_written(post) and not failed(read) and not lists_its_comment(post, read))
 
@@ -736,12 +739,12 @@ def release_rereads(calls):
     nothing. What is looked at is the re-read's first page, which every
     fault on it refuses or answers (F20's comment-lost-then-unread and
     comment-500-then-unread, F23's comment-late and
-    comment-unanswered-late, its review's comment-422-then-unread, and
-    comment-limited-then-unread), so a later page, which no fault makes,
-    is not looked at; a later read of the comments in the run, for an
-    overlap's markers or a released branch's comment, is a read like any
-    other, so one GitHub refuses is no reason for the labels to stay off
-    (F20's review)."""
+    comment-unanswered-late, its review's comment-422-then-unread and
+    comment-limited-late, and comment-limited-then-unread), so a later
+    page, which no fault makes, is not looked at; a later read of the
+    comments in the run, for an overlap's markers or a released branch's
+    comment, is a read like any other, so one GitHub refuses is no reason
+    for the labels to stay off (F20's review)."""
     posted = {}
     for at, c in answered(calls):
         number = comments_of(c.path)
@@ -762,8 +765,14 @@ def failed(call):
 def may_have_written(post):
     """Whether GitHub may have made a write it gave no success for: a
     server error or no answer at all may come after the write, where a
-    4xx is a refusal GitHub gives in place of making it (F23)."""
-    return post.status is None or post.status >= 500
+    4xx is a refusal GitHub gives in place of making it (F23), save a rate
+    limit's, which GitHub's documentation never says it gives in place of
+    acting on the call, so it may come after the write too (F23's
+    review). The rate limit is read from the fault (rate_limited), never
+    from the library's rule (adapters.github.rate_limited, wrote_nothing),
+    so a library that takes one for a refusal that wrote nothing is
+    seen."""
+    return post.status is None or post.status >= 500 or rate_limited(post)
 
 
 def lists_its_comment(post, read):

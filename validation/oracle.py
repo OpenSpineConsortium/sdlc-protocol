@@ -89,12 +89,14 @@ SPEC = {
                 "since GitHub may have written it",
     "whole": "A run whose comment fails reads the issue's comments, and the comment there after all, one GitHub "
              "wrote and lost its answer to, makes the release whole.",
-    "refused": "Where they list none and GitHub refused the comment, with an answer from 400 to 499, which GitHub "
-               "gives in place of writing anything, the run puts back the labels it took off and takes off the todo "
-               "it put on",
-    "listed late": "Where they list none after any other answer to the comment, a server error, a redirect, an "
-                   "answer the run could not read or no answer at all, none of which says GitHub wrote nothing, and "
-                   "GitHub may list a comment it wrote only later",
+    "refused": "Where they list none and GitHub refused the comment, with an answer from 400 to 499 other than a "
+               "rate limit's, which GitHub gives in place of writing anything, the run puts back the labels it took "
+               "off and takes off the todo it put on",
+    "listed late": "Where they list none after any other answer to the comment, a rate limit's refusal, a 429 or a "
+                   "403 that names a rate limit or a wait in retry-after, which GitHub's documentation never says it "
+                   "gives in place of acting on the call, a server error, a redirect, an answer the run could not "
+                   "read or no answer at all, none of which says GitHub wrote nothing, and GitHub may list a comment "
+                   "it wrote only later",
     "unread": "or where the run cannot read them, whatever GitHub answered the comment with",
     "unsettled": "the run cannot tell whether a release comment stands, its own, an earlier run's or one someone "
                  "else wrote: it leaves the labels as the release left them and counts no release of its own, so "

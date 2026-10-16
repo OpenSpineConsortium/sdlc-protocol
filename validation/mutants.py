@@ -125,6 +125,7 @@ ORIGINAL_CLAIM_RELEASED = github.claim_released
 ORIGINAL_RELEASE_ONE = github.release_one
 ORIGINAL_RATE_LIMITED = github.rate_limited
 ORIGINAL_RATE_WAIT = github.rate_wait
+ORIGINAL_WROTE_NOTHING = github.wrote_nothing
 # The headers of the token's hour, which rate_wait reads for the hour's end.
 HOUR_HEADERS = ("x-ratelimit-remaining", "x-ratelimit-reset")
 
@@ -292,8 +293,9 @@ def relabelled_before_the_comment(api, snap, key, now):
     comment, and left so when the comment fails and the labels go back on,
     so the page of a run whose release GitHub refused shows the issue as
     released while GitHub holds its labels again. Since F23's fix the
-    labels go back only after a refusal, a 4xx, so only such a refusal
-    tells this copy from the library."""
+    labels go back only after a refusal that says GitHub wrote nothing, a
+    4xx other than a rate limit's since its review, so only such a
+    refusal tells this copy from the library."""
     release = snap.releases[key]
     names, put_on = coordinator.labels_released(snap, key), coordinator.labels_put_on(snap, key)
     taken_off = []
@@ -903,9 +905,10 @@ def landed_release_finding_none_unread(api, key, release):
     release_one leaves the labels off where a read that lists none
     follows a server error, the answer both of F20's faults give the
     post, so the mutant puts them back only where GitHub refused the
-    comment with a 4xx and then the read, where a release comment an
-    earlier run's post or someone else wrote may stand
-    (comment-422-then-unread, F23's review)."""
+    comment with a 4xx, other than a rate limit's since the review's
+    third finding, and then the read, where a release comment an earlier
+    run's post or someone else wrote may stand (comment-422-then-unread,
+    F23's review)."""
     try:
         comments = api.get_all(f"/repos/{api.repo}/issues/{key}/comments")
     except github.GitHubError:
@@ -919,8 +922,22 @@ def landed_release_finding_none_unread(api, key, release):
 def wrote_nothing_unless_answered(problem):
     """github.wrote_nothing reading no answer at all as a refusal, as if a
     call that never heard back had been turned away, where the connection
-    may have dropped after GitHub wrote the comment (F23)."""
-    return problem.status is None or 400 <= problem.status < 500
+    may have dropped after GitHub wrote the comment (F23). Every other
+    answer it reads by the library's own rule, so it changes that one rule
+    whatever the library's rule becomes, as F23's review changed it for a
+    rate limit's refusal."""
+    return problem.status is None or ORIGINAL_WROTE_NOTHING(problem)
+
+
+def wrote_nothing_after_a_rate_limit(problem):
+    """github.wrote_nothing as F23's fix had it until its review: every 4xx
+    a refusal that wrote nothing, a rate limit's among them, which rests
+    on GitHub refusing a rate limit's call before it acts on it, as its
+    documentation never says and canary C4, not run, would settle; where
+    GitHub wrote the comment it refused so and lists it only later, the
+    labels go back beside it and hold the claim for good
+    (comment-limited-late; F23's review)."""
+    return problem.status is not None and 400 <= problem.status < 500
 
 
 def release_one_counting_unsettled(api, snap, key, now):
@@ -1305,6 +1322,11 @@ MUTANTS = {
         github, "wrote_nothing", lambda problem: False,
         "G3L", "a release comment GitHub refused with a 4xx, which it answers in place of writing one, puts the "
                "labels back when the issue's comments list none (F23)"),
+    "a rate limit's refusal taken for one that wrote nothing": Mutant(
+        github, "wrote_nothing", wrote_nothing_after_a_rate_limit,
+        "G3L", "a run whose release comment GitHub refused for a rate limit, which its documentation never says "
+               "comes before GitHub acts on the call, and whose issue's comments then list none, leaves the labels "
+               "as the release left them (F23's review)"),
     "a writer's release not vouched for": Mutant(
         github, "may_write", nobody_vouched_for,
         "G5", "anyone who may write may release, whatever author_association GitHub shows"),

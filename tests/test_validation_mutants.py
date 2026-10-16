@@ -84,6 +84,7 @@ TRACES = {
     "a late comment's labels put back": "the regression traces",
     "no answer taken for a refusal": "the regression traces",
     "a refusal taken for a late comment": "the regression traces",
+    "a rate limit's refusal taken for one that wrote nothing": "the regression traces",
     "a writer's release not vouched for": (HELD + [WAIT, Verb("marker", DANA, (1,)), BOARD], Scope()),
     "a claim number with leading zeros": ([CLAIM, CLAIMED, Verb("push-by-hand", M.OWNER, (1, "claude/01"))],
                                           Scope(careless=True)),
@@ -324,9 +325,11 @@ class TheLane(unittest.TestCase):
         limit, and eight from its second review, one for each rule of the
         client's waits, so the bound is widened to 150; and F23's fix
         three, a late comment's labels put back, no answer taken for a
-        refusal, and a refusal taken for a late comment, 137 within it."""
+        refusal, and a refusal taken for a late comment, and its review
+        one, a rate limit's refusal taken for one that wrote nothing, 138
+        within it."""
         self.assertTrue(10 <= len(mutants.MUTANTS) <= 150)
-        self.assertEqual(len(mutants.MUTANTS), 137)
+        self.assertEqual(len(mutants.MUTANTS), 138)
         self.assertEqual(sorted(TRACES), sorted(mutants.MUTANTS))
 
     def test_every_mutant_names_a_rule_the_library_still_has(self):

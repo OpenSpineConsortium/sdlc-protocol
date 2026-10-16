@@ -2187,6 +2187,38 @@ class Coordinate(unittest.TestCase):
                 self.assertEqual(board.released_keys(snap), set())
                 self.assertIn("| #12 | claude/12 | nightly | #40 |", board.render(snap))
 
+    def test_a_comment_refused_for_a_rate_limit_and_not_listed_leaves_the_labels(self):
+        """F23's review: a rate limit's refusal is a 4xx, but GitHub's
+        documentation never says GitHub gives it in place of acting on the
+        call, which canary C4 would settle and is not run, so a refusal the
+        client gave up on, after each of its tries or at once for a wait
+        longer than a run waits, whose read lists no comment leaves the
+        labels as a server error does, with the same line. Until the review
+        the labels went back, which held the claim for good where GitHub
+        had written the comment."""
+        secondary = {"message": "You have exceeded a secondary rate limit"}
+        refusals = ((Refusal(403, secondary), "HTTP 403: You have exceeded a secondary rate limit", [60, 120]),
+                    (Refusal(403, secondary, {"retry-after": "150"}), "HTTP 403: You have exceeded a secondary rate "
+                                                                       "limit", []),
+                    (Refusal(429), "HTTP 429", [60, 120]))
+        for refusal, said, waited in refusals:
+            with self.subTest(said=said, waited=waited):
+                answers = release_answers()
+                answers["POST /repos/o/r/issues/12/comments"] = refusal
+                answers[COMMENTS_12] = FakeAnswer([])
+                snap, waits = idle_snapshot(), []
+                api, opener = client(answers, waits)
+                self.assertEqual(github.coordinate(api, snap, NOW), [
+                    f"#12: release unsettled, the comment failed: POST /repos/o/r/issues/12/comments: {said}; its "
+                    "issue's comments list none yet, though GitHub may have written it before that failure and list "
+                    "it only later; the labels stay as the release left them"])
+                self.assertEqual([c.get_method() for c in opener.calls],
+                                 ["DELETE", "DELETE", "GET"] + ["POST"] * (len(waited) + 1) + ["GET"])
+                self.assertEqual(waits, waited)
+                self.assertEqual((snap.claim_issues["12"].labels, snap.issues[0].labels), (["todo"], ["todo"]))
+                self.assertEqual(board.released_keys(snap), set())
+                self.assertIn("| #12 | claude/12 | nightly | #40 |", board.render(snap))
+
     def test_a_comment_answered_with_a_server_error_or_none_and_listed_is_a_whole_release(self):
         """GitHub wrote the comment and the read after the failure lists it,
         so the release is whole whatever the failure was, and the line says
@@ -2208,12 +2240,25 @@ class Coordinate(unittest.TestCase):
     def test_only_a_refusal_from_400_to_499_says_github_wrote_nothing(self):
         """F23: a 4xx is GitHub's answer in place of the write. A server
         error, no answer at all, and an answer the client could not read as
-        JSON, which it gives no status either, may each come after it."""
-        for status, wrote_nothing in ((400, True), (403, True), (404, True), (410, True), (422, True), (429, True),
+        JSON, which it gives no status either, may each come after it; and,
+        since F23's review, so may a rate limit's refusal, a 429 or a 403
+        that says it is one by its message or a retry-after
+        (rate_limited), which GitHub's documentation never says comes
+        before GitHub acts on the call. A 403 that says neither, whatever
+        its x-ratelimit-remaining, is a refusal like any other."""
+        for status, wrote_nothing in ((400, True), (403, True), (404, True), (410, True), (422, True), (429, False),
                                       (499, True), (500, False), (502, False), (503, False), (504, False),
                                       (None, False)):
             with self.subTest(status=status):
                 problem = github.GitHubError("POST /repos/o/r/issues/12/comments: failed", status)
+                self.assertIs(github.wrote_nothing(problem), wrote_nothing)
+        for detail, headers, wrote_nothing in (("You have exceeded a secondary rate limit", None, False),
+                                               ("API rate limit exceeded for installation ID 1.", None, False),
+                                               ("", {"Retry-After": "150"}, False),
+                                               ("Resource not accessible by integration", None, True),
+                                               ("", {"x-ratelimit-remaining": "0"}, True)):
+            with self.subTest(detail=detail, headers=headers):
+                problem = github.GitHubError("POST /repos/o/r/issues/12/comments: failed", 403, detail, headers)
                 self.assertIs(github.wrote_nothing(problem), wrote_nothing)
 
     def test_a_second_label_github_refuses_puts_the_first_back(self):
@@ -2744,13 +2789,16 @@ class ReleaseAcrossRuns(unittest.TestCase):
 
     def test_a_release_whose_comment_failed_is_finished_by_the_next_run(self):
         # GitHub wrote nothing either way: after a 4xx the labels go back,
-        # and after a 502 with none listed they stay off, since the run
-        # cannot tell (F23); the next run, finding no release comment,
-        # releases the claim whole, a label already off counting as taken
-        # off.
+        # and after a 502, or a rate limit's refusal the client does not
+        # wait out, with none listed they stay off, since the run cannot
+        # tell (F23 and its review); the next run, finding no release
+        # comment, releases the claim whole, a label already off counting
+        # as taken off.
+        limited = Refusal(403, {"message": "You have exceeded a secondary rate limit"}, {"retry-after": "150"})
         for refusal, said in ((Refusal(422, {"message": "Validation Failed"}), "claimed, worker:nightly put back"),
-                              (Refusal(502), "the labels stay as the release left them")):
-            with self.subTest(said=said):
+                              (Refusal(502), "the labels stay as the release left them"),
+                              (limited, "the labels stay as the release left them")):
+            with self.subTest(said=said, status=refusal.code):
                 repository, snap, page, first, second = self.runs({"POST /repos/o/r/issues/12/comments": refusal})
                 self.assertEqual(len(first), 1)
                 self.assertTrue(first[0].endswith(said), first)
@@ -2839,12 +2887,16 @@ class ReleaseAcrossRuns(unittest.TestCase):
 
     def test_a_comment_github_wrote_and_listed_late_is_counted_by_the_next_run(self):
         """F23: GitHub writes the release comment, answers 502 or nothing at
-        all, and lists the comment only after the read that follows. Until
-        the fix the labels went back beside the comment, and the claim was
-        held for good; the next run now reads the comment, counts the
-        release and renames the branch, releasing nothing again."""
-        for failure in (Refusal(502), Unanswered()):
-            with self.subTest(failure=type(failure).__name__):
+        all, or, since its review, refuses it for a rate limit, here asking
+        a wait longer than a run waits, so the client tries once, and lists
+        the comment only after the read that follows. Until the fix, and
+        for the rate limit until the review, the labels went back beside
+        the comment, and the claim was held for good; the next run now
+        reads the comment, counts the release and renames the branch,
+        releasing nothing again."""
+        limited = Refusal(403, {"message": "You have exceeded a secondary rate limit"}, {"retry-after": "150"})
+        for failure in (Refusal(502), Unanswered(), limited):
+            with self.subTest(failure=(type(failure).__name__, failure.code)):
                 repository = ListedLate(lose={"POST /repos/o/r/issues/12/comments": failure})
                 api = self.unsettled_first(repository)
                 self.assertEqual(len(repository.release_comments()), 1)
