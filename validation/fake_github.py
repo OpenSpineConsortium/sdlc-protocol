@@ -21,9 +21,12 @@ fake was not:
   run, and computed on the next, as GitHub computes it late.
 
 Fault makes chosen calls fail: an HTTP status, GitHub's message and, for a
-secondary rate limit, a retry-after header, whose wait the library's
-client makes before it asks again (adapters.github.rate_wait), so such a
-fault answers one try of the call; with applied, the write is
+secondary rate limit, a retry-after header. A fault of a rate limit's, a
+429 or a 403 that says so, answers one try of the call, which the
+library's client makes again after the wait GitHub asks for
+(adapters.github.rate_wait), so a fault refuses a call for the run only
+with times enough for every try, and the harness judges the call by its
+last try (invariants.answered); with applied, the write is
 made and its answer lost, as a 502 after GitHub wrote the comment; with
 answer, a read of the activity is answered with a list other than the
 model's, one that lags a push or lists one the run did not see (F8).
@@ -66,7 +69,11 @@ before it, or, for a branch a push made again, the delete before that
 push, at that delete's own time with the head it took away as the head
 before, assumed, as GitHub's branch_deletion entry (F8's second review), a
 renamed branch keeping them, which the model's rename does and canary C6
-now records (DESIGN.md section 11, What C6 records of the activity).
+now records (DESIGN.md section 11, What C6 records of the activity); and
+a call GitHub refuses for a rate limit is one it did not act on, so such
+a fault's refusal writes nothing, assumed, which the client's making a
+write again rests on, and which C4 would settle and is not run (DESIGN.md,
+3.2 and 11).
 """
 
 import base64

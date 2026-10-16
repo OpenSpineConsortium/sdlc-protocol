@@ -123,6 +123,14 @@ ORIGINAL_OPEN_WORK = board.open_work
 ORIGINAL_DEAL_MOVES = team.deal_moves
 ORIGINAL_CLAIM_RELEASED = github.claim_released
 ORIGINAL_RELEASE_ONE = github.release_one
+ORIGINAL_RATE_LIMITED = github.rate_limited
+
+
+def rate_limited_or_a_5xx(status, headers, detail):
+    """github.rate_limited taking a 5xx for a rate limit's refusal too, so
+    the client makes a call again after a 502 that came after GitHub
+    wrote it, as comment-lost's does, and the write is made twice."""
+    return (isinstance(status, int) and status >= 500) or ORIGINAL_RATE_LIMITED(status, headers, detail)
 
 
 def comment_then_labels(api, snap, key, now):
@@ -1529,6 +1537,12 @@ MUTANTS = {
         github, "claim_released", claim_released_ignoring_kept,
         "G14", "the clerk counts a release that kept a head for a branch pushed again at it, as the board does, "
                "so the claim is dealt as released (F8)"),
+    "a 5xx retried as a rate limit": Mutant(
+        github, "rate_limited", rate_limited_or_a_5xx,
+        "G3", "the client makes a call again only after a rate limit's refusal, which GitHub is assumed to make "
+              "before it acts, never after a 5xx, which may come after GitHub wrote, so a release comment GitHub "
+              "wrote and lost the answer to is not written twice (the review of the client's waits for a rate "
+              "limit)"),
 }
 
 

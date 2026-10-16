@@ -223,6 +223,10 @@ TRACES = {
     # release kept counted released whenever its comment came.
     "the clerk dating by the committer date": dealing.Case({1: ("todo",)}, 1, "released-ahead", ("a", "b")),
     "the clerk ignoring a kept head": dealing.Case({1: ("todo",)}, 1, "kept", ("a", "b")),
+    # The release comment GitHub writes and answers with a 502: the client
+    # asks again only after a rate limit's refusal, so under the mutant it
+    # posts the comment a second time, two release comments in one run.
+    "a 5xx retried as a rate limit": (HELD + [WAIT, board_with("comment-lost")], Scope()),
 }
 LANES = {lane.name: lane for lane in mutants.LANES}
 
@@ -275,11 +279,12 @@ class TheLane(unittest.TestCase):
         four: the floor of the first read alone, the earlier floor, a fresh
         delete dating nothing, and the run's event ignored, so the bound is
         widened to 120 and the count noted; its follow-up's second review
-        one, an older push trusted in the run its push started; and F20's
-        fix three, an unsettled release put back, counted, or failing the
-        run."""
+        one, an older push trusted in the run its push started; F20's fix
+        three, an unsettled release put back, counted, or failing the run;
+        and one from the review of the client's waits for a rate limit, a
+        5xx retried as a rate limit."""
         self.assertTrue(10 <= len(mutants.MUTANTS) <= 120)
-        self.assertEqual(len(mutants.MUTANTS), 117)
+        self.assertEqual(len(mutants.MUTANTS), 118)
         self.assertEqual(sorted(TRACES), sorted(mutants.MUTANTS))
 
     def test_every_mutant_names_a_rule_the_library_still_has(self):

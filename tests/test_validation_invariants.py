@@ -797,7 +797,7 @@ class AReleaseThatCannotReadItsComment(unittest.TestCase):
 
     DUE = [Verb("claim", "a", (1,)), Verb("label-on", "a", (1, "claimed")), Verb("label-on", "a", (1, "worker:a")),
            Verb("wait", "clock", (25,))]
-    FAULTS = ("comment-lost-then-unread", "comment-500-then-unread")
+    FAULTS = ("comment-lost-then-unread", "comment-500-then-unread", "comment-limited-then-unread")
 
     def test_the_labels_stay_as_the_release_left_them_and_the_next_run_settles_it(self):
         for fault in self.FAULTS:
@@ -845,6 +845,112 @@ class AReleaseThatCannotReadItsComment(unittest.TestCase):
         self.assertEqual(invariants.comments_of("/issues/12/comments"), 12)
         for path in ("/issues/12/labels", "/issues/12", "/pulls/12/comments", "/issues/\u00b2/comments"):
             self.assertIsNone(invariants.comments_of(path), path)
+
+
+class TheClientsWaitsForARateLimit(unittest.TestCase):
+    """The library's client waits as GitHub asks for a rate limit and makes
+    the call again (adapters.github.rate_wait), so one call the library
+    asks for is up to three on the fake: the harness judges it by its last
+    try (invariants.answered), and holds every run, a faulted one too, to
+    one release comment to an issue and one overlap comment to a piece
+    (invariants.written_once)."""
+
+    DUE = [Verb("claim", "a", (1,)), Verb("label-on", "a", (1, "claimed")), Verb("label-on", "a", (1, "worker:a")),
+           Verb("wait", "clock", (25,))]
+    # F11's trace's shape: a ready pull request a day idle, whose comment
+    # post_comments makes.
+    READY = [Verb("claim", "a", (1,)), Verb("label-on", "a", (1, "claimed")), Verb("label-on", "a", (1, "worker:a")),
+             Verb("open-draft", "a", (1,)), Verb("mark-ready", "a", (100,)), Verb("wait", "clock", (25,))]
+
+    def record_of(self, fault):
+        model = M.seeded((1,), writers=("a",))
+        cycle.board_run(model)
+        for step in self.DUE:
+            verbs.apply(model, step)
+        return cycle.board_run(model, faults=(verbs.FAULTS[fault],))
+
+    def test_a_call_the_client_made_again_is_one_judged_by_its_last_try(self):
+        limited = Call("GET", "/branches", (("per_page", "100"),), None, 429, False, True, verbs.FAULTS["branches-429"])
+        read = limited._replace(status=200, injected=False, fault=None)
+        self.assertEqual(invariants.answered([limited, read]), [(1, read)])
+        self.assertTrue(invariants.reads_failed([limited]))
+        self.assertFalse(invariants.reads_failed([limited, read]))
+        self.assertEqual(len(invariants.answered([limited] * 4)), 2, "no more than the client's three tries")
+        self.assertEqual(len(invariants.answered([limited._replace(status=500), read])), 2, "a 5xx is not asked again")
+        no_right = limited._replace(status=403, fault=verbs.FAULTS["pushes-403"])
+        self.assertEqual(len(invariants.answered([no_right, read])), 2, "a 403 that names no rate limit is not")
+        other = read._replace(query=(("page", "2"), ("per_page", "100")))
+        self.assertEqual(len(invariants.answered([limited, other])), 2, "another ask is a call of its own")
+
+    def test_a_run_that_fails_after_a_read_answered_on_its_second_try_is_not_excused(self):
+        """F11's mutant stops the run at the refused comment; the read of
+        the branches before it, refused once for a rate limit and answered
+        after the client's wait, excuses nothing, where it excused the
+        failed run while each try counted as a read of its own."""
+        steps = self.READY + [board_with("branches-429", "comment-500"), BOARD]
+        self.assertEqual(violations(steps), [])
+        self.assertEqual(violations(self.READY + [board_with("branches-429"), BOARD]), [])
+        with mutants.switched_on(mutants.MUTANTS["a refused comment stops the run"]):
+            self.assertEqual(guarantees(violations(steps)), ["G15"])
+
+    def test_a_release_comment_refused_on_every_try_is_a_refused_write(self):
+        """comment-limited-for-the-run: the release comment is refused on
+        each of the client's three tries, its waits spent, so the release
+        fails as under comment-500, its labels go back and the next run
+        releases the claim; with the read after it refused too,
+        comment-limited-then-unread, the run cannot tell whether its
+        comment stands and leaves the release to the next run (F20)."""
+        self.assertEqual(violations(self.DUE + [board_with("comment-limited-for-the-run"), BOARD]), [])
+        for fault, unread in (("comment-limited-for-the-run", set()), ("comment-limited-then-unread", {1})):
+            with self.subTest(fault=fault):
+                record = self.record_of(fault)
+                posted = [c.status for c in record.calls if c.method == "POST" and c.path == "/issues/1/comments"]
+                self.assertEqual((posted, invariants.unread_releases(record.calls)), ([403] * 3, unread))
+
+    def test_a_push_read_refused_on_every_try_is_one_read_and_the_committer_date_stands_in(self):
+        """pushes-429-for-the-run: three tries of one read, after which G2
+        owes no second read (may_tell_more), as the library makes none
+        (github.may_answer_later); the library as it was, reading such a
+        refusal again after its pause, breaks G2 here."""
+        steps = self.DUE + [board_with("pushes-429-for-the-run"), BOARD]
+        self.assertEqual(violations(steps), [])
+        record = self.record_of("pushes-429-for-the-run")
+        tries = [c.status for c in record.calls if c.path == "/activity" and "activity_type" not in dict(c.query)]
+        self.assertEqual(tries, [429, 429, 429])
+        self.assertEqual([len(reads) for reads in invariants.activity_reads(record.calls, None).values()], [1])
+
+        def again_after_a_rate_limit(problem):
+            return problem.status is None or problem.status >= 500 or problem.status == 429
+
+        with mock.patch.object(github, "may_answer_later", again_after_a_rate_limit):
+            self.assertEqual(guarantees(violations(steps)), ["G2"])
+
+    def test_a_comment_written_twice_in_one_run_is_seen_though_a_fault_touched_the_run(self):
+        """Under the mutant that takes a 5xx for a rate limit, the client
+        posts comment-lost's release comment again after GitHub wrote it;
+        the writes of a run a fault touched are compared with nothing else,
+        so the check of a run's writes is what sees it, for an overlap
+        comment as for a release comment."""
+        steps = self.DUE + [board_with("comment-lost"), BOARD]
+        self.assertEqual(violations(steps), [])
+        with mutants.switched_on(mutants.MUTANTS["a 5xx retried as a rate limit"]):
+            self.assertIn(invariants.Violation("G3", "#1 heard claim-released 2 times in one run"), violations(steps))
+        told = oracle.Effect("comment", 2, "overlap")
+        self.assertEqual(invariants.written_once([told, told]),
+                         [invariants.Violation("G7", "#2 heard overlap 2 times in one run")])
+        self.assertEqual(invariants.written_once([told, oracle.Effect("comment", 3, "overlap")]), [])
+
+    def test_a_rename_refused_for_a_rate_limit_owes_no_word_on_the_issue(self):
+        """A rename a rate limit refuses on every try is refused for the
+        moment, as after a 500: the library says nothing on the issue
+        (github.explain_refusal), and the harness, which reads a refusal
+        for good by its status, leaves it out of the names a run failed to
+        free (invariants.names_not_freed), or it would owe a word for a 403
+        that names no rule and no right."""
+        limited = verbs.Fault("POST", "/branches/*/rename", 403, times=3, message=verbs.SECONDARY)
+        with mock.patch.dict(verbs.FAULTS, {"rename-limited": limited}):
+            self.assertEqual(violations([Verb("claim", "a", (1,)), Verb("wait", "clock", (25,)),
+                                         board_with("rename-limited"), BOARD]), [])
 
 
 class TheChecksHoldUnderAFaultThatNeverFires(unittest.TestCase):

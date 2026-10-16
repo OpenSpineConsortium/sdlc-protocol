@@ -66,6 +66,9 @@ CLAIM_DIR = "docs/agents/claims"
 # a claim's head (github.read_push), told from the reads of a
 # branch's making, which name branch_creation (F13).
 PUSHES = (("activity_type", None),)
+# GitHub's message for a secondary rate limit, which names it
+# (adapters.github.rate_limited).
+SECONDARY = "You have exceeded a secondary rate limit"
 # The faults a board run can meet, by name (DESIGN.md, 3.2).
 FAULTS = {
     "comment-500": Fault("POST", "/issues/*/comments", 500),
@@ -78,8 +81,21 @@ FAULTS = {
                                       then=Fault("GET", "/issues/*/comments", 500)),
     "comment-500-then-unread": Fault("POST", "/issues/*/comments", 500,
                                      then=Fault("GET", "/issues/*/comments", 500)),
-    "comment-rate-limited": Fault("POST", "/issues/*/comments", 403, message="You have exceeded a secondary rate limit",
-                                  retry_after="60"),
+    "comment-rate-limited": Fault("POST", "/issues/*/comments", 403, message=SECONDARY, retry_after="60"),
+    # A comment's post refused for a secondary rate limit on every try the
+    # client makes, the first and one after each of the waits it makes
+    # where GitHub names none, a minute and then two
+    # (adapters.github.rate_wait), which spend the three minutes a client
+    # waits in all: the comment is refused for the run, as comment-500's
+    # is, so a release whose comment it is puts its labels back and is
+    # owed again (F11).
+    "comment-limited-for-the-run": Fault("POST", "/issues/*/comments", 403, times=3, message=SECONDARY),
+    # The same, and the read of the issue's comments after it refused for a
+    # rate limit too, which the client, its three minutes spent, does not
+    # wait out: the run cannot tell whether its comment stands and leaves
+    # the release for the next run to settle, as under F20's two.
+    "comment-limited-then-unread": Fault("POST", "/issues/*/comments", 403, times=3, message=SECONDARY,
+                                         then=Fault("GET", "/issues/*/comments", 403, message=SECONDARY)),
     "label-delete-500": Fault("DELETE", "/issues/*/labels/*", 500),
     "label-post-500": Fault("POST", "/issues/*/labels", 500),
     # A label GitHub writes and loses its answer to, as a release's todo
@@ -90,6 +106,12 @@ FAULTS = {
     "ref-delete-422": Fault("DELETE", "/git/refs/heads/*", 422),
     "compare-404": Fault("GET", "/compare/*", 404),
     "comments-read-500": Fault("GET", "/issues/*/comments", 500),
+    # The read of the branches, which the run needs, refused once for a
+    # rate limit, a 429 naming no wait: the client waits a minute and asks
+    # again (adapters.github.rate_wait), which GitHub answers, so the run
+    # goes on, and a run that fails after it is not excused by the 429,
+    # the read being answered in the end (invariants.answered).
+    "branches-429": Fault("GET", "/branches", 429),
     # The first read of the branches' making in the run (F13), the newest
     # creations' or a branch's own.
     "activity-500": Fault("GET", "/activity", 500, query=(("activity_type", "branch_creation"),)),
@@ -107,6 +129,13 @@ FAULTS = {
     # its committer date, which the run's log says.
     "pushes-403": Fault("GET", "/activity", 403, times=100, message="Resource not accessible by integration",
                         query=PUSHES),
+    # Every try of the first read of a claim's head's push refused for a
+    # rate limit, a 429 naming no wait, which the client asks again after
+    # a minute and then two (adapters.github.rate_wait): the read is
+    # refused for the run with its waits had, so the run does not read it
+    # again after a pause, as it would after a 5xx, and dates the claim by
+    # its committer date, which its log says (github.may_answer_later).
+    "pushes-429-for-the-run": Fault("GET", "/activity", 429, times=3, query=PUSHES),
     # The first read of a claim's head's push answered before the activity
     # lists the push that set the head: the run reads it once more, which
     # lists it, and dates the claim by its push.
