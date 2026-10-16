@@ -487,20 +487,20 @@ class GitStore:
         return self.pushed(model, worker, ref, f"git push --force-with-lease origin {ref}", lease=True, allowed=False)
 
     def lease_elsewhere(self, model, worker, number, files, how, when):
-        """verbs.lease_elsewhere with git: the clone verbs.leasing_clones
+        """verbs.lease_elsewhere with git: the clone verbs.leasing_clone
         names, the worker's second made the first time it is fetched into,
         fetches, makes the claim commit and is pushed from with a lease, by
         a command run from the worker's own clone, which the guard reads as
         the hook does, a directory that is not there being one a cd does not
-        reach (F21)."""
-        pusher, named = verbs.leasing_clones(worker, how)
+        reach, and which names the clones by where they are (F21)."""
+        pusher = verbs.leasing_clone(worker, how)
         model.fetch(pusher)
         ref = verbs.claim_ref(number)
         clone = self.start_from(pusher, ref, f"origin/{MAIN}")
         self.write(clone, f"{CLAIM_DIR}/{number}.md", claim_text(number, worker, files))
         git(clone, "add", "-A", CLAIM_DIR, actor=worker)
         git(clone, "commit", "-q", "-m", f"Claim #{number}", actor=worker, when=when)
-        command = verbs.ELSEWHERE[how].format(clone=named, push=f"push --force-with-lease origin {ref}")
+        command = verbs.leasing_command(worker, how, ref, root=str(self.root / "clones"))
         return self.pushed(model, worker, ref, command, lease=True, allowed=False, clone=pusher)
 
     def drop_commits(self, model, worker, number):

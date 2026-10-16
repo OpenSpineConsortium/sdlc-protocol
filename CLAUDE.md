@@ -8,7 +8,7 @@ Each release waits for the owner's approval, given in the browser in the environ
 
 ## Layout
 
-- sdlc_protocol/: the package. The rules take what they need as arguments, the clock included; a rule that needs the outside world asks a World or a Client for it. The exceptions stay small and where they are: the guard asks git which branch is checked out in the clone a push runs in and the file system whether the directory a cd names is there, and board.write_if_changed writes STATE.md.
+- sdlc_protocol/: the package. The rules take what they need as arguments, the clock included; a rule that needs the outside world asks a World or a Client for it. The exceptions stay small and where they are: the guard asks git which branch is checked out in the clone a push runs in, the file system whether the directory a cd names is there, and HOME or the password database where a ~ leads, and board.write_if_changed writes STATE.md.
 - sdlc_protocol/adapters/: the worlds and the REST client, the only modules that call GitHub or change a git repository. cli.py is the shell around them: it reads the environment, the event, stdin and the files it is named.
 - spec/PROTOCOL.md: the protocol in prose, with no placeholders; it ships in the wheel as sdlc_protocol/spec/PROTOCOL.md.
 - sdlc_protocol/vendoring.py: the record a copy carries and its check; it imports nothing from the package and nothing outside the standard library, since a consumer runs it as a script inside a copy that may hold only a few modules.
