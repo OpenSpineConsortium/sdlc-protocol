@@ -279,9 +279,15 @@ class Release:
     stands; the head of its branch and when its last commit came
     (last_commit), which is when GitHub received the push that set the
     head, as the repository's activity records it (pushed_at), so no
-    worker's clock decides it (F8), or, where the activity records no such
-    push, when the head was committed, as its committer date says
-    (committed_at), one of the two read and the other ""; and whether a
+    worker's clock decides it (F8), or what the adapter dates the head by
+    in that push's place (adapters.github.head_since): an entry of the
+    branch that came after the run began, whatever heads it names, the
+    newest entry the reads listed where it is later than the committer
+    date, or, in the run the branch's own push started, the run's start,
+    each in pushed_at too, since each dates the last commit as a push
+    would, or, where none of those holds, when the head was committed, as
+    its committer date says (committed_at), one of the two read and the
+    other ""; and whether a
     release already kept that head, a branch released/<issue>-<short sha>
     standing at it (kept), so the branch was pushed again with nothing a
     release has not kept. An adapter fills it for every claim a release can
@@ -303,8 +309,10 @@ class Release:
     @property
     def last_commit(self):
         """When the branch's last commit came: GitHub's time of the push
-        that set the head, else the head's committer date, "" when neither
-        is known."""
+        that set the head, or what the adapter dates the head by in its
+        place, an entry after the run began, the newest entry listed or
+        the start of the run the branch's push started (pushed_at), else
+        the head's committer date, "" when neither is known."""
         return self.pushed_at or self.committed_at
 
     @classmethod
@@ -334,9 +342,10 @@ class Snapshot:
     GitHub's answer for each branch it refused to date, which the run's log
     names (adapters.github.began_refused_lines); and why each claim
     branch whose head no read dated by its push was dated otherwise, by
-    its committer date or by the newest entry listed, GitHub's refusal or
-    an activity that lists no push of the head, with what was read in its
-    place (adapters.github.pushed_refused_lines)."""
+    its committer date, by the newest entry listed or by the start of the
+    run its push started, GitHub's refusal or an activity that lists no
+    push of the head, with what was read in its place
+    (adapters.github.pushed_refused_lines)."""
 
     sha: str = ""
     default_branch: str = "main"
@@ -480,8 +489,9 @@ def released_keys(snapshot, idle_after=IDLE_AFTER):
     had gone without a commit for more than idle_after, and which nothing
     has been committed to since (claims.was_released), or whose head a
     release already kept, whenever its comment came (release_counts); the
-    last commit is when GitHub received the push that set the head, else
-    its committer date (Release.last_commit, F8). It takes both acts
+    last commit is when GitHub received the push that set the head, or
+    what the adapter dates the head by in its place, else its committer
+    date (Release.last_commit, F8). It takes both acts
     of a release, the comment and the label claimed taken off, so a stray
     comment frees nothing; a commit after the release, its holder's or a
     new claim's, ends it; and putting the label claimed back undoes it. A

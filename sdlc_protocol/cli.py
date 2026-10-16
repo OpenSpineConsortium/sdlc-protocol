@@ -98,7 +98,7 @@ def board_dry_run(args):
     return 0
 
 
-def plan_board(api, sha, default_branch, now, render_only=False, say=print):
+def plan_board(api, sha, default_branch, now, render_only=False, say=print, started_by=""):
     """The first half of a board run: read the repository as GitHub holds
     it, release the claims due and tell overlapping work (the coordinator),
     and render the page; with render_only, the command's --render-only,
@@ -107,9 +107,12 @@ def plan_board(api, sha, default_branch, now, render_only=False, say=print):
     and the page. The run is in two halves so that the validation harness
     can run them on its own clock with other work between them, as the
     half-minute of a workflow run allows; say takes each log line as it is
-    made."""
+    made, and started_by is the branch whose push started the run
+    (pushed_branch), "" for none, whose claim no read of the activity
+    dates, or one dates only by an entry from before the run began, is
+    dated at the run's start (adapters.github.head_since)."""
     github = github_adapter()
-    snap = github.snapshot(api, sha, default_branch, now)
+    snap = github.snapshot(api, sha, default_branch, now, started_by)
     for line in github.unread_claim_lines(snap) + github.pushed_refused_lines(snap) + github.began_refused_lines(snap):
         say(line)
     if not render_only:
@@ -146,6 +149,41 @@ def default_head_sha(environ, default_branch):
     return environ.get("GITHUB_SHA", "")
 
 
+def pushed_branch(environ):
+    """The branch whose push started the run, as the workflow's event names
+    it, "" where none did: on a push or a branch's creation the ref pushed
+    (GITHUB_REF), when it is a branch's and no tag's; on a pull request's
+    synchronize, the head branch the push moved, read from the event's
+    payload, when the head is this repository's, since a fork's branch is
+    no claim here; and nothing on any other event, nor on a pull request
+    event whose action is not synchronize, whose payload is read all the
+    same, since the action is in it, nor on a payload that cannot be read
+    or where the environment does not name the repository the run is in
+    (GITHUB_REPOSITORY). A claim on that branch whose push no read of the
+    activity dates, or one dates only by an entry from before the run
+    began, is dated at the run's start, for that run alone
+    (spec/PROTOCOL.md, Release; adapters.github.head_since): the push
+    that started the run is the one the activity is likeliest not to list
+    yet. A synchronize that GitHub fires for a change of the pull request's
+    base, with no push, holds such a claim one run too, which the next run
+    reads afresh."""
+    event = environ.get("GITHUB_EVENT_NAME", "")
+    if event in ("push", "create"):
+        ref = environ.get("GITHUB_REF", "")
+        return ref[len("refs/heads/"):] if ref.startswith("refs/heads/") else ""
+    if event != "pull_request":
+        return ""
+    payload, _ = read_event(environ)
+    if payload is None or payload.get("action") != "synchronize":
+        return ""
+    head = (payload.get("pull_request") or {}).get("head") or {}
+    repo = environ.get("GITHUB_REPOSITORY")
+    if not repo or (head.get("repo") or {}).get("full_name") != repo:
+        return ""
+    ref = head.get("ref")
+    return ref if isinstance(ref, str) else ""
+
+
 def board_live_run(args, environ):
     token, repo = environ.get("GITHUB_TOKEN"), environ.get("GITHUB_REPOSITORY")
     if not token or not repo:
@@ -153,7 +191,7 @@ def board_live_run(args, environ):
     api = github_adapter().GitHub(token, repo)
     now = datetime.now(timezone.utc)
     snap, page = plan_board(api, args.sha or default_head_sha(environ, args.default_branch), args.default_branch,
-                            now, args.render_only)
+                            now, args.render_only, started_by=pushed_branch(environ))
     out = Path(args.out) if args.out else board.STATE_PATH
     changed = board.write_if_changed(out, page)
     print(f"{out.as_posix()}: {'rewritten' if changed else 'unchanged'}")

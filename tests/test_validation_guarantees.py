@@ -146,15 +146,24 @@ class TheOracleSpeaksTheSpec(unittest.TestCase):
         model.now = M.HOUR
         verbs.apply(model, Verb("commit", "b", (1, -48 * M.HOUR)))
         self.assertEqual(oracle.LOG_WORDS["listed none"], github.NO_PUSH_LISTED)
+        self.assertEqual(oracle.LOG_WORDS["older push"], github.OLDER_PUSH_LISTED)
         self.assertTrue(oracle.LOG_WORDS["committer date"].startswith(oracle.LOG_WORDS["read from"]))
         self.assertTrue(oracle.LOG_WORDS["floor"].startswith(oracle.LOG_WORDS["read from"]))
+        self.assertTrue(oracle.LOG_WORDS["run start"].startswith(oracle.LOG_WORDS["read from"]))
 
-        def said(fault):
-            record = cycle.board_run(model.clone(), faults=(verbs.FAULTS[fault],))
+        def said(fault, event=cycle.SCHEDULE, ref_name=""):
+            record = cycle.board_run(model.clone(), event, ref_name, faults=(verbs.FAULTS[fault],))
             return [line for line in record.lines if oracle.LOG_WORDS["read from"] in line]
 
         floor = oracle.LOG_WORDS["floor"].format(floor=M.iso(0))
         self.assertEqual(said("pushes-lagging-twice"), ["claude/1: " + oracle.LOG_WORDS["listed none"] + floor])
+        # In the run the branch's push started (F8's third review) the same
+        # reads leave the head dated at the run's start, as GitHub writes a
+        # time, and the line says so.
+        begun = oracle.LOG_WORDS["run start"].format(at=M.iso(model.now))
+        self.assertEqual(said("pushes-lagging-twice", "create", "claude/1"),
+                         ["claude/1: " + oracle.LOG_WORDS["listed none"] + begun])
+        self.assertEqual(oracle.STARTED_BY_EVENTS, ("push", "create"))
         refused = said("pushes-403")
         self.assertEqual(len(refused), 1)
         self.assertTrue(refused[0].startswith("claude/1: " + oracle.LOG_WORDS["refused"]), refused[0])

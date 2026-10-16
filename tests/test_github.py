@@ -1099,11 +1099,17 @@ class Releases(unittest.TestCase):
              (github.NO_PUSH_LISTED, by_floor("2026-09-18T12:00:00Z"))),
             (Turns(Refusal(500), Refusal(503)), ("", committed), 2, (refused, by_commit)),
             # A repository GitHub says keeps no activity after listing an
-            # entry keeps the first read's words and floor.
+            # entry keeps the first read's words and floor; after a first
+            # read that listed nothing, or that it refused, it says what a
+            # 404 always said, that the committer dates are the rule, and
+            # the log is left alone (F8's third review).
             (Turns(stale_off, Refusal(404)), ("2026-09-18T12:00:00Z", ""), 2,
              (github.NO_PUSH_LISTED, by_floor("2026-09-18T12:00:00Z"))),
-            (Turns(FakeAnswer([]), Refusal(404)), ("", committed), 2, (github.NO_PUSH_LISTED, by_commit)),
+            (Turns(FakeAnswer([]), Refusal(404)), ("", committed), 2, None),
+            (Turns(Refusal(500), Refusal(404)), ("", committed), 2, None),
             (Turns(Refusal(500), FakeAnswer([])), ("", committed), 2, (github.NO_PUSH_LISTED, by_commit)),
+            (Turns(Refusal(500), older), ("2026-09-17T12:00:00Z", ""), 2,
+             (github.NO_PUSH_LISTED, by_floor("2026-09-17T12:00:00Z"))),
             (Refusal(403, {"message": "Resource not accessible by integration"}), ("", committed), 1,
              (refused, by_commit)),
             (Refusal(401), ("", committed), 1, (refused, by_commit)),
@@ -1114,26 +1120,81 @@ class Releases(unittest.TestCase):
             self.assert_head_since(answer, committed, began, expected, reads, why)
         # The committer date stands in where it is no earlier than the newest
         # entry listed, the same instant in GitHub's other spelling included,
-        # and where GitHub does not know the commit the newest entry does.
-        later = (("2026-09-18T18:00:00Z", ("", "2026-09-18T18:00:00Z")),
-                 ("2026-09-17T12:00:00+00:00", ("", "2026-09-17T12:00:00+00:00")),
-                 (None, ("2026-09-17T12:00:00Z", "")))
-        for dated, expected in later:
-            floored = by_commit if expected[1] else by_floor("2026-09-17T12:00:00Z")
+        # and where GitHub does not know the commit the newest entry does,
+        # which the line says in place of a committer date it has none of.
+        no_commit = ", so its idleness is read from its newest entry's time, 2026-09-17T12:00:00Z, GitHub not showing its commit"
+        later = (("2026-09-18T18:00:00Z", ("", "2026-09-18T18:00:00Z"), by_commit),
+                 ("2026-09-17T12:00:00+00:00", ("", "2026-09-17T12:00:00+00:00"), by_commit),
+                 (None, ("2026-09-17T12:00:00Z", ""), no_commit))
+        for dated, expected, floored in later:
             self.assert_head_since(Turns(older, older), dated, began, expected, 2, (github.NO_PUSH_LISTED, floored))
 
-    def assert_head_since(self, answer, committed, began, expected, reads, why):
+    def test_in_the_run_a_branch_s_push_started_an_undated_head_is_dated_at_the_run_s_start(self):
+        """F8's third review: a fresh branch's activity that lags both reads
+        is an empty list, with no floor, so in the run its push started,
+        which the workflow's event names (cli.pushed_branch), a head no
+        read dates is dated at the run's start, whatever the reads listed
+        and without reading the commit, the log saying so where there is a
+        why; a read that dates the push dates it as ever, and another
+        branch is read as before. Since F8's follow-up's second review an
+        entry that set the head but came more than PUSH_SINCE_SLACK before
+        the run began, an older push of the same head, dates nothing in
+        that run either: the head is dated at the run's start and the log
+        says the newest push the activity lists of it came before the run
+        began, which is so too of the run's own push where the run, queued
+        behind others, began more than PUSH_SINCE_SLACK after it (the
+        review of that change); another branch is still dated by such an
+        entry."""
+        listed = FakeAnswer([pushed("claude/12", "2026-09-19T12:00:00Z", HEAD_12)])
+        older_head = FakeAnswer([pushed("claude/12", "2026-09-18T12:00:00Z", HEAD_12)])
+        at_the_slack = FakeAnswer([pushed("claude/12", "2026-09-19T11:55:30Z", HEAD_12)])
+        within_it = FakeAnswer([pushed("claude/12", "2026-09-19T11:55:31Z", HEAD_12)])
+        older = FakeAnswer([pushed("claude/12", "2026-09-17T12:00:00Z", "bbbbbbb2222222")])
+        fresh_off = FakeAnswer([dict(pushed("claude/12", "2026-09-19T12:01:00Z", "bbbbbbb2222222"), before=HEAD_12)])
+        began = datetime(2026, 9, 19, 12, 0, 30, 500000, tzinfo=timezone.utc)
+        start = "2026-09-19T12:00:30Z"
+        by_start = f", so its idleness is read from the start of this run, {start}, which its push started"
+        by_commit = ", so its idleness is read from its committer date"
+        refused = "GitHub refused to say"
+        committed = "2026-09-16T12:00:00Z"
+        for answer, expected, reads, why in (
+                (Turns(FakeAnswer([]), FakeAnswer([])), (start, ""), 2, (github.NO_PUSH_LISTED, by_start)),
+                (Turns(older, older), (start, ""), 2, (github.NO_PUSH_LISTED, by_start)),
+                (Turns(Refusal(500), FakeAnswer([])), (start, ""), 2, (github.NO_PUSH_LISTED, by_start)),
+                (Turns(Refusal(500), Refusal(503)), (start, ""), 2, (refused, by_start)),
+                (Refusal(403, {"message": "Resource not accessible by integration"}), (start, ""), 1,
+                 (refused, by_start)),
+                (None, (start, ""), 1, None),
+                (Turns(FakeAnswer([]), Refusal(404)), (start, ""), 2, None),
+                (Turns(FakeAnswer([]), listed), ("2026-09-19T12:00:00Z", ""), 2, None),
+                (fresh_off, ("2026-09-19T12:01:00Z", ""), 1, None),
+                (older_head, (start, ""), 1, (github.OLDER_PUSH_LISTED, by_start)),
+                (at_the_slack, (start, ""), 1, (github.OLDER_PUSH_LISTED, by_start)),
+                (within_it, ("2026-09-19T11:55:31Z", ""), 1, None),
+                (Turns(Refusal(500), older_head), (start, ""), 2, (github.OLDER_PUSH_LISTED, by_start)),
+                (Turns(FakeAnswer([]), older_head), (start, ""), 2, (github.OLDER_PUSH_LISTED, by_start))):
+            self.assert_head_since(answer, committed, began, expected, reads, why, started_by="claude/12")
+        self.assert_head_since(Turns(FakeAnswer([]), FakeAnswer([])), committed, began, ("", committed), 2,
+                               (github.NO_PUSH_LISTED, by_commit), started_by="claude/13")
+        self.assert_head_since(older_head, committed, began, ("2026-09-18T12:00:00Z", ""), 1, None,
+                               started_by="claude/13")
+        self.assertEqual(github.github_time(began), start)
+        self.assertEqual(github.github_time(datetime(2026, 9, 19, 14, 0, 30, tzinfo=timezone(timedelta(hours=2)))),
+                         start)
+
+    def assert_head_since(self, answer, committed, began, expected, reads, why, started_by=""):
         """head_since over one answer of the activity, the head committed at
-        committed (None where GitHub does not know the commit): what it
-        reads, how often and with what pauses, and the log line it leaves,
-        why being (start, end) of that line or None for none."""
+        committed (None where GitHub does not know the commit), in a run
+        started by the push of started_by: what it reads, how often and
+        with what pauses, and the log line it leaves, why being (start,
+        end) of that line or None for none."""
         path, commit = pushes_path("claude/12"), f"/repos/o/r/git/commits/{HEAD_12}"
         answers = {commit: FakeAnswer({"committer": {"date": committed}})} if committed else {}
         answers |= {path: answer} if answer is not None else {}
         waits, refused = [], {}
         opener = InTurn(answers)
         api = github.GitHub("t", "o/r", opener=opener, sleep=waits.append)
-        self.assertEqual(github.head_since(api, "claude/12", HEAD_12, refused, began), expected, answer)
+        self.assertEqual(github.head_since(api, "claude/12", HEAD_12, refused, began, started_by), expected, answer)
         self.assertEqual(len([c for c in opener.calls if c.selector == path]), reads, answer)
         self.assertEqual(waits, [github.PUSH_RETRY_SECONDS] * (reads - 1), answer)
         if why is None:
@@ -1142,11 +1203,13 @@ class Releases(unittest.TestCase):
             start, end = why
             line = refused["claude/12"]
             self.assertTrue(line.startswith(start) and line.endswith(end), line)
-            if start == github.NO_PUSH_LISTED:
+            if start in (github.NO_PUSH_LISTED, github.OLDER_PUSH_LISTED):
                 self.assertEqual(line, start + end)
-        # The commit is read only where no read dated the push: where the
-        # line is left, and for a repository GitHub keeps no activity of.
-        dated = why is None and answer is not None
+        # The commit is read only where no read dated the push and the run
+        # was not started by the branch's push: where the committer date
+        # or the floor is read, and for a repository GitHub keeps no
+        # activity of.
+        dated = (expected[1] == "" and why is None and answer is not None) or started_by == "claude/12"
         self.assertEqual(commit in [c.selector for c in opener.calls], not dated, answer)
 
     def test_an_author_github_does_not_vouch_for_counts_with_write_permission(self):

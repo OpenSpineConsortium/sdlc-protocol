@@ -598,6 +598,56 @@ class TheOpenFindingsShow(unittest.TestCase):
                     found = [(v.guarantee, v.detail) for v in violations(held + [board_with(fault)], issues=(1, 2))]
                 self.assertIn(shown, found)
 
+    def test_f8_s_third_review_the_run_a_claim_s_push_started_dates_an_undated_head_at_its_start(self):
+        """F8's third review: b's claim commit, dated two days back, makes
+        its branch, whose create event starts the run; both reads of its
+        push are answered before the activity lists the making, an empty
+        list with no floor, so the head is dated at the run's start and
+        held, the log saying so; the mutant that dates the branch as any
+        other releases the claim in the run its own push started. A
+        schedule run with the same reads dates the committer date, as
+        before, and releases it, which the oracle reads the same."""
+        fresh = [Verb("claim", "b", (2, -48 * M.HOUR)), Verb("label-on", "b", (2, "claimed"))]
+        started = fresh + [board_with("pushes-lagging-twice", event="create", ref_name="claude/2")]
+        self.assertEqual(violations(started, issues=(1, 2)), [])
+        with mutants.switched_on(mutants.MUTANTS["the run's event ignored"]):
+            found = [(v.guarantee, v.detail) for v in violations(started, issues=(1, 2))]
+        self.assertIn(("G2", "released #2, which was not due"), found)
+        self.assertIn(("G2", "the run's log says claude/2's idleness is read from its committer date, after a list "
+                             "naming no push, where its reads owe the start of this run, after a list naming no "
+                             "push"), found)
+        self.assertEqual(violations(fresh + [board_with("pushes-lagging-twice")], issues=(1, 2)), [])
+
+    def test_f8_s_third_review_the_floor_is_the_newest_entry_of_either_read(self):
+        """F8's third review: an activity catching up, two pushes behind on
+        the first read and one on the second, lists two stale entries, the
+        second's the newer, which the floor is; a first read refused and a
+        second a push behind keep the second's; the branch's delete after
+        the run read it dates the claim as a push would. Each mutant that
+        undoes one of them is red."""
+        three = [Verb("claim", "b", (2,)), Verb("label-on", "b", (2, "claimed")), Verb("wait", "clock", (20,)),
+                 Verb("commit", "b", (2,)), Verb("wait", "clock", (5,)), Verb("commit", "b", (2, -48 * M.HOUR))]
+        two = [Verb("claim", "b", (2,)), Verb("label-on", "b", (2, "claimed")), Verb("wait", "clock", (20,)),
+               Verb("commit", "b", (2, -48 * M.HOUR))]
+        for steps, fault, mutant, shown in (
+                (three, "pushes-catching-up", "the earlier floor", ("G2", "released #2, which was not due")),
+                (three, "pushes-catching-up", "the floor of the first read alone",
+                 ("G2", "released #2, which was not due")),
+                (two, "pushes-catching-up", "the floor of the first read alone",
+                 ("G2", "released #2, which was not due")),
+                (two, "pushes-500-then-lagging", "the floor of the first read alone",
+                 ("G2", "released #2, which was not due")),
+                (two, "pushes-deleted", "a fresh delete dates nothing",
+                 ("G2", "the run read the push of claude/2's head 2 times, where its first read owes 1")),
+                (two, "pushes-deleted", "a fresh delete dates nothing",
+                 ("G2", "the run's log says claude/2's idleness is read from its newest entry's time, after a list "
+                        "naming no push, where its reads owe no line"))):
+            with self.subTest(fault=fault, mutant=mutant):
+                self.assertEqual(violations(steps + [board_with(fault)], issues=(1, 2)), [])
+                with mutants.switched_on(mutants.MUTANTS[mutant]):
+                    found = [(v.guarantee, v.detail) for v in violations(steps + [board_with(fault)], issues=(1, 2))]
+                self.assertIn(shown, found)
+
     def test_the_run_s_log_line_is_held_to_what_its_reads_owe(self):
         """G2's log (pushes_logged): one line for a claim no read dated by
         its push, its start the run's words for why and its end the clause
@@ -621,6 +671,45 @@ class TheOpenFindingsShow(unittest.TestCase):
         self.assertEqual(invariants.pushes_logged([refused, refused], model,
                                                   [said + oracle.LOG_WORDS["committer date"]]), [])
         self.assertEqual(invariants.pushes_logged([missing], model, []), [])
+        # A second read's 404 after a first that listed an entry keeps the
+        # first's words and floor; after one that was refused it says what a
+        # 404 always said, and no line is owed (F8's third review).
+        self.assertEqual(invariants.pushes_logged([lagging, missing], model, [listed + floor]), [])
+        self.assertEqual(invariants.pushes_logged([refused, missing], model, []), [])
+        # In the run the branch's push started the line reads the run's
+        # start, and the head is dated at it (SPEC["started by"]).
+        begun = oracle.LOG_WORDS["run start"].format(at=M.iso(model.now))
+        self.assertEqual(invariants.pushes_logged([lagging, lagging], model, [listed + begun], ref), [])
+        self.assertEqual(invariants.pushes_logged([refused, refused], model, [said + begun], ref), [])
+        self.assertEqual(invariants.pushes_logged([missing], model, [], ref), [])
+        self.assertEqual(invariants.push_dates([lagging, lagging], model, ref), {ref: model.now})
+        self.assertEqual(invariants.push_dates([missing], model, ref), {ref: model.now})
+        # An entry that set the head a day before the run began dates it
+        # outside the run, and in the run the branch's push started it is an
+        # older push of the head: one read is enough, the run's start dates
+        # the head, and the line says the newest push listed came before the
+        # run began (SPEC["started by"]; F8's follow-up's second review).
+        own = [{"ref": f"refs/heads/{ref}", "timestamp": M.iso(M.HOUR), "after": model.refs[ref],
+                "before": "0" * 40}]
+        older = Call("GET", "/activity", query, None, 200, False, True, None, own)
+        older_line = f"{ref}: {oracle.LOG_WORDS['older push']}" + begun
+        self.assertEqual(invariants.push_readings([older], model),
+                         {ref: invariants.PushReading(M.HOUR, "push")})
+        self.assertEqual(invariants.push_readings([older], model, ref),
+                         {ref: invariants.PushReading(model.now, "run start", "older push", M.iso(model.now))})
+        self.assertEqual(invariants.pushes_read_again([older], model), [])
+        self.assertEqual(invariants.pushes_logged([older], model, [older_line], ref), [])
+        self.assertEqual([v.guarantee for v in invariants.pushes_logged([older], model, [], ref)], ["G2"])
+        self.assertEqual([v.guarantee for v in invariants.pushes_logged([older], model, [listed + begun], ref)],
+                         ["G2"])
+        # Another branch's push starting the run leaves the floor rule to
+        # date the head: the stale entry's time is later than its commit's.
+        self.assertEqual(invariants.push_dates([lagging, lagging], model, "claude/2"), {ref: M.HOUR})
+        for calls, lines in (([lagging, lagging], [listed + floor]), ([lagging, lagging], [listed + begun] * 2),
+                             ([lagging, lagging], [listed + begun.replace("01:00", "02:00")]),
+                             ([missing], [listed + begun])):
+            with self.subTest(calls=[c.status for c in calls], lines=lines, started_by=ref):
+                self.assertEqual([v.guarantee for v in invariants.pushes_logged(calls, model, lines, ref)], ["G2"])
         for calls, lines in (([lagging, lagging], [listed + oracle.LOG_WORDS["committer date"]]),
                              ([lagging, lagging], [said + floor]),
                              ([lagging, lagging], [listed + floor.replace("01:00", "02:00")]),

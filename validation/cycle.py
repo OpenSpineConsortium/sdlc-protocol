@@ -118,19 +118,31 @@ def failed(half, problem, where):
     half.raised, half.raised_in = f"{type(problem).__name__}: {problem}", where
 
 
+def started_by(event, ref_name):
+    """The branch whose push started the run, as the library reads it from
+    the workflow's environment (cli.pushed_branch): the ref of a push or a
+    branch's creation, which GITHUB_REF names as a branch's, and nothing
+    on any other event; the oracle reads the same from the event and the
+    ref (oracle.pushed_branch)."""
+    environ = {"GITHUB_EVENT_NAME": event, "GITHUB_REF": f"refs/heads/{ref_name}" if ref_name else ""}
+    return cli.pushed_branch(environ)
+
+
 def start_run(model, event=SCHEDULE, ref_name="", faults=(), keep_states=True):
     """The first half: the model is changed by the coordinator's writes,
     and the run goes on in model.running until finish_run. A run that
     raises in its first half has nothing left to do, and finish_run then
     only records it. The states the record carries are copies, which a
-    run made whole has no use for and does not pay for."""
+    run made whole has no use for and does not pay for. The branch whose
+    push started the run, where the event names one, goes to the library
+    as the workflow's environment would give it (started_by)."""
     api, fake = api_for(model, tuple(faults))
     half = HalfRun(event, ref_name, model.now, tuple(faults), api, fake)
     if keep_states:
         half.started_from = model.copied_whole()
     try:
         half.snapshot, half.page = cli.plan_board(api, model.refs[MAIN], MAIN, moment(model.now),
-                                                  say=half.lines.append)
+                                                  say=half.lines.append, started_by=started_by(event, ref_name))
     except Unserved:
         raise
     except Exception as problem:  # the workflow's step fails on any exception, as Python exits 1

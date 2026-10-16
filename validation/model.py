@@ -169,7 +169,8 @@ class RepoModel:
     # the branch from, None for the push that made the branch; the
     # repository's activity lists it and a release dates a claim by it
     # (F8). A rename keeps the old name's, as GitHub's activity is assumed
-    # to; no canary check reads that yet. Part of the key.
+    # to, which canary C6 now records (DESIGN.md section 11, What C6
+    # records of the activity). Part of the key.
     pushed: dict = field(default_factory=dict)
     # The head the push that made each branch that stands set, by branch
     # name, which the activity's entry of that making names as the head it

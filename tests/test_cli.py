@@ -126,9 +126,10 @@ class BoardLiveRun(unittest.TestCase):
     def live(self, argv, environ=None):
         calls = {}
 
-        def snapshot(api, sha, default_branch, now):
+        def snapshot(api, sha, default_branch, now, started_by=""):
             calls["snapshot"] = (api.token, api.repo, sha, default_branch)
             calls["now"] = now
+            calls["started_by"] = started_by
             return board.Snapshot.from_dict(json.loads(FIXTURE.read_text(encoding="utf-8")))
 
         def coordinate(api, snap, now):
@@ -180,7 +181,8 @@ class BoardLiveRun(unittest.TestCase):
         """The validation harness runs the halves on its own clock with
         other work between them (validation/cycle.py)."""
         said = []
-        with mock.patch.object(github, "snapshot", lambda api, sha, default_branch, now: board.Snapshot(sha=sha)), \
+        with mock.patch.object(github, "snapshot",
+                               lambda api, sha, default_branch, now, started_by="": board.Snapshot(sha=sha)), \
              mock.patch.object(github, "unread_claim_lines", lambda snap: ["unread"]), \
              mock.patch.object(github, "pushed_refused_lines", lambda snap: ["unpushed"]), \
              mock.patch.object(github, "began_refused_lines", lambda snap: ["undated"]), \
@@ -224,8 +226,73 @@ class BoardLiveRun(unittest.TestCase):
                                             environ)
         self.assertEqual((code, calls["snapshot"][2]), (0, "given"), "--sha is taken as given on any event")
 
+    def test_the_branch_whose_push_started_the_run_reaches_the_snapshot(self):
+        """F8's third review: the branch a push or a creation names, and a
+        pull request's head on its synchronize, goes down to the adapter,
+        which dates a head of it no read dates at the run's start; no other
+        event names one, nor a tag's push."""
+        with tempfile.TemporaryDirectory() as folder:
+            out = str(Path(folder) / "STATE.md")
+            payload = Path(folder) / "event.json"
+            payload.write_text(json.dumps({"action": "synchronize", "pull_request": {
+                "head": {"ref": "claude/7", "repo": {"full_name": REPO}}}}), encoding="utf-8")
+            for event, ref, expected in (("create", "refs/heads/claude/7", "claude/7"),
+                                         ("push", "refs/heads/claude/7", "claude/7"),
+                                         ("push", "refs/heads/main", "main"), ("push", "refs/tags/v1", ""),
+                                         ("create", "refs/tags/v1", ""), ("delete", "refs/heads/claude/7", ""),
+                                         ("schedule", "", ""), ("issues", "refs/heads/main", ""),
+                                         ("pull_request", "refs/pull/40/merge", "claude/7")):
+                environ = {**self.ENVIRON, "GITHUB_EVENT_NAME": event, "GITHUB_REF": ref,
+                           "GITHUB_EVENT_PATH": str(payload)}
+                with self.subTest(event=event, ref=ref):
+                    (code, _, _), calls = self.live(["--render-only", "--out", out], environ)
+                    self.assertEqual((code, calls["started_by"]), (0, expected))
+
+    def test_pushed_branch_reads_a_pull_request_s_head_on_its_synchronize_alone(self):
+        """A synchronize names the pull request's head branch when the head
+        is this repository's; any other action, a fork's head, a missing
+        or unreadable payload, a head with no ref and an environment that
+        names no repository, under which a head with no repository would
+        otherwise pass (the first review), name none."""
+        def pushed(payload, event="pull_request", path=None, repo=REPO):
+            with tempfile.TemporaryDirectory() as folder:
+                where = Path(folder) / "event.json"
+                if payload is not None:
+                    where.write_text(payload if isinstance(payload, str) else json.dumps(payload), encoding="utf-8")
+                environ = {"GITHUB_EVENT_NAME": event, "GITHUB_EVENT_PATH": path or str(where)}
+                if repo is not None:
+                    environ["GITHUB_REPOSITORY"] = repo
+                return cli.pushed_branch(environ)
+
+        head = {"ref": "claude/7", "repo": {"full_name": REPO}}
+        self.assertEqual(pushed({"action": "synchronize", "pull_request": {"head": head}}), "claude/7")
+        self.assertEqual(pushed({"action": "opened", "pull_request": {"head": head}}), "")
+        self.assertEqual(pushed({"action": "reopened", "pull_request": {"head": head}}), "")
+        self.assertEqual(pushed({"action": "closed", "pull_request": {"head": head}}), "")
+        self.assertEqual(pushed({"action": "synchronize", "pull_request": {"head": dict(head, repo={"full_name": "f/w"})}}),
+                         "")
+        self.assertEqual(pushed({"action": "synchronize", "pull_request": {"head": dict(head, repo=None)}}), "")
+        for absent in (None, ""):
+            self.assertEqual(pushed({"action": "synchronize", "pull_request": {"head": head}}, repo=absent), "")
+            self.assertEqual(pushed({"action": "synchronize", "pull_request": {"head": dict(head, repo=None)}},
+                                    repo=absent), "")
+            self.assertEqual(pushed({"action": "synchronize",
+                                     "pull_request": {"head": dict(head, repo={"full_name": None})}}, repo=absent),
+                             "")
+        self.assertEqual(pushed({"action": "synchronize", "pull_request": {"head": dict(head, ref=None)}}), "")
+        self.assertEqual(pushed({"action": "synchronize", "pull_request": {}}), "")
+        self.assertEqual(pushed({"action": "synchronize"}), "")
+        self.assertEqual(pushed("not json"), "")
+        self.assertEqual(pushed("[]"), "")
+        self.assertEqual(pushed(None), "")
+        self.assertEqual(pushed(None, path="/nonexistent/event.json"), "")
+        self.assertEqual(pushed({"action": "synchronize", "pull_request": {"head": head}}, event="pull_request_target"),
+                         "")
+        self.assertEqual(cli.pushed_branch({}), "")
+        self.assertEqual(cli.pushed_branch({"GITHUB_EVENT_NAME": "create"}), "")
+
     def test_a_refused_call_is_one_line_and_exit_1(self):
-        def refused(api, sha, default_branch, now):
+        def refused(api, sha, default_branch, now, started_by=""):
             raise github.GitHubError("GET /repos/octo/widgets/issues: HTTP 403", 403)
 
         with mock.patch.object(github, "GitHub", FakeBoardApi), mock.patch.object(github, "snapshot", refused):

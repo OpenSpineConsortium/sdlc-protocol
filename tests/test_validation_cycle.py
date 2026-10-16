@@ -64,7 +64,7 @@ def through_cli(model, event, ref_name):
         out = Path(scratch) / "STATE.md"
         args = cli.board_arguments(["--out", str(out), "--sha", model.refs[M.MAIN]])
         environ = {"GITHUB_TOKEN": "t", "GITHUB_REPOSITORY": M.REPO, "GITHUB_EVENT_NAME": event,
-                   "GITHUB_REF_NAME": ref_name}
+                   "GITHUB_REF_NAME": ref_name, "GITHUB_REF": f"refs/heads/{ref_name}" if ref_name else ""}
         code = cli.board_live_run(args, environ)
         page = out.read_text(encoding="ascii")
     lines = [line for line in printed.getvalue().splitlines() if not line.endswith(("rewritten", "unchanged"))]
@@ -166,9 +166,9 @@ class TheRunInTwoHalves(unittest.TestCase):
         looked = model.clone()
         verbs.apply(looked, Verb("wait", "clock", (3,)))
 
-        def reading(api, branch, sha, refused=None, now=None):
+        def reading(api, branch, sha, refused=None, now=None, started_by=""):
             seen.append(now)
-            return real(api, branch, sha, refused, now)
+            return real(api, branch, sha, refused, now, started_by)
 
         with mock.patch.object(github, "head_since", reading):
             cycle.start_run(model)
