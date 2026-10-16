@@ -21,7 +21,9 @@ fake was not:
   run, and computed on the next, as GitHub computes it late.
 
 Fault makes chosen calls fail: an HTTP status, GitHub's message and, for a
-secondary rate limit, a retry-after header; with applied, the write is
+secondary rate limit, a retry-after header, whose wait the library's
+client makes before it asks again (adapters.github.rate_wait), so such a
+fault answers one try of the call; with applied, the write is
 made and its answer lost, as a 502 after GitHub wrote the comment; with
 answer, a read of the activity is answered with a list other than the
 model's, one that lags a push or lists one the run did not see (F8).

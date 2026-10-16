@@ -345,15 +345,26 @@ class TheTransport(unittest.TestCase):
 class Faults(unittest.TestCase):
     def test_a_fault_answers_its_status_the_times_it_is_given(self):
         model = M.seeded()
-        api, fake = cycle.api_for(model, (Fault("POST", "/issues/*/comments", 403, times=1,
-                                                message="You have exceeded a secondary rate limit", retry_after="60"),))
+        api, fake = cycle.api_for(model, (Fault("POST", "/issues/*/comments", 500, times=1, message="Server Error"),))
         with self.assertRaises(github.GitHubError) as caught:
             api.post(f"/repos/{M.REPO}/issues/1/comments", {"body": "one"})
-        self.assertEqual((caught.exception.status, caught.exception.detail),
-                         (403, "You have exceeded a secondary rate limit"))
+        self.assertEqual((caught.exception.status, caught.exception.detail), (500, "Server Error"))
         self.assertEqual(model.issues[1].comments, ())
         api.post(f"/repos/{M.REPO}/issues/1/comments", {"body": "two"})
         self.assertEqual([c.body for c in model.issues[1].comments], ["two"])
+
+    def test_a_secondary_rate_limit_asks_its_wait_and_the_client_waits_it_out(self):
+        """The fault's 403 says a secondary rate limit was reached and names
+        the seconds to wait in retry-after, as GitHub does; the library's
+        client waits as asked and posts again (adapters.github.rate_wait),
+        so the comment is written once, by the second call."""
+        model = M.seeded()
+        api, fake = cycle.api_for(model, (Fault("POST", "/issues/*/comments", 403, times=1,
+                                                message="You have exceeded a secondary rate limit", retry_after="7"),))
+        api.post(f"/repos/{M.REPO}/issues/1/comments", {"body": "one"})
+        self.assertEqual([(c.status, c.injected) for c in fake.calls], [(403, True), (200, False)])
+        self.assertEqual(api.waited, [7])
+        self.assertEqual([c.body for c in model.issues[1].comments], ["one"])
 
     def test_an_applied_fault_makes_the_write_and_loses_the_answer(self):
         model = M.seeded()

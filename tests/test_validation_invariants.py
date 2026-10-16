@@ -199,12 +199,30 @@ class TheFixesOf041Hold(unittest.TestCase):
                  board_with("label-delete-500"), BOARD]
         self.assertEqual(violations(steps), [])
 
+    IDLE = [Verb("claim", "a", (1,)), Verb("label-on", "a", (1, "claimed")), Verb("label-on", "a", (1, "worker:a")),
+            Verb("wait", "clock", (25,))]
+
     def test_a_refused_release_comment_puts_the_labels_back(self):
-        for fault in ("comment-500", "comment-rate-limited", "comment-lost"):
+        for fault in ("comment-500", "comment-lost"):
             with self.subTest(fault=fault):
-                steps = [Verb("claim", "a", (1,)), Verb("label-on", "a", (1, "claimed")),
-                         Verb("label-on", "a", (1, "worker:a")), Verb("wait", "clock", (25,)), board_with(fault), BOARD]
-                self.assertEqual(violations(steps), [])
+                self.assertEqual(violations(self.IDLE + [board_with(fault), BOARD]), [])
+
+    def test_a_release_comment_refused_for_a_rate_limit_is_written_after_the_wait(self):
+        """F11's secondary rate limit, since the measurement pass's third
+        pull request: the client waits as GitHub asks and posts the comment
+        again (adapters.github.rate_wait), so the run that met the limit
+        releases the claim whole, the comment written once."""
+        self.assertEqual(violations(self.IDLE + [board_with("comment-rate-limited"), BOARD]), [])
+        model = M.seeded((1,), writers=("a",))
+        cycle.board_run(model)
+        for step in self.IDLE:
+            verbs.apply(model, step)
+        record = cycle.board_run(model, faults=(verbs.FAULTS["comment-rate-limited"],))
+        posted = [call.status for call in record.calls if call.method == "POST" and call.path.endswith("/comments")
+                  and oracle.first_line(call.body["body"]) == oracle.RELEASE_MARKER]
+        self.assertEqual(posted, [403, 200])
+        released = [c for c in model.issues[1].comments if oracle.first_line(c.body) == oracle.RELEASE_MARKER]
+        self.assertEqual((len(released), "claimed" in model.issues[1].labels), (1, False))
 
     def test_a_refused_rename_is_said_once_and_tried_again(self):
         steps = [Verb("claim", "a", (1,)), Verb("wait", "clock", (25,)), board_with("rename-403"), BOARD,

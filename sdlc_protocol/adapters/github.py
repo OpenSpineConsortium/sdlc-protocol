@@ -91,6 +91,25 @@ LIMIT_HEADERS = ("x-ratelimit-remaining", "x-ratelimit-limit", "x-ratelimit-rese
 # the year 2287, which datetime writes, and int() of a longer string
 # spends time no answer is worth (count_in).
 LIMIT_DIGITS = 10
+# GitHub refuses a call for a rate limit with a 403 or a 429, as its own
+# documentation says ("Rate limits for the REST API", "Exceeding the rate
+# limit"): its primary limit with x-ratelimit-remaining at 0, to be asked
+# again only after x-ratelimit-reset; a secondary limit with a message that
+# names it, to be asked again after retry-after's seconds where the answer
+# gives them, else after at least a minute and longer each time, giving up
+# after a few tries. The client waits as GitHub asks only while the wait
+# is short (rate_wait): a run that waited longer would hold up the runs
+# queued behind it, and the next run reads everything again anyway, so a
+# longer wait fails the call as any other refusal does. A client's waits
+# are bounded in all too (RATE_WAIT_BUDGET), at three minutes, so a job
+# with a limit of five minutes, the shortest a consumer gives a job that
+# runs the client, ends with GitHub's own words and not by its limit.
+RATE_STATUSES = (403, 429)
+RATE_WORDS = "rate limit"
+RATE_RETRIES = 2
+RATE_FIRST_WAIT = 60
+RATE_LONGEST_WAIT = 120
+RATE_WAIT_BUDGET = 180
 
 # GitHub's mergeable_state words that say only that something besides the
 # branch stops the merge, a rule, a review or the draft itself: how the
@@ -110,13 +129,16 @@ PASSING = {"success", "neutral", "skipped"}
 class GitHubError(team.ClientError):
     """A call GitHub refused or did not answer. The message names the
     method, the path and the status, never the token; status is the HTTP
-    status (None when there was no answer) and detail GitHub's own message
-    from the answer's body, "" when it gave none."""
+    status (None when there was no answer), detail GitHub's own message
+    from the answer's body, "" when it gave none, and headers the
+    answer's headers, None when there was no answer, for the wait a rate
+    limit asks (rate_wait)."""
 
-    def __init__(self, message, status=None, detail=""):
+    def __init__(self, message, status=None, detail="", headers=None):
         super().__init__(message)
         self.status = status
         self.detail = detail
+        self.headers = headers
 
 
 def next_link(headers):
@@ -153,6 +175,43 @@ def count_in(text):
     return int(text)
 
 
+def header(headers, name):
+    """One header of an answer by its lowercase name, read in any case as
+    HTTP reads names, or None where the answer had none: urllib gives an
+    HTTPError's headers as None when it has no answer to read them from,
+    and a stand-in may give them as a plain mapping, whose names keep the
+    case they were written in."""
+    if headers is None:
+        return None
+    return next((value for key, value in headers.items() if isinstance(key, str) and key.lower() == name), None)
+
+
+def rate_wait(status, headers, detail, tries, now):
+    """The seconds to wait before a call GitHub refused is made again, the
+    tries-th time in a row it was refused: the wait GitHub asks for a
+    refusal of a rate limit's, a 429, or a 403 that says it is one by its
+    message or its headers; None for any other refusal, a 403 for a token
+    without the right or a rule among them, for a spent hour whose end
+    the answer does not say, once the tries are spent (RATE_RETRIES), or
+    where GitHub asks for a longer wait than a run waits
+    (RATE_LONGEST_WAIT). now is the clock's time in seconds since the
+    epoch, which x-ratelimit-reset is written in."""
+    if status not in RATE_STATUSES or tries >= RATE_RETRIES:
+        return None
+    asked = count_in(header(headers, "retry-after"))
+    left = count_in(header(headers, "x-ratelimit-remaining"))
+    reset = count_in(header(headers, "x-ratelimit-reset"))
+    if asked is not None:
+        wait = asked
+    elif left == 0:
+        wait = max(reset - int(now), 0) + 1 if reset is not None else None
+    elif status == 403 and RATE_WORDS not in (detail or "").lower():
+        wait = None
+    else:
+        wait = RATE_FIRST_WAIT * 2 ** tries
+    return wait if wait is not None and wait <= RATE_LONGEST_WAIT else None
+
+
 def many(count, word):
     return f"{count} {word}{'' if count == 1 else 's'}"
 
@@ -162,11 +221,16 @@ def calls_line(api):
     REST API GitHub answered, its reads and its writes, and what the
     token's rate limit had left by the latest answer that said it, so
     whoever reads the run's log sees what a board run costs and how near
-    the hour's limit it ran (LIMIT_HEADERS)."""
+    the hour's limit it ran (LIMIT_HEADERS), and how long it waited for a
+    rate limit where it did; a stand-in client that keeps no waits, as one
+    written before the client waited, waited for none."""
     reads = api.made["GET"]
     writes = sum(api.made.values()) - reads
     line = f"GitHub's REST API: {many(reads + writes, 'call')} in this run, {many(reads, 'read')} and " \
            f"{many(writes, 'write')}"
+    waited = getattr(api, "waited", None) or ()
+    if waited:
+        line += f"; it waited {sum(waited)} s for GitHub's rate limits, after {many(len(waited), 'refusal')}"
     if api.limit is None:
         return line
     left, allowed, reset = api.limit
@@ -203,18 +267,23 @@ class GitHub:
     """The REST calls the package makes, through urllib, and the methods
     team.Client lists.
 
-    The opener and the sleep are arguments so a test can hand in fakes; the
-    token is the argument, else GITHUB_TOKEN, and with neither there is no
-    client, since every call would be refused.
+    The opener, the sleep and the clock are arguments so a test can hand in
+    fakes; the token is the argument, else GITHUB_TOKEN, and with neither
+    there is no client, since every call would be refused.
     """
 
-    def __init__(self, token, repo, opener=None, sleep=time.sleep):
+    def __init__(self, token, repo, opener=None, sleep=time.sleep, clock=time.time):
         self.token = token or os.environ.get("GITHUB_TOKEN")
         if not self.token:
             raise GitHubError("no token: pass one, or set GITHUB_TOKEN")
         self.repo = repo
         self.opener = opener or urllib.request.build_opener()
         self.sleep = sleep
+        self.clock = clock
+        # The seconds of each wait the client made for a rate limit, in
+        # order, for the run's log (calls_line) and the run's bound
+        # (RATE_WAIT_BUDGET).
+        self.waited = []
         self.asked = permissions(self)
         # The calls GitHub answered this client, by method, and the rate
         # limit as the latest answer that said it left it: the calls left,
@@ -235,19 +304,47 @@ class GitHub:
         return API + path + ("?" + urllib.parse.urlencode(params) if params else "")
 
     def request(self, method, url, body=None, missing_ok=False):
-        """One call; the decoded JSON and the answer's headers. A 404 is
-        (None, headers) when missing_ok says absence is an answer. Every
+        """One call, made again after the wait GitHub asks where it refuses
+        the call for a rate limit and the wait is one a run takes
+        (wait_before_again); the decoded JSON and the answer's headers, or
+        the last refusal's GitHubError. GitHub refuses a rate limit's call
+        before it does anything with it, so a write is made again as a read
+        is."""
+        tries = 0
+        while True:
+            try:
+                return self.send(method, url, body, missing_ok)
+            except GitHubError as problem:
+                wait = self.wait_before_again(problem, tries)
+                if wait is None:
+                    raise
+            self.waited.append(wait)
+            self.sleep(wait)
+            tries += 1
+
+    def wait_before_again(self, problem, tries):
+        """The wait rate_wait asks before the call is made again, or None
+        where it asks none or the run has waited as long as it waits in all
+        (RATE_WAIT_BUDGET)."""
+        wait = rate_wait(problem.status, problem.headers, problem.detail, tries, self.clock())
+        if wait is None or sum(self.waited) + wait > RATE_WAIT_BUDGET:
+            return None
+        return wait
+
+    def send(self, method, url, body=None, missing_ok=False):
+        """One call, made once; the decoded JSON and the answer's headers. A
+        404 is (None, headers) when missing_ok says absence is an answer. Every
         failure of the call, whether GitHub, the connection or http.client
-        refused it, is a GitHubError, whichever part of urllib raised it;
-        the URL is always the adapter's own or the next page a Link header
-        names, which has the scheme urllib asks of it before trying
-        anything. An answer cut short (IncompleteRead) and one that is no
-        HTTP (BadStatusLine) are http.client's own exceptions, no OSError,
-        which urllib passes on as they are, past every caller that turns a
-        refusal into a line. A call http.client will not send is said by
-        what holds the character it refuses (unsent), and the answer is read
-        as JSON only once the call is done, so a call never sent is never
-        said to have had an answer that was not JSON."""
+        refused it, is a GitHubError, whichever part of urllib raised it; the
+        URL is always the adapter's own or the next page a Link header names,
+        which has the scheme urllib asks of it before trying anything. An
+        answer cut short (IncompleteRead) and one that is no HTTP
+        (BadStatusLine) are http.client's own exceptions, no OSError, which
+        urllib passes on as they are, past every caller that turns a refusal
+        into a line. A call http.client will not send is said by what holds the
+        character it refuses (unsent), and the answer is read as JSON only once
+        the call is done, so a call never sent is never said to have had an
+        answer that was not JSON."""
         data = json.dumps(body).encode("utf-8") if body is not None else None
         headers = self.headers()
         if data is not None:
@@ -262,7 +359,8 @@ class GitHub:
             self.count_answer(method, problem.headers)
             if problem.code == 404 and missing_ok:
                 return None, problem.headers
-            raise GitHubError(f"{where}: HTTP {problem.code}", problem.code, error_detail(problem)) from None
+            raise GitHubError(f"{where}: HTTP {problem.code}", problem.code, error_detail(problem),
+                              problem.headers) from None
         except OSError as problem:
             raise GitHubError(f"{where}: {getattr(problem, 'reason', problem)}") from None
         except http.client.HTTPException as problem:
