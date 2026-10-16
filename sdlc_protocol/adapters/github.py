@@ -192,11 +192,14 @@ def rate_limited(status, headers, detail):
     itself: a 429, Too Many Requests; or a 403 that says it is one, by a
     retry-after header or by a message that names a rate limit, as
     GitHub's refusals for its primary limit ("API rate limit exceeded")
-    and its secondary limits do. A 403 that says neither is GitHub's
-    answer to a token without the right or to a rule, whatever its
-    x-ratelimit-remaining says: every answer counts against the hour, so
-    the hour's last call is answered with none left, whatever GitHub
-    answers it with."""
+    and its secondary limits do. That retry-after tells one whatever the
+    message says is this project's assumption (validation/DESIGN.md,
+    3.2): GitHub's documentation names it for a secondary limit's refusal
+    and never says that no other refusal sends it. A 403 that says
+    neither is GitHub's answer to a token without the right or to a rule,
+    whatever its x-ratelimit-remaining says: every answer counts against
+    the hour, so the hour's last call is answered with none left,
+    whatever GitHub answers it with."""
     if status not in RATE_STATUSES:
         return False
     return status == 429 or header(headers, "retry-after") is not None or RATE_WORDS in (detail or "").lower()

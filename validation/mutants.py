@@ -124,6 +124,9 @@ ORIGINAL_DEAL_MOVES = team.deal_moves
 ORIGINAL_CLAIM_RELEASED = github.claim_released
 ORIGINAL_RELEASE_ONE = github.release_one
 ORIGINAL_RATE_LIMITED = github.rate_limited
+ORIGINAL_RATE_WAIT = github.rate_wait
+# The headers of the token's hour, which rate_wait reads for the hour's end.
+HOUR_HEADERS = ("x-ratelimit-remaining", "x-ratelimit-reset")
 
 
 def rate_limited_or_a_5xx(status, headers, detail):
@@ -131,6 +134,85 @@ def rate_limited_or_a_5xx(status, headers, detail):
     the client makes a call again after a 502 that came after GitHub
     wrote it, as comment-lost's does, and the write is made twice."""
     return (isinstance(status, int) and status >= 500) or ORIGINAL_RATE_LIMITED(status, headers, detail)
+
+
+def rate_wait_retry_after_alone(status, headers, detail, tries, now):
+    """github.rate_wait in the order the client's first version took the
+    waits GitHub asks for: retry-after's seconds alone where it names any,
+    the hour's end only where it names none, so a refusal naming a short
+    wait with the token's hour spent is made again before the hour ends,
+    while GitHub still has no call to give it."""
+    if github.header(headers, "retry-after") is not None:
+        headers = {k: v for k, v in headers.items() if not (isinstance(k, str) and k.lower() in HOUR_HEADERS)}
+    return ORIGINAL_RATE_WAIT(status, headers, detail, tries, now)
+
+
+def rate_limited_by_its_words_alone(status, headers, detail):
+    """github.rate_limited reading no header, so a 403 that names a wait in
+    retry-after and no rate limit in its message is taken for a refusal
+    for good and not waited out."""
+    return ORIGINAL_RATE_LIMITED(status, {}, detail)
+
+
+def rate_limited_by_its_headers_alone(status, headers, detail):
+    """github.rate_limited reading no message, so a secondary rate limit's
+    403 that names no wait, as GitHub's own sends, is taken for a refusal
+    for good: not waited out, and a rename it refused said on the issue to
+    be refused by a rule or a right."""
+    return ORIGINAL_RATE_LIMITED(status, headers, "")
+
+
+def rate_limited_whatever_the_403(status, headers, detail):
+    """github.rate_limited taking every 403 for a rate limit's, a token
+    without the right's among them, so the client waits out a refusal no
+    wait lifts and asks GitHub again for nothing."""
+    return status in github.RATE_STATUSES
+
+
+def may_answer_later_after_a_rate_limit(problem):
+    """github.may_answer_later as the client's first version had it: a
+    rate limit's refusal, which the client has waited out as long as
+    GitHub asks and a run waits, may be answered later, so the push it
+    refused is read again after the library's own pause while GitHub
+    still asks for no call."""
+    status = problem.status
+    if status is None or status >= 500 or status == 429:
+        return True
+    return status == 403 and "rate limit" in (problem.detail or str(problem)).lower()
+
+
+def rate_wait_never(status, headers, detail, tries, now):
+    """github.rate_wait asking no wait of any refusal, so the client makes
+    no call again and a rate limit's refusal that a minute's wait lifts
+    fails the call at once."""
+    return None
+
+
+def wait_before_again_unbounded(self, problem, tries):
+    """github.GitHub.wait_before_again without the bound on a run's waits
+    in all (RATE_WAIT_BUDGET), so a run that has waited its three minutes
+    waits again, past what a job's limit leaves the rest of the run."""
+    return github.rate_wait(problem.status, problem.headers, problem.detail, tries, self.clock())
+
+
+def explain_refusal_of_a_rate_limit_too(api, key, old, new, problem):
+    """github.explain_refusal without its skip of a rate limit's refusal,
+    as the client's first version had it: a rename a rate limit refused
+    on every try is said on the issue to be refused for good, sending the
+    owner after a rule or a right that is not missing, and its marker
+    keeps a later refusal for good unsaid."""
+    if problem.status not in github.REFUSED_FOR_GOOD:
+        return ""
+    marker = board.RENAME_REFUSED_MARKER.format(branch=new)
+    words = f"HTTP {problem.status}{github.github_words(problem)}"
+    try:
+        if github.has_marker(api, key, marker):
+            return ""
+        text = board.rename_refused_text(old, new, github.rulesets_on(api, (old, new)), words)
+        api.post(f"/repos/{api.repo}/issues/{key}/comments", {"body": marker + "\n" + text})
+    except github.GitHubError as failure:
+        return f"; saying so on #{key} failed: {failure}{github.github_words(failure)}"
+    return f"; said so on #{key}"
 
 
 def comment_then_labels(api, snap, key, now):
@@ -1543,6 +1625,47 @@ MUTANTS = {
               "before it acts, never after a 5xx, which may come after GitHub wrote, so a release comment GitHub "
               "wrote and lost the answer to is not written twice (the review of the client's waits for a rate "
               "limit)"),
+    # The second review of the client's waits for a rate limit: one mutant
+    # for each rule of the client's waits, its first version's and its
+    # first review's, held by the waits the fake keeps
+    # (invariants.waits_as_asked), the reads of a push (pushes_read_again)
+    # and the word a run owes on the issue.
+    "retry-after waited in place of the hour's end": Mutant(
+        github, "rate_wait", rate_wait_retry_after_alone,
+        "G15", "the client waits the longest of the waits GitHub asks for, since each holds whatever the other "
+               "says, so a refusal naming a short wait with the token's hour spent is not made again before the "
+               "hour's end (the first review of the client's waits)"),
+    "retry-after not telling a rate limit": Mutant(
+        github, "rate_limited", rate_limited_by_its_words_alone,
+        "G15", "a 403 that names a wait in retry-after is a rate limit's refusal, this project's assumption, and "
+               "is waited out (the client's waits for a rate limit)"),
+    "a rate limit's words not telling one": Mutant(
+        github, "rate_limited", rate_limited_by_its_headers_alone,
+        "G15", "a 403 whose message names a rate limit is a rate limit's refusal though it names no wait, as "
+               "GitHub's secondary limits send it, and is waited out (the client's waits for a rate limit)"),
+    "any 403 taken for a rate limit": Mutant(
+        github, "rate_limited", rate_limited_whatever_the_403,
+        "G15", "a 403 that names neither a wait nor a rate limit is GitHub's answer for a token without the "
+               "right or a rule, which no wait lifts, so it is not made again (the first review of the client's "
+               "waits)"),
+    "a rate limit's refusal read again after the pause": Mutant(
+        github, "may_answer_later", may_answer_later_after_a_rate_limit,
+        "G2", "a rate limit's refusal of a push's read, which the client has waited out as long as GitHub asks "
+              "and a run waits, is not read again after the library's pause, while GitHub still asks for no "
+              "call (the first review of the client's waits)"),
+    "the client never waiting": Mutant(
+        github, "rate_wait", rate_wait_never,
+        "G15", "the client waits as GitHub asks for a rate limit and makes the call again, so a refusal a "
+               "minute's wait lifts fails no call (the client's waits for a rate limit)"),
+    "no bound on a run's waits": Mutant(
+        github.GitHub, "wait_before_again", wait_before_again_unbounded,
+        "G15", "a run waits three minutes in all for rate limits, so a job with a limit of five minutes ends "
+               "with GitHub's own words and not by its limit (the client's waits for a rate limit)"),
+    "a rename a rate limit refused said refused for good": Mutant(
+        github, "explain_refusal", explain_refusal_of_a_rate_limit_too,
+        "G10", "a rename a rate limit refused on every try is refused for the moment and owes no word on the "
+               "issue, which would name a rule or a right that is not missing (the first review of the "
+               "client's waits)"),
 }
 
 

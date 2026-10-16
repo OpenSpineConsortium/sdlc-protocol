@@ -103,6 +103,13 @@ FAULTS = {
     "label-post-lost": Fault("POST", "/issues/*/labels", 502, applied=True),
     "rename-403": Fault("POST", "/branches/*/rename", 403),
     "rename-422": Fault("POST", "/branches/*/rename", 422),
+    # A released claim's rename refused for a secondary rate limit on
+    # every try the client makes, a minute and then two apart: a refusal
+    # for the moment, as a 500 is, so the library says nothing on the
+    # issue (github.explain_refusal), whose word would send the owner
+    # after a rule or a right that is not missing, and the next run tries
+    # the rename again.
+    "rename-limited": Fault("POST", "/branches/*/rename", 403, times=3, message=SECONDARY),
     "ref-delete-422": Fault("DELETE", "/git/refs/heads/*", 422),
     "compare-404": Fault("GET", "/compare/*", 404),
     "comments-read-500": Fault("GET", "/issues/*/comments", 500),
@@ -112,6 +119,17 @@ FAULTS = {
     # goes on, and a run that fails after it is not excused by the 429,
     # the read being answered in the end (invariants.answered).
     "branches-429": Fault("GET", "/branches", 429),
+    # The same read refused once with a 403 whose retry-after asks for ten
+    # seconds and whose x-ratelimit headers say the token's hour is spent
+    # and ends a hundred seconds on, and whose message names no rate
+    # limit, so its retry-after alone tells it for a rate limit's, as this
+    # project assumes (DESIGN.md, 3.2). GitHub asks for each wait
+    # ("Exceeding the rate limit"), so the client waits the longer, until
+    # a second after the hour's end, and asks again, which GitHub answers;
+    # a client that waited retry-after's ten seconds alone, or took the
+    # refusal for one of a right, is seen by its waits
+    # (invariants.waits_as_asked).
+    "branches-limited-for-the-hour": Fault("GET", "/branches", 403, retry_after="10", reset_after=100),
     # The first read of the branches' making in the run (F13), the newest
     # creations' or a branch's own.
     "activity-500": Fault("GET", "/activity", 500, query=(("activity_type", "branch_creation"),)),
@@ -136,6 +154,17 @@ FAULTS = {
     # again after a pause, as it would after a 5xx, and dates the claim by
     # its committer date, which its log says (github.may_answer_later).
     "pushes-429-for-the-run": Fault("GET", "/activity", 429, times=3, query=PUSHES),
+    # Every read of a claim's head's push refused for a secondary rate
+    # limit whose retry-after asks for two and a half minutes, longer than
+    # a run waits for one call (adapters.github.rate_wait): the client
+    # does not wait, the refusal is GitHub's answer for the run, and the
+    # run does not read the push again after its pause, GitHub still
+    # asking for no call, but dates the claim by its committer date. A
+    # library that read it again would make two reads of one push with the
+    # client's tries unspent, which the harness tells from the client's
+    # own tries only by the waits the fake keeps (invariants.answered).
+    "pushes-limited-too-long": Fault("GET", "/activity", 403, times=100, message=SECONDARY, retry_after="150",
+                                     query=PUSHES),
     # The first read of a claim's head's push answered before the activity
     # lists the push that set the head: the run reads it once more, which
     # lists it, and dates the claim by its push.

@@ -674,8 +674,15 @@ class RateLimits(unittest.TestCase):
                 self.assertNotIn("waited", github.calls_line(api))
 
     def test_a_403_that_names_its_wait_is_a_rate_limit_s(self):
-        """GitHub sends retry-after with a rate limit's refusal alone, so a
-        403 that carries one is waited out whatever its message says."""
+        """A 403 that carries retry-after is waited out whatever its message
+        says. That is this project's assumption, not GitHub's word: its
+        documentation says that for a secondary rate limit "you will
+        receive a `403` or `429` response and an error message that
+        indicates that you exceeded a secondary rate limit. If the
+        `retry-after` response header is present, you should not retry
+        your request until after that many seconds has elapsed" ("Exceeding
+        the rate limit"), and never says that no other refusal sends one
+        (validation/DESIGN.md, 3.2)."""
         api, waits, opener = self.asked({self.PATH: Turns(Refusal(403, headers={"retry-after": "7"}),
                                                           FakeAnswer({"number": 7}))})
         self.assertEqual(api.get(self.PATH), {"number": 7})

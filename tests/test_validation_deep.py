@@ -634,7 +634,8 @@ class KnownSearches(unittest.TestCase):
         on that read, too."""
         pushes = ["activity-500-all", "pushes-403", "pushes-429-for-the-run", "pushes-500", "pushes-500-then-lagging",
                   "pushes-500-then-moved", "pushes-catching-up", "pushes-deleted", "pushes-lagging",
-                  "pushes-lagging-then-500", "pushes-lagging-twice", "pushes-moved", "pushes-moved-twice"]
+                  "pushes-lagging-then-500", "pushes-lagging-twice", "pushes-limited-too-long", "pushes-moved",
+                  "pushes-moved-twice"]
         self.assertEqual(sorted(deep.ACTIVITY_FAULTS), ["activity-500"] + pushes)
         for space, depth, wanted in (("E-activity", 2, ["activity-500"] + pushes), ("E-faults", 1, pushes)):
             with self.subTest(space=space):
