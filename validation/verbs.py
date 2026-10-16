@@ -53,7 +53,7 @@ from typing import NamedTuple
 from sdlc_protocol import guard
 
 from . import cycle, model as M, oracle
-from .fake_github import DELETED, LAGGING, LAGGING_BY_TWO, MOVED, MOVED_TWICE, Fault
+from .fake_github import DELETED, LAGGING, LAGGING_BY_TWO, LISTED_LATE, MOVED, MOVED_TWICE, Fault
 from .model import CLAIM_PREFIX, HOUR, MAIN, OWNER, RELEASED_PREFIX, Comment, PullRequest, claim_text
 
 CLOCK, BOARD = "clock", "board"
@@ -80,6 +80,19 @@ FAULTS = {
                                      then=Fault("GET", "/issues/*/comments", 500)),
     "comment-rate-limited": Fault("POST", "/issues/*/comments", 403, message="You have exceeded a secondary rate limit",
                                   retry_after="60"),
+    # A release comment GitHub refuses with a 4xx, which it answers in
+    # place of writing anything, so the run puts the labels back
+    # (SPEC["put back"]), where after a 500 it cannot tell whether GitHub
+    # wrote the comment and leaves them off (F23).
+    "comment-422": Fault("POST", "/issues/*/comments", 422, message="Validation Failed"),
+    # A release comment GitHub writes and loses its answer to, with a 502
+    # or with no answer at all, and lists only after the read of the
+    # issue's comments that follows, which lists none of it, so the run
+    # cannot tell whether the comment stands (SPEC["listed late"]; F23).
+    "comment-late": Fault("POST", "/issues/*/comments", 502, applied=True,
+                          then=Fault("GET", "/issues/*/comments", 200, answer=LISTED_LATE)),
+    "comment-unanswered-late": Fault("POST", "/issues/*/comments", None, applied=True, message="timed out",
+                                     then=Fault("GET", "/issues/*/comments", 200, answer=LISTED_LATE)),
     "label-delete-500": Fault("DELETE", "/issues/*/labels/*", 500),
     "label-post-500": Fault("POST", "/issues/*/labels", 500),
     # A label GitHub writes and loses its answer to, as a release's todo

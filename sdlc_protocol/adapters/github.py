@@ -1235,26 +1235,31 @@ def release_one(api, snap, key, now):
     and todo on where the issue carries none of todo, epic and blocker
     (coordinator.labels_put_on), then the comment, in the protocol's
     order, and the board counts a release only once both are done. A run
-    that fails between them puts back the labels it took off and takes off
-    the todo it put on, so the issue is as the run found it and the next
-    run starts the release over, unless the comment turns out to be there
-    after all, one GitHub wrote and lost its answer to, which makes the
-    release whole. A run that cannot read the issue's comments to see
-    whether it is there leaves the labels as the release left them and
-    counts no release of its own (unsettled; F20), since labels put back
-    beside a comment that stands would hold the claim for good: the
-    comment tells every later coordinator the claim is released, and the
-    label claimed tells the board it is held; the next run, reading the
-    comments, settles it as it settles any claim whose labels are off,
-    finding the release whole or releasing the claim again unless its
-    holder pushed or a person put the label claimed back in the meantime,
-    while on a head a release already kept, where a release comment that
-    counts stands, whenever it came (board.release_counts), that earlier
-    release frees the claim in the same run once the labels are off.
-    Where GitHub refuses the putting back too, the labels are left off
-    with no comment, as an unsettled release leaves them where GitHub
-    wrote none, until a run releases the claim or a person puts them
-    back. What was done, in a line."""
+    whose comment fails reads the issue's comments, and the comment there
+    after all, one GitHub wrote and lost its answer to, makes the release
+    whole. Where they list none and GitHub refused the comment with a 4xx,
+    which says it wrote nothing (wrote_nothing), the run puts back the
+    labels it took off and takes off the todo it put on, so the issue is
+    as the run found it and the next run starts the release over. Where
+    the run cannot read the comments (unsettled; F20), or they list none
+    after a server error or no answer at all, either of which may come
+    after GitHub wrote the comment, which it may list only later
+    (not_listed; F23), the run cannot tell whether the comment stands,
+    so it leaves the labels as the release left them and counts no
+    release of its own, since labels put back beside a comment that
+    stands would hold the claim for good: the comment tells every later
+    coordinator the claim is released, and the label claimed tells the
+    board it is held; the next run, reading the comments, settles it as
+    it settles any claim whose labels are off, finding the release whole
+    or releasing the claim again unless its holder pushed or a person put
+    the label claimed back in the meantime, while on a head a release
+    already kept, where a release comment that counts stands, whenever it
+    came (board.release_counts), that earlier release frees the claim in
+    the same run once the labels are off. Where GitHub refuses the
+    putting back too, the labels are left off with no comment, as an
+    unsettled release leaves them where GitHub wrote none, until a run
+    releases the claim or a person puts them back. What was done, in a
+    line."""
     release = snap.releases[key]
     names, put_on = coordinator.labels_released(snap, key), coordinator.labels_put_on(snap, key)
     taken_off = []
@@ -1277,6 +1282,8 @@ def release_one(api, snap, key, now):
             released_at = landed_release(api, key, release)
         except GitHubError as unread:
             return unsettled(snap, key, names, put_on, problem, unread)
+        if not released_at and not wrote_nothing(problem):
+            return not_listed(snap, key, names, put_on, problem)
         if not released_at:
             return (f"#{key}: not released, the comment failed: {problem}{github_words(problem)}"
                     + put_back(api, key, taken_off, put_on))
@@ -1343,34 +1350,66 @@ def put_back(api, key, names, put_on=()):
 def unsettled(snap, key, names, put_on, problem, unread):
     """The line of a release whose comment failed and whose issue's
     comments could not be read to see whether GitHub wrote it anyway: the
-    labels stay as the release left them, and the snapshot shows them so,
-    with no release of this run's, since the run cannot tell whether one
-    stands, so the page lists the claim as held and nothing is renamed
-    this run; the next run, reading the comments, finds the comment and
-    the release is whole, or finds none and releases the claim again,
-    unless its holder pushed since or a person put the label claimed back
-    beside the comment (F20; until its fix the labels went back beside a
-    comment that might stand, which held the claim for good). A head a
-    release already kept, where a release comment that counts stands, is
-    the exception: that comment counts whenever it came
+    labels stay as the release left them (labels_left; F20, until whose
+    fix the labels went back beside a comment that might stand, which held
+    the claim for good)."""
+    return labels_left(snap, key, names, put_on, problem,
+                       f"its issue's comments could not be read to see whether GitHub wrote it anyway: "
+                       f"{unread}{github_words(unread)}")
+
+
+def not_listed(snap, key, names, put_on, problem):
+    """The line of a release whose comment GitHub answered with a server
+    error or with no answer at all and whose issue's comments, read after
+    it, list none: either may come after GitHub wrote the comment, which it
+    may list only later, so the read does not tell whether the comment
+    stands, and the labels stay as the release left them (labels_left;
+    F23, until whose fix the labels went back, which held the claim for
+    good where GitHub had written the comment)."""
+    return labels_left(snap, key, names, put_on, problem,
+                       "its issue's comments list none yet, though GitHub may have written it before that failure "
+                       "and list it only later")
+
+
+def labels_left(snap, key, names, put_on, problem, why):
+    """The line of a release the run cannot tell is whole, why being the
+    reason it cannot: the labels stay as the release left them, and the
+    snapshot shows them so, with no release of this run's, since the run
+    cannot tell whether one stands, so the page lists the claim as held
+    and nothing is renamed this run; the next run, reading the comments,
+    finds the comment and the release is whole, or finds none and
+    releases the claim again, unless its holder pushed since or a person
+    put the label claimed back beside the comment. A head a release
+    already kept, where a release comment that counts stands, is the
+    exception: that comment counts whenever it came
     (board.release_counts), so with the labels off the snapshot counts
     that earlier release, and the same run lists the claim as released
     and deletes the branch, whose work is kept, with no word of this
     release on the issue where GitHub wrote none (F20's review). So the
     line says what was done and nothing of what comes next."""
     coordinator.after_labels(snap, key, names, put_on)
-    return (f"#{key}: release unsettled, the comment failed: {problem}{github_words(problem)}; its issue's "
-            f"comments could not be read to see whether GitHub wrote it anyway: {unread}{github_words(unread)}; "
+    return (f"#{key}: release unsettled, the comment failed: {problem}{github_words(problem)}; {why}; "
             f"the labels stay as the release left them")
+
+
+def wrote_nothing(problem):
+    """Whether a write that failed surely changed nothing: GitHub refused
+    it with a 4xx, which it answers in place of making the write, where a
+    server error, a 502 among them, or no answer at all may come after
+    GitHub made it, and GitHub may list what it made only later, so a read
+    that finds nothing then tells nothing (F23)."""
+    return problem.status is not None and 400 <= problem.status < 500
 
 
 def landed_release(api, key, release):
     """When the comment that releases this claim was made, by the rule the
-    next run reads it with (claims.was_released), or "" when none stands:
-    a call that GitHub answered with an error, a 502 or a timeout, may
-    still have written the comment, and once it stands the release is done;
-    only a comment newer than the latest the run held is this run's
-    (newer). A read GitHub refuses raises GitHubError, since the run then
+    next run reads it with (claims.was_released), or "" when none is
+    listed: a call that GitHub answered with an error, a 502 or a timeout,
+    may still have written the comment, and once it stands the release is
+    done; only a comment newer than the latest the run held is this run's
+    (newer). "" says no more than that none is listed yet, since GitHub
+    may list a comment it wrote only later (release_one, wrote_nothing;
+    F23). A read GitHub refuses raises GitHubError, since the run then
     cannot tell whether the comment stands (release_one)."""
     comments = api.get_all(f"/repos/{api.repo}/issues/{key}/comments")
     released_at = claims.latest_release(comments, may_write(api))

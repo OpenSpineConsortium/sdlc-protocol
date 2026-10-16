@@ -40,6 +40,12 @@ def run(event, ref_name=""):
 
 
 def violations(steps, scope=Scope(), known=oracle.AS_BUILT, issues=(1,), labels=("todo",), opaque_pulls=False):
+    return played(steps, scope, known, issues, labels, opaque_pulls)[1]
+
+
+def played(steps, scope=Scope(), known=oracle.AS_BUILT, issues=(1,), labels=("todo",), opaque_pulls=False):
+    """The model once the steps are played, and the violations found on
+    the way."""
     model = M.seeded(issues or scope.issues, writers=("a", "b", "c", verbs.CAROL, verbs.DANA), labels=labels)
     # As validation/run.py sets it from a scenario: with it on the fake
     # answers blocked for every mergeable pull request, as GitHub does
@@ -51,11 +57,16 @@ def violations(steps, scope=Scope(), known=oracle.AS_BUILT, issues=(1,), labels=
         before = model.clone()
         outcome = verbs.apply(model, step, scope)
         found += invariants.step_checks(before, model, step, outcome, known)
-    return found
+    return model, found
 
 
 def guarantees(found):
     return sorted({v.guarantee for v in found})
+
+
+def release_comments(model, number):
+    """How many release comments the issue carries."""
+    return sum(oracle.comment_kind(c.body) == "claim-released" for c in model.comments_on(number))
 
 
 IDLE_RELEASE = [Verb("claim", "a", (1,)), Verb("label-on", "a", (1, "claimed")), Verb("label-on", "a", (1, "worker:a")),
@@ -200,11 +211,26 @@ class TheFixesOf041Hold(unittest.TestCase):
         self.assertEqual(violations(steps), [])
 
     def test_a_refused_release_comment_puts_the_labels_back(self):
-        for fault in ("comment-500", "comment-rate-limited", "comment-lost"):
+        """F1's fix carried to the comment: GitHub refuses the release
+        comment with a 4xx, which it answers in place of writing anything,
+        so the run puts the labels back and the next run releases the claim
+        whole; a comment GitHub wrote and lost its answer to, and lists,
+        makes the release whole in the run (SPEC["put back"],
+        SPEC["whole"]). The secondary rate limit is held to no violation
+        alone, since a client that retries it makes the release whole."""
+        due = [Verb("claim", "a", (1,)), Verb("label-on", "a", (1, "claimed")), Verb("label-on", "a", (1, "worker:a")),
+               Verb("wait", "clock", (25,))]
+        for fault, labels in (("comment-422", {"claimed", "todo", "worker:a"}), ("comment-rate-limited", None),
+                              ("comment-lost", {"todo"})):
             with self.subTest(fault=fault):
-                steps = [Verb("claim", "a", (1,)), Verb("label-on", "a", (1, "claimed")),
-                         Verb("label-on", "a", (1, "worker:a")), Verb("wait", "clock", (25,)), board_with(fault), BOARD]
-                self.assertEqual(violations(steps), [])
+                model, found = played(due + [board_with(fault)])
+                self.assertEqual(found, [])
+                if labels is not None:
+                    self.assertEqual(model.issues[1].labels, labels)
+                model, found = played(due + [board_with(fault), BOARD])
+                self.assertEqual(found, [])
+                self.assertEqual((model.issues[1].labels, "claude/1" in model.refs), ({"todo"}, False))
+                self.assertEqual(release_comments(model, 1), 1)
 
     def test_a_refused_rename_is_said_once_and_tried_again(self):
         steps = [Verb("claim", "a", (1,)), Verb("wait", "clock", (25,)), board_with("rename-403"), BOARD,
@@ -827,6 +853,85 @@ class AReleaseThatCannotReadItsComment(unittest.TestCase):
         self.assertEqual(invariants.comments_of("/issues/12/comments"), 12)
         for path in ("/issues/12/labels", "/issues/12", "/pulls/12/comments", "/issues/\u00b2/comments"):
             self.assertIsNone(invariants.comments_of(path), path)
+
+
+class AReleaseThatCannotTellWhetherItsCommentStands(unittest.TestCase):
+    """F23: GitHub answers the release comment with a server error or with
+    no answer at all, either of which may come after it wrote the comment,
+    and the read of the issue's comments after it lists none, the comment
+    written and listed late or never written; the run leaves the labels as
+    the release left them, counts no release and goes on, and the next run
+    settles it (SPEC["listed late"], SPEC["unsettled"], SPEC["settled
+    next"])."""
+
+    DUE = [Verb("claim", "a", (1,)), Verb("label-on", "a", (1, "claimed")), Verb("label-on", "a", (1, "worker:a")),
+           Verb("wait", "clock", (25,))]
+    # Written and listed late after a 502 or no answer, and never written
+    # after a 500.
+    FAULTS = (("comment-late", 1), ("comment-unanswered-late", 1), ("comment-500", 0))
+
+    def test_the_labels_stay_off_and_the_next_run_settles_it(self):
+        for fault, written in self.FAULTS:
+            with self.subTest(fault=fault):
+                model, found = played(self.DUE + [board_with(fault)])
+                self.assertEqual(found, [])
+                self.assertEqual((model.issues[1].labels, "claude/1" in model.refs), ({"todo"}, True))
+                self.assertEqual(release_comments(model, 1), written)
+                model, found = played(self.DUE + [board_with(fault), BOARD])
+                self.assertEqual(found, [])
+                self.assertEqual((model.issues[1].labels, "claude/1" in model.refs), ({"todo"}, False))
+                self.assertEqual(release_comments(model, 1), 1, "the next run counts the comment or makes one")
+
+    def test_each_of_f23_s_mutants_is_caught_under_its_fault(self):
+        """The rule as built until the fix, under each of the three faults;
+        no answer read as a refusal, under the fault that has none; and a
+        refusal read as a failure that may have written, under a 422."""
+        cases = [(fault, "a late comment's labels put back") for fault, _ in self.FAULTS]
+        cases += [("comment-unanswered-late", "no answer taken for a refusal"),
+                  ("comment-422", "a refusal taken for a late comment")]
+        for fault, mutant in cases:
+            with self.subTest(fault=fault, mutant=mutant), mutants.switched_on(mutants.MUTANTS[mutant]):
+                self.assertEqual(guarantees(violations(self.DUE + [board_with(fault), BOARD])), ["G3L"])
+
+    def test_a_holder_who_pushes_before_the_next_run_keeps_the_claim_with_its_labels_off(self):
+        """As after F20's faults: a comment GitHub wrote is older than the
+        holder's push, so the next run finds no release, and the claim stays
+        the holder's with its labels off until it goes a day without a
+        commit and is released again."""
+        for fault, _ in self.FAULTS:
+            with self.subTest(fault=fault):
+                self.assertEqual(violations(self.DUE + [board_with(fault), Verb("commit", "a", (1,)), BOARD,
+                                                        Verb("wait", "clock", (25,)), BOARD]), [])
+
+    def test_unlisted_releases_are_read_from_the_calls(self):
+        """A failed post of the release comment that may have written it, a
+        server error or no answer, with a re-read GitHub answered without
+        the comment that post wrote, or with none since it wrote none; a
+        refusal, a re-read that lists the comment, one GitHub refused,
+        which is F20's, or a read before the post, is none."""
+        release = {"body": oracle.RELEASE_MARKER + "\nreleased"}
+        late = verbs.FAULTS["comment-late"].then
+
+        def post(status, written):
+            return Call("POST", "/issues/1/comments", (), release, status, written, True)
+
+        listed = Call("GET", "/issues/1/comments", (), None, 200, False)
+        listed_late = Call("GET", "/issues/1/comments", (), None, 200, False, True, late)
+        refused = Call("GET", "/issues/1/comments", (), None, 500, False, True)
+        self.assertEqual(invariants.unlisted_releases([post(502, True), listed_late]), {1})
+        self.assertEqual(invariants.unlisted_releases([post(None, True), listed_late]), {1})
+        self.assertEqual(invariants.unlisted_releases([post(500, False), listed]), {1})
+        self.assertEqual(invariants.unlisted_releases([post(502, True), listed]), set())
+        self.assertEqual(invariants.unlisted_releases([post(422, False), listed]), set())
+        self.assertEqual(invariants.unlisted_releases([post(500, False), refused]), set())
+        self.assertEqual(invariants.unlisted_releases([listed_late, post(502, True)]), set())
+        overlap = Call("POST", "/issues/1/comments", (), {"body": "<!-- sdlc-coordinator: overlap 2 -->"}, 502, True,
+                       True)
+        self.assertEqual(invariants.unlisted_releases([overlap, listed_late]), set())
+        self.assertEqual(invariants.unread_releases([post(500, False), refused]), {1})
+        self.assertEqual(invariants.unread_releases([post(None, True), listed_late]), {1})
+        self.assertTrue(invariants.failed(post(None, True)))
+        self.assertFalse(invariants.may_have_written(post(422, False)))
 
 
 class TheChecksHoldUnderAFaultThatNeverFires(unittest.TestCase):

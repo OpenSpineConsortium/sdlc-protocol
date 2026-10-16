@@ -84,10 +84,16 @@ SPEC = {
              "epic and blocker, so the Queue lists it again even when a worker's label alone gave it to the "
              "worker, while a blocker is listed under Blockers without it; then it posts a comment on the issue "
              "whose first line is `<!-- sdlc-coordinator: claim-released -->`",
-    "put back": "A run that fails between the two puts back the labels it took off and takes off the todo it put on",
-    "unsettled": "where the run cannot read the issue's comments to tell whether it is, it leaves the labels as "
-                 "the release left them and counts no release of its own, so its page lists the claim as held and "
-                 "the branch keeps its name",
+    "whole": "A run that fails between the two reads the issue's comments, and the comment there after all, one "
+             "GitHub wrote and lost its answer to, makes the release whole.",
+    "put back": "Where they list none and GitHub refused the comment, with an answer from 400 to 499, which GitHub "
+                "gives in place of writing anything, the run puts back the labels it took off and takes off the todo "
+                "it put on",
+    "unsettled": "the run cannot tell whether the comment stands: it leaves the labels as the release left them and "
+                 "counts no release of its own, so its page lists the claim as held and the branch keeps its name",
+    "listed late": "or they list none after GitHub answered the comment with a server error or with no answer at "
+                   "all, either of which may come after GitHub wrote it, and GitHub may list a comment it wrote only "
+                   "later",
     "settled next": "the next run, reading the comments, finds the release whole where GitHub wrote the comment, "
                     "or releases the claim again where it wrote none, unless its holder pushed since, which keeps "
                     "the claim, or a person put the label claimed back beside a comment GitHub wrote, which undoes "

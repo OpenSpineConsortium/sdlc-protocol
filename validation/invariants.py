@@ -127,7 +127,7 @@ def reads_failed(calls):
     release comment failed, which leaves the release for the next run to
     settle (unsettling_reads, F20)."""
     done_without = unsettling_reads(calls)
-    return any(c.method == "GET" and (c.status >= FAILED_READ or c.status in (403, 429))
+    return any(c.method == "GET" and (c.status is None or c.status >= FAILED_READ or c.status in (403, 429))
                and not c.path.startswith(READS_DONE_WITHOUT) and at not in done_without
                for at, c in enumerate(calls))
 
@@ -502,13 +502,15 @@ def is_put_back(effect, number):
 
 def labels_put_back(before, after, calls, actual):
     """A run that fails between the labels and the comment puts back what it
-    took off and takes off the todo it put on (spec, Release), unless GitHub
-    refused the putting back too; one whose comment was written, its
-    answer lost or not, puts back nothing, since the comment makes the
-    release whole; and one that could not read the issue's comments to
-    tell whether its comment stands puts back nothing either, leaving the
-    labels as the release left them for the next run to settle
-    (SPEC["unsettled"], unread_releases; F20) (G3L)."""
+    took off and takes off the todo it put on where GitHub refused the
+    comment (SPEC["put back"]), unless GitHub refused the putting back
+    too; one whose comment was written, its answer lost or not, puts back
+    nothing, since the comment makes the release whole (SPEC["whole"]);
+    and one that cannot tell whether its comment stands, having no read of
+    the issue's comments to tell it (F20) or one that lists none after an
+    answer that may come after GitHub wrote the comment (F23), puts back
+    nothing either, leaving the labels as the release left them for the
+    next run to settle (SPEC["unsettled"], unread_releases) (G3L)."""
     problems = []
     unread = unread_releases(calls)
     todo_on = {e.target for e in actual if e == oracle.Effect("label-on", e.target, (oracle.TODO,))}
@@ -531,11 +533,16 @@ def labels_put_back(before, after, calls, actual):
 
 
 def unread_releases(calls):
-    """The issues whose release the run could not settle: GitHub answered
-    the post of the release comment with an error and refused the read of
+    """The issues whose release the run could not settle, since it cannot
+    tell whether its release comment stands (SPEC["unsettled"]): GitHub
+    answered the post of the comment with an error and refused the read of
     the issue's comments after it, which would have said whether it wrote
-    the comment anyway (SPEC["unsettled"]; F20)."""
-    return frozenset(unsettling_reads(calls).values())
+    the comment anyway (unsettling_reads; F20); or it answered the post
+    with a server error or with no answer at all, either of which may come
+    after it wrote the comment, and answered the read after it with no
+    comment that post wrote, which it may list only later
+    (SPEC["listed late"], unlisted_releases; F23)."""
+    return frozenset(unsettling_reads(calls).values()) | unlisted_releases(calls)
 
 
 def unsettling_reads(calls):
@@ -544,26 +551,63 @@ def unsettling_reads(calls):
     place among the calls, with the issue: the re-read that would have
     said whether GitHub wrote the comment anyway, which the run does
     without, leaving the release for the next run to settle
-    (SPEC["unsettled"]; F20). That re-read is the first read of the
-    issue's comments after the failed post, and the refusal looked for is
-    of its first page, which both of F20's faults refuse
-    (comment-lost-then-unread, comment-500-then-unread), so a refusal of a
-    later page, which no fault makes, is not looked for; a later read of
-    them in the run, for an overlap's markers or a
-    released branch's comment, is a read like any other, so one GitHub
-    refuses is no reason for the labels to stay off (F20's review)."""
-    failed, found = set(), {}
+    (SPEC["unsettled"]; F20)."""
+    return {at: number for number, _, at, read in release_rereads(calls) if failed(read)}
+
+
+def unlisted_releases(calls):
+    """The issues whose release comment GitHub answered with a server error
+    or with no answer at all, which may come after it wrote the comment,
+    and whose read of the comments after it GitHub answered without a
+    comment that post wrote, the comment written and listed late
+    (LISTED_LATE) or never written, which the run cannot tell apart
+    (SPEC["listed late"]; F23)."""
+    return frozenset(number for number, post, _, read in release_rereads(calls)
+                     if may_have_written(post) and not failed(read) and not lists_its_comment(post, read))
+
+
+def release_rereads(calls):
+    """Each failed post of an issue's release comment with the first read
+    of that issue's comments after it, the re-read that says whether
+    GitHub wrote the comment anyway, as (the issue, the post, the read's
+    place among the calls, the read). What is looked at is the re-read's
+    first page, which every fault on it refuses or answers (F20's
+    comment-lost-then-unread and comment-500-then-unread, F23's
+    comment-late and comment-unanswered-late), so a later page, which no
+    fault makes, is not looked at; a later read of the comments in the
+    run, for an overlap's markers or a released branch's comment, is a
+    read like any other, so one GitHub refuses is no reason for the labels
+    to stay off (F20's review)."""
+    posted = {}
     for at, c in enumerate(calls):
         number = comments_of(c.path)
         if number is None:
             continue
-        if c.method == "POST" and c.status >= 400 and oracle.comment_kind(c.body["body"]) == "claim-released":
-            failed.add(number)
-        elif c.method == "GET" and number in failed:
-            failed.discard(number)
-            if c.status >= 400:
-                found[at] = number
-    return found
+        if c.method == "POST" and failed(c) and oracle.comment_kind(c.body["body"]) == "claim-released":
+            posted[number] = c
+        elif c.method == "GET" and number in posted:
+            yield number, posted.pop(number), at, c
+
+
+def failed(call):
+    """Whether GitHub answered a call with an error, or did not answer it
+    at all (fake_github.Call.status None)."""
+    return call.status is None or call.status >= 400
+
+
+def may_have_written(post):
+    """Whether GitHub may have made a write it gave no success for: a
+    server error or no answer at all may come after the write, where a
+    4xx is a refusal GitHub gives in place of making it (F23)."""
+    return post.status is None or post.status >= 500
+
+
+def lists_its_comment(post, read):
+    """Whether an answered read of an issue's comments listed the comment
+    a failed post wrote: GitHub wrote it, and the model answered the read,
+    where a fault answering in its place (LISTED_LATE) leaves out what
+    GitHub wrote in the run and lost its answer to (F23)."""
+    return post.applied and read.fault is None
 
 
 def comments_of(path):
@@ -580,13 +624,14 @@ def unsettled_left_alone(calls, actual, start):
     """A run that could not tell whether its release comment stands counts
     no release of its own: it neither renames nor deletes the claim's
     branch nor says where the branch went, since the next run, reading the
-    comments, settles it (SPEC["unsettled"], SPEC["settled next"]; F20)
-    (G3L). A head a release already kept, in start, the state the run
-    started from, where a release comment that counts stands, is the
-    exception: that comment counts for it whenever it came,
-    so once the labels are off that earlier release frees the claim in
-    the same run, and the board deletes the branch, whose work is kept
-    (SPEC["unsettled kept"], SPEC["kept deleted"]; F20's review)."""
+    comments, settles it (SPEC["unsettled"], SPEC["settled next"]; F20,
+    and F23 for a comment listed late) (G3L). A head a release already
+    kept, in start, the state the run started from, where a release
+    comment that counts stands, is the exception: that comment counts for
+    it whenever it came, so once the labels are off that earlier release
+    frees the claim in the same run, and the board deletes the branch,
+    whose work is kept (SPEC["unsettled kept"], SPEC["kept deleted"];
+    F20's review)."""
     problems = []
     for number in sorted(unread_releases(calls)):
         ref = oracle.branch_of(number)
@@ -1001,10 +1046,11 @@ def seen(model, dates, unread=frozenset(), began=0):
     oracle.dated, with the branches it dated by their committer dates
     undated, and each it dated by a push or by the floor dated by that
     minute; and, on the issues unread names, without the release comment
-    the run posted since began and could not read back, since the run
-    cannot tell it stands (unread_releases, SPEC["unsettled"]), so its
-    page shows such a claim held, with the labels the release left,
-    until the next run (F20). oracle.dated gives the model itself when
+    the run posted since began and could not read back, or read back
+    before GitHub listed it, since the run cannot tell it stands
+    (unread_releases, SPEC["unsettled"]), so its page shows such a claim
+    held, with the labels the release left, until the next run (F20,
+    F23). oracle.dated gives the model itself when
     nothing differs, so the comments are taken out of a copy."""
     undated = frozenset(branch for branch, minute in dates.items() if minute is None)
     view = oracle.dated(model, undated, {branch: m for branch, m in dates.items() if m is not None})

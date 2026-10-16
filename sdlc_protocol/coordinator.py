@@ -21,12 +21,14 @@ claim was, what its branch holds and what its plan was, so the next worker
 can carry the work on or start over, and the board renames the branch in
 the same run. The board counts a release only once both are done, and a
 run that fails between them puts back the labels it took off and takes off
-the todo it put on, so the issue is as it was and the next run starts the
-release over, unless it cannot read the issue's comments to tell whether
-GitHub wrote the comment after all, when it leaves the labels as the
-release left them for the next run to settle (adapters/github.py,
-unsettled; F20). Like the board, this module only decides and words;
-adapters/github.py makes the calls.
+the todo it put on where GitHub refused the comment, so the issue is as it
+was and the next run starts the release over; where it cannot tell
+whether GitHub wrote the comment after all, its issue's comments unread
+(F20) or listing none after a server error or no answer at all, which may
+come after GitHub wrote it (F23), it leaves the labels as the release
+left them for the next run to settle (adapters/github.py, release_one).
+Like the board, this module only decides and words; adapters/github.py
+makes the calls.
 """
 
 import dataclasses
@@ -235,7 +237,7 @@ def after_labels(snapshot, key, taken_off, put_on=()):
     """The snapshot as GitHub knows it once a release has taken taken_off
     off the issue with this key and put put_on on it, in both places the
     board reads them, with no new release comment known: after_release's
-    labels, and all of an unsettled release (adapters.github.unsettled),
+    labels, and all of an unsettled release (adapters.github.labels_left),
     whose comment the run cannot tell stands. The release comment the
     snapshot held stays, so a head a release already kept, whose latest
     release comment counts whenever it came (board.release_counts), is

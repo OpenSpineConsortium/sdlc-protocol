@@ -76,11 +76,14 @@ TRACES = {
     "main moved told only in the push's run": "the regression traces",
     "the rename skipped": (HELD + [WAIT, BOARD], Scope()),
     "overlaps told on every run": ([CLAIM, Verb("claim", "b", (2,)), BOARD], SHARED),
-    "the labels not put back": (HELD + [WAIT, board_with("comment-500")], Scope()),
+    "the labels not put back": (HELD + [WAIT, board_with("comment-422")], Scope()),
     "a lost comment's release not seen": (HELD + [WAIT, board_with("comment-lost")], Scope()),
     "an unsettled release put back": "the regression traces",
     "an unsettled release counted": "the regression traces",
     "an unsettled release failing the run": "the regression traces",
+    "a late comment's labels put back": "the regression traces",
+    "no answer taken for a refusal": "the regression traces",
+    "a refusal taken for a late comment": "the regression traces",
     "a writer's release not vouched for": (HELD + [WAIT, Verb("marker", DANA, (1,)), BOARD], Scope()),
     "a claim number with leading zeros": ([CLAIM, CLAIMED, Verb("push-by-hand", M.OWNER, (1, "claude/01"))],
                                           Scope(careless=True)),
@@ -113,7 +116,7 @@ TRACES = {
     "the Blockers section without blocked blockers": ([BLOCKER, labelled("blocked"), BOARD], Scope()),
     "the Blockers section without the given blockers": ([BLOCKER, labelled("worker:b"), BOARD], Scope()),
     "the Queue without the blockers labelled todo": ([BLOCKER, BOARD], Scope()),
-    "a release relabels the board before its comment": ([BLOCKER] + HELD + [WAIT, board_with("comment-500")],
+    "a release relabels the board before its comment": ([BLOCKER] + HELD + [WAIT, board_with("comment-422")],
                                                          Scope()),
     "a bare worker: taken off at release": ([labelled("worker:")] + HELD + [WAIT, BOARD], Scope()),
     "the landing order by number": "the regression traces",
@@ -189,13 +192,15 @@ TRACES = {
     # undone by the label claimed, released once idle by a run whose
     # comment GitHub refuses. No search reaches either: none offers the
     # drop of commits, and the kept head needs a release, a push and a
-    # day; F8's trace plays both.
+    # day; F8's trace plays both. The comment is refused with a 422, since
+    # after a 500 the library cannot tell whether GitHub wrote it and puts
+    # nothing back (F23).
     "a stale entry off the head dates it": ([Verb("claim", "a", (1, 48 * M.HOUR)), CLAIMED, Verb("wait", "clock", (1,)),
                                              Verb("commit", "a", (1,)), WAIT, Verb("drop-commits", "a", (1,)),
                                              board_with("pushes-lagging")], Scope()),
     "a kept head's old release taken for the lost comment": (
         HELD + [WAIT, BOARD, Verb("push-old-head", "a", (1, "released/1-6d6ae03")), CLAIMED, WAIT,
-                board_with("comment-500")], Scope()),
+                board_with("comment-422")], Scope()),
     "a stranger's pull request named on a claim's row": "the regression traces",
     "a stranger's pull request taken for a claim's work": "the regression traces",
     "a stranger's pull request listed after its release": "the regression traces",
@@ -277,9 +282,11 @@ class TheLane(unittest.TestCase):
         widened to 120 and the count noted; its follow-up's second review
         one, an older push trusted in the run its push started; and F20's
         fix three, an unsettled release put back, counted, or failing the
-        run."""
-        self.assertTrue(10 <= len(mutants.MUTANTS) <= 120)
-        self.assertEqual(len(mutants.MUTANTS), 117)
+        run; and F23's fix three, a late comment's labels put back, no
+        answer taken for a refusal, and a refusal taken for a late comment,
+        which bring the count to the bound, so it is widened to 130."""
+        self.assertTrue(10 <= len(mutants.MUTANTS) <= 130)
+        self.assertEqual(len(mutants.MUTANTS), 120)
         self.assertEqual(sorted(TRACES), sorted(mutants.MUTANTS))
 
     def test_every_mutant_names_a_rule_the_library_still_has(self):

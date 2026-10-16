@@ -140,6 +140,8 @@ def comment_then_labels(api, snap, key, now):
             released_at = github.landed_release(api, key, release)
         except github.GitHubError as unread:
             return f"#{key}: release unsettled, the comment failed: {problem}; the comments unread: {unread}"
+        if not released_at and not github.wrote_nothing(problem):
+            return f"#{key}: release unsettled, the comment failed: {problem}; the comments list none yet"
         if not released_at:
             return f"#{key}: not released, the comment failed: {problem}"
     try:
@@ -199,7 +201,9 @@ def relabelled_before_the_comment(api, snap, key, now):
     relabelled as soon as the labels are off and todo is on, before the
     comment, and left so when the comment fails and the labels go back on,
     so the page of a run whose release GitHub refused shows the issue as
-    released while GitHub holds its labels again."""
+    released while GitHub holds its labels again. Since F23's fix the
+    labels go back only after a refusal, a 4xx, so only such a refusal
+    tells this copy from the library."""
     release = snap.releases[key]
     names, put_on = coordinator.labels_released(snap, key), coordinator.labels_put_on(snap, key)
     taken_off = []
@@ -222,6 +226,8 @@ def relabelled_before_the_comment(api, snap, key, now):
             released_at = github.landed_release(api, key, release)
         except github.GitHubError as unread:
             return github.unsettled(snap, key, names, put_on, problem, unread)
+        if not released_at and not github.wrote_nothing(problem):
+            return github.not_listed(snap, key, names, put_on, problem)
         if not released_at:
             return f"#{key}: not released, the comment failed: {problem}" + github.put_back(api, key, taken_off, put_on)
     coordinator.after_release(snap, key, released_at or now.isoformat(), names, put_on)
@@ -800,10 +806,11 @@ def pushed_by_but_a_delete(entry, sha, now):
 def landed_release_finding_none_unread(api, key, release):
     """github.landed_release as every build before F20's fix had it: a
     read of the issue's comments GitHub refuses finds no comment, as a
-    read that listed none does, so release_one puts the labels back
-    beside a comment that may stand, which holds the claim for good, the
-    comment telling every later coordinator the claim is released and the
-    label claimed telling the board it is held (F20)."""
+    read that listed none does, so release_one, as built before F23's fix
+    too (release_one_as_before_f20), puts the labels back beside a comment
+    that may stand, which holds the claim for good, the comment telling
+    every later coordinator the claim is released and the label claimed
+    telling the board it is held (F20)."""
     try:
         comments = api.get_all(f"/repos/{api.repo}/issues/{key}/comments")
     except github.GitHubError:
@@ -812,6 +819,26 @@ def landed_release_finding_none_unread(api, key, release):
     if not released_at or not github.newer(released_at, release.released_at):
         return ""
     return released_at if board.release_counts(dataclasses.replace(release, released_at=released_at)) else ""
+
+
+def release_one_as_before_f20(api, snap, key, now):
+    """github.release_one as every build before F20's fix had it: a read of
+    the issue's comments GitHub refuses finds no comment
+    (landed_release_finding_none_unread), and a comment no read finds is
+    taken for one GitHub never wrote, whatever GitHub answered its post
+    with, as before F23's fix as well, which would otherwise leave the
+    labels off after a server error, so the labels go back beside a
+    comment that may stand (F20)."""
+    with mock.patch.object(github, "landed_release", landed_release_finding_none_unread), \
+            mock.patch.object(github, "wrote_nothing", lambda problem: True):
+        return ORIGINAL_RELEASE_ONE(api, snap, key, now)
+
+
+def wrote_nothing_unless_answered(problem):
+    """github.wrote_nothing reading no answer at all as a refusal, as if a
+    call that never heard back had been turned away, where the connection
+    may have dropped after GitHub wrote the comment (F23)."""
+    return problem.status is None or 400 <= problem.status < 500
 
 
 def release_one_counting_unsettled(api, snap, key, now):
@@ -1167,12 +1194,13 @@ MUTANTS = {
         "G7", "overlapping work is told once"),
     "the labels not put back": Mutant(
         github, "put_back", lambda api, key, names, put_on=(): "",
-        "G3L", "a run that fails between the two puts back the labels it took off"),
+        "G3L", "a run that fails before its release comment, or whose comment GitHub refused, puts back the labels "
+               "it took off"),
     "a lost comment's release not seen": Mutant(
         github, "landed_release", lambda api, key, release: "",
         "G3L", "a comment GitHub wrote and lost its answer to makes the release whole"),
     "an unsettled release put back": Mutant(
-        github, "landed_release", landed_release_finding_none_unread,
+        github, "release_one", release_one_as_before_f20,
         "G3L", "a run that cannot read whether its release comment stands leaves the labels as the release left "
                "them (F20)"),
     "an unsettled release counted": Mutant(
@@ -1182,6 +1210,19 @@ MUTANTS = {
     "an unsettled release failing the run": Mutant(
         github, "unsettled", unsettled_raising,
         "G15", "a run that cannot read whether its release comment stands goes on and writes its page (F20)"),
+    "a late comment's labels put back": Mutant(
+        github, "wrote_nothing", lambda problem: True,
+        "G3L", "a run whose release comment GitHub answered with a server error, or with no answer at all, and "
+               "whose issue's comments then list none, leaves the labels as the release left them, since GitHub may "
+               "have written the comment and list it only later (F23)"),
+    "no answer taken for a refusal": Mutant(
+        github, "wrote_nothing", wrote_nothing_unless_answered,
+        "G3L", "no answer at all, like a server error, may come after GitHub wrote the comment, so it is no refusal "
+               "and the labels stay as the release left them (F23)"),
+    "a refusal taken for a late comment": Mutant(
+        github, "wrote_nothing", lambda problem: False,
+        "G3L", "a release comment GitHub refused with a 4xx, which it answers in place of writing one, puts the "
+               "labels back when the issue's comments list none (F23)"),
     "a writer's release not vouched for": Mutant(
         github, "may_write", nobody_vouched_for,
         "G5", "anyone who may write may release, whatever author_association GitHub shows"),
