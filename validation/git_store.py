@@ -490,7 +490,7 @@ class GitStore:
         fetches, makes the claim commit and is pushed from with a lease, by
         a command run from the worker's own clone, which the guard reads as
         the hook does, a directory that is not there being one a cd does not
-        reach (F21)."""
+        reach, and which names the clones by where they are (F21)."""
         pusher = verbs.leasing_clone(worker, how)
         model.fetch(pusher)
         ref = verbs.claim_ref(number)
@@ -498,7 +498,7 @@ class GitStore:
         self.write(clone, f"{CLAIM_DIR}/{number}.md", claim_text(number, worker, files))
         git(clone, "add", "-A", CLAIM_DIR, actor=worker)
         git(clone, "commit", "-q", "-m", f"Claim #{number}", actor=worker, when=when)
-        command = verbs.leasing_command(worker, how, ref)
+        command = verbs.leasing_command(worker, how, ref, root=str(self.root / "clones"))
         return self.pushed(model, worker, ref, command, lease=True, allowed=False, clone=pusher)
 
     def drop_commits(self, model, worker, number):

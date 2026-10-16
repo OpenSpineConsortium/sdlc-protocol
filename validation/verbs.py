@@ -11,16 +11,19 @@ what the checker explores.
 
 Every push a worker makes is a git command, run from the worker's own
 clone, and before the model takes it the push guard judges it, by the
-library's own guard.refused_push, as the template's PreToolUse hook does;
-a push the guard refuses never happens. The guard judges each push in the
-clone it runs in (F21), which the memory world names by its directory,
+library's own guard.refused_push, as the library's hook, guard.run, does
+(the template's tools/guard_push.py does not call it, and judges every
+push in the session's own clone, as 0.5.0's guard did); a push the guard
+refuses never happens. The guard judges each push in each clone it may
+run in (F21), which the memory world names by its directory,
 /clones/<name> (CLONES), and reads that clone's branches and the claim
 files a lease is judged by (guard.other_holder) from the model as git
 there would show them (git_shows, claim_files_in): the remote-tracking
 ref as that clone's last fetch or push left it, and the branch pushed.
 lease-elsewhere is F7's careless rebaser in a second clone of its own,
-reached from its session's clone by git -C or by cd, or in its own clone
-after a cd that fails (F21).
+reached from its session's clone by git -C, by cd, or by a cd that is
+made and one that fails, or in its session's own clone, reached by moves
+and names the guard cannot follow (ELSEWHERE, F21).
 
 Actors: the workers of the scope, each a person's session that may write
 (author_association COLLABORATOR); the owner; carol, a collaborator; dana,
@@ -75,13 +78,18 @@ CLONES = "/clones"
 # or by a cd the shell makes and then one into a directory that is not
 # there, which leaves the shell where it stood; or its session's own
 # clone, after a cd in a here-document's body, which the shell reads as
-# text, or by a -C through a path the shell expands, which names it.
+# text, by a -C through a path the shell expands, which names it, by a -C
+# relative to where a cd behind a test that fails would have taken the
+# shell, which the shell skips (F21's fourth review), or with GIT_DIR
+# exported, which names it whatever -C comes after (the same review).
 ELSEWHERE = {"-C": "git -C ../{clone} {push}", "cd": "cd ../{clone} && git {push}",
              "missing": "cd ../{clone}; cd ../{absent}; git {push}",
              "body": "cat > /dev/null <<'EOF'\ncd ..\nEOF\ngit {push}",
-             "expanded": 'git -C "$(git rev-parse --show-toplevel)" {push}'}
+             "expanded": 'git -C "$(git rev-parse --show-toplevel)" {push}',
+             "skipped": "cd ..; false && cd {clone}; git -C {own} {push}",
+             "exported": "export GIT_DIR={root}/{own}/.git; git -C {root} {push}"}
 # The ways whose push runs in the worker's own clone (leasing_clone).
-FROM_OWN_CLONE = ("body", "expanded")
+FROM_OWN_CLONE = ("body", "expanded", "skipped", "exported")
 
 # A read of the activity with no type named: the read of the push that set
 # a claim's head (github.read_push), told from the reads of a
@@ -520,12 +528,14 @@ def lease_elsewhere(model, worker, number, files, how):
     session runs from its own clone, which has not fetched that claim,
     reaching the second by git -C, by cd, or by a cd and then one into a
     directory that is not there, which leaves the shell in the second
-    (ELSEWHERE); or, for body and expanded, it does all that in its own
-    clone, after a cd in a here-document's body, which the shell does not
-    run, or naming its own clone by a -C the shell expands. Git would take
-    it, so the guard must judge the push in the clone it runs in and
-    refuse it, as it refuses lease_onto's. No search offers it; F21's
-    trace plays it."""
+    (ELSEWHERE); or, for body, expanded, skipped and exported, it does all
+    that in its own clone, after a cd in a here-document's body, which the
+    shell does not run, naming its own clone by a -C the shell expands, by
+    a relative -C after a cd behind a test that fails, which the shell
+    skips, or with GIT_DIR exported, which names it whatever -C comes
+    after. Git would take it, so the guard must judge the push in the clone
+    it runs in and refuse it, as it refuses lease_onto's. No search offers
+    it; F21's trace plays it."""
     pusher = leasing_clone(worker, how)
     model.fetch(pusher)
     ref = claim_ref(number)
@@ -542,10 +552,11 @@ def leasing_clone(worker, how):
     return worker if how in FROM_OWN_CLONE else other_clone(worker)
 
 
-def leasing_command(worker, how, ref):
+def leasing_command(worker, how, ref, root=CLONES):
     """The command lease_elsewhere's session runs from the worker's own
-    clone (ELSEWHERE), naming the second clone and the absent one."""
-    return ELSEWHERE[how].format(clone=other_clone(worker), absent=absent_clone(worker),
+    clone (ELSEWHERE), naming the second clone, the absent one, the
+    worker's own and root, the directory that holds them."""
+    return ELSEWHERE[how].format(clone=other_clone(worker), absent=absent_clone(worker), own=worker, root=root,
                                  push=f"push --force-with-lease origin {ref}")
 
 

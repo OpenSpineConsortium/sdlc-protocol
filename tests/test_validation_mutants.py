@@ -97,6 +97,8 @@ TRACES = {
     "a cd to what is not a directory taken as made": "the regression traces",
     "a push judged only where the shell's moves take it": "the regression traces",
     "a push whose clone cannot be told judged by its words alone": "the regression traces",
+    "a relative -C after a move judged where it names alone": "the regression traces",
+    "GIT_DIR forgotten once an absolute path names a place": "the regression traces",
     "dealing without its taken set": "dealing at every look",
     "each leg dealt from its own look": "the regression traces",
     "given to workers needing the label todo": "the regression traces",
@@ -286,9 +288,11 @@ class TheLane(unittest.TestCase):
         not following the shell's moves, and taking a cd to what is not a
         directory as made, and its third review two, a push judged only where
         the shell's moves take it and a push whose clone cannot be told
-        judged by its words alone, so the bound is widened to 130."""
+        judged by its words alone, so the bound is widened to 130, and its
+        fourth review two, a relative -C after a move judged where it names
+        alone and GIT_DIR forgotten once an absolute path names a place."""
         self.assertTrue(10 <= len(mutants.MUTANTS) <= 130)
-        self.assertEqual(len(mutants.MUTANTS), 122)
+        self.assertEqual(len(mutants.MUTANTS), 124)
         self.assertEqual(sorted(TRACES), sorted(mutants.MUTANTS))
 
     def test_every_mutant_names_a_rule_the_library_still_has(self):

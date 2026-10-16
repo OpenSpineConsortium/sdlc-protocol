@@ -138,7 +138,12 @@ BUDGET_SECONDS = 10
 # b's leases from its own clone, step 4, after a here-document whose body
 # holds a cd, taken once a push is judged only where the shell's moves
 # take it, and step 5, by a -C the shell expands, taken once a push whose
-# clone cannot be told is judged by its words alone.
+# clone cannot be told is judged by its words alone; and, from F21's
+# fourth review, step 6, by a -C relative to where a cd behind a test
+# that fails would have taken the shell, taken once such a -C is judged
+# where it names alone, and step 7, with GIT_DIR exported before an
+# absolute -C, taken once GIT_DIR is forgotten when an absolute path names
+# a place.
 UNDONE = {
     "F1": [("the comment before the labels", 5, "G3L")],
     "F2": [("a piece of work named by the number it is shown by", 4, "G7"),
@@ -196,7 +201,9 @@ UNDONE = {
             ("the guard does not follow the shell's moves", 2, "G11a"),
             ("a cd to what is not a directory taken as made", 3, "G11a"),
             ("a push judged only where the shell's moves take it", 4, "G11a"),
-            ("a push whose clone cannot be told judged by its words alone", 5, "G11a")],
+            ("a push whose clone cannot be told judged by its words alone", 5, "G11a"),
+            ("a relative -C after a move judged where it names alone", 6, "G11a"),
+            ("GIT_DIR forgotten once an absolute path names a place", 7, "G11a")],
 }
 # The twenty-one findings, every one settled since F21's fix: F1, F3,
 # F5, F6, F10 and F11 fixed in 0.4.1; F2, F4, F7, F8, F9, F12, F13, F14,

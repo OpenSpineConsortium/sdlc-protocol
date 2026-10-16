@@ -1216,16 +1216,27 @@ MUTANTS = {
         "G11a", "a cd or pushd that fails leaves the shell where it stood, so a lease run after it from a clone a cd "
                 "reached, onto a claim another worker holds, is judged there and refused (F21)"),
     "a push judged only where the shell's moves take it": Mutant(
-        guard, "push_places", lambda argv, directory, here: [guard.Reading(guard.push_place(argv, directory))],
+        guard, "push_places", lambda argv, shell, here: [guard.Reading(guard.push_place(argv, shell.directory))],
         "G11a", "a push after a move is judged also where the command starts, since a cd in a here-document's body "
                 "moves the shell only as the guard reads it, so a lease from the session's own clone onto a claim "
                 "another worker holds is refused there (F21's third review)"),
     "a push whose clone cannot be told judged by its words alone": Mutant(
-        guard, "push_places", lambda argv, directory, here: [guard.Reading(guard.push_place(argv, directory)),
-                                                             guard.Reading(guard.push_place(argv, here))],
+        guard, "push_places", lambda argv, shell, here: [guard.Reading(guard.push_place(argv, shell.directory)),
+                                                         guard.Reading(guard.push_place(argv, here))],
         "G11a", "a push whose clone the guard cannot tell is judged in the session's own clone too, so a lease "
                 "through a path the shell expands onto a claim another worker holds is refused there "
                 "(F21's third review)"),
+    "a relative -C after a move judged where it names alone": Mutant(
+        guard, "after_a_move", lambda argv, shell: False,
+        "G11a", "a push by a -C relative to where the shell stands, after a cd, pushd or popd the guard may "
+                "misread, is judged in the session's own clone too, so a lease from there after a cd behind a test "
+                "that fails, onto a claim another worker holds, is refused (F21's fourth review)"),
+    "GIT_DIR forgotten once an absolute path names a place": Mutant(
+        guard, "followed_and_unmoved", lambda argv, shell, here: (guard.push_place(argv, shell.directory),
+                                                                  guard.push_place(argv, here)),
+        "G11a", "a push after GIT_DIR is set alone or exported is judged by its words and in the session's own "
+                "clone, whatever cd or -C comes after, so a lease from the repository GIT_DIR names onto a claim "
+                "another worker holds is refused there (F21's fourth review)"),
     "dealing without its taken set": Mutant(
         team, "deal", deal_without_the_taken_set,
         "G14", "the workers of one run are dealt distinct issues"),
