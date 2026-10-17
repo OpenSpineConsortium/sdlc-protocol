@@ -567,6 +567,48 @@ class ReadingTest(unittest.TestCase):
         self.assertEqual(guard.readings("cat <<EOF\nIt's $(git push origin main) done\nEOF\nls")[1],
                          "cat <<EOF ; $(git push origin main) ; ls")
 
+    def test_an_expanded_body_joins_a_line_that_ends_in_a_backslash(self):
+        """bash takes a backslash-newline out of a body it expands before it
+        compares a line with the delimiter, an odd run of backslashes
+        continuing the line and an even one not, and takes a <<-'s tabs
+        off the joined line's start alone; a quoted body joins nothing."""
+        for command, bodies in (
+                ("cat <<EOF\nE\\\nOF\nls", ["E\\\nOF\n"]),
+                ("cat <<EOF\nEOF\\\n\nls", ["EOF\\\n\n"]),
+                ("cat <<EOF\nE\\\nO\\\nF\nls", ["E\\\nO\\\nF\n"]),
+                ("cat <<EOF\na\\\nEOF\nEOF\nls", ["a\\\nEOF\nEOF\n"]),
+                ("cat <<EOF\na\\\\\nEOF\nls", ["a\\\\\nEOF\n"]),
+                ("cat <<EOF\na\\\\\\\nEOF\nEOF\nls", ["a\\\\\\\nEOF\nEOF\n"]),
+                ("cat <<-EOF\n\tE\\\nOF\nls", ["\tE\\\nOF\n"]),
+                ("cat <<-EOF\nE\\\n\tOF\nEOF\nls", ["E\\\n\tOF\nEOF\n"]),
+                ("cat <<'EOF'\nE\\\nOF\nEOF\nls", ["E\\\nOF\nEOF\n"]),
+                ("x=\"$(cat <<EOF\nE\\\nOF)\"\nls", ["E\\\nOF"])):
+            with self.subTest(command=command):
+                self.assertEqual(body_texts(command), bodies)
+        self.assertTrue(guard.continues("a\\") and guard.continues("a\\\\\\"))
+        self.assertFalse(guard.continues("a") or guard.continues("a\\\\"))
+
+    def test_a_double_parenthesis_is_arithmetic_only_where_bash_reads_it_so(self):
+        """bash reads (( as arithmetic where the ) that closes its second (
+        is followed at once by another, and else as a subshell in a
+        subshell, whose here-documents are read as any other; so is $((."""
+        for command in ("((1 << 2))\nIt's", "(( (1+2) << 3 ))\nIt's", "echo $(( (1) << 2 ))\nIt's",
+                        "echo \"$((1<<2))\"\nIt's"):
+            with self.subTest(command=command):
+                self.assertEqual(guard.here_document_bodies(command), [])
+        for command, bodies in (("((cd /tmp); cat <<'EOF'\nIt's\nEOF\n)", ["It's\nEOF\n"]),
+                                ("((cd /tmp) && cat <<'EOF'\nIt's\nEOF\n)", ["It's\nEOF\n"]),
+                                ("x=$((cd /tmp); cat <<'EOF'\nIt's\nEOF\n)", ["It's\nEOF\n"]),
+                                ("(( 1 ) ); cat <<'EOF'\nIt's\nEOF", ["It's\nEOF"]),
+                                ("((cd /tmp; cat <<'EOF'\nIt's\nEOF", ["It's\nEOF"])):
+            with self.subTest(command=command):
+                self.assertEqual(body_texts(command), bodies)
+        self.assertEqual([body.runs for body in guard.here_document_bodies(
+            "cat <<EOF\n$((git push origin main); true) $((1+2))\nEOF")], [("$((git push origin main); true)",)])
+        self.assertEqual(guard.arithmetic_end("((1))", 2), 5)
+        self.assertIsNone(guard.arithmetic_end("((a) )", 2))
+        self.assertIsNone(guard.arithmetic_end("((a", 2))
+
     def test_the_command_is_read_whole_and_with_its_bodies_cut_out(self):
         self.assertEqual(guard.readings("git push origin main"), ["git push origin main"])
         self.assertEqual(guard.readings("cat <<'EOF'\nIt's\nEOF\ngit push origin main"),
@@ -586,7 +628,10 @@ class ReadingTest(unittest.TestCase):
                 "cat <<A <<'B'\nIt's\nA\nfine\nB\ngit push origin main\necho 'x'",
                 "x=\"$(cat <<'EOF'\nSay \"hi\nEOF)\"\ngit push origin main\ngh pr create --body \"x\"",
                 "cat <<EOF\nIt's $(git push origin main) done, isn't it\nEOF",
-                "echo $((1<<2)); cat <<'EOF'\nIt's\nEOF\ngit push origin main\necho 'done'"):
+                "echo $((1<<2)); cat <<'EOF'\nIt's\nEOF\ngit push origin main\necho 'done'",
+                "cat <<EOF\nDon't\nE\\\nOF\ngit push origin main\ncat <<'EOF'\nIt's\nEOF",
+                "cat <<EOF\nDon't\nEOF\\\n\ngit push origin main\nEOF\ncat <<'EOF'\nIt's\nEOF",
+                "((cd /tmp); cat <<'EOF'\nDon't\nEOF\n)\ngit push origin main\n((cd /tmp); cat <<'EOF'\nIt's\nEOF\n)"):
             with self.subTest(command=command):
                 self.assertEqual(self.run_guard(command), (2, MAIN))
                 self.assertEqual(self.run_as_before_f25(command), (0, ""), "as built until F25's fix")

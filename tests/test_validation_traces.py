@@ -161,9 +161,13 @@ BUDGET_SECONDS = 10
 # read as text; step 5, in a substitution in a body the shell expands,
 # taken once an expanded body's substitutions are cut out with it; and
 # step 6, after a body a line EOF)" ends, taken once a body in a
-# substitution ends only at its delimiter's own line. Its step 1, after
-# a body with an apostrophe, is the finding's first shape, which both of
-# the fix's readings read, so no one mutant takes it.
+# substitution ends only at its delimiter's own line; step 7, after a
+# body a line E and a backslash, then one OF, ends, taken once an
+# expanded body's backslash-newline is kept; and step 8, between the
+# here-documents of two ((cd .); ...) subshells, taken once every (( is
+# read as arithmetic. Its step 1, after a body with an apostrophe, is the
+# finding's first shape, which both of the fix's readings read, so no one
+# mutant takes it.
 UNDONE = {
     "F1": [("the comment before the labels", 5, "G3L")],
     "F2": [("a piece of work named by the number it is shown by", 4, "G7"),
@@ -232,7 +236,9 @@ UNDONE = {
             ("no here-document's body told", 3, "G11a"),
             ("a here-document in a quoted substitution read as text", 4, "G11a"),
             ("an expanded body's substitutions cut out with it", 5, "G11a"),
-            ("a body in a substitution ended only by its delimiter's own line", 6, "G11a")],
+            ("a body in a substitution ended only by its delimiter's own line", 6, "G11a"),
+            ("an expanded body's backslash-newline kept", 7, "G11a"),
+            ("every double parenthesis read as arithmetic", 8, "G11a")],
 }
 # The findings with a trace, every one settled since F25's fix: F1, F3,
 # F5, F6, F10 and F11 fixed in 0.4.1; F2, F4, F7, F8, F9, F12, F13, F14,

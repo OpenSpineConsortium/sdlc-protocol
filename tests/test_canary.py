@@ -1222,9 +1222,9 @@ class TheRecords(unittest.TestCase):
         self.assertIsNone(canary.vendored_version(None))
         self.assertEqual(canary.known_for(first_line),
                          canary.known.AS_BUILT | {"F2", "F4", "F7", "F8", "F9", "F12", "F13", "F14", "F15", "F17",
-                                                  "F18", "F19", "F20", "F21", "F26"})
+                                                  "F18", "F19", "F20", "F21", "F25", "F26"})
         self.assertEqual(canary.known.AS_BUILT, frozenset(), "no finding is read as built since F2's fix")
-        self.assertEqual(canary.known_for(f"sdlc-protocol 0.5.0 {COMMIT}"), canary.known.AS_BUILT | {"F21", "F26"})
+        self.assertEqual(canary.known_for(f"sdlc-protocol 0.5.0 {COMMIT}"), canary.known.AS_BUILT | {"F21", "F25", "F26"})
         self.assertEqual(canary.known_for(f"sdlc-protocol {EVERY_FIX} {COMMIT}"), canary.known.AS_BUILT)
         self.assertEqual(canary.known_for("unreadable"), canary.known.AS_BUILT)
         self.assertEqual(canary.known_words(frozenset({"F12", "F2", "F13", "F99"})),
@@ -1239,12 +1239,12 @@ class TheRecords(unittest.TestCase):
             data = json.loads(path.read_text())
             self.assertEqual(data["known_for"],
                              ["F2", "F4", "F7", "F8", "F9", "F12", "F13", "F14", "F15", "F17", "F18", "F19",
-                              "F20", "F21", "F26"])
+                              "F20", "F21", "F25", "F26"])
             self.assertEqual(data["results"][0]["status"], "known")
             self.assertIn("F12 (fixed after 0.4.1)", out.getvalue())
             self.assertEqual(canary.run_site(FakeSite(vendoring="0.5.0"), ["C2"], path, None, out), 1)
             data = json.loads(path.read_text())
-            self.assertEqual(data["known_for"], ["F21", "F26"], "0.5.0 carries every fix up to F20's")
+            self.assertEqual(data["known_for"], ["F21", "F25", "F26"], "0.5.0 carries every fix up to F20's")
             self.assertEqual(data["results"][0]["status"], "failed")
             self.assertEqual(canary.run_site(FakeSite(vendoring=EVERY_FIX), ["C2"], path, None, out), 1)
             data = json.loads(path.read_text())

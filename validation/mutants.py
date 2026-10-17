@@ -401,6 +401,18 @@ def lease_onto_any_claim(name, source, expected, claim_file_at, remote="origin")
     return None
 
 
+def every_double_parenthesis_arithmetic(command, i):
+    """guard.arithmetic_end as the scan read (( and $(( until F25's
+    review: as arithmetic always, to the ) that closes both parentheses,
+    so the here-documents of ((cd x); cat <<EOF ...), which bash reads as
+    a subshell in a subshell, are not told."""
+    depth = 2
+    while i < len(command) and depth:
+        depth += {"(": 1, ")": -1}.get(command[i], 0)
+        i += 1
+    return i
+
+
 def long_option_named_in_full(word, wrapper):
     """guard.long_option_of as the guard read a wrapper's long options
     until F26's fix: by the whole name alone, so a start of it, which GNU's
@@ -1385,6 +1397,16 @@ MUTANTS = {
         guard, "closes_substitution", lambda line, delimiter: False,
         "G11a", "a body inside a substitution ends at a line that starts with its delimiter and holds a ), as "
                 "bash 5.2 ends it, so a lease after a body a line EOF)\" ends, onto a claim another worker holds, "
+                "is read and refused (F25)"),
+    "an expanded body's backslash-newline kept": Mutant(
+        guard, "continues", lambda text: False,
+        "G11a", "a line of a body the shell expands that ends in a backslash goes on into the next before it is "
+                "compared with the delimiter, as bash reads it, so a lease after a body a line E and a backslash, "
+                "then one OF, ends, onto a claim another worker holds, is read and refused (F25)"),
+    "every double parenthesis read as arithmetic": Mutant(
+        guard, "arithmetic_end", every_double_parenthesis_arithmetic,
+        "G11a", "a (( whose second ( closes with no ) at once after it is a subshell in a subshell, as bash reads "
+                "it, so a lease between two such subshells' here-documents, onto a claim another worker holds, "
                 "is read and refused (F25)"),
     "dealing without its taken set": Mutant(
         team, "deal", deal_without_the_taken_set,

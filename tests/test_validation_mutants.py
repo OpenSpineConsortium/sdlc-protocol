@@ -108,6 +108,8 @@ TRACES = {
     "a here-document in a quoted substitution read as text": "the regression traces",
     "an expanded body's substitutions cut out with it": "the regression traces",
     "a body in a substitution ended only by its delimiter's own line": "the regression traces",
+    "an expanded body's backslash-newline kept": "the regression traces",
+    "every double parenthesis read as arithmetic": "the regression traces",
     "dealing without its taken set": "dealing at every look",
     "each leg dealt from its own look": "the regression traces",
     "given to workers needing the label todo": "the regression traces",
@@ -328,14 +330,15 @@ class TheLane(unittest.TestCase):
         client's waits, so the bound is widened to 150, 134 within it;
         F26's fix three, a long option read only in full, env's
         abbreviated --chdir not read and an optional value taken from the
-        next word, 137; and F25's fix five, one for each rule of its
+        next word, 137; and F25's fix seven, one for each rule of its
         reading: a quote that never closes hiding the command, no
         here-document's body told, a here-document in a quoted substitution
-        read as text, an expanded body's substitutions cut out with it, and
-        a body in a substitution ended only by its delimiter's own line,
-        142."""
+        read as text, an expanded body's substitutions cut out with it, a
+        body in a substitution ended only by its delimiter's own line, an
+        expanded body's backslash-newline kept and every double parenthesis
+        read as arithmetic, 144."""
         self.assertTrue(10 <= len(mutants.MUTANTS) <= 150)
-        self.assertEqual(len(mutants.MUTANTS), 142)
+        self.assertEqual(len(mutants.MUTANTS), 144)
         self.assertEqual(sorted(TRACES), sorted(mutants.MUTANTS))
 
     def test_every_mutant_names_a_rule_the_library_still_has(self):

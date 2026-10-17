@@ -157,18 +157,23 @@ reading beside the whole, a body misread hides no command the whole
 reading shows, and refuses too much at worst. The bodies told are those of
 << and <<- outside quotes and in a substitution, in double quotes or not,
 as in "$(cat <<'EOF' ... )", each starting at the first newline at its
-operator's level and ending past the line that is its word, where bash 5.2
-ends one in a substitution (closes_substitution), or at the end of the
-text; a <<< here-string, arithmetic, a comment and a quoted span open
-none. A third reading, of each line alone, was weighed and left out: with
-a quote that never closes read leniently it finds no push in F25's shapes
-that the two miss, and what it alone would read is text inside quotes
-that close, as a commit message given by -m "...", which it would refuse
-wherever a line starts with a push; what hides a push inside quotes that
-close is the quoting of a command substitution or $'...', which want
-readings of their own. So a push inside $'...', backquotes or a
-substitution in double quotes still passes, and branch protection stands
-behind it.
+operator's level and ending past the line that is its word, a line of a
+body the shell expands joined to the next where it ends in a backslash
+(continues), where bash 5.2 ends one in a substitution
+(closes_substitution), or at the end of the text; a <<< here-string,
+arithmetic, a comment and a quoted span open none, and a (( is arithmetic
+only where bash reads it so (arithmetic_end), ((cd x); ...) being a
+subshell in a subshell. A third reading, of each line alone, was weighed
+and left out: with a quote that never closes read leniently it finds no
+push in F25's shapes that the two miss, and what it alone would read is
+text inside quotes that close, as a commit message given by -m "...",
+which it would refuse wherever a line starts with a push; what hides a
+push inside quotes that close is the quoting of a command substitution or
+$'...', which want readings of their own. So a push inside $'...',
+backquotes or a substitution in double quotes still passes, as does one
+after a $'...' that holds a backslash before an apostrophe, which this
+module reads as a quote closed early, and branch protection stands behind
+it.
 """
 
 import os
@@ -449,13 +454,19 @@ def level(contexts):
 
 def arithmetic_end(command, i):
     """Where the arithmetic whose (( ends just before i ends, past the ))
-    that closes it, counting the parentheses inside; the end of the text
-    when none does."""
-    depth = 2
-    while i < len(command) and depth:
+    that closes it, counting the parentheses inside; None where the (( is
+    no arithmetic. bash reads (( as arithmetic only where the ) that closes
+    its second ( is followed at once by another, and else as a subshell in
+    a subshell, as in ((cd x); cat <<EOF ...), whose here-documents it
+    reads as any other (F25), and so does this module, and where no ) closes
+    it, which bash cannot read, the text after it is read as commands."""
+    depth = 1
+    while i < len(command):
         depth += {"(": 1, ")": -1}.get(command[i], 0)
         i += 1
-    return i
+        if not depth:
+            return i + 1 if command.startswith(")", i) else None
+    return None
 
 
 def delimiter_word(command, i):
@@ -511,8 +522,9 @@ def double_quoted_step(command, i, contexts):
         return i + 2, contexts
     if command[i] == '"':
         return i + 1, contexts[:-1]
-    if command.startswith("$((", i):
-        return arithmetic_end(command, i + 3), contexts
+    end = arithmetic_end(command, i + 3) if command.startswith("$((", i) else None
+    if end:
+        return end, contexts
     if command.startswith("$(", i):
         return i + 2, contexts + ("$(",)
     return i + 1, contexts
@@ -534,8 +546,10 @@ def unquoted_step(command, i, contexts, word_start):
     if ch == "#" and word_start:
         end = command.find("\n", i)
         return (len(command) if end == -1 else end), contexts, False
-    if command.startswith("((", i) or command.startswith("$((", i):
-        return arithmetic_end(command, i + (3 if ch == "$" else 2)), contexts, False
+    end = (arithmetic_end(command, i + (3 if ch == "$" else 2))
+           if command.startswith("((", i) or command.startswith("$((", i) else None)
+    if end:
+        return end, contexts, False
     if ch == '"':
         return i + 1, contexts + ('"',), False
     if command.startswith("$(", i):
@@ -577,7 +591,7 @@ def substitutions_in(command, start, end):
     while i < end:
         if command[i] == "\\":
             i += 2
-        elif command.startswith("$((", i):
+        elif command.startswith("$((", i) and arithmetic_end(command, i + 3):
             i = arithmetic_end(command, i + 3)
         elif command.startswith("$(", i):
             close = min(substitution_end(command, i), end)
@@ -597,22 +611,45 @@ def closes_substitution(line, delimiter):
     return line.startswith(delimiter) and ")" in line[len(delimiter):]
 
 
-def body_end(command, start, document):
-    """Where a here-document's body that starts at start ends: past the
-    first line that is its delimiter, that line's leading tabs taken off
-    after <<-, or, inside a substitution, right after the delimiter on a
-    line that ends the body there (closes_substitution); and at the end of
-    the text, where bash ends a body no line ends."""
-    i = start
-    while i < len(command):
+def continues(text):
+    """Whether a line of a body the shell expands goes on into the next: it
+    ends in a backslash that no backslash before it escapes, an odd run of
+    them, which bash takes out with the newline after it before it compares
+    the line with the delimiter (F25: a line of E and a backslash, then one
+    of OF, ends a body whose delimiter is EOF)."""
+    return (len(text) - len(text.rstrip("\\"))) % 2 == 1
+
+
+def body_line(command, i, joins):
+    """The line of a body that starts at command[i] as bash compares it with
+    the delimiter, where in command each of its characters stands, and
+    where the newline that ends it stands: in a body the shell expands
+    (joins), a line goes on into the next while it continues (continues),
+    and in a quoted one each line stands alone."""
+    text, places = "", []
+    while True:
         newline = command.find("\n", i)
         line_end = len(command) if newline == -1 else newline
-        line = command[i:line_end]
+        piece = command[i:line_end]
+        if not (joins and newline != -1 and continues(piece)):
+            return text + piece, places + list(range(i, line_end)), line_end
+        text, places, i = text + piece[:-1], places + list(range(i, line_end - 1)), line_end + 1
+
+
+def body_end(command, start, document):
+    """Where a here-document's body that starts at start ends: past the
+    first line that is its delimiter (body_line), that line's leading tabs
+    taken off after <<-, or, inside a substitution, right after the
+    delimiter on a line that ends the body there (closes_substitution); and
+    at the end of the text, where bash ends a body no line ends."""
+    i = start
+    while i < len(command):
+        line, places, line_end = body_line(command, i, document.expands)
         indent = len(line) - len(line.lstrip("\t")) if document.strip_tabs else 0
         if line[indent:] == document.delimiter:
             return min(line_end + 1, len(command))
         if "$(" in document.within and closes_substitution(line[indent:], document.delimiter):
-            return i + indent + len(document.delimiter)
+            return places[indent + len(document.delimiter)]
         i = line_end + 1
     return len(command)
 

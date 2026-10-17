@@ -155,5 +155,24 @@ class TheGuardJudged(unittest.TestCase):
                                        "timeout --sig KILL 60 ": 157})
 
 
+    def test_the_lane_bites_on_a_guard_that_reads_a_command_whole_or_not_at_all(self):
+        """F25: read whole and strictly, with no body told, the session's
+        here-documents pair their bodies' apostrophes around the push, so
+        every forbidden push in that wrapper passes, as on the guard before
+        the fix; with the fix the wrapper is judged as the bare command."""
+        from unittest import mock
+
+        from sdlc_protocol import guard
+
+        commands = [c for c in g.commands() if c.wrapper == g.HERE_DOCUMENTS]
+        self.assertEqual(g.judge(commands=commands).failures, {})
+        bare = {(c.prefix, c.argv): g.guard_refuses(c.text) for c in g.commands() if c.wrapper == "{}"}
+        self.assertTrue(all(g.guard_refuses(c.text) == bare[c.prefix, c.argv] for c in commands[::7]))
+        strict = guard.plain_text
+        with mock.patch.object(guard, "plain_text", lambda command, lenient=False: strict(command)), \
+                mock.patch.object(guard, "here_document_bodies", lambda command: []):
+            self.assertEqual(sum(g.judge(commands=commands).failures.values()), 5670)
+
+
 if __name__ == "__main__":
     unittest.main()

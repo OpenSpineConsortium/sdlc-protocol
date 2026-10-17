@@ -93,8 +93,11 @@ CLONES = "/clones"
 # it, the form a session writes a commit message and a pull request's body
 # in, between such bodies inside double-quoted substitutions that hold a
 # double quote, in a substitution in a body the shell expands, between two
-# apostrophes of the body's text, and after a body in a double-quoted
-# substitution that a line EOF)" ends, as bash 5.2 ends one.
+# apostrophes of the body's text, after a body in a double-quoted
+# substitution that a line EOF)" ends, as bash 5.2 ends one, after a body
+# that a line E and a backslash, then one OF, ends, as bash joins them, and
+# between the here-documents of two subshells in subshells written ((cd .);
+# ...), which bash reads as no arithmetic.
 ELSEWHERE = {"-C": "git -C ../{clone} {push}", "cd": "cd ../{clone} && git {push}",
              "missing": "cd ../{clone}; cd ../{absent}; git {push}",
              "body": "cat > /dev/null <<'EOF'\ncd ..\nEOF\ngit {push}",
@@ -109,10 +112,13 @@ ELSEWHERE = {"-C": "git -C ../{clone} {push}", "cd": "cd ../{clone} && git {push
                                      'gh pr create --body "$(cat <<\'EOF\'\nQuote" here\nEOF\n)"'),
              "body-substitution": "cat <<EOF\nIt's $(git {push}) done, isn't it\nEOF",
              "closing-line": 'msg="$(cat <<\'EOF\'\nSay "hi\nEOF)"\ngit {push}\ngh pr create --body "x"',
+             "joined": "cat <<EOF\nDon't\nE\\\nOF\ngit {push}\ncat <<'EOF'\nIt's\nEOF",
+             "subshells": ("((cd .); cat <<'EOF'\nDon't\nEOF\n)\ngit {push}\n"
+                           "((cd .); cat <<'EOF'\nIt's\nEOF\n)"),
              "env": "env --ch ../{clone} git {push}"}
 # The ways whose push runs in the worker's own clone (leasing_clone).
 FROM_OWN_CLONE = ("body", "expanded", "skipped", "exported", "home", "apostrophe", "unclosed", "paired",
-                  "quoted-substitution", "body-substitution", "closing-line")
+                  "quoted-substitution", "body-substitution", "closing-line", "joined", "subshells")
 
 # A read of the activity with no type named: the read of the push that set
 # a claim's head (github.read_push), told from the reads of a
