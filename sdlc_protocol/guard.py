@@ -233,12 +233,17 @@ GNU_STANDARD = {"help": FLAG, "version": FLAG}
 # runs nothing, and one that has it runs the command after it; GNU time as
 # its src/time.c reads them in 1.9 and 1.10, whose manual's --output is a
 # start of --output-file; and bash's command and exec, which take no long
-# option (bash's own time takes only -p, a flag). An option another make's
-# wrapper reads and GNU's does not, as the env of FreeBSD and macOS reads
-# -P with a value, is read as a flag, and the push behind it passes, as
+# option (bash's own time takes only -p, a flag). env's short options that
+# take a value hold the BSD ones too: -P altpath, the directories the env
+# of FreeBSD and macOS searches for the command, and FreeBSD's -L and -U,
+# a login class and a user, since those makes run the command after the
+# value; GNU's env refuses all three and runs nothing (exit 125), so
+# reading the next word as their value costs only the refusal of a push
+# GNU would not have run. Any other option another make's wrapper reads
+# and GNU's does not is read as a flag, and the push behind it passes, as
 # before F26's fix.
 WRAPPERS = {
-    "env": Wrapper("uCSa", {"argv0": VALUE, "ignore-environment": FLAG, "env0-from": VALUE, "null": FLAG,
+    "env": Wrapper("uCSaPLU", {"argv0": VALUE, "ignore-environment": FLAG, "env0-from": VALUE, "null": FLAG,
                             "unset": VALUE, "chdir": VALUE, "default-signal": OPTIONAL, "ignore-signal": OPTIONAL,
                             "block-signal": OPTIONAL, "list-signal-handling": FLAG, "debug": FLAG,
                             "quoting-style": VALUE, "split-string": VALUE, **GNU_STANDARD}),

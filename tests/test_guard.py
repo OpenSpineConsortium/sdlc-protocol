@@ -429,7 +429,7 @@ WRAPPER_WORDS = (
     ["nice", "--adjustment=5"], ["nice", "-n", "5"], ["nice", "-5"], ["nice", "--5"], ["nice", "--x"],
     ["timeout", "--sig", "KILL", "60"], ["timeout", "--s", "TERM", "--k", "5", "60"], ["timeout", "--kill=5", "60"],
     ["timeout", "--f", "60"], ["timeout", "--p", "60"], ["timeout", "--verb", "60"], ["timeout", "--v", "60"],
-    ["nohup", "--"], ["nohup", "--x"],
+    ["nohup", "--"], ["nohup", "--x"], ["env", "-P", "/usr/bin"], ["env", "-L", "root"], ["env", "-U", "root"],
 )
 # What a GNU coreutils program exits with when it refuses its own words
 # and runs nothing.
@@ -476,6 +476,18 @@ class WrapperTest(unittest.TestCase):
                         "timeout --kill=5 --si=TERM 60 git push origin main",
                         "time --output-file x git push origin main", "time --output x git push origin main",
                         "time --o x --fo %e --a git push origin main", "time --f %e --verb git push origin main"):
+            with self.subTest(command=command):
+                self.assertEqual([guard.push_arguments(argv) for argv in guard.simple_commands(command)],
+                                 [["origin", "main"]])
+
+    def test_bsd_env_s_short_options_that_take_a_value_are_read_with_it(self):
+        """The env of FreeBSD and macOS takes -P altpath, and FreeBSD's
+        -L and -U a login class and a user, each with a value, attached or
+        the next word, and runs the command after it, so the push behind
+        each is judged; GNU's env refuses all three and runs nothing."""
+        for command in ("env -P /usr/bin git push origin main", "env -P/usr/bin git push origin main",
+                        "env -L root git push origin main", "env -U root git push origin main",
+                        "env -i -P /usr/bin -u HOME git push origin main", "env -Lroot/ git push origin main"):
             with self.subTest(command=command):
                 self.assertEqual([guard.push_arguments(argv) for argv in guard.simple_commands(command)],
                                  [["origin", "main"]])
