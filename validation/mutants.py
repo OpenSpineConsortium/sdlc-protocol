@@ -124,6 +124,7 @@ ORIGINAL_OPEN_WORK = board.open_work
 ORIGINAL_DEAL_MOVES = team.deal_moves
 ORIGINAL_CLAIM_RELEASED = github.claim_released
 ORIGINAL_RELEASE_ONE = github.release_one
+ORIGINAL_FREEING = coordinator.freeing
 ORIGINAL_RATE_LIMITED = github.rate_limited
 ORIGINAL_RATE_WAIT = github.rate_wait
 ORIGINAL_WROTE_NOTHING = github.wrote_nothing
@@ -407,6 +408,22 @@ def lease_onto_any_claim(name, source, expected, claim_file_at, remote="origin")
     """guard.other_holder judging nothing: the guard as it was before F7's
     fix, passing a lease onto any claude/ branch, whoever claimed it."""
     return None
+
+
+def long_option_named_in_full(word, wrapper):
+    """guard.long_option_of as the guard read a wrapper's long options
+    until F26's fix: by the whole name alone, so a start of it, which GNU's
+    getopt_long reads as the option, names nothing."""
+    name = word[2:].partition("=")[0]
+    return name if name in wrapper.long_options else None
+
+
+def optional_value_from_the_next_word(word, wrapper):
+    """guard.long_value_is_next taking the next word as the value of an
+    option that may take one, which getopt_long takes only attached, as it
+    takes one that needs a value."""
+    takes = wrapper.long_options.get(guard.long_option_of(word, wrapper))
+    return "=" not in word and takes in (guard.VALUE, guard.OPTIONAL)
 
 
 def each_leg_from_its_own_look(clients, workers, looks, areas=None):
@@ -1237,6 +1254,66 @@ def free_though_blocked(snap, issue):
     return issue["number"] not in snap.claimed and labels.CLAIMED not in labels.label_names(issue)
 
 
+def in_review_left_where_a_branch_stands(snapshot, number, names):
+    """coordinator.freeing taking nothing off a reopened issue whose claim
+    branch, or a released branch, stands, so in-review stays and the
+    claim, finished by its label, is never released (F22)."""
+    plan = ORIGINAL_FREEING(snapshot, number, names)
+    return coordinator.Freeing() if plan.branch_stands else plan
+
+
+def ready_pull_request_unread(snapshot, number, names):
+    """coordinator.freeing reading no pull request, so a reopened issue whose
+    claim's own pull request, marked ready, waits for review loses the
+    in-review that finishes it (F22)."""
+    return ORIGINAL_FREEING(dataclasses.replace(board.as_snapshot(snapshot), pulls=[]), number, names)
+
+
+def entry_since_the_close_alone(api, key, closed, claimed_at):
+    """claimed_by_a_claim reading any entry of the claim branch at or after
+    the close as the claim's, whenever the label went on, so a person's
+    undo after a claim made since has ended reads as that claim's."""
+    entry = github.newest_entry(api, claims.branch_of(key))
+    if entry is None:
+        return None
+    at = github.entry_time(entry) if entry else ""
+    return bool(at) and claims.parse_time(at) >= claims.parse_time(closed)
+
+
+def todo_put_on_last(api, snap, number):
+    """github.free_reopened taking the labels off before it puts todo on, so
+    a run that fails after claimed came off leaves an issue no section of
+    the board lists and no later run frees (F22). It reads what the
+    library reads, in its order, and changes only when todo goes on."""
+    branch = claims.branch_of(str(number))
+    issue = api.issue(number) or {}
+    if issue.get("state") != "open":
+        return f"#{number}: not freed"
+    pull = api.pull_detail(branch)
+    plan = coordinator.freeing(github.with_claims_pull(snap, number, pull), number, labels.label_names(issue))
+    if plan.taken_off and not plan.branch_stands and github.branch_sha(api, branch):
+        return f"#{number}: not freed"
+    for name in plan.taken_off:
+        if name == labels.CLAIMED and not plan.branch_stands and github.branch_sha(api, branch):
+            return f"#{number}: not freed"
+        github.take_label_off(api, number, name)
+    if plan.put_on:
+        api.post(f"/repos/{api.repo}/issues/{number}/labels", {"labels": list(plan.put_on)})
+    coordinator.after_labels(snap, str(number), plan.taken_off, plan.put_on)
+    return f"#{number}: freed"
+
+
+def releases_read_before_the_freeing(api, snapshot, now):
+    """github.coordinate reading which claims are due before it frees the
+    reopened issues, so a claim whose in-review the freeing takes off waits
+    for the next run, where the spec releases it in the same run (F22)."""
+    snap = board.as_snapshot(snapshot)
+    due = coordinator.releases_due(snap, now)
+    lines = [github.free_reopened(api, snap, number) for number in coordinator.reopened_due(snap)]
+    lines += [github.release_one(api, snap, key, now) for key in due]
+    return lines + github.tell_overlaps(api, snap)
+
+
 MUTANTS = {
     "idle at exactly 24 hours": Mutant(
         claims, "is_idle", lambda last, now, idle_after=claims.IDLE_AFTER: now - claims.parse_time(last) >= idle_after,
@@ -1406,6 +1483,19 @@ MUTANTS = {
         "G11a", "a push by a -C from a ~ is judged in the session's own clone too, since the shell reads the ~ "
                 "from a HOME the command may set, so a lease from there after HOME is set, onto a claim another "
                 "worker holds, is refused (F21's fourth review)"),
+    "a long option read only in full": Mutant(
+        guard, "long_option_of", long_option_named_in_full,
+        "G11a", "a wrapper's long option is read by any start of its name that names it alone, as GNU's "
+                "getopt_long reads it, so the push behind env --uns HOME, nice --adj 5 or timeout --sig KILL 60 is "
+                "judged and refused (F26)"),
+    "env's abbreviated --chdir not read": Mutant(
+        guard, "names_chdir", lambda word: word.partition("=")[0] == "--chdir",
+        "G11a", "env's --chdir is read by any start of its name that names it alone, so a lease by env --ch from "
+                "another clone onto a claim another worker holds is judged there and refused (F26)"),
+    "an optional value taken from the next word": Mutant(
+        guard, "long_value_is_next", optional_value_from_the_next_word,
+        "G11a", "a value a wrapper's long option may take is taken only attached, so the push after env "
+                "--default-signal is judged and refused (F26)"),
     "dealing without its taken set": Mutant(
         team, "deal", deal_without_the_taken_set,
         "G14", "the workers of one run are dealt distinct issues"),
@@ -1779,6 +1869,52 @@ MUTANTS = {
         "G10", "a rename a rate limit refused on every try is refused for the moment and owes no word on the "
                "issue, which would name a rule or a right that is not missing (the first review of the "
                "client's waits)"),
+    "a reopened issue left as it is": Mutant(
+        coordinator, "reopened_due", lambda snapshot: [],
+        "G8", "a reopened issue whose claim ended with its close loses claimed, in-review and the worker's labels, "
+              "and todo goes on, so the Queue lists it again (F22)"),
+    "a claim branch not read for a reopened issue": Mutant(
+        coordinator, "claim_stands",
+        lambda snap, key: any(name.startswith(claims.released_branch(key, "")) for name in snap.kept_names),
+        "G8", "a claim branch is a claim whatever the labels say, so a reopened issue whose claim branch stands "
+              "loses in-review alone (F22)"),
+    "a released branch not read for a reopened issue": Mutant(
+        github, "kept_names", lambda listed: [],
+        "G8", "a released branch beside the label claimed is a release being undone, so a reopened issue that "
+              "carries both loses no label (F22)"),
+    "in-review left on where a branch stands": Mutant(
+        coordinator, "freeing", in_review_left_where_a_branch_stands,
+        "G8", "a reopened issue whose claim branch stands loses in-review, so its claim is released once idle "
+              "(F22)"),
+    "a ready pull request's in-review taken off": Mutant(
+        coordinator, "freeing", ready_pull_request_unread,
+        "G8", "a claim's own pull request marked ready finishes it, so its reopened issue loses no label (F22)"),
+    "todo put on last": Mutant(
+        github, "free_reopened", todo_put_on_last,
+        "G8", "a freeing puts todo on first and takes claimed off last, so a run that fails partway leaves the issue "
+              "for the next run to free (F22)"),
+    "a release before the last close read as an undo": Mutant(
+        github, "ended_releases", lambda api, issues, branches, kept, asked: [],
+        "G8", "a released branch an earlier claim's release left before the issue's last close undoes nothing, so "
+              "a reopened issue whose later claim ended with the close is freed wholly (F22's review)"),
+    "claimed put back after the close read as the ended claim's": Mutant(
+        github, "claimed_since_close", lambda events: False,
+        "G8", "the label claimed put on after a reopened issue's last close is a person undoing a release an "
+              "earlier claim's release left before it, so the freeing leaves claimed on (F22's second review)"),
+    "a claim made since the close read as an undo": Mutant(
+        github, "claimed_by_a_claim", lambda api, key, closed, claimed_at: False,
+        "G8", "the label claimed a claim made since a reopened issue's last close put on is that claim's, so once "
+              "its branch is deleted with no release the freeing takes it off with the claim's other labels (F22's "
+              "third review)"),
+    "an undo after an ended claim read as the claim's": Mutant(
+        github, "claimed_by_a_claim", entry_since_the_close_alone,
+        "G8", "the label claimed a person puts back after a claim made since a reopened issue's last close has "
+              "ended, later than its branch's delete, is a person's undo, so the freeing leaves claimed on (the "
+              "review of F22's third review)"),
+    "the releases due read before the freeing": Mutant(
+        github, "coordinate", releases_read_before_the_freeing,
+        "G3", "a claim whose in-review a freeing takes off is released in the same run where its branch has gone a "
+              "day without a commit (F22)"),
 }
 
 
@@ -1791,6 +1927,32 @@ WORKER = Verb("label-on", "a", (1, "worker:a"))
 # clock runs 25 hours.
 DUE = (CLAIM, CLAIMED, WORKER, Verb("wait", "clock", (25,)))
 SHARED = ("src/shared.py",)
+# a's idle claim released, then b's claim on #1, announced, finished as
+# Finish says, its claim file deleted, its pull request marked ready and
+# in-review on, for the owner to merge (F22).
+REOPENS = DUE + (Verb("board", verbs.BOARD, (cycle.SCHEDULE, "")), Verb("claim", "b", (1,)),
+                 Verb("label-on", "b", (1, "claimed")), Verb("label-on", "b", (1, "worker:b")),
+                 Verb("label-off", "b", (1, "todo")), Verb("open-draft", "b", (1,)), Verb("drop-claim-file", "b", (1,)),
+                 Verb("mark-ready", "b", (100,)), Verb("label-on", "b", (1, "in-review")))
+# a's idle claim on #1 released, then #1 closed by hand and reopened with
+# no claim between, so the release came before the issue's last close and
+# the owner, following the release's note, may still undo it by putting
+# claimed back after the close (F22's second review).
+UNDOABLE = DUE + (Verb("board", verbs.BOARD, (cycle.SCHEDULE, "")), Verb("close-issue", M.OWNER, (1,)),
+                  Verb("reopen-issue", M.OWNER, (1,)))
+# b's claim on #1 after that close and reopen, announced and ready for
+# review, which the owner may close unmerged and delete the branch of
+# while #1 stays open, so the claim ends with no release comment and its
+# claimed, put on after the close, is the claim's own (F22's third review).
+LATER_CLAIM = UNDOABLE + (Verb("claim", "b", (1,)), Verb("label-on", "b", (1, "claimed")),
+                          Verb("label-on", "b", (1, "worker:b")), Verb("label-off", "b", (1, "todo")),
+                          Verb("open-draft", "b", (1,)), Verb("mark-ready", "b", (100,)),
+                          Verb("label-on", "b", (1, "in-review")))
+# That claim ended with its branch deleted and #1 freed, so the owner may
+# still undo a's release an hour later by putting claimed back, later than
+# the branch's delete (the review of F22's third review).
+ENDED_LATER_CLAIM = LATER_CLAIM + (Verb("delete-claim-branch", M.OWNER, (1,)),
+                                   Verb("board", verbs.BOARD, (cycle.SCHEDULE, "")))
 
 # Cheapest first, since a mutant is judged by the first search that
 # catches it. The traces met F4, dealing from differing looks, on the
@@ -1912,6 +2074,21 @@ SEARCHES = (
     Search("a stranger's marker on overlapping claims", (CLAIM, Verb("claim", "b", (2,))),
            Scope(workers=("a", "b"), issues=(1, 2), people=(SAM,), waits=(25,),
                  files=((1, SHARED), (2, SHARED))), 2, issues=(1, 2)),
+    # a's claim released, b's claim on #1 ready for review: the owner may
+    # merge it, keeping its branch or not, and close and reopen #1, so each
+    # rule of the freeing is searched and not only traced; and a release
+    # before #1 was closed and reopened, which the owner may still undo;
+    # a claim made after that reopen whose branch the owner deletes while
+    # #1 stays open; and the owner's undo once that claim has ended (F22's
+    # reviews).
+    Search("a reopened issue after a release and a later claim", REOPENS, Scope(workers=("a", "b"),
+           people=(M.OWNER,), waits=(25,), reopens=True), 4),
+    Search("a release undone on a reopened issue", UNDOABLE, Scope(workers=("a", "b"), people=(M.OWNER,),
+           waits=(25,), reopens=True), 2),
+    Search("a claim since a reopen ended by deleting its branch", LATER_CLAIM, Scope(workers=("a", "b"),
+           people=(M.OWNER,), waits=(25,), reopens=True, deletes=True), 2),
+    Search("an undo after a claim since a reopen ended", ENDED_LATER_CLAIM, Scope(workers=("a", "b"),
+           people=(M.OWNER,), waits=(1,), reopens=True, deletes=True), 3),
 )
 CATCHERS = LANES + SEARCHES + (PICKING, LABEL_MIXES)
 

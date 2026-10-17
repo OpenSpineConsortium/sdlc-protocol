@@ -16,7 +16,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from validation import deep, fake_github, git_store, invariants, known, model as M, replay, run, scenarios, verbs  # noqa: E402
+from validation import deep, fake_github, git_store, invariants, known, model as M, mutants, replay, run, scenarios, verbs  # noqa: E402
 from validation.verbs import Scope, Verb  # noqa: E402
 
 # A guard against a hung git, not against a slow runner: the lane's own
@@ -63,13 +63,29 @@ class ScenariosOverGit(unittest.TestCase):
         record = run.run_scenario(scenarios.SCENARIOS["S01"], world=run.GIT)
         self.assertTrue(any("claim b 1: fetch first" in line for line in record.timeline), "\n".join(record.timeline))
 
-    def test_the_traces_of_f7_and_f12_play_over_git_as_known_json_records(self):
-        for finding in ("F7", "F12"):
+    def test_the_traces_of_f7_f12_and_f22_play_over_git_as_known_json_records(self):
+        for finding in ("F7", "F12", "F22"):
             with self.subTest(trace=finding):
                 trace = replay.traces()[finding]
                 record = replay.replay(trace, world=run.GIT)
                 self.assertEqual(record.mismatches, [], "\n".join(record.timeline))
                 self.assertEqual(known.differences("trace", finding, results(record)), [], "\n".join(record.timeline))
+
+    def test_f22_s_trace_is_red_over_git_where_it_is_in_memory_under_each_of_its_mutants(self):
+        """DESIGN.md says F22's trace plays the same in both worlds, green
+        on the library and red under each mutant that undoes a part of the
+        fix at the same step and for the same guarantees; a's claim at hour
+        27 deletes its claim file before its merge, so a's next claim has a
+        file to add and git a commit to make (F22's third review)."""
+        trace = replay.traces()["F22"]
+        for name, mutant in mutants.MUTANTS.items():
+            if "F22" not in mutant.why:
+                continue
+            with self.subTest(mutant=name), mutants.switched_on(mutant):
+                in_memory = results(replay.replay(trace))
+                over_git = results(replay.replay(trace, world=run.GIT))
+                self.assertTrue(in_memory)
+                self.assertEqual(over_git, in_memory)
 
 
 class TheStore(unittest.TestCase):

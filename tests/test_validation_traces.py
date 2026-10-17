@@ -1,5 +1,5 @@
-"""The regression traces of DESIGN.md 5.3, one per finding F1 to F21 and
-F23 (validation/traces/, played by validation/replay.py), and known.json, the
+"""The regression traces of DESIGN.md 5.3, one per finding, F1 to F23 and
+F26 (validation/traces/, played by validation/replay.py), and known.json, the
 record of what is red on purpose: every trace loads and plays with no
 mismatch; its red results are exactly what known.json records, as built
 and with each open finding's switch off in the oracle; a trace of a
@@ -126,31 +126,62 @@ BUDGET_SECONDS = 10
 # leaving it open. F20's at its first board run, step 8, where GitHub
 # writes a's release comment and loses its answer, then refuses the read
 # of the issue's comments after it: the release counts and the branch is
-# renamed in that run once the run takes the refused read for the comment
-# standing, and the run fails once the refused read is let through; each
-# again at its third, step 10, for b's comment GitHub never wrote; and at
-# its eighth, step 21, where GitHub refuses the comment on b's new claim
-# with a 422 and then the read after it: the labels go back once a refused
-# read finds no comment, where after the server errors of steps 8 and 10
-# such a read leaves them off since F23's fix, as one that lists none
-# does, so a refusal is where that mutant differs (F23's review). F21's at
-# b's first lease from its second clone, step 1, by git -C, which is taken
-# once the guard ignores git's and env's -C, at its second, step 2, by cd,
-# taken once the guard does not follow the shell's moves, and at its
-# third, step 3, after a cd that is made and one that fails, taken once
-# the guard takes the second cd as made; and at b's leases from its own
-# clone, step 4, after a here-document whose body holds a cd, taken once a
-# push is judged only where the shell's moves take it, and step 5, by a -C
-# the shell expands, taken once a push whose clone cannot be told is
-# judged by its words alone; and, from F21's fourth review, step 6, by a
-# -C relative to where a cd behind a test that fails would have taken the
-# shell, taken once such a -C is judged where it names alone, step 7, with
-# GIT_DIR exported before an absolute -C, taken once GIT_DIR is forgotten
-# when an absolute path names a place, and step 8, by a -C from a ~ after
-# HOME is set in the command, taken once such a -C is judged where it
-# names alone. F23's at its first board run, step 16, where GitHub writes
-# a's release comment, answers 502 and lists it only after the run's read
-# of the issue's comments: the labels go back beside the comment once a
+# renamed in that run once the run takes the refused read for the
+# comment standing, and the run fails once the refused read is let
+# through; each again at its third, step 10, for b's comment GitHub
+# never wrote; and at its eighth, step 21, where GitHub refuses the
+# comment on b's new claim with a 422 and then the read after it: the
+# labels go back once a refused read finds no comment, where after the
+# server errors of steps 8 and 10 such a read leaves them off since
+# F23's fix, as one that lists none does, so a refusal is where that
+# mutant differs (F23's review). F21's at b's first lease from its
+# second clone, step 1, by git -C, which is taken once the guard ignores
+# git's and env's -C, at its second, step 2, by cd, taken once the guard
+# does not follow the shell's moves, and at its third, step 3, after a
+# cd that is made and one that fails, taken once the guard takes the
+# second cd as made; and at b's leases from its own clone, step 4, after
+# a here-document whose body holds a cd, taken once a push is judged
+# only where the shell's moves take it, and step 5, by a -C the shell
+# expands, taken once a push whose clone cannot be told is judged by its
+# words alone; and, from F21's fourth review, step 6, by a -C relative
+# to where a cd behind a test that fails would have taken the shell,
+# taken once such a -C is judged where it names alone, step 7, with
+# GIT_DIR exported before an absolute -C, taken once GIT_DIR is
+# forgotten when an absolute path names a place, and step 8, by a -C
+# from a ~ after HOME is set in the command, taken once such a -C is
+# judged where it names alone. F22's at its first board run, step 10,
+# after #1 was reopened once a's pull request merged and the repository
+# deleted claude/1: claimed, in-review and worker:a stay on once the
+# coordinator leaves a reopened issue as it is, and a label goes on
+# after one came off once todo is put on last; at its second, step 21,
+# where b's pull request, marked ready, finishes the claim on #1 closed
+# and reopened, its in-review comes off once a ready pull request is not
+# read; at its third, step 24, where b's merged branch is kept and #1
+# reopened, in-review stays once the claim branch is not read, the
+# coordinator then planning to free #1 wholly and, reading claude/1
+# again, freeing nothing, or once in-review is left on where a branch
+# stands; at its fifth, step 36, where a's merged pull request closed #1
+# after b's release and the owner reopened it, b's released branch still
+# standing, claimed and worker:a stay once a release before the last
+# close is read as an undo (F22's review); at its sixth, step 47, where
+# a's merged branch, kept a day after its last commit, is not released
+# in the run that takes its in-review off once the releases due are read
+# before the freeing; at its seventh, step 49, where the owner put
+# claimed back on the reopened #1 to undo the release that run made,
+# claimed comes off once the released branch is not read; at its eighth,
+# step 54, where the owner closed #1 and reopened it after that release
+# and put claimed back again, claimed comes off once claimed put on
+# after the close is read as the ended claim's (F22's second review); at
+# its ninth since F22's third review, step 67, where b claimed #1 after
+# it was closed and reopened again and the owner closed b's ready pull
+# request unmerged and deleted claude/1, claimed and worker:b stay once
+# a claim made since the close is read as an undo; and, since that
+# review's review, step 69, where the owner put claimed back an hour
+# after that delete to undo a's release, claimed comes off once any
+# entry since the close is read as the claim's whenever the label went
+# on. F23's at its first board run, step 16, where GitHub writes a's
+# release comment, answers 502 and lists it only after the run's read of
+# the issue's comments: the labels go back beside the comment once a
 # read that lists none is taken for one GitHub never wrote whatever it
 # answered; at its third, step 18, where the post of b's comment has no
 # answer at all, once no answer is taken for a refusal; at its seventh,
@@ -161,9 +192,16 @@ BUDGET_SECONDS = 10
 # labels go back beside the comment once a rate limit's refusal is taken
 # for one that wrote nothing; and, from its second review, at its
 # eleventh, step 34, where GitHub refuses the comment on d's third claim
-# for a rate limit having written it, then the client's second try with a
-# 422, and lists it late, the labels go back beside the comment once a
-# refusal after a rate limit's is read by its last try alone.
+# for a rate limit having written it, then the client's second try with
+# a 422, and lists it late, the labels go back beside the comment once a
+# refusal after a rate limit's is read by its last try alone; and F26's
+# at its first guard step, step 1, env --uns FOO before a push to main,
+# which passes once a wrapper's long option is read only by its whole
+# name, as do its second and third, nice --adj 5 and timeout --sig KILL
+# 60; at its fourth, step 4, env --def before a push to main, which
+# passes once a value an option may take is taken from the next word;
+# and at b's lease from its second clone by env --ch, step 5, taken once
+# env's --chdir is read only by its whole name.
 UNDONE = {
     "F1": [("the comment before the labels", 5, "G3L")],
     "F2": [("a piece of work named by the number it is shown by", 4, "G7"),
@@ -225,20 +263,32 @@ UNDONE = {
             ("a relative -C after a move judged where it names alone", 6, "G11a"),
             ("GIT_DIR forgotten once an absolute path names a place", 7, "G11a"),
             ("a -C by ~ judged where it names alone", 8, "G11a")],
+    "F22": [("a reopened issue left as it is", 10, "G8"), ("todo put on last", 10, "G8"),
+            ("a ready pull request's in-review taken off", 21, "G8"),
+            ("a claim branch not read for a reopened issue", 24, "G8"),
+            ("in-review left on where a branch stands", 24, "G8"),
+            ("a release before the last close read as an undo", 36, "G8"),
+            ("the releases due read before the freeing", 47, "G3"),
+            ("a released branch not read for a reopened issue", 49, "G8"),
+            ("claimed put back after the close read as the ended claim's", 54, "G8"),
+            ("a claim made since the close read as an undo", 67, "G8"),
+            ("an undo after an ended claim read as the claim's", 69, "G8")],
     "F23": [("a late comment's labels put back", 16, "G3L"), ("no answer taken for a refusal", 18, "G3L"),
             ("a refusal taken for a late comment", 22, "G3L"),
             ("a rate limit's refusal taken for one that wrote nothing", 28, "G3L"),
             ("a refusal after a rate limit read by its last try alone", 34, "G3L")],
+    "F26": [("a long option read only in full", 1, "G11a"),
+            ("an optional value taken from the next word", 4, "G11a"),
+            ("env's abbreviated --chdir not read", 5, "G11a")],
 }
-# The findings of this branch, F1 to F21 and F23 (F22 is another pull
-# request's), every one settled since F23's fix: F1, F3, F5, F6, F10 and
-# F11 fixed in 0.4.1; F2, F4, F7, F8, F9, F12, F13, F14, F15, F17, F18,
-# F19 and F20 fixed in 0.5.0, and F21 and F23 on main after it
-# (known.json's fixed_after); and F16, fixed in the spec's words, which
-# the library as built already keeps, so known.json names no version for
-# it.
+# The findings with a trace, every one settled since F23's fix: F1, F3,
+# F5, F6, F10 and F11 fixed in 0.4.1; F2, F4, F7, F8, F9, F12, F13, F14,
+# F15, F17, F18, F19 and F20 fixed in 0.5.0, and F21, F22, F26 and F23 on
+# main after it (known.json's fixed_after); and F16, fixed in the spec's
+# words, which the library as built already keeps, so known.json names no
+# version for it.
 FIXED = ("F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12", "F13", "F14", "F15", "F16", "F17",
-         "F18", "F19", "F20", "F21", "F23")
+         "F18", "F19", "F20", "F21", "F22", "F23", "F26")
 # Findings red as built, which no rule of the library answers: none since
 # F4's fix; the test keeps the case for the next one.
 RED_AS_BUILT = ()
@@ -421,7 +471,8 @@ class KnownJson(unittest.TestCase):
         self.assertEqual(known.FIXED_AFTER,
                          {"F2": "0.4.1", "F4": "0.4.1", "F7": "0.4.1", "F8": "0.4.1", "F9": "0.4.1", "F12": "0.4.1",
                           "F13": "0.4.1", "F14": "0.4.1", "F15": "0.4.1", "F17": "0.4.1", "F18": "0.4.1",
-                          "F19": "0.4.1", "F20": "0.4.1", "F21": "0.5.0", "F23": "0.5.0"})
+                          "F19": "0.4.1", "F20": "0.4.1", "F21": "0.5.0", "F22": "0.5.0", "F23": "0.5.0",
+                          "F26": "0.5.0"})
         current = known.version_key(sdlc_protocol.__version__)
         for finding, version in known.FIXED_AFTER.items():
             with self.subTest(finding=finding):
@@ -431,14 +482,14 @@ class KnownJson(unittest.TestCase):
                 self.assertLessEqual(known.version_key(version), current,
                                      "the last version with a finding is one main has stated, never a later one")
         fixed_in_0_5_0 = {"F2", "F4", "F7", "F8", "F9", "F12", "F13", "F14", "F15", "F17", "F18", "F19", "F20"}
-        fixed_after_0_5_0 = {"F21", "F23"}
+        fixed_after_0_5_0 = {"F21", "F22", "F23", "F26"}
         self.assertEqual(known.as_built_for("0.4.1"), known.AS_BUILT | fixed_in_0_5_0 | fixed_after_0_5_0)
         self.assertEqual(known.as_built_for("0.4.0"), known.AS_BUILT | fixed_in_0_5_0 | fixed_after_0_5_0)
         self.assertEqual(known.as_built_for("0.4.2"), known.AS_BUILT | fixed_after_0_5_0,
-                         "a release after 0.4.1 carries the fixes 0.5.0 carries, F21's and F23's not among them")
+                         "the next release carries the fixes")
         self.assertEqual(known.as_built_for("0.5.0"), known.AS_BUILT | fixed_after_0_5_0)
         self.assertEqual(known.as_built_for("0.5.1"), known.AS_BUILT,
-                         "the release after 0.5.0 carries F21's and F23's fixes")
+                         "the release after 0.5.0 carries F21's, F22's, F23's and F26's fixes")
         self.assertEqual(known.as_built_for("1.0.0"), known.AS_BUILT)
         for none in (None, "", "unknown", "0.4", "0.4.1-dirty", "1" * 10 + ".0.0"):
             self.assertEqual(known.as_built_for(none), known.AS_BUILT, none)
