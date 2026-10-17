@@ -5,7 +5,9 @@ before git, a wrapper that runs the command another way, git's global
 options, push options plain, bundled and abbreviated, and refspecs that
 name the worker's own claim branch, another worker's, the default and the
 board branch under every spelling, a branch that is no claim and a name
-that reads as a claim and claims nothing. Each command is judged twice:
+that reads as a claim and claims nothing; and, with no wrapper or global
+option around them, the prefixes whose wrapper is given a long option by
+a start of its name (ABBREVIATED, F26). Each command is judged twice:
 by the guard, as the hook runs it, and by the board rules read off what
 git would do with it.
 
@@ -71,6 +73,14 @@ MISNAMED = ("claude/07", "claude/\u0667")  # a leading zero; an Arabic-Indic sev
 CLAIM_NUMBER = re.compile(r"0|[1-9][0-9]{0,8}")
 
 PREFIXES = ("", "FOO=1 ", "env ", "command ", "nice ", "time ")
+# A wrapper given a long option by a start of its name, as GNU's
+# getopt_long reads it: one that needs a value, with its value as the next
+# word, and one that may take a value, with none, which it takes only
+# attached. The guard compared a long option with the names that take a
+# value, in full, so it read the word after --uns, --adj or --sig as the
+# command (F26). Like every prefix they change what the guard reads and
+# never git's arguments, so they are taken with the command alone.
+ABBREVIATED = ("env --uns FOO ", "env --def ", "nice --adj 5 ", "timeout --sig KILL 60 ")
 # The wrapper that hides the command in a string another program runs is
 # the one the guard cannot read (G11b).
 WRAPPERS = ("{}", "bash -c '{}'", "true && {}", "( {} )", "echo $({})")
@@ -116,9 +126,13 @@ class Command(NamedTuple):
 
 
 def commands():
-    """Every command of the grammar. A wholesale option takes no refspec
-    and --delete needs one, as git reads them."""
-    for prefix, wrapper, glob, option, spec in itertools.product(PREFIXES, WRAPPERS, GLOBALS, OPTIONS, REFSPECS):
+    """Every command of the grammar: each prefix with every wrapper and
+    global option, and each ABBREVIATED one with the command alone. A
+    wholesale option takes no refspec and --delete needs one, as git reads
+    them."""
+    parts = itertools.chain(itertools.product(PREFIXES, WRAPPERS, GLOBALS, OPTIONS, REFSPECS),
+                            itertools.product(ABBREVIATED, ("{}",), ("",), OPTIONS, REFSPECS))
+    for prefix, wrapper, glob, option, spec in parts:
         if option in WHOLESALE_OPTIONS and spec:
             continue
         if option == " --delete" and (not spec or spec.startswith(" +") or spec.startswith(" :")):

@@ -1,5 +1,5 @@
-"""The regression traces of DESIGN.md 5.3, one per finding F1 to F22
-(validation/traces/, played by validation/replay.py), and known.json, the
+"""The regression traces of DESIGN.md 5.3, one per finding, F1 to F22 and
+F26 (validation/traces/, played by validation/replay.py), and known.json, the
 record of what is red on purpose: every trace loads and plays with no
 mismatch; its red results are exactly what known.json records, as built
 and with each open finding's switch off in the oracle; a trace of a
@@ -166,7 +166,14 @@ BUDGET_SECONDS = 10
 # once the released branch is not read; and at its last, step 54, where
 # the owner closed #1 and reopened it after that release and put claimed
 # back again, claimed comes off once claimed put on after the close is
-# read as the ended claim's (F22's second review).
+# read as the ended claim's (F22's second review). F26's at its first
+# guard step, step 1, env --uns FOO before a push to main, which passes
+# once a wrapper's long option is read only by its whole name, as do its
+# second and third, nice --adj 5 and timeout --sig KILL 60; at its fourth,
+# step 4, env --def before a push to main, which passes once a value an
+# option may take is taken from the next word; and at b's lease from its
+# second clone by env --ch, step 5, taken once env's --chdir is read only
+# by its whole name.
 UNDONE = {
     "F1": [("the comment before the labels", 5, "G3L")],
     "F2": [("a piece of work named by the number it is shown by", 4, "G7"),
@@ -236,15 +243,18 @@ UNDONE = {
             ("the releases due read before the freeing", 47, "G3"),
             ("a released branch not read for a reopened issue", 49, "G8"),
             ("claimed put back after the close read as the ended claim's", 54, "G8")],
+    "F26": [("a long option read only in full", 1, "G11a"),
+            ("an optional value taken from the next word", 4, "G11a"),
+            ("env's abbreviated --chdir not read", 5, "G11a")],
 }
-# The twenty-two findings, every one settled since F22's fix: F1, F3,
+# The findings with a trace, every one settled since F22's fix: F1, F3,
 # F5, F6, F10 and F11 fixed in 0.4.1; F2, F4, F7, F8, F9, F12, F13, F14,
-# F15, F17, F18, F19 and F20 fixed in 0.5.0, and F21 and F22 on main after
-# it (known.json's fixed_after); and F16, fixed in the spec's words, which
-# the library as built already keeps, so known.json names no version for
-# it.
+# F15, F17, F18, F19 and F20 fixed in 0.5.0, and F21, F22 and F26 on main
+# after it (known.json's fixed_after); and F16, fixed in the spec's words,
+# which the library as built already keeps, so known.json names no
+# version for it.
 FIXED = ("F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12", "F13", "F14", "F15", "F16", "F17",
-         "F18", "F19", "F20", "F21", "F22")
+         "F18", "F19", "F20", "F21", "F22", "F26")
 # Findings red as built, which no rule of the library answers: none since
 # F4's fix; the test keeps the case for the next one.
 RED_AS_BUILT = ()
@@ -427,7 +437,7 @@ class KnownJson(unittest.TestCase):
         self.assertEqual(known.FIXED_AFTER,
                          {"F2": "0.4.1", "F4": "0.4.1", "F7": "0.4.1", "F8": "0.4.1", "F9": "0.4.1", "F12": "0.4.1",
                           "F13": "0.4.1", "F14": "0.4.1", "F15": "0.4.1", "F17": "0.4.1", "F18": "0.4.1",
-                          "F19": "0.4.1", "F20": "0.4.1", "F21": "0.5.0", "F22": "0.5.0"})
+                          "F19": "0.4.1", "F20": "0.4.1", "F21": "0.5.0", "F22": "0.5.0", "F26": "0.5.0"})
         current = known.version_key(sdlc_protocol.__version__)
         for finding, version in known.FIXED_AFTER.items():
             with self.subTest(finding=finding):
@@ -437,14 +447,14 @@ class KnownJson(unittest.TestCase):
                 self.assertLessEqual(known.version_key(version), current,
                                      "the last version with a finding is one main has stated, never a later one")
         fixed_in_0_5_0 = {"F2", "F4", "F7", "F8", "F9", "F12", "F13", "F14", "F15", "F17", "F18", "F19", "F20"}
-        fixed_after_0_5_0 = {"F21", "F22"}
+        fixed_after_0_5_0 = {"F21", "F22", "F26"}
         self.assertEqual(known.as_built_for("0.4.1"), known.AS_BUILT | fixed_in_0_5_0 | fixed_after_0_5_0)
         self.assertEqual(known.as_built_for("0.4.0"), known.AS_BUILT | fixed_in_0_5_0 | fixed_after_0_5_0)
         self.assertEqual(known.as_built_for("0.4.2"), known.AS_BUILT | fixed_after_0_5_0,
                          "the next release carries the fixes")
         self.assertEqual(known.as_built_for("0.5.0"), known.AS_BUILT | fixed_after_0_5_0)
         self.assertEqual(known.as_built_for("0.5.1"), known.AS_BUILT,
-                         "the release after 0.5.0 carries F21's and F22's fixes")
+                         "the release after 0.5.0 carries F21's, F22's and F26's fixes")
         self.assertEqual(known.as_built_for("1.0.0"), known.AS_BUILT)
         for none in (None, "", "unknown", "0.4", "0.4.1-dirty", "1" * 10 + ".0.0"):
             self.assertEqual(known.as_built_for(none), known.AS_BUILT, none)

@@ -114,6 +114,9 @@ TRACES = {
     "a released branch not read for a reopened issue": "the regression traces",
     "a release before the last close read as an undo": "the regression traces",
     "claimed put back after the close read as the ended claim's": "the regression traces",
+    "a long option read only in full": "the regression traces",
+    "env's abbreviated --chdir not read": "the regression traces",
+    "an optional value taken from the next word": "the regression traces",
     "dealing without its taken set": "dealing at every look",
     "each leg dealt from its own look": "the regression traces",
     "given to workers needing the label todo": "the regression traces",
@@ -331,17 +334,19 @@ class TheLane(unittest.TestCase):
         and a -C by ~ judged where it names alone; and one from the review
         of the client's waits for a rate limit, a 5xx retried as a rate
         limit, and eight from its second review, one for each rule of the
-        client's waits, so the bound is widened to 150, 134 within it; and
-        F22's fix seven, a reopened issue left as it is, todo put on last, a
-        ready pull request's in-review taken off, a claim branch and a
-        released branch not read for a reopened issue, in-review left on
-        where a branch stands, and the releases due read before the
-        freeing, 141 within that bound, its review one, a release
-        before the issue's last close read as an undo, 142, and its second
-        review one, claimed put back after the close read as the ended
-        claim's, 143."""
+        client's waits, so the bound is widened to 150, 134 within it;
+        F26's fix three, a long option read only in full, env's
+        abbreviated --chdir not read and an optional value taken from the
+        next word, 137; and F22's fix seven, a reopened issue left as it
+        is, todo put on last, a ready pull request's in-review taken off, a
+        claim branch and a released branch not read for a reopened issue,
+        in-review left on where a branch stands, and the releases due read
+        before the freeing, 144 within that bound, its review one, a
+        release before the issue's last close read as an undo, 145, and its
+        second review one, claimed put back after the close read as the ended
+        claim's, 146."""
         self.assertTrue(10 <= len(mutants.MUTANTS) <= 150)
-        self.assertEqual(len(mutants.MUTANTS), 143)
+        self.assertEqual(len(mutants.MUTANTS), 146)
         self.assertEqual(sorted(TRACES), sorted(mutants.MUTANTS))
 
     def test_every_mutant_names_a_rule_the_library_still_has(self):

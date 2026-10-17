@@ -21,9 +21,10 @@ files a lease is judged by (guard.other_holder) from the model as git
 there would show them (git_shows, claim_files_in): the remote-tracking
 ref as that clone's last fetch or push left it, and the branch pushed.
 lease-elsewhere is F7's careless rebaser in a second clone of its own,
-reached from its session's clone by git -C, by cd, or by a cd that is
-made and one that fails, or in its session's own clone, reached by moves
-and names the guard cannot follow (ELSEWHERE, F21).
+reached from its session's clone by git -C, by cd, by a cd that is made
+and one that fails, or by env's --chdir written as a start of its name
+(F26); or in its session's own clone, reached by moves and names the
+guard cannot follow (ELSEWHERE, F21).
 
 Actors: the workers of the scope, each a person's session that may write
 (author_association COLLABORATOR); the owner; carol, a collaborator; dana,
@@ -77,22 +78,24 @@ CLAIM_DIR = "docs/agents/claims"
 CLONES = "/clones"
 # How F21's careless rebaser reaches the clone its push runs in from its
 # session's: its second clone, by git's -C, by the shell's cd before git,
-# or by a cd the shell makes and then one into a directory that is not
-# there, which leaves the shell where it stood; or its session's own
-# clone, after a cd in a here-document's body, which the shell reads as
-# text, by a -C through a path the shell expands, which names it, by a -C
-# relative to where a cd behind a test that fails would have taken the
-# shell, which the shell skips (F21's fourth review), with GIT_DIR
-# exported, which names it whatever -C comes after, or by a -C from a ~
-# after HOME is set, which the shell reads from that HOME and the guard
-# from the hook's own (the same review).
+# by a cd the shell makes and then one into a directory that is not
+# there, which leaves the shell where it stood, or by env's --chdir
+# written as --ch, a start of its name that GNU env reads as the option
+# (F26); or its session's own clone, after a cd in a here-document's
+# body, which the shell reads as text, by a -C through a path the shell
+# expands, which names it, by a -C relative to where a cd behind a test
+# that fails would have taken the shell, which the shell skips (F21's
+# fourth review), with GIT_DIR exported, which names it whatever -C comes
+# after, or by a -C from a ~ after HOME is set, which the shell reads from
+# that HOME and the guard from the hook's own (the same review).
 ELSEWHERE = {"-C": "git -C ../{clone} {push}", "cd": "cd ../{clone} && git {push}",
              "missing": "cd ../{clone}; cd ../{absent}; git {push}",
              "body": "cat > /dev/null <<'EOF'\ncd ..\nEOF\ngit {push}",
              "expanded": 'git -C "$(git rev-parse --show-toplevel)" {push}',
              "skipped": "cd ..; false && cd {clone}; git -C {own} {push}",
              "exported": "export GIT_DIR={root}/{own}/.git; git -C {root} {push}",
-             "home": "HOME={root}; git -C ~/{own} {push}"}
+             "home": "HOME={root}; git -C ~/{own} {push}",
+             "env": "env --ch ../{clone} git {push}"}
 # The ways whose push runs in the worker's own clone (leasing_clone).
 FROM_OWN_CLONE = ("body", "expanded", "skipped", "exported", "home")
 
@@ -591,18 +594,19 @@ def lease_elsewhere(model, worker, number, files, how):
     there and makes its claim commit there, with a claim file naming
     itself, then leases onto a claim another worker holds by a command its
     session runs from its own clone, which has not fetched that claim,
-    reaching the second by git -C, by cd, or by a cd and then one into a
-    directory that is not there, which leaves the shell in the second
-    (ELSEWHERE); or, for body, expanded, skipped, exported and home, it
-    does all that in its own clone, after a cd in a here-document's body,
-    which the shell does not run, naming its own clone by a -C the shell
-    expands, by a relative -C after a cd behind a test that fails, which
-    the shell skips, with GIT_DIR exported, which names it whatever -C
-    comes after, or by a -C from a ~ after HOME is set to the directory
-    that holds the clones, which the guard reads from the hook's own HOME.
+    reaching the second by git -C, by cd, by a cd and then one into a
+    directory that is not there, which leaves the shell in the second, or
+    by env --ch, which GNU env reads as --chdir (ELSEWHERE); or, for body,
+    expanded, skipped, exported and home, it does all that in its own
+    clone, after a cd in a here-document's body, which the shell does not
+    run, naming its own clone by a -C the shell expands, by a relative -C
+    after a cd behind a test that fails, which the shell skips, with
+    GIT_DIR exported, which names it whatever -C comes after, or by a -C
+    from a ~ after HOME is set to the directory that holds the clones,
+    which the guard reads from the hook's own HOME.
     Git would take it, so the guard must judge the push in the clone it
     runs in and refuse it, as it refuses lease_onto's. No search offers
-    it; F21's trace plays it."""
+    it; F21's trace plays it, and F26's its env."""
     pusher = leasing_clone(worker, how)
     model.fetch(pusher)
     ref = claim_ref(number)

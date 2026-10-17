@@ -91,9 +91,11 @@ passes as it did before the fence. Git is found behind what the shell
 reads before a command: VAR=value assignments, the reserved words that
 open a compound command or negate a pipeline (!, {, if, then, else, elif,
 while, until, do, and function with its name), and the wrappers env,
-command, nice, time, exec, nohup and timeout, each with its own options,
-and git's own options before the verb, each with its value where it takes
-one (GIT_VALUE_OPTIONS), and a query after which git runs nothing
+command, nice, time, exec, nohup and timeout, each with its own options as
+it reads them, a long one by any start of its name that names it alone, as
+env --uns for env --unset, since GNU's getopt_long reads them so (WRAPPERS,
+F26), and git's own options before the verb, each with its value where it
+takes one (GIT_VALUE_OPTIONS), and a query after which git runs nothing
 (GIT_QUERIES). A push is read as git reads its arguments: short options
 in a bundle, as in -fu; a long one by any start of its name that names it
 alone, as --force-w, or taken back with --no-; a value that is no
@@ -206,27 +208,53 @@ SHELL_TILDE = re.compile(r"~(?:[+-][0-9]*|[0-9]+)(?:/|$)")
 
 class Wrapper(NamedTuple):
     """How a command that runs another reads its own words first, as GNU's
-    getopt does: its short options that take a value, attached as in -n5 or
-    as the next word, its long options that take one, attached with = or as
-    the next word, and how many words follow its options before the command
-    it runs, as timeout's duration does."""
+    getopt_long does: its short options that take a value, attached as in
+    -n5 or as the next word; every long option it has, each by what it
+    takes, as git push's are read (FLAG, VALUE, OPTIONAL), the flags among
+    them, since a word names an option by any start of its name that names
+    no other (long_option_of); and how many words follow its options before
+    the command it runs, as timeout's duration does."""
 
-    short_values: str = ""
-    long_values: frozenset = frozenset()
+    short_values: str
+    long_options: dict
     operands: int = 0
 
 
-# The commands a person puts before git to run it another way, as GNU's
-# env, nice, time, nohup and timeout and bash's command and exec read their
-# options (bash's own time takes only -p, a flag).
+# The two long options every GNU program reads.
+GNU_STANDARD = {"help": FLAG, "version": FLAG}
+# The commands a person puts before git to run it another way, with every
+# option each reads before the command (F26: the guard compared a long one
+# with the names that take a value, in full, so "env --uns HOME", "nice
+# --adj 5" and "timeout --sig KILL" were read as running HOME, 5 and the
+# duration). GNU coreutils' env, nice, nohup and timeout as 9.4's --help
+# lists them, with env's -a and --argv0 of 9.5, its --env0-from of 9.12
+# and its --quoting-style, which coreutils' NEWS lists for the release
+# after 9.12, since a version that lacks an option refuses the word and
+# runs nothing, and one that has it runs the command after it; GNU time as
+# its src/time.c reads them in 1.9 and 1.10, whose manual's --output is a
+# start of --output-file; and bash's command and exec, which take no long
+# option (bash's own time takes only -p, a flag). env's short options that
+# take a value hold the BSD ones too: -P altpath, the directories the env
+# of FreeBSD and macOS searches for the command, and FreeBSD's -L and -U,
+# a login class and a user, since those makes run the command after the
+# value; GNU's env refuses all three and runs nothing (exit 125), so
+# reading the next word as their value costs only the refusal of a push
+# GNU would not have run. Any other option another make's wrapper reads
+# and GNU's does not is read as a flag, and the push behind it passes, as
+# before F26's fix.
 WRAPPERS = {
-    "env": Wrapper("uCS", frozenset({"--unset", "--chdir", "--split-string"})),
-    "command": Wrapper(),
-    "nice": Wrapper("n", frozenset({"--adjustment"})),
-    "time": Wrapper("of", frozenset({"--output", "--format"})),
-    "exec": Wrapper("a"),
-    "nohup": Wrapper(),
-    "timeout": Wrapper("ks", frozenset({"--kill-after", "--signal"}), operands=1),
+    "env": Wrapper("uCSaPLU", {"argv0": VALUE, "ignore-environment": FLAG, "env0-from": VALUE, "null": FLAG,
+                            "unset": VALUE, "chdir": VALUE, "default-signal": OPTIONAL, "ignore-signal": OPTIONAL,
+                            "block-signal": OPTIONAL, "list-signal-handling": FLAG, "debug": FLAG,
+                            "quoting-style": VALUE, "split-string": VALUE, **GNU_STANDARD}),
+    "command": Wrapper("", {}),
+    "nice": Wrapper("n", {"adjustment": VALUE, **GNU_STANDARD}),
+    "time": Wrapper("of", {"append": FLAG, "format": VALUE, "output-file": VALUE, "portability": FLAG, "quiet": FLAG,
+                           "verbose": FLAG, **GNU_STANDARD}),
+    "exec": Wrapper("a", {}),
+    "nohup": Wrapper("", GNU_STANDARD),
+    "timeout": Wrapper("ks", {"foreground": FLAG, "kill-after": VALUE, "preserve-status": FLAG, "signal": VALUE,
+                              "verbose": FLAG, **GNU_STANDARD}, operands=1),
 }
 # command -v and -V say what would run and run nothing.
 DESCRIBES_ONLY = set("vV")
@@ -370,17 +398,49 @@ def value_is_next(bundle, value_letters):
     return False
 
 
+def long_option_of(word, wrapper):
+    """The wrapper's long option a word that starts with -- names, as GNU's
+    getopt_long resolves it, the word read up to any =: the option of
+    exactly that name, else the one option whose name it starts, as --uns
+    names --unset; None where it starts the names of more than one option,
+    as env's --d does --default-signal's and --debug's, or of none, either
+    of which the wrapper refuses, running nothing. glibc also takes a start
+    shared by two names of one option, which no wrapper here has."""
+    name = word[2:].partition("=")[0]
+    if name in wrapper.long_options:
+        return name
+    found = [option for option in wrapper.long_options if option.startswith(name)]
+    return found[0] if len(found) == 1 else None
+
+
+def long_value_is_next(word, wrapper):
+    """Whether a wrapper's long option word takes the next word as its
+    value: one that names an option that needs a value (VALUE), with none
+    attached by =. One whose value is OPTIONAL takes it only attached, as
+    env's --default-signal does, and a FLAG none. A word long_option_of
+    cannot resolve is read as taking none, as every long option the guard
+    did not know was before F26's fix, and the words after it as the
+    wrapper reads them: the wrapper runs nothing then, so a push after it
+    refused costs a rephrasing of a command that runs nothing, and a
+    wrapper of another version, which may read the word as one option, as
+    an env from before --ignore-signal reads --i as --ignore-environment,
+    has its push judged. No start that options of one wrapper share here
+    is one of an option that takes the next word, so the word is read as
+    each of the options it starts would read it."""
+    return "=" not in word and wrapper.long_options.get(long_option_of(word, wrapper)) == VALUE
+
+
 def past_options(argv, i, wrapper):
     """Where a wrapper's command starts: past its options from argv[i] on,
-    each with its value (Wrapper), past a -- that ends them, and past the
-    operands the wrapper takes before the command."""
+    each with its value (Wrapper, long_value_is_next), past a -- that ends
+    them, and past the operands the wrapper takes before the command."""
     while i < len(argv) and argv[i].startswith("-"):
         word = argv[i]
         i += 1
         if word == "--":
             break
         if word.startswith("--"):
-            if "=" not in word and word in wrapper.long_values:
+            if long_value_is_next(word, wrapper):
                 i += 1
         elif value_is_next(word[1:], wrapper.short_values):
             i += 1
@@ -496,13 +556,21 @@ def joined(place, path, physical=False):
     return path if physical else os.path.normpath(path)
 
 
+def names_chdir(word):
+    """Whether one of env's long option words names --chdir, in full or by
+    any start of it that names no other option of env's, as --ch does
+    (long_option_of)."""
+    return long_option_of(word, WRAPPERS["env"]) == "chdir"
+
+
 def env_directory(options):
     """The directory env's option words name for the command it runs, as
-    GNU env reads -C DIR, -CDIR, a bundle that ends in C, and --chdir with
-    its value attached or as the next word: the last one given, since env
-    changes directory once, to the last directory it was given, from where
-    it was run (F21's third review: "env -C sub -C ../other" runs in
-    ../other); None where none is given."""
+    GNU env reads -C DIR, -CDIR, a bundle that ends in C, and --chdir or a
+    start of it (names_chdir, F26: "env --ch=../other" was judged where env
+    was run), with its value attached or as the next word: the last one
+    given, since env changes directory once, to the last directory it was
+    given, from where it was run (F21's third review: "env -C sub -C
+    ../other" runs in ../other); None where none is given."""
     found, env, i = None, WRAPPERS["env"], 0
     while i < len(options):
         word = options[i]
@@ -510,10 +578,10 @@ def env_directory(options):
         if word == "--":
             break
         if word.startswith("--"):
-            name, attached, value = word.partition("=")
-            if not attached and name in env.long_values and i < len(options):
+            value = word.partition("=")[2]
+            if long_value_is_next(word, env) and i < len(options):
                 value, i = options[i], i + 1
-            if name == "--chdir":
+            if names_chdir(word):
                 found = value
             continue
         for at, letter in enumerate(word[1:], start=1):
