@@ -20,13 +20,15 @@ on it, whose first line is claims.RELEASE_MARKER, saying why, whose the
 claim was, what its branch holds and what its plan was, so the next worker
 can carry the work on or start over, and the board renames the branch in
 the same run. The board counts a release only once both are done. A run
-that fails at the labels puts back the labels it took off and takes off
-the todo it put on, so the issue is as it was and the next run starts the
-release over. A run whose comment fails reads the issue's comments: a
-release comment there makes the release whole; where they list none after
-GitHub refused the comment, a 4xx other than a rate limit's on a try that
-followed none refused for a rate limit, which it answers in place of
-writing anything, the run puts the labels back as at the labels; and where
+that fails at the labels puts back the labels it took off, the one whose
+taking off GitHub answered with an error among them unless GitHub refused
+it in place of taking it off (F27), and takes off the todo it put on, so
+the issue is as it was and the next run starts the release over. A run
+whose comment fails reads the issue's comments: a release comment there
+makes the release whole; where they list none after GitHub refused the
+comment, a 4xx other than a rate limit's on a try that followed none
+refused for a rate limit, which it answers in place of writing anything,
+the run puts the labels back as at the labels; and where
 it cannot read them, whatever GitHub answered (F20), or they list none
 after any other answer, a rate limit's refusal, on the last try or on one
 the run made the comment again after, a server error or no answer among

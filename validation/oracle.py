@@ -85,8 +85,11 @@ SPEC = {
              "worker, while a blocker is listed under Blockers without it; then it posts a comment on the issue "
              "whose first line is `<!-- sdlc-coordinator: claim-released -->`",
     "put back": "A run that fails at the labels, taking one off or putting todo on, puts back the labels it took "
-                "off and takes off the todo it put on, even one whose putting on GitHub answered with an error, "
-                "since GitHub may have written it",
+                "off, even one whose taking off GitHub answered with an error, unless GitHub refused it with an "
+                "answer from 400 to 499 other than a rate limit's, on a try that followed none GitHub refused for "
+                "a rate limit, which GitHub gives in place of taking it off, since GitHub may have taken it off "
+                "and a label put back that is still on changes nothing, and takes off the todo it put on, even one "
+                "whose putting on GitHub answered with an error, since GitHub may have written it",
     "whole": "A run whose comment fails reads the issue's comments, and the comment there after all, one GitHub "
              "wrote and lost its answer to, makes the release whole.",
     "refused": "Where they list none and GitHub refused the comment, with an answer from 400 to 499 other than a "

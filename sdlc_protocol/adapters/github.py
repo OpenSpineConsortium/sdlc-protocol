@@ -1619,9 +1619,11 @@ def release_one(api, snap, key, now):
     (coordinator.labels_put_on), then the comment, in the protocol's
     order, and the board counts a release only once both are done. A run
     that fails at the labels, taking one off or putting todo on, puts
-    back the labels it took off and takes off the todo it put on, even
-    one whose putting on GitHub answered with an error, since GitHub may
-    have written it (put_labels_on, put_back), so the issue is as the run
+    back the labels it took off, even one whose removal GitHub answered
+    with an error other than a refusal that says it wrote nothing
+    (take_labels_off; F27), and takes off the todo it put on, even one
+    whose putting on GitHub answered with an error, since GitHub may have
+    written either (put_labels_on, put_back), so the issue is as the run
     found it and the next run starts the release over. A run whose
     comment fails reads the issue's comments, and the comment there after
     all, one GitHub wrote and lost its answer to, makes the release
@@ -1652,12 +1654,8 @@ def release_one(api, snap, key, now):
     done, in a line."""
     release = snap.releases[key]
     names, put_on = coordinator.labels_released(snap, key), coordinator.labels_put_on(snap, key)
-    taken_off = []
-    try:
-        for name in names:
-            if take_label_off(api, key, name):
-                taken_off.append(name)
-    except GitHubError as problem:
+    taken_off, problem = take_labels_off(api, key, names)
+    if problem:
         return (f"#{key}: not released, taking the labels off failed: {problem}{github_words(problem)}"
                 + put_back(api, key, taken_off))
     refused = put_labels_on(api, key, put_on, taken_off)
@@ -1682,16 +1680,46 @@ def release_one(api, snap, key, now):
     return f"#{key}: claim released, idle since {release.last_commit}{lost}"
 
 
-def take_label_off(api, key, name):
+def take_labels_off(api, key, names):
+    """Take a release's labels off its issue, in order, stopping at the
+    first GitHub fails: the labels to put back should a step fail, and
+    the failure, or None. The label whose removal failed is among them
+    unless GitHub refused it in a way that says it wrote nothing
+    (wrote_nothing), since a server error or no answer at all may come
+    after GitHub took it off, and putting back a label still on changes
+    nothing, where leaving off one GitHub took leaves the issue as
+    neither the release nor the run found it (F27, until whose fix only
+    the labels whose removal GitHub answered went back). A 404 that
+    answers a try after a rate limit's refusal counts as a label taken
+    off, for the same reason (take_label_off; F27's review)."""
+    taken_off = []
+    for name in names:
+        try:
+            if take_label_off(api, key, name, retried_404_taken=True):
+                taken_off.append(name)
+        except GitHubError as problem:
+            return taken_off + ([] if wrote_nothing(problem) else [name]), problem
+    return taken_off, None
+
+
+def take_label_off(api, key, name, retried_404_taken=False):
     """Take one label off a claim's issue: True when it came off, False when
     GitHub answered 404, for an issue that no longer carried it, which is
     the label being off too, so a release goes on and puts back, if a later
-    step fails, only what it took off."""
+    step fails, only what it took off. With retried_404_taken, as a
+    release takes its labels off (take_labels_off), a 404 that answers a
+    try the client made after a rate limit's refusal of an earlier one
+    counts as the label taken off: GitHub may have taken it off on the
+    refused try, so the 404 says it is off now, not that the issue never
+    carried it, and the release goes on and puts it back should a later
+    step fail, where a plain 404 left it off a held claim's issue (F27's
+    review). Taking a todo off again, or freeing a reopened issue, wants
+    only the label off, which such a 404 says either way."""
     try:
         api.delete(f"/repos/{api.repo}/issues/{key}/labels/{urllib.parse.quote(name, safe='')}")
     except GitHubError as problem:
         if problem.status == 404:
-            return False
+            return retried_404_taken and problem.after_rate_limit
         raise
     return True
 

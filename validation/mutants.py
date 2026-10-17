@@ -109,6 +109,7 @@ ORIGINAL_LABELS_RELEASED = coordinator.labels_released
 ORIGINAL_IS_RELEASED = board.is_released
 ORIGINAL_ISSUE_ROWS = board.issue_rows
 ORIGINAL_COMMENTS_DUE = board.comments_due
+ORIGINAL_TAKE_LABEL_OFF = github.take_label_off
 ORIGINAL_OVERLAPS_DUE = coordinator.overlap_comments_due
 ORIGINAL_REFUSAL = guard.refusal
 ORIGINAL_TOLD = coordinator.told_numbers
@@ -1303,6 +1304,31 @@ def todo_put_on_last(api, snap, number):
     return f"#{number}: freed"
 
 
+def take_labels_off_putting_back(failed_too):
+    """github.take_labels_off with the label whose removal failed put back
+    as failed_too(problem) says: never, as before F27's fix, which leaves
+    off a label GitHub took and lost its answer to, or always, which puts
+    back a label GitHub refused to take off."""
+    def take_labels_off(api, key, names):
+        taken_off = []
+        for name in names:
+            try:
+                if github.take_label_off(api, key, name):
+                    taken_off.append(name)
+            except github.GitHubError as problem:
+                return taken_off + ([name] if failed_too(problem) else []), problem
+        return taken_off, None
+    return take_labels_off
+
+
+def take_label_off_trusting_a_retried_404(api, key, name, retried_404_taken=False):
+    """github.take_label_off reading every 404 as a label the issue never
+    carried, a 404 after a rate limit's refusal of an earlier try among
+    them, as before F27's review, so a release that fails later leaves off
+    a label the refused try may have taken."""
+    return ORIGINAL_TAKE_LABEL_OFF(api, key, name)
+
+
 def releases_read_before_the_freeing(api, snapshot, now):
     """github.coordinate reading which claims are due before it frees the
     reopened issues, so a claim whose in-review the freeing takes off waits
@@ -1518,6 +1544,16 @@ MUTANTS = {
     "a todo written and lost stays on": Mutant(
         github, "put_labels_on", put_labels_on_then(lambda taken_off, put_on: (taken_off, ())),
         "G3L", "a todo GitHub wrote and lost its answer to is taken off again with the labels put back (F15's review)"),
+    "a label taken off and lost stays off": Mutant(
+        github, "take_labels_off", take_labels_off_putting_back(lambda problem: False),
+        "G3L", "a release whose label GitHub took off and answered with a server error or no answer puts it back (F27)"),
+    "a 404 after a rate limit read as never on": Mutant(
+        github, "take_label_off", take_label_off_trusting_a_retried_404,
+        "G3L", "a label whose removal answered 404 after a rate limit's refusal may have come off on the refused try "
+               "and is put back with the others when a later label fails (F27's review)"),
+    "a label refused its removal put back": Mutant(
+        github, "take_labels_off", take_labels_off_putting_back(lambda problem: True),
+        "G3L", "a release puts back no label GitHub refused to take off, which is still on (F27)"),
     "an epic gets todo": Mutant(
         coordinator, "NEEDS_NO_TODO", frozenset({labels.TODO, labels.BLOCKER}),
         "G3", "a release puts no todo on an epic, which the Queue never lists (F15's review)"),
