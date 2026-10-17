@@ -432,6 +432,8 @@ class FakeGitHub:
                 self.model.add_comment(number, Comment(BOT, "NONE", self.model.now, body["body"]))
                 at = len(self.model.comments_on(number)) - 1
                 return self.comment_json(number, at, self.model.comments_on(number)[at]), {}
+        if s[2] == "events" and len(s) == 3 and method == "GET" and number in self.model.issues:
+            return self.page(self.events_json(self.model.issues[number]), query, url)
         if s[2] == "labels" and number in self.model.issues:
             if method == "POST" and len(s) == 3:
                 for name in body["labels"]:
@@ -450,6 +452,13 @@ class FakeGitHub:
         reason = "reopened" if issue.reopened else "completed" if issue.state == "closed" else None
         return {"number": issue.number, "title": issue.title, "state": issue.state, "body": issue.body,
                 "labels": [{"name": n} for n in sorted(issue.labels)], "updated_at": iso(0), "state_reason": reason}
+
+    @staticmethod
+    def events_json(issue):
+        """An issue's events as GitHub lists them, here its latest close
+        alone, the one event the coordinator reads them for (F22's
+        review)."""
+        return [] if issue.closed_at is None else [{"event": "closed", "created_at": iso(issue.closed_at)}]
 
     def pull_as_issue(self, pull):
         return {"number": pull.number, "title": pull.title, "state": "open" if pull.state == "open" else "closed",

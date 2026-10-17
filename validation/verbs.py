@@ -799,9 +799,11 @@ MERGED_EVENTS = ((cycle.PUSH, MAIN), (cycle.PULL_REQUEST, ""), (cycle.ISSUES, ""
 
 def close_issue(model, number):
     """Close an issue, as a merge that closes it or a person does: GitHub's
-    state_reason is then completed, no longer reopened."""
+    state_reason is then completed, no longer reopened, and its events
+    record the close at this minute."""
     if number in model.issues:
-        model.issues[number].state, model.issues[number].reopened = "closed", False
+        issue = model.issues[number]
+        issue.state, issue.reopened, issue.closed_at = "closed", False, model.now
 
 
 def reopen_issue(model, number):

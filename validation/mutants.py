@@ -1206,14 +1206,19 @@ def ready_pull_request_unread(snapshot, number, names):
 def todo_put_on_last(api, snap, number):
     """github.free_reopened taking the labels off before it puts todo on, so
     a run that fails after claimed came off leaves an issue no section of
-    the board lists and no later run frees (F22)."""
+    the board lists and no later run frees (F22). It reads what the
+    library reads, in its order, and changes only when todo goes on."""
+    branch = claims.branch_of(str(number))
     issue = api.issue(number) or {}
     if issue.get("state") != "open":
         return f"#{number}: not freed"
-    plan = coordinator.freeing(snap, number, labels.label_names(issue))
-    if plan.taken_off and not plan.branch_stands and github.branch_sha(api, claims.branch_of(str(number))):
+    pull = api.pull_detail(branch)
+    plan = coordinator.freeing(github.with_claims_pull(snap, number, pull), number, labels.label_names(issue))
+    if plan.taken_off and not plan.branch_stands and github.branch_sha(api, branch):
         return f"#{number}: not freed"
     for name in plan.taken_off:
+        if name == labels.CLAIMED and not plan.branch_stands and github.branch_sha(api, branch):
+            return f"#{number}: not freed"
         github.take_label_off(api, number, name)
     if plan.put_on:
         api.post(f"/repos/{api.repo}/issues/{number}/labels", {"labels": list(plan.put_on)})
@@ -1774,6 +1779,10 @@ MUTANTS = {
         github, "free_reopened", todo_put_on_last,
         "G8", "a freeing puts todo on first and takes claimed off last, so a run that fails partway leaves the issue "
               "for the next run to free (F22)"),
+    "a release before the last close read as an undo": Mutant(
+        github, "ended_releases", lambda api, issues, branches, kept, trusted: [],
+        "G8", "a released branch an earlier claim's release left before the issue's last close undoes nothing, so "
+              "a reopened issue whose later claim ended with the close is freed wholly (F22's review)"),
     "the releases due read before the freeing": Mutant(
         github, "coordinate", releases_read_before_the_freeing,
         "G3", "a claim whose in-review a freeing takes off is released in the same run where its branch has gone a "
@@ -1790,6 +1799,17 @@ WORKER = Verb("label-on", "a", (1, "worker:a"))
 # clock runs 25 hours.
 DUE = (CLAIM, CLAIMED, WORKER, Verb("wait", "clock", (25,)))
 SHARED = ("src/shared.py",)
+# a's idle claim released, then b's claim on #1, announced, finished as
+# Finish says, its claim file deleted, its pull request marked ready and
+# in-review on, for the owner to merge (F22).
+REOPENS = DUE + (Verb("board", verbs.BOARD, (cycle.SCHEDULE, "")), Verb("claim", "b", (1,)),
+                 Verb("label-on", "b", (1, "claimed")), Verb("label-on", "b", (1, "worker:b")),
+                 Verb("label-off", "b", (1, "todo")), Verb("open-draft", "b", (1,)), Verb("drop-claim-file", "b", (1,)),
+                 Verb("mark-ready", "b", (100,)), Verb("label-on", "b", (1, "in-review")))
+# a's claim on #1, closed and reopened, then released once idle, so its
+# release came after the issue's last close, for the owner to undo (F22).
+UNDOABLE = (CLAIM, CLAIMED, WORKER, Verb("close-issue", M.OWNER, (1,)), Verb("reopen-issue", M.OWNER, (1,)),
+            Verb("wait", "clock", (25,)), Verb("board", verbs.BOARD, (cycle.SCHEDULE, "")))
 
 # Cheapest first, since a mutant is judged by the first search that
 # catches it. The traces met F4, dealing from differing looks, on the
@@ -1911,6 +1931,14 @@ SEARCHES = (
     Search("a stranger's marker on overlapping claims", (CLAIM, Verb("claim", "b", (2,))),
            Scope(workers=("a", "b"), issues=(1, 2), people=(SAM,), waits=(25,),
                  files=((1, SHARED), (2, SHARED))), 2, issues=(1, 2)),
+    # a's claim released, b's claim on #1 ready for review: the owner may
+    # merge it, keeping its branch or not, and close and reopen #1, so each
+    # rule of the freeing is searched and not only traced; and a release
+    # on a reopened #1, which the owner may undo (F22's review).
+    Search("a reopened issue after a release and a later claim", REOPENS, Scope(workers=("a", "b"),
+           people=(M.OWNER,), waits=(25,), reopens=True), 4),
+    Search("a release undone on a reopened issue", UNDOABLE, Scope(workers=("a", "b"), people=(M.OWNER,),
+           waits=(25,), reopens=True), 2),
 )
 CATCHERS = LANES + SEARCHES + (PICKING, LABEL_MIXES)
 

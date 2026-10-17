@@ -455,9 +455,13 @@ class SnapshotShape(unittest.TestCase):
         self.assertTrue(snap.issues[0].reopened)
         self.assertEqual(snap.kept_names, ["released/12-aaaaaaa", "released/3-bbbbbbb"])
         self.assertEqual(Snapshot.from_json(snap.to_json()), snap)
+        snap.ended_releases = ["12"]
+        self.assertEqual(Snapshot.from_json(snap.to_json()), snap)
+        self.assertEqual(Snapshot.from_dict(dict(snapshot(), ended_releases=[12])).ended_releases, ["12"])
         self.assertEqual(snap.issues[0].to_dict()["state_reason"], "reopened")
         old = Snapshot.from_dict(snapshot())
         self.assertNotIn("kept_names", old.to_dict())
+        self.assertNotIn("ended_releases", old.to_dict())
         self.assertNotIn("state_reason", old.issues[0].to_dict())
         for reason in (None, "completed", "not_planned", "REOPENED", True):
             self.assertFalse(Issue.from_dict({"number": 1, "state_reason": reason}).reopened, reason)

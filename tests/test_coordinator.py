@@ -374,6 +374,24 @@ class ReopenedIssues(unittest.TestCase):
         other = reopened(branches=["claude/120"], kept_names=["released/120-bbbbbbb", "released/1-ccccccc"])
         self.assertFalse(coordinator.claim_stands(other, "12"), "another issue's branches hold nothing of #12")
 
+    def test_a_released_branch_an_earlier_claim_left_before_the_close_undoes_nothing(self):
+        """Claim A on #12 was released, leaving released/12-aaaaaaa; claim
+        B then finished and merged, its branch deleted, and #12 was
+        reopened. A's release came before the close, so its branch is no
+        release being undone: counting it would take in-review off alone
+        and leave claimed and B's label on an issue no section of the board
+        lists, for good (F22's review)."""
+        snap = reopened(("claimed", "in-review", "worker:b"), kept_names=["released/12-aaaaaaa"],
+                        ended_releases=["12"])
+        self.assertFalse(coordinator.claim_stands(snap, "12"))
+        self.assertEqual(coordinator.freeing(snap, 12, snap.issues[0].labels),
+                         coordinator.Freeing(("todo",), ("worker:b", "in-review", "claimed")))
+        coordinator.after_labels(snap, "12", ("worker:b", "in-review", "claimed"), ("todo",))
+        self.assertEqual(coordinator.reopened_due(snap), [])
+        self.assertIn("| #12 | Describe the board | todo |", board.render(snap).split(board.QUEUE_HEADING)[1])
+        standing = reopened(branches=["claude/12"], kept_names=["released/12-aaaaaaa"], ended_releases=["12"])
+        self.assertTrue(coordinator.claim_stands(standing, "12"), "a claim branch is a claim whatever came before")
+
     def test_a_ready_pull_request_from_the_claim_branch_finishes_the_claim_and_nothing_comes_off(self):
         ready = {"number": 41, "title": "Again", "head": {"ref": "claude/12", "sha": HEAD}, "mergeable_state": "clean",
                  "updated_at": "2026-09-20T00:00:00Z", "draft": False, "files": ["a.md"]}

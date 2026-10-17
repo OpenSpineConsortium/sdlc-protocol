@@ -300,7 +300,8 @@ def freeing(snapshot, number, names):
     in-review is off the release frees it when its branch has gone a day
     without a commit, in the same run where it has (adapters.github.
     may_be_due), while a released branch beside the label claimed is a
-    release a person is undoing. Where none stands and the issue carries
+    release a person is undoing, unless that release came before the
+    issue's last close (claim_stands). Where none stands and the issue carries
     claimed or in-review, the claim ended with the close: todo goes on as
     a release puts it on (labels_put_on), then every worker's label,
     in-review and claimed come off, claimed last, so a run that fails
@@ -320,9 +321,17 @@ def freeing(snapshot, number, names):
 
 def claim_stands(snap, key):
     """Whether a branch stands for the issue with this key: its claim
-    branch, or a branch a release left (board.Snapshot.kept_names)."""
+    branch, or a branch a release left (board.Snapshot.kept_names) where
+    that release may be being undone. A release whose latest comment came
+    no later than the issue's last close (board.Snapshot.ended_releases)
+    belongs to a claim before the close, which a person undoing a release
+    on the open issue cannot mean: counting its branch would take in-review
+    off alone and leave claimed and the worker's label on an issue with no
+    claim branch for good, listed in no section of the board."""
+    if claims.branch_of(key) in snap.branches:
+        return True
     kept = claims.released_branch(key, "")
-    return claims.branch_of(key) in snap.branches or any(name.startswith(kept) for name in snap.kept_names)
+    return key not in snap.ended_releases and any(name.startswith(kept) for name in snap.kept_names)
 
 
 # --- overlaps -----------------------------------------------------------------

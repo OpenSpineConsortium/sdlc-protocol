@@ -707,6 +707,46 @@ def kept_names(listed):
     return [name for name in (board.branch_name(b) for b in listed) if name.startswith(claims.RELEASED_PREFIX)]
 
 
+def ended_releases(api, issues, branches, kept, trusted):
+    """The reopened issues, by key, whose released branches a release of a
+    claim before the issue's last close left: an open issue GitHub says
+    was reopened that carries claimed or in-review, with no claim branch
+    and a branch released/<issue>-<short sha> standing, whose latest
+    release comment by an author the repository trusts came no later than
+    the latest close its events record, or where none counts. Such a
+    branch is no release being undone, so the coordinator frees the issue
+    wholly (coordinator.claim_stands; F22). Only such an issue costs calls,
+    its events and its comments, and a freed one carries neither label, so
+    each is read in a run or two. One GitHub refuses either read for, or
+    whose events record no close, is left out, so its released branch
+    counts as a release being undone and the freeing takes in-review off
+    alone, as before this was read, until a later run reads it."""
+    found = []
+    for issue in issues:
+        key = str(issue.get("number", ""))
+        names = labels.label_names(issue)
+        if (issue.get("state_reason") != board.REOPENED or not {labels.CLAIMED, labels.IN_REVIEW} & set(names)
+                or claims.branch_of(key) in branches
+                or not any(name.startswith(claims.released_branch(key, "")) for name in kept)):
+            continue
+        try:
+            closed = latest_close(api.get_all(f"/repos/{api.repo}/issues/{key}/events"))
+            released = claims.latest_release(api.get_all(f"/repos/{api.repo}/issues/{key}/comments"), trusted)
+        except GitHubError:
+            continue
+        if closed and (not released or claims.parse_time(released) <= claims.parse_time(closed)):
+            found.append(key)
+    return found
+
+
+def latest_close(events):
+    """When an issue was last closed, as GitHub wrote the time of its
+    latest event closed, or "" where its events record none."""
+    times = [entry_time({"timestamp": e.get("created_at")}) for e in events
+             if isinstance(e, dict) and e.get("event") == "closed"]
+    return max((at for at in times if at), key=claims.parse_time, default="")
+
+
 def claim_heads(listed):
     """The head commit of each claim branch, by branch, from the branch
     list as the API gives it; a branch given by name alone has none."""
@@ -1182,6 +1222,9 @@ def collect(api, sha, default_branch, now=None, started_by=""):
     kept = kept_names(listed)
     if kept:
         found["kept_names"] = kept
+        ended = ended_releases(api, issues, branches, kept, may_write(api, asked))
+        if ended:
+            found["ended_releases"] = ended
     found["began"], refused = began_times(api, found)
     if refused:
         found["began_refused"] = refused
@@ -1370,19 +1413,29 @@ def free_reopened(api, snap, number):
     closed by then; where the board read no branch for it, read its claim
     branch again too, and leave the issue to the next run once one
     stands, since a worker that claimed it after the board read the
-    branches has just put claimed and its label on; then put todo on
-    where it goes and take the labels off in freeing's order, claimed
-    last, so a run that fails partway leaves the issue carrying claimed
-    or in-review for the next run to free. Nothing is put back: every
+    branches has just put claimed and its label on; and read its claim's
+    open pull request again, which the freeing reads in place of the
+    board's, so the issue is left as it is once that is marked ready,
+    since in-review is then the finished claim's own; then
+    put todo on where it goes and take the labels off in freeing's order,
+    claimed last, reading the claim branch once more just before claimed
+    comes off and leaving claimed on once one stands, so a worker that
+    claimed the issue while it was freed keeps the label its claim put
+    on, and a run that fails partway leaves the issue carrying claimed or
+    in-review for the next run to free. Nothing is put back: every
     step brings the issue nearer to free. The snapshot takes what was
     done, so the board this run renders shows it. Nothing here raises;
     what was done, in a line."""
+    branch = claims.branch_of(str(number))
     try:
         issue = api.issue(number) or {}
         if issue.get("state") != "open":
             return f"#{number}: not freed, closed since the board read it"
-        plan = coordinator.freeing(snap, number, labels.label_names(issue))
-        if plan.taken_off and not plan.branch_stands and branch_sha(api, claims.branch_of(str(number))):
+        pull = api.pull_detail(branch)
+        plan = coordinator.freeing(with_claims_pull(snap, number, pull), number, labels.label_names(issue))
+        if not plan.taken_off and marked_ready(pull):
+            return f"#{number}: not freed, its claim's pull request was marked ready since the board read it"
+        if plan.taken_off and not plan.branch_stands and branch_sha(api, branch):
             return f"#{number}: not freed, claimed since the board read the branches"
     except GitHubError as problem:
         return f"#{number}: not freed, reading it again failed: {problem}{github_words(problem)}"
@@ -1392,6 +1445,10 @@ def free_reopened(api, snap, number):
             api.post(f"/repos/{api.repo}/issues/{number}/labels", {"labels": list(plan.put_on)})
             put_on += plan.put_on
         for name in plan.taken_off:
+            if name == labels.CLAIMED and not plan.branch_stands and branch_sha(api, branch):
+                coordinator.after_labels(snap, str(number), taken_off, put_on)
+                return (f"#{number}: reopened, not wholly freed, claimed while it was freed, so claimed stays"
+                        + done_words(put_on, taken_off))
             take_label_off(api, number, name)
             taken_off.append(name)
     except GitHubError as problem:
@@ -1404,6 +1461,21 @@ def free_reopened(api, snap, number):
     if plan.branch_stands:
         return f"#{number}: reopened with a branch standing for it" + done_words(put_on, taken_off)
     return f"#{number}: reopened with its claim ended, freed" + done_words(put_on, taken_off)
+
+
+def with_claims_pull(snap, number, pull):
+    """The snapshot with the claim's own open pull request on this issue as
+    read again (pull_detail), or none where it reads none, in place of the
+    one the board read, so a pull request marked ready since then finishes
+    the claim for the freeing (coordinator.freeing)."""
+    others = [p for p in snap.pulls if not board.of_claim(p, str(number))]
+    return dataclasses.replace(snap, pulls=others + ([board.Pull.from_dict(pull)] if pull else []))
+
+
+def marked_ready(pull):
+    """Whether the claim's own open pull request, as pull_detail gives it,
+    is marked ready; None, no such pull request, is not."""
+    return pull is not None and not pull.get("draft")
 
 
 def done_words(put_on, taken_off):

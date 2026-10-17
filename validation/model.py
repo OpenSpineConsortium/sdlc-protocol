@@ -101,7 +101,9 @@ class LabelEvent:
 @dataclass
 class Issue:
     """One issue; reopened is GitHub's state_reason "reopened", which an
-    issue closed and opened again carries while it stays open (F22)."""
+    issue closed and opened again carries while it stays open, and
+    closed_at the minute of its latest close, which its events record, None
+    for one never closed (F22)."""
 
     number: int
     title: str
@@ -110,6 +112,7 @@ class Issue:
     comments: tuple = ()
     body: str = ""
     reopened: bool = False
+    closed_at: int = None
 
 
 @dataclass
@@ -585,7 +588,7 @@ class RepoModel:
         return (
             self.now,
             tuple(sorted(self.refs.items())),
-            tuple(sorted((n, i.state, tuple(sorted(i.labels)), i.comments, i.body, i.reopened)
+            tuple(sorted((n, i.state, tuple(sorted(i.labels)), i.comments, i.body, i.reopened, i.closed_at)
                          for n, i in self.issues.items())),
             tuple(sorted((n, p.head, p.author, p.body, p.draft, p.state, p.opened_at, p.updated_at, p.merged_at,
                           p.comments, p.fork, p.sha, p.association) for n, p in self.pulls.items())),

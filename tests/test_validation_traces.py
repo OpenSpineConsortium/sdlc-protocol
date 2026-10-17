@@ -155,11 +155,15 @@ BUDGET_SECONDS = 10
 # reopened, in-review stays once the claim branch is not read, the
 # coordinator then planning to free #1 wholly and, reading claude/1 again,
 # freeing nothing, or once in-review is left on where a branch stands; at
-# its fifth, step 36, where a's merged branch, kept a day after its last
-# commit, is not released in the run that takes its in-review off once
-# the releases due are read before the freeing; and at its last, step 40,
-# where the owner put claimed back to undo a release before closing and
-# reopening #1, claimed comes off once the released branch is not read.
+# its fifth, step 36, where a's merged pull request closed #1 after b's
+# release and the owner reopened it, b's released branch still standing,
+# claimed and worker:a stay once a release before the last close is read
+# as an undo (F22's review); at its sixth, step 47, where a's merged
+# branch, kept a day after its last commit, is not released in the run
+# that takes its in-review off once the releases due are read before the
+# freeing; and at its last, step 49, where the owner put claimed back on
+# the reopened #1 to undo the release that run made, claimed comes off
+# once the released branch is not read.
 UNDONE = {
     "F1": [("the comment before the labels", 5, "G3L")],
     "F2": [("a piece of work named by the number it is shown by", 4, "G7"),
@@ -225,8 +229,9 @@ UNDONE = {
             ("a ready pull request's in-review taken off", 21, "G8"),
             ("a claim branch not read for a reopened issue", 24, "G8"),
             ("in-review left on where a branch stands", 24, "G8"),
-            ("the releases due read before the freeing", 36, "G3"),
-            ("a released branch not read for a reopened issue", 40, "G8")],
+            ("a release before the last close read as an undo", 36, "G8"),
+            ("the releases due read before the freeing", 47, "G3"),
+            ("a released branch not read for a reopened issue", 49, "G8")],
 }
 # The twenty-two findings, every one settled since F22's fix: F1, F3,
 # F5, F6, F10 and F11 fixed in 0.4.1; F2, F4, F7, F8, F9, F12, F13, F14,

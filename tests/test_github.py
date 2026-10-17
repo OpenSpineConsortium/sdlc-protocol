@@ -2472,6 +2472,8 @@ LABELS_13 = "POST /repos/o/r/issues/13/labels"
 # The claim branch read again before a freeing where the board read none;
 # the fake answers 404 for it, as GitHub does for a branch that is not there.
 REF_13 = "/repos/o/r/git/ref/heads/claude/13"
+# The claim's open pull request read again before a freeing, none here.
+PULLS_13 = "/repos/o/r/pulls?state=open&head=o%3Aclaude%2F13"
 
 
 def label_off_13(name):
@@ -2481,7 +2483,7 @@ def label_off_13(name):
 def reopened_answers(names=("claimed", "in-review", "todo", "worker:nightly"), state="open"):
     answers = {ISSUE_13: FakeAnswer({"number": 13, "state": state, "state_reason": "reopened",
                                      "labels": [{"name": n} for n in names]}),
-               LABELS_13: FakeAnswer([])}
+               LABELS_13: FakeAnswer([]), PULLS_13: FakeAnswer([])}
     for name in ("claimed", "in-review", "worker:nightly"):
         answers[label_off_13(name)] = FakeAnswer(None)
     return answers
@@ -2501,8 +2503,10 @@ class FreeReopened(unittest.TestCase):
         api, opener = client(reopened_answers())
         self.assertEqual(github.coordinate(api, snap, NOW), [
             "#13: reopened with its claim ended, freed; worker:nightly, in-review, claimed taken off"])
-        self.assertEqual(asked(opener), ["GET /repos/o/r/issues/13", "GET " + REF_13, label_off_13("worker:nightly"),
-                                         label_off_13("in-review"), label_off_13("claimed")])
+        self.assertEqual(asked(opener), ["GET /repos/o/r/issues/13", "GET " + PULLS_13, "GET " + REF_13,
+                                         label_off_13("worker:nightly"), label_off_13("in-review"),
+                                         "GET " + REF_13, label_off_13("claimed")],
+                         "the claim branch is read once more just before claimed comes off")
         self.assertEqual(snap.issues[0].labels, ["todo"])
         self.assertIn("| #13 | Again | todo |", board.render(snap).split(board.QUEUE_HEADING)[1])
 
@@ -2512,7 +2516,7 @@ class FreeReopened(unittest.TestCase):
         api, opener = client(reopened_answers(names))
         self.assertEqual(github.coordinate(api, snap, NOW), [
             "#13: reopened with its claim ended, freed; todo put on; worker:nightly, in-review, claimed taken off"])
-        self.assertEqual(asked(opener)[2], LABELS_13)
+        self.assertEqual(asked(opener)[3], LABELS_13)
         self.assertEqual(opener.sent("POST"), [{"labels": ["todo"]}])
 
     def test_the_labels_are_read_again_and_an_issue_closed_since_is_left_alone(self):
@@ -2542,18 +2546,19 @@ class FreeReopened(unittest.TestCase):
         api, opener = client(answers)
         line, = github.coordinate(api, reopened_snapshot(("claimed", "worker:nightly")), NOW)
         self.assertTrue(line.endswith("HTTP 403: Resource not accessible"), line)
-        self.assertEqual(asked(opener), ["GET /repos/o/r/issues/13", "GET " + REF_13, LABELS_13],
+        self.assertEqual(asked(opener), ["GET /repos/o/r/issues/13", "GET " + PULLS_13, "GET " + REF_13, LABELS_13],
                          "with todo refused nothing comes off, so the issue is never left with neither")
 
     def test_a_refused_read_frees_nothing(self):
-        for refused in (ISSUE_13, REF_13):
+        reads = (ISSUE_13, PULLS_13, REF_13)
+        for at, refused in enumerate(reads):
             answers = reopened_answers()
             answers[refused] = Refusal(500)
             api, opener = client(answers)
             with self.subTest(refused=refused):
                 self.assertEqual(github.coordinate(api, reopened_snapshot(), NOW), [
-                    f"#13: not freed, reading it again failed: GET {refused}: HTTP 500"])
-                self.assertEqual(asked(opener), ["GET " + path for path in (ISSUE_13, REF_13)][:2 if refused == REF_13 else 1])
+                    f"#13: not freed, reading it again failed: GET {refused.partition('?')[0]}: HTTP 500"])
+                self.assertEqual(asked(opener), ["GET " + path for path in reads[:at + 1]])
 
     def test_a_claim_made_since_the_board_read_the_branches_is_left_to_the_next_run(self):
         """The board read no branch for #13, and a worker has claimed it
@@ -2564,7 +2569,7 @@ class FreeReopened(unittest.TestCase):
         snap = reopened_snapshot()
         api, opener = client(answers)
         self.assertEqual(github.coordinate(api, snap, NOW), ["#13: not freed, claimed since the board read the branches"])
-        self.assertEqual(asked(opener), ["GET /repos/o/r/issues/13", "GET " + REF_13])
+        self.assertEqual(asked(opener), ["GET /repos/o/r/issues/13", "GET " + PULLS_13, "GET " + REF_13])
         self.assertEqual(snap.issues[0].labels, ["claimed", "in-review", "todo", "worker:nightly"])
 
     def test_with_a_branch_standing_in_review_alone_comes_off_and_the_claim_is_released_in_the_same_run_once_due(self):
@@ -2581,12 +2586,14 @@ class FreeReopened(unittest.TestCase):
         reread = {"number": 12, "state": "open", "state_reason": "reopened",
                   "labels": [{"name": n} for n in ("claimed", "in-review", "todo", "worker:nightly")]}
         answers = release_answers() | {"/repos/o/r/issues/12": FakeAnswer(reread),
+                                       "/repos/o/r/pulls?state=open&head=o%3Aclaude%2F12": FakeAnswer([]),
                                        "DELETE /repos/o/r/issues/12/labels/in-review": FakeAnswer(None)}
         api, opener = client(answers)
         self.assertEqual(github.coordinate(api, snap, NOW), [
             "#12: reopened with a branch standing for it; in-review taken off",
             "#12: claim released, idle since 2026-09-18T12:00:00Z"])
-        self.assertEqual(asked(opener)[:2], ["GET /repos/o/r/issues/12", "DELETE /repos/o/r/issues/12/labels/in-review"])
+        self.assertEqual(asked(opener)[:3], ["GET /repos/o/r/issues/12", "GET /repos/o/r/pulls?state=open&head=o%3Aclaude%2F12",
+                                             "DELETE /repos/o/r/issues/12/labels/in-review"])
         self.assertEqual(board.released_keys(snap), {"12"})
         self.assertEqual(snap.claim_issues["12"].labels, ["todo"])
         snap = reopened_snapshot(branches=["claude/13"], claim_issues={"13": {"state": "open", "labels": [
@@ -2619,6 +2626,56 @@ class FreeReopened(unittest.TestCase):
         self.assertEqual(lines[1], "#12: claim released, idle since 2026-09-18T12:00:00Z")
         self.assertEqual(asked(opener)[0], "GET /repos/o/r/issues/13")
 
+    def test_a_claim_marked_ready_since_the_board_read_it_keeps_its_labels(self):
+        """In-review is then the finished claim's own (finding 2 of F22's
+        review): the claim's open pull request is read again first."""
+        answers = reopened_answers()
+        answers[PULLS_13] = FakeAnswer([{"number": 41, "head": {"ref": "claude/13", "repo": {"full_name": "o/r"}},
+                                         "base": {"ref": "main", "repo": {"full_name": "o/r"}},
+                                         "user": {"login": "nightly"}, "author_association": "MEMBER"}])
+        answers["/repos/o/r/pulls/41"] = FakeAnswer({"number": 41, "draft": False, "head": {"ref": "claude/13"}})
+        snap = reopened_snapshot()
+        api, opener = client(answers)
+        self.assertEqual(github.coordinate(api, snap, NOW), [
+            "#13: not freed, its claim's pull request was marked ready since the board read it"])
+        self.assertNotIn("DELETE", " ".join(asked(opener)))
+        answers["/repos/o/r/pulls/41"] = FakeAnswer({"number": 41, "draft": True, "head": {"ref": "claude/13"}})
+        api, opener = client(answers)
+        self.assertEqual(github.coordinate(api, reopened_snapshot(), NOW), [
+            "#13: reopened with its claim ended, freed; worker:nightly, in-review, claimed taken off"])
+
+    def test_a_claim_made_while_the_issue_is_freed_keeps_claimed(self):
+        """The claim branch is read once more just before claimed, the
+        last label, comes off (finding 3 of F22's review)."""
+        answers = reopened_answers()
+        reads = iter([Refusal(404), FakeAnswer({"object": {"sha": HEAD_12}})])
+
+        class Branching(FakeOpener):
+            def open(self, call, timeout=None):
+                if call.selector == REF_13:
+                    self.answers[REF_13] = next(reads)
+                return super().open(call, timeout)
+
+        opener = Branching(answers)
+        api = github.GitHub("t", "o/r", opener=opener, sleep=lambda seconds: None)
+        snap = reopened_snapshot()
+        self.assertEqual(github.coordinate(api, snap, NOW), [
+            "#13: reopened, not wholly freed, claimed while it was freed, so claimed stays; "
+            "worker:nightly, in-review taken off"])
+        self.assertNotIn(label_off_13("claimed"), asked(opener))
+        self.assertEqual(snap.issues[0].labels, ["claimed", "todo"])
+
+    def test_a_ready_claim_on_a_reopened_issue_costs_no_read_for_a_release(self):
+        """may_be_due lets a reopened issue labelled in-review through, but
+        releases skips a branch whose pull request is marked ready before
+        it, so a finished claim's issue costs no call (finding 4 of F22's
+        review)."""
+        issue = {"state": "open", "labels": ["claimed", "in-review"], "state_reason": "reopened"}
+        ready = {"number": 41, "draft": False, "head": {"ref": "claude/13"}}
+        api, opener = client({})
+        self.assertEqual(github.releases(api, {"claude/13": HEAD_12}, {"13": issue}, [ready], NOW), {})
+        self.assertEqual(opener.calls, [])
+
     def test_the_branches_a_release_left_are_read_with_the_branch_list(self):
         snap, answers = fixture_answers()
         answers["/repos/o/r/branches?per_page=100"] = FakeAnswer(
@@ -2627,6 +2684,73 @@ class FreeReopened(unittest.TestCase):
         found = github.collect(api, "abc", "main")
         self.assertEqual(found["kept_names"], ["released/12-aaaaaaa"])
         self.assertNotIn("kept_names", github.collect(client(fixture_answers()[1])[0], "abc", "main"))
+
+
+EVENTS_12 = "/repos/o/r/issues/12/events?per_page=100"
+COMMENTS_12 = "/repos/o/r/issues/12/comments?per_page=100"
+
+
+def release_comment(at):
+    return {"body": "<!-- sdlc-coordinator: claim-released -->\nReleased.", "created_at": at,
+            "user": {"login": "github-actions[bot]"}, "author_association": "NONE"}
+
+
+class EndedReleases(unittest.TestCase):
+    """F22's review: a released branch an earlier claim's release left,
+    before the issue's last close, undoes nothing, so the reopened issue is
+    freed wholly; the issue's events and comments say when each came."""
+
+    ISSUE = {"number": 12, "state": "open", "state_reason": "reopened",
+             "labels": [{"name": n} for n in ("claimed", "in-review", "worker:b")]}
+    CLOSED = [{"event": "closed", "created_at": "2026-09-10T00:00:00Z"}, {"event": "reopened",
+              "created_at": "2026-09-11T00:00:00Z"}, {"event": "closed", "created_at": "2026-09-19T00:00:00Z"},
+              {"event": "labeled", "created_at": "2026-09-30T00:00:00Z"}]
+
+    def ended(self, comments, events=None, issue=None, branches=(), kept=("released/12-aaaaaaa",)):
+        answers = {EVENTS_12: events if isinstance(events, Refusal) else FakeAnswer(self.CLOSED if events is None
+                                                                                   else events),
+                   COMMENTS_12: comments if isinstance(comments, Refusal) else FakeAnswer(comments)}
+        api, opener = client(answers)
+        found = github.ended_releases(api, [issue or self.ISSUE], list(branches), list(kept), lambda login: False)
+        return found, asked(opener)
+
+    def test_a_release_before_the_last_close_is_ended_and_one_after_it_is_not(self):
+        self.assertEqual(self.ended([release_comment("2026-09-18T00:00:00Z")]),
+                         (["12"], ["GET " + EVENTS_12, "GET " + COMMENTS_12]))
+        self.assertEqual(self.ended([release_comment("2026-09-19T00:00:00Z")])[0], ["12"], "no later than the close")
+        self.assertEqual(self.ended([])[0], ["12"], "no release comment counts, so none came after the close")
+        self.assertEqual(self.ended([release_comment("2026-09-20T00:00:00Z")])[0], [],
+                         "a release after the close, which a person may be undoing")
+        stranger = dict(release_comment("2026-09-20T00:00:00Z"), user={"login": "sam"})
+        self.assertEqual(self.ended([release_comment("2026-09-18T00:00:00Z"), stranger])[0], ["12"],
+                         "a release comment by an author nobody vouches for counts for nothing")
+
+    def test_where_it_cannot_tell_the_released_branch_counts_as_a_release_being_undone(self):
+        self.assertEqual(self.ended([], events=[{"event": "reopened", "created_at": "2026-09-11T00:00:00Z"}])[0], [])
+        self.assertEqual(self.ended([], events=Refusal(500))[0], [])
+        self.assertEqual(self.ended(Refusal(403))[0], [])
+
+    def test_only_a_reopened_issue_with_a_claims_labels_a_released_branch_and_no_claim_branch_costs_calls(self):
+        for issue, branches, kept in (
+                (dict(self.ISSUE, state_reason="completed"), (), ("released/12-aaaaaaa",)),
+                (dict(self.ISSUE, labels=[{"name": "todo"}, {"name": "worker:b"}]), (), ("released/12-aaaaaaa",)),
+                (self.ISSUE, ("claude/12",), ("released/12-aaaaaaa",)),
+                (self.ISSUE, (), ("released/120-aaaaaaa", "released/1-aaaaaaa"))):
+            with self.subTest(issue=issue, branches=branches, kept=kept):
+                self.assertEqual(self.ended([], issue=issue, branches=branches, kept=kept), ([], []))
+
+    def test_the_board_run_reads_them_so_the_released_branch_counts_for_nothing(self):
+        snap, answers = fixture_answers()
+        issue = {"number": 12, "title": "Describe the board", "state": "open", "state_reason": "reopened",
+                 "labels": [{"name": n} for n in ("claimed", "in-review", "worker:b")]}
+        answers["/repos/o/r/issues?state=open&per_page=100"] = FakeAnswer([issue])
+        answers["/repos/o/r/branches?per_page=100"] = FakeAnswer([{"name": "main"}, {"name": "released/12-aaaaaaa"}])
+        answers[EVENTS_12] = FakeAnswer(self.CLOSED)
+        answers[COMMENTS_12] = FakeAnswer([release_comment("2026-09-18T00:00:00Z")])
+        api, _ = client(answers)
+        found = github.collect(api, "abc", "main")
+        self.assertEqual(found["ended_releases"], ["12"])
+        self.assertFalse(coordinator.claim_stands(board.Snapshot.from_dict(found), "12"))
 
 
 class Repository(FakeOpener):

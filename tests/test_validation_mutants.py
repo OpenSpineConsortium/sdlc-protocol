@@ -100,9 +100,11 @@ TRACES = {
     "a relative -C after a move judged where it names alone": "the regression traces",
     "GIT_DIR forgotten once an absolute path names a place": "the regression traces",
     "a -C by ~ judged where it names alone": "the regression traces",
-    # F22's seven: a reopened issue freed, or left, as its claim branch, a
-    # released branch, a ready pull request and the run's order say; no
-    # search reopens an issue, so F22's trace is their catcher.
+    # F22's eight: a reopened issue freed, or left, as its claim branch, a
+    # released branch and when its release came, a ready pull request and
+    # the run's order say; F22's trace, the first lane, is their catcher,
+    # and the two searches F22's review added, which reopen an issue,
+    # catch each of them too (ReopenSearches).
     "a reopened issue left as it is": "the regression traces",
     "todo put on last": "the regression traces",
     "a ready pull request's in-review taken off": "the regression traces",
@@ -110,6 +112,7 @@ TRACES = {
     "in-review left on where a branch stands": "the regression traces",
     "the releases due read before the freeing": "the regression traces",
     "a released branch not read for a reopened issue": "the regression traces",
+    "a release before the last close read as an undo": "the regression traces",
     "dealing without its taken set": "dealing at every look",
     "each leg dealt from its own look": "the regression traces",
     "given to workers needing the label todo": "the regression traces",
@@ -332,9 +335,10 @@ class TheLane(unittest.TestCase):
         ready pull request's in-review taken off, a claim branch and a
         released branch not read for a reopened issue, in-review left on
         where a branch stands, and the releases due read before the
-        freeing, 141 within that bound."""
+        freeing, 141 within that bound, and its review one, a release
+        before the issue's last close read as an undo, 142."""
         self.assertTrue(10 <= len(mutants.MUTANTS) <= 150)
-        self.assertEqual(len(mutants.MUTANTS), 141)
+        self.assertEqual(len(mutants.MUTANTS), 142)
         self.assertEqual(sorted(TRACES), sorted(mutants.MUTANTS))
 
     def test_every_mutant_names_a_rule_the_library_still_has(self):
@@ -444,12 +448,14 @@ class TheLane(unittest.TestCase):
 
     def test_the_lanes_come_first_then_the_searches_cheapest_first_then_the_two_widest_lanes(self):
         self.assertEqual([c.name for c in mutants.CATCHERS[:len(LANES)]], list(LANES))
-        self.assertEqual(mutants.SEARCHES[-5].name, "a stranger's pull request from a fork on a due claim")
-        self.assertEqual(mutants.SEARCHES[-4].name, "a stranger's pull request from a due claim's own branch")
-        self.assertEqual(mutants.SEARCHES[-3].name, "a stranger's pull request from a due claim's own branch, GitHub "
+        self.assertEqual(mutants.SEARCHES[-7].name, "a stranger's pull request from a fork on a due claim")
+        self.assertEqual(mutants.SEARCHES[-6].name, "a stranger's pull request from a due claim's own branch")
+        self.assertEqual(mutants.SEARCHES[-5].name, "a stranger's pull request from a due claim's own branch, GitHub "
                                                     "refusing to say who may write")
-        self.assertEqual(mutants.SEARCHES[-2].name, "the holder back between the halves of a run")
-        self.assertEqual(mutants.SEARCHES[-1].name, "a stranger's marker on overlapping claims")
+        self.assertEqual(mutants.SEARCHES[-4].name, "the holder back between the halves of a run")
+        self.assertEqual(mutants.SEARCHES[-3].name, "a stranger's marker on overlapping claims")
+        self.assertEqual(mutants.SEARCHES[-2].name, "a reopened issue after a release and a later claim")
+        self.assertEqual(mutants.SEARCHES[-1].name, "a release undone on a reopened issue")
         self.assertEqual(mutants.CATCHERS[len(LANES):-2], mutants.SEARCHES)
         self.assertIs(mutants.CATCHERS[-2], mutants.PICKING)
         self.assertIs(mutants.CATCHERS[-1], mutants.LABEL_MIXES)
@@ -566,6 +572,26 @@ class TheSearchesCatchWhatTheyWereAddedFor(unittest.TestCase):
                 continue
             with self.subTest(mutant=name), mutants.switched_on(mutant):
                 self.assertIn(mutant.guarantee, {g for g, _ in mutants.violations(search)})
+
+    def test_the_searches_that_reopen_an_issue_catch_every_mutant_of_f22_s_fix(self):
+        """The lane credits F22's eight mutants to F22's trace, so the two
+        searches F22's review added, the only ones with the scope's reopens
+        on, are held here to all eight: together they find nothing on the
+        library, and the violation each mutant names. The first, from a
+        release and a later claim ready for review, is the one that would
+        have found the review's first finding, a released branch an
+        earlier claim left before the close read as a release undone."""
+        searches = [s for s in mutants.SEARCHES if s.scope.reopens]
+        self.assertEqual([s.name for s in searches], ["a reopened issue after a release and a later claim",
+                                                      "a release undone on a reopened issue"])
+        for search in searches:
+            self.assertEqual(mutants.violations(search), {}, search.name)
+        for name, mutant in mutants.MUTANTS.items():
+            if "F22" not in mutant.why:
+                continue
+            with self.subTest(mutant=name), mutants.switched_on(mutant):
+                found = {g for search in searches for g, _ in mutants.violations(search)}
+                self.assertIn(mutant.guarantee, found)
 
     def test_github_refusing_to_say_who_may_write_catches_the_two_readings_of_a_refusal(self):
         """F19's review: the spec's sentence on an answer GitHub will not

@@ -358,7 +358,10 @@ class Snapshot:
     (adapters.github.pushed_refused_lines); and the branches a release
     left standing, released/<issue>-<short sha>, by name, whose work a
     person may put back, so the coordinator frees no reopened issue whose
-    release is being undone (coordinator.claim_stands; F22)."""
+    release is being undone (coordinator.claim_stands; F22), with the
+    reopened issues, by key, whose released branches an earlier claim's
+    release left, its latest release comment no later than the issue's
+    last close, so they undo nothing (adapters.github.ended_releases)."""
 
     sha: str = ""
     default_branch: str = "main"
@@ -373,6 +376,7 @@ class Snapshot:
     began_refused: dict = field(default_factory=dict)
     pushed_refused: dict = field(default_factory=dict)
     kept_names: list = field(default_factory=list)
+    ended_releases: list = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, data):
@@ -392,6 +396,7 @@ class Snapshot:
             began_refused={str(k): str(v) for k, v in (data.get("began_refused") or {}).items()},
             pushed_refused={str(k): str(v) for k, v in (data.get("pushed_refused") or {}).items()},
             kept_names=[branch_name(b) for b in data.get("kept_names") or []],
+            ended_releases=[str(k) for k in data.get("ended_releases") or []],
         )
 
     def to_dict(self):
@@ -408,7 +413,8 @@ class Snapshot:
             "began": dict(self.began),
         } | ({"began_refused": dict(self.began_refused)} if self.began_refused else {}) \
             | ({"pushed_refused": dict(self.pushed_refused)} if self.pushed_refused else {}) \
-            | ({"kept_names": list(self.kept_names)} if self.kept_names else {})
+            | ({"kept_names": list(self.kept_names)} if self.kept_names else {}) \
+            | ({"ended_releases": list(self.ended_releases)} if self.ended_releases else {})
 
     @classmethod
     def from_json(cls, text):
