@@ -38,6 +38,10 @@ PRIVATE = "refs/symphony-locks"
 # client's own words, and receive-pack's when the server refused another.
 SWEPT_ALONG = ("atomic push failed", "atomic push failure", "atomic transaction failed")
 
+# The refusals that mean the remote moved under the push, so a new read
+# may succeed; any other refusal, a rule or a hook, will refuse again.
+MOVED = ("non-fast-forward", "fetch first", "stale info", "atomic transaction failed")
+
 
 class LocksFailed(Exception):
     """The table could not be read or moved; the message says why."""
@@ -138,14 +142,19 @@ def git_input(repo, args, text):
 def push(repo, remote, refspecs, options=()):
     """Push the refspecs all or none, never forced; each destination ref
     with what git says of refusing it, such as "[rejected] (fetch
-    first)", or "" where it was taken."""
+    first)", or "" where it was taken. A ref the remote holds already at
+    the commit pushed is "[up to date]": git sends nothing for it and
+    checks no lease on it, so the caller decides what that means."""
     pushed = git(repo, "push", "--atomic", "--porcelain", *options, remote, *refspecs)
     outcome = {}
     for line in pushed.stdout.splitlines():
         parts = line.split("\t")
         if len(parts) >= 3 and parts[0] in ("*", " ", "+", "-", "!", "="):
             ref = parts[1].partition(":")[2]
-            outcome[ref] = (parts[2] or "refused") if parts[0] == "!" else ""
+            if parts[0] == "!":
+                outcome[ref] = parts[2] or "refused"
+            else:
+                outcome[ref] = "[up to date]" if parts[0] == "=" else ""
     if pushed.returncode != 0 and not outcome:
         raise LocksFailed(f"could not push to {remote}: {last_line(pushed)}")
     return outcome
@@ -161,6 +170,10 @@ def change(repo, remote, decide, default_branch="main", claim_branch="", ended=(
     ClaimTaken. `decide` may raise locks.Held, which is passed on with
     nothing pushed."""
     for _ in range(tries):
+        if claim_branch and remote_heads(repo, remote, f"refs/heads/{claim_branch}"):
+            # Asked before the push, since git pushes the rest of an atomic
+            # push beside a branch the remote holds at this very commit.
+            raise ClaimTaken(f"{claim_branch} is on {remote} already: another worker holds the issue")
         tip, entries = fetch_table(repo, remote)
         numbers = {entry.claim for entry in entries}
         alive = live_claims(repo, remote, numbers, default_branch, ended) | ({owner} if owner else set())
@@ -179,11 +192,19 @@ def change(repo, remote, decide, default_branch="main", claim_branch="", ended=(
             options.append(f"--force-with-lease=refs/heads/{claim_branch}:")
             refspecs.append(f"refs/heads/{claim_branch}:refs/heads/{claim_branch}")
         outcome = push(repo, remote, refspecs, options)
+        if claim_branch and outcome.get(f"refs/heads/{claim_branch}") == "[up to date]":
+            # The remote has this very claim already, so the push made no
+            # claim: a worker that checked out another's claim, or a
+            # retry of a push whose answer was lost, which reads the same.
+            raise ClaimTaken(f"{claim_branch} is on {remote} already at this commit: the push claimed nothing")
         refused = {ref: why for ref, why in outcome.items() if why}
         if not refused:
             return after
         if claim_branch and claim_held(repo, remote, claim_branch, refused):
             raise ClaimTaken(f"{claim_branch} is on {remote} already: another worker holds the issue")
+        if not any(word in why for why in refused.values() for word in MOVED):
+            raise LocksFailed("the remote refused the push: " + "; ".join(
+                f"{ref.removeprefix('refs/heads/')} {why}" for ref, why in sorted(refused.items())))
     raise LocksFailed(f"{locks.LOCKS_BRANCH} kept moving: {tries} tries were refused")
 
 
@@ -211,8 +232,13 @@ def acquire(repo, remote, wanted, default_branch="main", claim_branch=""):
     if len(owners) != 1 or min(owners) < 1:
         raise LocksFailed("locks are taken for one claim, an issue's number from 1")
     owner = owners.pop()
-    if not claim_branch and not remote_heads(repo, remote, f"refs/heads/{claims.branch_of(owner)}"):
-        raise LocksFailed(f"{claims.branch_of(owner)} is not on {remote}: take the locks with the claim itself")
+    branch = claims.branch_of(owner)
+    if claim_branch and claim_branch != branch:
+        raise LocksFailed(f"the locks of #{owner} go with {branch}, not {claim_branch}")
+    if claim_branch and landed(repo, remote, f"refs/heads/{claim_branch}", default_branch):
+        raise LocksFailed(f"{claim_branch} has no commit of its own beyond {default_branch}: commit the claim first")
+    if not claim_branch and owner not in live_claims(repo, remote, {owner}, default_branch):
+        raise LocksFailed(f"{branch} is not a live claim on {remote}: take the locks with the claim itself")
     return change(repo, remote, lambda entries, live: locks.acquire(entries, wanted, live),
                   default_branch, claim_branch, owner=owner)
 
@@ -224,6 +250,14 @@ def release(repo, remote, claim, default_branch="main"):
 
 def sweep(repo, remote, default_branch="main", ended=()):
     return change(repo, remote, lambda entries, live: locks.sweep(entries, live), default_branch, ended=ended)
+
+
+def landed(repo, remote, ref, default_branch):
+    """Whether the local `ref` is already in the remote's default branch,
+    so a push of it claims nothing that would stay live."""
+    main = f"{PRIVATE}/{remote}/{default_branch}"
+    git(repo, "fetch", "--quiet", "--no-tags", remote, f"+refs/heads/{default_branch}:{main}")
+    return git(repo, "merge-base", "--is-ancestor", ref, main).returncode == 0
 
 
 def blob_text(repo, spec):
@@ -248,7 +282,7 @@ def fork_point(repo, base, head):
 def added(repo, base, head):
     """The files the change adds, which no claim could have been editing
     before it."""
-    names = git(repo, "diff", "--no-renames", "--diff-filter=A", "--name-only", "-z",
+    names = git(repo, "diff", "--no-color", "--no-textconv", "--no-renames", "--diff-filter=A", "--name-only", "-z",
                 fork_point(repo, base, head), head)
     return sorted(filter(None, names.stdout.split("\0")))
 
@@ -257,12 +291,12 @@ def touched(repo, base, head):
     """The keys the change from the merge base of `base` and `head` to
     `head` touches, file by file."""
     fork = fork_point(repo, base, head)
-    names = git(repo, "diff", "--no-renames", "--name-only", "-z", fork, head)
+    names = git(repo, "diff", "--no-color", "--no-textconv", "--no-renames", "--name-only", "-z", fork, head)
     keys = set()
     for path in filter(None, names.stdout.split("\0")):
         base_text = blob_text(repo, f"{fork}:{path}")
         if git(repo, "cat-file", "-e", f"{head}:{path}").returncode != 0:
             base_text = None  # gone: the whole file
-        diff = git(repo, "diff", "--no-renames", "--no-ext-diff", "-U0", fork, head, "--", path).stdout
+        diff = git(repo, "diff", "--no-color", "--no-textconv", "--no-renames", "--no-ext-diff", "-U0", fork, head, "--", path).stdout
         keys.update(locks.touched_keys(path, base_text, locks.hunks_of(diff)))
     return sorted(keys)

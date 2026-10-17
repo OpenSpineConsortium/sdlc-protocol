@@ -59,6 +59,7 @@ SUFFIXES = PYTHON + MARKDOWN
 
 SCHEME = re.compile(r"[a-z][a-z0-9-]*:[^/]")
 HEADING = re.compile(r" {0,3}(#{1,6})(?:[ \t]+(.*?))?(?:[ \t]+#+)?[ \t]*$")
+LONE_CR = re.compile(r"\r(?!\n)")
 FENCE = re.compile(r" {0,3}(`{3,}|~{3,})")
 
 
@@ -258,7 +259,7 @@ def python_symbols(text):
     each from its first decorator to its last line; None when the file
     does not parse, so it is locked whole."""
     try:
-        tree = ast.parse(text)
+        tree = ast.parse(git_lines(text))
     except (SyntaxError, ValueError):
         return None
     found = []
@@ -269,6 +270,12 @@ def python_symbols(text):
                 found += [symbol_of(inner, f"{node.name}.{inner.name}") for inner in node.body
                           if isinstance(inner, (ast.FunctionDef, ast.AsyncFunctionDef))]
     return found
+
+
+def git_lines(text):
+    """The text with each lone carriage return made a space, so ast counts
+    lines as git does, at LF alone."""
+    return LONE_CR.sub(" ", text)
 
 
 def symbol_of(node, name):
@@ -380,7 +387,7 @@ def python_reads(path, text, written, repository_files=()):
     symbols = python_symbols(text)
     if not symbols:
         return []
-    tree = ast.parse(text)
+    tree = ast.parse(git_lines(text))
     node = find_node(tree, written)
     if node is None:
         return []

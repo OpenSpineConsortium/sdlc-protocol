@@ -243,18 +243,14 @@ class Verifying(Remote):
 class Reviewed(Remote):
     """The cases an adversarial review of the first version found."""
 
-    def test_a_refusal_of_the_table_by_the_server_is_retried_not_read_as_a_held_claim(self):
-        marker = Path(self.tmp.name) / "refuse-once"
-        marker.write_text("x", encoding="utf-8")
+    def test_a_refusal_of_the_table_by_the_server_is_not_read_as_a_held_claim(self):
         hook = Path(self.bare) / "hooks" / "update"
-        hook.write_text(f"#!/bin/sh\nif [ \"$1\" = refs/heads/locks ] && [ -e {marker} ]; then\n"
-                        f"  rm {marker}; echo refused once >&2; exit 1\nfi\nexit 0\n", encoding="utf-8")
+        hook.write_text("#!/bin/sh\n[ \"$1\" = refs/heads/locks ] && exit 1\nexit 0\n", encoding="utf-8")
         hook.chmod(0o755)
         self.claim(self.a, 1)
-        git_locks.acquire(self.a, "origin", [Entry("m.py#f", 1)], claim_branch="claude/1")
-        self.assertFalse(marker.exists())
-        self.assertTrue(self.remote_ref("refs/heads/claude/1"))
-        self.assertEqual(self.table(), [Entry("m.py#f", 1)])
+        with self.assertRaises(git_locks.LocksFailed):
+            git_locks.acquire(self.a, "origin", [Entry("m.py#f", 1)], claim_branch="claude/1")
+        self.assertFalse(self.remote_ref("refs/heads/claude/1"))
 
     def test_commits_built_on_another_s_claim_are_never_pushed_onto_it(self):
         self.claim(self.a, 1)
@@ -299,6 +295,53 @@ class Reviewed(Remote):
         with redirect_stdout(io.StringIO()):
             self.assertEqual(cli.run_locks(args, environ={"SYMPHONY_LOCKS": "advise"}), 0)
             self.assertEqual(cli.run_locks(args, environ={"SYMPHONY_LOCKS": "enforce"}), 1)
+
+
+class ReviewedAgain(Remote):
+    """The cases the second review round found."""
+
+    def test_checking_out_another_s_claim_and_pushing_it_claims_nothing(self):
+        self.claim(self.a, 5)
+        git_locks.acquire(self.a, "origin", [Entry("m.py#f", 5)], claim_branch="claude/5")
+        git(self.b, "fetch", "--quiet", "origin")
+        git(self.b, "checkout", "--quiet", "-B", "claude/5", "origin/claude/5")
+        with self.assertRaises(git_locks.ClaimTaken):
+            git_locks.acquire(self.b, "origin", [Entry("m.py#h", 5, WRITE, "wb")], claim_branch="claude/5")
+        self.assertEqual(self.table(), [Entry("m.py#f", 5)])
+
+    def test_a_landed_claim_takes_no_more_locks(self):
+        self.claim(self.a, 1)
+        git_locks.acquire(self.a, "origin", [Entry("m.py#f", 1)], claim_branch="claude/1")
+        git(self.a, "push", "--quiet", "origin", "claude/1:main")
+        with self.assertRaises(git_locks.LocksFailed):
+            git_locks.acquire(self.a, "origin", [Entry("m.py#h", 1)])
+
+    def test_a_claim_branch_with_no_commit_of_its_own_is_refused(self):
+        git(self.a, "checkout", "--quiet", "-B", "claude/2", "origin/main")
+        with self.assertRaises(git_locks.LocksFailed):
+            git_locks.acquire(self.a, "origin", [Entry("m.py#f", 2)], claim_branch="claude/2")
+        self.assertFalse(self.remote_ref("refs/heads/claude/2"))
+
+    def test_the_claim_branch_must_be_the_claim_s_own(self):
+        self.claim(self.a, 3)
+        with self.assertRaises(git_locks.LocksFailed):
+            git_locks.acquire(self.a, "origin", [Entry("m.py#f", 4)], claim_branch="claude/3")
+
+    def test_a_refusal_that_will_not_go_away_says_why_at_once(self):
+        hook = Path(self.bare) / "hooks" / "update"
+        hook.write_text("#!/bin/sh\n[ \"$1\" = refs/heads/locks ] && exit 1\nexit 0\n", encoding="utf-8")
+        hook.chmod(0o755)
+        self.claim(self.a, 1)
+        with self.assertRaises(git_locks.LocksFailed) as failed:
+            git_locks.acquire(self.a, "origin", [Entry("m.py#f", 1)], claim_branch="claude/1")
+        self.assertIn("the remote refused the push", str(failed.exception))
+
+    def test_a_coloured_diff_in_the_user_s_settings_changes_nothing(self):
+        git(self.a, "config", "color.diff", "always")
+        git(self.a, "checkout", "--quiet", "-B", "work", "origin/main")
+        Path(self.a, "m.py").write_text(BASE.replace("* 2", "* 3"), encoding="utf-8")
+        git(self.a, "commit", "--quiet", "-am", "g")
+        self.assertEqual(git_locks.touched(self.a, "origin/main", "HEAD"), ["m.py#g"])
 
 
 if __name__ == "__main__":

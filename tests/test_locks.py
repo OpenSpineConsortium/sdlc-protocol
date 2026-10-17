@@ -246,5 +246,10 @@ class ReviewedEdges(unittest.TestCase):
         self.assertEqual(locks.python_reads("pkg/m.py", text, "h", ["pkg/util.py"]), ["pkg/util.py"])
 
 
+    def test_a_lone_carriage_return_does_not_move_python_s_lines(self):
+        text = "x = 1  # a\rb\ndef f():\n    return 1\n"
+        self.assertEqual([(symbol.name, symbol.first) for symbol in locks.python_symbols(text)], [("f", 2)])
+
+
 if __name__ == "__main__":
     unittest.main()
