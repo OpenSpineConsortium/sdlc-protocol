@@ -829,6 +829,44 @@ class AReleaseThatPutsTodoOn(unittest.TestCase):
         self.assertFalse(invariants.put_back_refused([not_there], 1))
 
 
+class AReleaseThatFailsTakingALabelOff(unittest.TestCase):
+    """F27: a label GitHub took off and answered with a server error or no
+    answer at all is put back with those the run took off, and one GitHub
+    refused to take off, still on, is not."""
+
+    DUE = AReleaseThatPutsTodoOn.DUE
+
+    def test_a_label_taken_off_and_lost_is_put_back(self):
+        for fault in ("label-delete-lost", "label-delete-unanswered", "label-delete-500"):
+            with self.subTest(fault=fault):
+                steps = self.DUE + [board_with(fault), BOARD]
+                self.assertEqual(violations(steps), [])
+                with mutants.switched_on(mutants.MUTANTS["a label taken off and lost stays off"]):
+                    found = violations(steps)
+                self.assertEqual(guarantees(found), [] if fault == "label-delete-500" else ["G3L"])
+
+    def test_a_label_github_refused_to_take_off_is_not_put_back(self):
+        steps = self.DUE + [board_with("label-delete-422"), BOARD]
+        self.assertEqual(violations(steps), [])
+        with mutants.switched_on(mutants.MUTANTS["a label refused its removal put back"]):
+            found = violations(steps)
+        self.assertEqual([(v.guarantee, v.detail) for v in found],
+                         [("G3L", "#1: claimed put back, which the run never took off")])
+
+    def test_a_label_may_be_off_by_the_calls_answers(self):
+        def removal(status, applied=False):
+            return Call("DELETE", "/issues/1/labels/claimed", (), None, status, applied, True)
+        put_back = [oracle.Effect("label-on", 1, ("claimed",))]
+        for status, applied, may_be_off in ((204, True, True), (502, True, True), (500, False, True),
+                                            (None, True, True), (422, False, False), (404, False, False)):
+            with self.subTest(status=status):
+                calls = [removal(status, applied)]
+                self.assertEqual(invariants.labels_may_be_off(calls) == {(1, "claimed")}, may_be_off)
+                self.assertEqual(invariants.put_back_unasked(calls, put_back) == [], may_be_off)
+        self.assertEqual(invariants.put_back_unasked([], [oracle.Effect("label-on", 1, ("todo",))]), [],
+                         "a release's todo is no label put back")
+
+
 class AReleaseThatCannotReadItsComment(unittest.TestCase):
     """F20: GitHub answers the release comment with an error and refuses
     the read of the issue's comments after it, which would say whether a

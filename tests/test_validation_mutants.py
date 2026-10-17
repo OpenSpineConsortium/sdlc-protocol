@@ -133,6 +133,8 @@ TRACES = {
     "the release's own page without its todo": "the regression traces",
     "a refused todo puts no label back": ([TODO_OFF] + HELD + [WAIT, board_with("label-post-500")], Scope()),
     "a todo written and lost stays on": ([TODO_OFF] + HELD + [WAIT, board_with("label-post-lost")], Scope()),
+    "a label taken off and lost stays off": "the regression traces",
+    "a label refused its removal put back": "the regression traces",
     "an epic gets todo": ([TODO_OFF, Verb("label-on", M.OWNER, (1, "epic"))] + HELD + [WAIT, BOARD], Scope()),
     "a blocker gets todo": ([TODO_OFF, Verb("label-on", M.OWNER, (1, "blocker"))] + HELD + [WAIT, BOARD], Scope()),
     "a blocked task gets no todo": ([TODO_OFF, Verb("label-on", M.OWNER, (1, "blocked"))] + HELD + [WAIT, BOARD],
@@ -364,9 +366,11 @@ class TheLane(unittest.TestCase):
         try alone, 153. That passes 150, so the bound is widened to 200:
         the lane grows by a few mutants for each finding it fixes, and
         0.5.1 carries several findings, F22, F23 and F26 among them, with
-        F24, F25 and F27 still to come."""
+        F24, F25 and F27 still to come. F27's fix adds two, a label taken
+        off and lost stays off and a label refused its removal put back,
+        155."""
         self.assertTrue(10 <= len(mutants.MUTANTS) <= 200)
-        self.assertEqual(len(mutants.MUTANTS), 153)
+        self.assertEqual(len(mutants.MUTANTS), 155)
         self.assertEqual(sorted(TRACES), sorted(mutants.MUTANTS))
 
     def test_every_mutant_names_a_rule_the_library_still_has(self):

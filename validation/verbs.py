@@ -189,6 +189,18 @@ FAULTS = {
                                                  then=Fault("GET", "/issues/*/comments", 200,
                                                             answer=LISTED_LATE))),
     "label-delete-500": Fault("DELETE", "/issues/*/labels/*", 500),
+    # A release's first label GitHub takes off and loses its answer to,
+    # with a 502 or with no answer at all, so the run, failing there, puts
+    # back the label whose removal failed as well as those it took off;
+    # until F27's fix it put back only those GitHub answered, and the
+    # label GitHub took stayed off while the claim was held (SPEC["put
+    # back"]; F27).
+    "label-delete-lost": Fault("DELETE", "/issues/*/labels/*", 502, applied=True),
+    "label-delete-unanswered": Fault("DELETE", "/issues/*/labels/*", None, applied=True, message="timed out"),
+    # The same label refused with a 422, which GitHub answers in place of
+    # taking it off, so the label is still on and the run puts back only
+    # what it took off, never a label GitHub refused (F27).
+    "label-delete-422": Fault("DELETE", "/issues/*/labels/*", 422, message="Validation Failed"),
     "label-post-500": Fault("POST", "/issues/*/labels", 500),
     # A label GitHub writes and loses its answer to, as a release's todo
     # can be (F15's review).

@@ -766,7 +766,42 @@ def labels_put_back(before, after, calls, actual):
             continue
         if not put_back_refused(calls, number) and after.issues[number].labels != freed.issues[number].labels:
             problems.append(Violation("G3L", f"#{number}: the release failed and its labels were not put back"))
+    return problems + put_back_unasked(calls, actual)
+
+
+def put_back_unasked(calls, actual):
+    """A failed release puts back only a label it took off or one whose
+    removal GitHub may have made, its answer a server error, a rate
+    limit's refusal or no answer at all (may_have_written); a label GitHub
+    refused to take off with any other 4xx, a 404 for one not there among
+    them, is as it was, and putting it on is a write the release does not
+    owe, which puts on a label the issue never carried after a 404, and
+    whose own failure would say a label still on may be off (SPEC["put
+    back"]; F27) (G3L)."""
+    may_be_off = labels_may_be_off(calls)
+    problems = []
+    for effect in actual:
+        if effect.kind == "label-on" and effect.detail != (oracle.TODO,):
+            for name in effect.detail:
+                if (effect.target, name) not in may_be_off:
+                    problems.append(Violation("G3L", f"#{effect.target}: {name} put back, which the run "
+                                                     f"never took off"))
     return problems
+
+
+def labels_may_be_off(calls):
+    """Each (issue, label) a call of the run took off, or may have taken
+    off: GitHub answered its removal with success, or with an answer that
+    may come after the write (may_have_written), each try judged."""
+    found = set()
+    for _, tries in tried(calls):
+        last = tries[-1]
+        parts = last.path.strip("/").split("/")
+        if last.method != "DELETE" or parts[0] != "issues" or len(parts) < 4 or parts[2] != "labels":
+            continue
+        if any(c.applied for c in tries) or not failed(last) or may_have_written(*tries):
+            found.add((int(parts[1]), "/".join(parts[3:])))
+    return found
 
 
 def unread_releases(calls):
