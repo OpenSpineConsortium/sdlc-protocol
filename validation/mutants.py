@@ -400,6 +400,22 @@ def lease_onto_any_claim(name, source, expected, claim_file_at, remote="origin")
     return None
 
 
+def long_option_named_in_full(word, wrapper):
+    """guard.long_option_of as the guard read a wrapper's long options
+    until F26's fix: by the whole name alone, so a start of it, which GNU's
+    getopt_long reads as the option, names nothing."""
+    name = word[2:].partition("=")[0]
+    return name if name in wrapper.long_options else None
+
+
+def optional_value_from_the_next_word(word, wrapper):
+    """guard.long_value_is_next taking the next word as the value of an
+    option that may take one, which getopt_long takes only attached, as it
+    takes one that needs a value."""
+    takes = wrapper.long_options.get(guard.long_option_of(word, wrapper))
+    return "=" not in word and takes in (guard.VALUE, guard.OPTIONAL)
+
+
 def each_leg_from_its_own_look(clients, workers, looks, areas=None):
     """The workers' workflow as built until F4's fix: each leg asks for
     itself at its own moment, so two looks that differ on whether the
@@ -1332,6 +1348,19 @@ MUTANTS = {
         "G11a", "a push by a -C from a ~ is judged in the session's own clone too, since the shell reads the ~ "
                 "from a HOME the command may set, so a lease from there after HOME is set, onto a claim another "
                 "worker holds, is refused (F21's fourth review)"),
+    "a long option read only in full": Mutant(
+        guard, "long_option_of", long_option_named_in_full,
+        "G11a", "a wrapper's long option is read by any start of its name that names it alone, as GNU's "
+                "getopt_long reads it, so the push behind env --uns HOME, nice --adj 5 or timeout --sig KILL 60 is "
+                "judged and refused (F26)"),
+    "env's abbreviated --chdir not read": Mutant(
+        guard, "names_chdir", lambda word: word.partition("=")[0] == "--chdir",
+        "G11a", "env's --chdir is read by any start of its name that names it alone, so a lease by env --ch from "
+                "another clone onto a claim another worker holds is judged there and refused (F26)"),
+    "an optional value taken from the next word": Mutant(
+        guard, "long_value_is_next", optional_value_from_the_next_word,
+        "G11a", "a value a wrapper's long option may take is taken only attached, so the push after env "
+                "--default-signal is judged and refused (F26)"),
     "dealing without its taken set": Mutant(
         team, "deal", deal_without_the_taken_set,
         "G14", "the workers of one run are dealt distinct issues"),

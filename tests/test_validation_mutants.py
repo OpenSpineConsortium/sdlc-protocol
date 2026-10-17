@@ -100,6 +100,9 @@ TRACES = {
     "a relative -C after a move judged where it names alone": "the regression traces",
     "GIT_DIR forgotten once an absolute path names a place": "the regression traces",
     "a -C by ~ judged where it names alone": "the regression traces",
+    "a long option read only in full": "the regression traces",
+    "env's abbreviated --chdir not read": "the regression traces",
+    "an optional value taken from the next word": "the regression traces",
     "dealing without its taken set": "dealing at every look",
     "each leg dealt from its own look": "the regression traces",
     "given to workers needing the label todo": "the regression traces",
@@ -317,9 +320,12 @@ class TheLane(unittest.TestCase):
         and a -C by ~ judged where it names alone; and one from the review
         of the client's waits for a rate limit, a 5xx retried as a rate
         limit, and eight from its second review, one for each rule of the
-        client's waits, so the bound is widened to 150, 134 within it."""
+        client's waits, so the bound is widened to 150, 134 within it;
+        and F26's fix three, a long option read only in full, env's
+        abbreviated --chdir not read and an optional value taken from the
+        next word, 137."""
         self.assertTrue(10 <= len(mutants.MUTANTS) <= 150)
-        self.assertEqual(len(mutants.MUTANTS), 134)
+        self.assertEqual(len(mutants.MUTANTS), 137)
         self.assertEqual(sorted(TRACES), sorted(mutants.MUTANTS))
 
     def test_every_mutant_names_a_rule_the_library_still_has(self):
