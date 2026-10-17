@@ -21,10 +21,11 @@ files a lease is judged by (guard.other_holder) from the model as git
 there would show them (git_shows, claim_files_in): the remote-tracking
 ref as that clone's last fetch or push left it, and the branch pushed.
 lease-elsewhere is F7's careless rebaser in a second clone of its own,
-reached from its session's clone by git -C, by cd, or by a cd that is
-made and one that fails, or in its session's own clone, reached by moves
-and names the guard cannot follow (ELSEWHERE, F21), or written beside
-here-documents and quotes the guard misread until F25's fix.
+reached from its session's clone by git -C, by cd, by a cd that is made
+and one that fails, or by env's --chdir written as a start of its name
+(F26); or in its session's own clone, reached by moves and names the
+guard cannot follow (ELSEWHERE, F21), or written beside here-documents
+and quotes the guard misread until F25's fix.
 
 Actors: the workers of the scope, each a person's session that may write
 (author_association COLLABORATOR); the owner; carol, a collaborator; dana,
@@ -76,23 +77,24 @@ CLAIM_DIR = "docs/agents/claims"
 CLONES = "/clones"
 # How F21's careless rebaser reaches the clone its push runs in from its
 # session's: its second clone, by git's -C, by the shell's cd before git,
-# or by a cd the shell makes and then one into a directory that is not
-# there, which leaves the shell where it stood; or its session's own
-# clone, after a cd in a here-document's body, which the shell reads as
-# text, by a -C through a path the shell expands, which names it, by a -C
-# relative to where a cd behind a test that fails would have taken the
-# shell, which the shell skips (F21's fourth review), with GIT_DIR
-# exported, which names it whatever -C comes after, or by a -C from a ~
-# after HOME is set, which the shell reads from that HOME and the guard
-# from the hook's own (the same review). Or its own clone, by a push the
-# guard read no push in until F25's fix: after a here-document whose body
-# holds an apostrophe, before a quote that never closes, between two
-# here-documents whose bodies' apostrophes pair around it, the form a
-# session writes a commit message and a pull request's body in, between
-# such bodies inside double-quoted substitutions that hold a double quote,
-# in a substitution in a body the shell expands, between two apostrophes
-# of the body's text, and after a body in a double-quoted substitution
-# that a line EOF)" ends, as bash 5.2 ends one.
+# by a cd the shell makes and then one into a directory that is not
+# there, which leaves the shell where it stood, or by env's --chdir
+# written as --ch, a start of its name that GNU env reads as the option
+# (F26); or its session's own clone, after a cd in a here-document's
+# body, which the shell reads as text, by a -C through a path the shell
+# expands, which names it, by a -C relative to where a cd behind a test
+# that fails would have taken the shell, which the shell skips (F21's
+# fourth review), with GIT_DIR exported, which names it whatever -C comes
+# after, or by a -C from a ~ after HOME is set, which the shell reads from
+# that HOME and the guard from the hook's own (the same review). Or its
+# own clone, by a push the guard read no push in until F25's fix: after a
+# here-document whose body holds an apostrophe, before a quote that never
+# closes, between two here-documents whose bodies' apostrophes pair around
+# it, the form a session writes a commit message and a pull request's body
+# in, between such bodies inside double-quoted substitutions that hold a
+# double quote, in a substitution in a body the shell expands, between two
+# apostrophes of the body's text, and after a body in a double-quoted
+# substitution that a line EOF)" ends, as bash 5.2 ends one.
 ELSEWHERE = {"-C": "git -C ../{clone} {push}", "cd": "cd ../{clone} && git {push}",
              "missing": "cd ../{clone}; cd ../{absent}; git {push}",
              "body": "cat > /dev/null <<'EOF'\ncd ..\nEOF\ngit {push}",
@@ -106,7 +108,8 @@ ELSEWHERE = {"-C": "git -C ../{clone} {push}", "cd": "cd ../{clone} && git {push
              "quoted-substitution": ('git commit -q -m "$(cat <<\'EOF\'\nSay "hi\nEOF\n)"\ngit {push}\n'
                                      'gh pr create --body "$(cat <<\'EOF\'\nQuote" here\nEOF\n)"'),
              "body-substitution": "cat <<EOF\nIt's $(git {push}) done, isn't it\nEOF",
-             "closing-line": 'msg="$(cat <<\'EOF\'\nSay "hi\nEOF)"\ngit {push}\ngh pr create --body "x"'}
+             "closing-line": 'msg="$(cat <<\'EOF\'\nSay "hi\nEOF)"\ngit {push}\ngh pr create --body "x"',
+             "env": "env --ch ../{clone} git {push}"}
 # The ways whose push runs in the worker's own clone (leasing_clone).
 FROM_OWN_CLONE = ("body", "expanded", "skipped", "exported", "home", "apostrophe", "unclosed", "paired",
                   "quoted-substitution", "body-substitution", "closing-line")
@@ -115,6 +118,9 @@ FROM_OWN_CLONE = ("body", "expanded", "skipped", "exported", "home", "apostrophe
 # a claim's head (github.read_push), told from the reads of a
 # branch's making, which name branch_creation (F13).
 PUSHES = (("activity_type", None),)
+# GitHub's message for a secondary rate limit, which names it
+# (adapters.github.rate_limited).
+SECONDARY = "You have exceeded a secondary rate limit"
 # The faults a board run can meet, by name (DESIGN.md, 3.2).
 FAULTS = {
     "comment-500": Fault("POST", "/issues/*/comments", 500),
@@ -127,8 +133,21 @@ FAULTS = {
                                       then=Fault("GET", "/issues/*/comments", 500)),
     "comment-500-then-unread": Fault("POST", "/issues/*/comments", 500,
                                      then=Fault("GET", "/issues/*/comments", 500)),
-    "comment-rate-limited": Fault("POST", "/issues/*/comments", 403, message="You have exceeded a secondary rate limit",
-                                  retry_after="60"),
+    "comment-rate-limited": Fault("POST", "/issues/*/comments", 403, message=SECONDARY, retry_after="60"),
+    # A comment's post refused for a secondary rate limit on every try the
+    # client makes, the first and one after each of the waits it makes
+    # where GitHub names none, a minute and then two
+    # (adapters.github.rate_wait), which spend the three minutes a client
+    # waits in all: the comment is refused for the run, as comment-500's
+    # is, so a release whose comment it is puts its labels back and is
+    # owed again (F11).
+    "comment-limited-for-the-run": Fault("POST", "/issues/*/comments", 403, times=3, message=SECONDARY),
+    # The same, and the read of the issue's comments after it refused for a
+    # rate limit too, which the client, its three minutes spent, does not
+    # wait out: the run cannot tell whether its comment stands and leaves
+    # the release for the next run to settle, as under F20's two.
+    "comment-limited-then-unread": Fault("POST", "/issues/*/comments", 403, times=3, message=SECONDARY,
+                                         then=Fault("GET", "/issues/*/comments", 403, message=SECONDARY)),
     "label-delete-500": Fault("DELETE", "/issues/*/labels/*", 500),
     "label-post-500": Fault("POST", "/issues/*/labels", 500),
     # A label GitHub writes and loses its answer to, as a release's todo
@@ -136,9 +155,33 @@ FAULTS = {
     "label-post-lost": Fault("POST", "/issues/*/labels", 502, applied=True),
     "rename-403": Fault("POST", "/branches/*/rename", 403),
     "rename-422": Fault("POST", "/branches/*/rename", 422),
+    # A released claim's rename refused for a secondary rate limit on
+    # every try the client makes, a minute and then two apart: a refusal
+    # for the moment, as a 500 is, so the library says nothing on the
+    # issue (github.explain_refusal), whose word would send the owner
+    # after a rule or a right that is not missing, and the next run tries
+    # the rename again.
+    "rename-limited": Fault("POST", "/branches/*/rename", 403, times=3, message=SECONDARY),
     "ref-delete-422": Fault("DELETE", "/git/refs/heads/*", 422),
     "compare-404": Fault("GET", "/compare/*", 404),
     "comments-read-500": Fault("GET", "/issues/*/comments", 500),
+    # The read of the branches, which the run needs, refused once for a
+    # rate limit, a 429 naming no wait: the client waits a minute and asks
+    # again (adapters.github.rate_wait), which GitHub answers, so the run
+    # goes on, and a run that fails after it is not excused by the 429,
+    # the read being answered in the end (invariants.answered).
+    "branches-429": Fault("GET", "/branches", 429),
+    # The same read refused once with a 403 whose retry-after asks for ten
+    # seconds and whose x-ratelimit headers say the token's hour is spent
+    # and ends a hundred seconds on, and whose message names no rate
+    # limit, so its retry-after alone tells it for a rate limit's, as this
+    # project assumes (DESIGN.md, 3.2). GitHub asks for each wait
+    # ("Exceeding the rate limit"), so the client waits the longer, until
+    # a second after the hour's end, and asks again, which GitHub answers;
+    # a client that waited retry-after's ten seconds alone, or took the
+    # refusal for one of a right, is seen by its waits
+    # (invariants.waits_as_asked).
+    "branches-limited-for-the-hour": Fault("GET", "/branches", 403, retry_after="10", reset_after=100),
     # The first read of the branches' making in the run (F13), the newest
     # creations' or a branch's own.
     "activity-500": Fault("GET", "/activity", 500, query=(("activity_type", "branch_creation"),)),
@@ -156,6 +199,24 @@ FAULTS = {
     # its committer date, which the run's log says.
     "pushes-403": Fault("GET", "/activity", 403, times=100, message="Resource not accessible by integration",
                         query=PUSHES),
+    # Every try of the first read of a claim's head's push refused for a
+    # rate limit, a 429 naming no wait, which the client asks again after
+    # a minute and then two (adapters.github.rate_wait): the read is
+    # refused for the run with its waits had, so the run does not read it
+    # again after a pause, as it would after a 5xx, and dates the claim by
+    # its committer date, which its log says (github.may_answer_later).
+    "pushes-429-for-the-run": Fault("GET", "/activity", 429, times=3, query=PUSHES),
+    # Every read of a claim's head's push refused for a secondary rate
+    # limit whose retry-after asks for two and a half minutes, longer than
+    # a run waits for one call (adapters.github.rate_wait): the client
+    # does not wait, the refusal is GitHub's answer for the run, and the
+    # run does not read the push again after its pause, GitHub still
+    # asking for no call, but dates the claim by its committer date. A
+    # library that read it again would make two reads of one push with the
+    # client's tries unspent, which the harness tells from the client's
+    # own tries only by the waits the fake keeps (invariants.answered).
+    "pushes-limited-too-long": Fault("GET", "/activity", 403, times=100, message=SECONDARY, retry_after="150",
+                                     query=PUSHES),
     # The first read of a claim's head's push answered before the activity
     # lists the push that set the head: the run reads it once more, which
     # lists it, and dates the claim by its push.
@@ -546,21 +607,22 @@ def lease_elsewhere(model, worker, number, files, how):
     there and makes its claim commit there, with a claim file naming
     itself, then leases onto a claim another worker holds by a command its
     session runs from its own clone, which has not fetched that claim,
-    reaching the second by git -C, by cd, or by a cd and then one into a
-    directory that is not there, which leaves the shell in the second
-    (ELSEWHERE); or, for body, expanded, skipped, exported and home, it
-    does all that in its own clone, after a cd in a here-document's body,
-    which the shell does not run, naming its own clone by a -C the shell
-    expands, by a relative -C after a cd behind a test that fails, which
-    the shell skips, with GIT_DIR exported, which names it whatever -C
-    comes after, or by a -C from a ~ after HOME is set to the directory
-    that holds the clones, which the guard reads from the hook's own HOME;
-    or, for F25's ways, in its own clone beside here-documents and a quote
-    that never closes, which bash reads as text or as a line it runs
-    nothing of, after the push. Git would take it, so the guard must read
-    the push and judge it in the clone it runs in and refuse it, as it
-    refuses lease_onto's. No search offers it; F21's and F25's traces
-    play it."""
+    reaching the second by git -C, by cd, by a cd and then one into a
+    directory that is not there, which leaves the shell in the second, or
+    by env --ch, which GNU env reads as --chdir (ELSEWHERE); or, for body,
+    expanded, skipped, exported and home, it does all that in its own
+    clone, after a cd in a here-document's body, which the shell does not
+    run, naming its own clone by a -C the shell expands, by a relative -C
+    after a cd behind a test that fails, which the shell skips, with
+    GIT_DIR exported, which names it whatever -C comes after, or by a -C
+    from a ~ after HOME is set to the directory that holds the clones,
+    which the guard reads from the hook's own HOME; or, for F25's ways, in
+    its own clone beside here-documents and a quote that never closes,
+    which bash reads as text or as a line it runs nothing of, after the
+    push. Git would take it, so the guard must read the push and judge it
+    in the clone it runs in and refuse it, as it refuses lease_onto's. No
+    search offers it; F21's trace plays it, F26's its env and F25's its
+    here-documents."""
     pusher = leasing_clone(worker, how)
     model.fetch(pusher)
     ref = claim_ref(number)

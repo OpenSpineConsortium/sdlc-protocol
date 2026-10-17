@@ -27,13 +27,17 @@ class TheGrammar(unittest.TestCase):
                       "bash -c 'git push origin main'", "git -c push.default=current push origin",
                       "git push --force-with-lease origin claude/7", "git push origin HEAD:claude/07",
                       "git -C . push origin main", "git --config-env user.name=HOME push origin +claude/7",
-                      "git --shallow-file x push origin main",
+                      "git --shallow-file x push origin main", "env --uns FOO git push origin main",
+                      "env --def git push origin main", "nice --adj 5 git push origin +claude/7",
+                      "timeout --sig KILL 60 git push origin HEAD:board",
                       "git commit -F - <<'EOF'\nDon't stop\nEOF\ngit push origin main\ncat <<'EOF'\nIt's done\nEOF"):
             with self.subTest(shape=shape):
                 self.assertIn(shape, texts)
         self.assertEqual(len(set(texts)), len(texts))
-        self.assertEqual(len(g.argument_lists()), 1398)
-        self.assertEqual(len(texts), 50328, "since F25's fix a sixth wrapper, the session's here-documents")
+        self.assertEqual(len(g.argument_lists()), 1398, "a prefix changes what the guard reads, never git's words")
+        self.assertEqual(len(texts), 51260, "since F25's fix a sixth wrapper, the session's here-documents")
+        self.assertFalse(any(c.prefix in g.ABBREVIATED and (c.wrapper != "{}" or c.argv.startswith("-"))
+                             for c in g.commands()), "an abbreviated wrapper is taken with the command alone")
 
 
 class GitsAnswers(unittest.TestCase):
@@ -87,7 +91,7 @@ class TheGuardJudged(unittest.TestCase):
         self.assertLess(time.perf_counter() - began, BUDGET_SECONDS)
         self.assertEqual(judgement.missing, ())
         self.assertEqual(judgement.failures, {}, g.report(judgement))
-        self.assertEqual(judgement.commands, 50328)
+        self.assertEqual(judgement.commands, 51260)
         let_through = {d.why for d in judgement.classes if d.kind == "let through"}
         self.assertTrue(let_through)
         self.assertTrue(all("G11b" in why for why in let_through), let_through)
@@ -126,6 +130,29 @@ class TheGuardJudged(unittest.TestCase):
             judgement = g.judge(commands=[c for c in g.commands() if c.prefix == "" and c.wrapper == "{}"])
         self.assertTrue(judgement.failures)
         self.assertTrue(any("plain forced" in d.why for d in judgement.failures))
+
+    def test_the_lane_bites_on_a_guard_that_reads_a_wrapper_s_long_option_only_in_full(self):
+        """F26: read by its whole name alone, --uns, --adj and --sig take no
+        value, so the word after each is read as the command and every
+        forbidden push behind it passes, as on the guard before the fix;
+        --def, which names no option in full either, is read as a flag,
+        and the push after it is judged."""
+        from unittest import mock
+
+        from sdlc_protocol import guard
+
+        def in_full(word, wrapper):
+            name = word[2:].partition("=")[0]
+            return name if name in wrapper.long_options else None
+
+        let_through = {}
+        for prefix in g.ABBREVIATED:
+            commands = [c for c in g.commands() if c.prefix == prefix]
+            self.assertEqual(g.judge(commands=commands).failures, {}, prefix)
+            with mock.patch.object(guard, "long_option_of", in_full):
+                let_through[prefix] = sum(g.judge(commands=commands).failures.values())
+        self.assertEqual(let_through, {"env --uns FOO ": 157, "env --def ": 0, "nice --adj 5 ": 157,
+                                       "timeout --sig KILL 60 ": 157})
 
 
 if __name__ == "__main__":
