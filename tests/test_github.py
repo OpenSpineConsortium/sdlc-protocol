@@ -2688,7 +2688,7 @@ class FreeReopened(unittest.TestCase):
 
 EVENTS_12 = "/repos/o/r/issues/12/events?per_page=100"
 COMMENTS_12 = "/repos/o/r/issues/12/comments?per_page=100"
-ACTIVITY_12 = activity_path("claude/12")
+ACTIVITY_12 = pushes_path("claude/12")
 
 
 def release_comment(at):
@@ -2755,39 +2755,72 @@ class EndedReleases(unittest.TestCase):
         """F22's third review: a's claim released on 09-18, #12 closed on
         09-19 and reopened on 09-20, b claiming it then, its pull request
         marked ready, closed unmerged and its branch deleted, the issue
-        open. b's claimed came after the close, but the activity lists the
-        push that made claude/12 after it too, so that claimed is b's
-        claim's and no person's undo, and the released branch a's release
-        left undoes nothing; a making in the close's own second reads as
-        after it. Where b's claim was released after the close, its
-        release still stands to be undone."""
+        open. b's claimed came after the close, but the newest entry the
+        activity lists for claude/12, of any kind, came after the close and
+        no earlier than that label, so it is b's claim's and no person's
+        undo, and the released branch a's release left undoes nothing; an
+        entry in the label's own second reads as the claim's. Where b's
+        claim was released after the close, its release still stands to be
+        undone."""
         later = [{"event": "closed", "created_at": "2026-09-19T00:00:00Z"},
                  {"event": "reopened", "created_at": "2026-09-20T00:00:00Z"},
                  {"event": "labeled", "label": {"name": "claimed"}, "created_at": "2026-09-20T00:05:00Z"},
                  {"event": "labeled", "label": {"name": "in-review"}, "created_at": "2026-09-21T00:00:00Z"}]
-        for at in ("2026-09-20T00:04:00Z", "2026-09-19T00:00:00Z"):
-            with self.subTest(made=at):
+        for entry in (made("claude/12", "2026-09-21T01:00:00Z", "branch_deletion"),
+                      made("claude/12", "2026-09-20T00:05:00Z", "push")):
+            with self.subTest(entry=entry):
                 self.assertEqual(self.ended([release_comment("2026-09-18T00:00:00Z")], events=later,
-                                            extra={ACTIVITY_12: FakeAnswer([made("claude/12", at)])}),
+                                            extra={ACTIVITY_12: FakeAnswer([entry])}),
                                  (["12"], ["GET " + EVENTS_12, "GET " + ACTIVITY_12, "GET " + COMMENTS_12]))
+        deleted = FakeAnswer([made("claude/12", "2026-09-21T01:00:00Z", "branch_deletion")])
         self.assertEqual(self.ended([release_comment("2026-09-22T00:00:00Z")], events=later,
-                                    extra={ACTIVITY_12: FakeAnswer([made("claude/12", "2026-09-20T00:04:00Z")])})[0],
+                                    extra={ACTIVITY_12: deleted})[0],
                          [], "b's own release after the close, which a person may be undoing")
+
+    def test_claimed_put_back_after_a_claim_made_since_the_close_ended_is_an_undo(self):
+        """The review of F22's third review: b's claim made after the close
+        ended with claude/12 deleted on 09-21 at 01:00, and a person took
+        claimed off and put it back at 03:00 to undo a's release; that label
+        came later than the newest entry the activity lists for the branch,
+        its delete, so it is an undo, as is a label later than the branch's
+        making where no later entry is listed, a claim whose delete GitHub
+        no longer lists reading so too."""
+        undone = [{"event": "closed", "created_at": "2026-09-19T00:00:00Z"},
+                  {"event": "reopened", "created_at": "2026-09-20T00:00:00Z"},
+                  {"event": "labeled", "label": {"name": "claimed"}, "created_at": "2026-09-20T00:05:00Z"},
+                  {"event": "unlabeled", "label": {"name": "claimed"}, "created_at": "2026-09-21T02:00:00Z"},
+                  {"event": "labeled", "label": {"name": "claimed"}, "created_at": "2026-09-21T03:00:00Z"}]
+        for entry in (made("claude/12", "2026-09-21T01:00:00Z", "branch_deletion"),
+                      made("claude/12", "2026-09-20T00:04:00Z")):
+            with self.subTest(entry=entry):
+                self.assertEqual(self.ended([release_comment("2026-09-18T00:00:00Z")], events=undone,
+                                            extra={ACTIVITY_12: FakeAnswer([entry])}),
+                                 ([], ["GET " + EVENTS_12, "GET " + ACTIVITY_12]))
 
     def test_where_the_activity_cannot_say_the_issue_is_left_out(self):
         """A refused read of the activity, a repository GitHub keeps no
-        activity of (a 404), an answer that is no list and a making whose
-        time reads as none each leave the issue out this run, so no label
-        comes off on a guess, and the comments are not read."""
+        activity of (a 404), and an entry with no time or one that reads as
+        none each leave the issue out this run, so no label comes off on a
+        guess, and the comments are not read; claimed_by_a_claim says None
+        for an entry with no time, and a label claimed with no time leaves
+        the issue out with no read of the activity at all."""
         later = [{"event": "closed", "created_at": "2026-09-19T00:00:00Z"},
                  {"event": "labeled", "label": {"name": "claimed"}, "created_at": "2026-09-20T00:05:00Z"}]
-        for answer in (Refusal(403), Refusal(500), None, FakeAnswer({"message": "odd"}),
-                       FakeAnswer([made("claude/12", "not a time")])):
+        untimed = {k: v for k, v in made("claude/12", "").items() if k != "timestamp"}
+        for answer in (Refusal(403), Refusal(500), None, FakeAnswer([untimed]),
+                       FakeAnswer([made("claude/12", "not a time", "branch_deletion")])):
             with self.subTest(answer=answer):
                 found, calls = self.ended([release_comment("2026-09-18T00:00:00Z")], events=later,
                                           extra={} if answer is None else {ACTIVITY_12: answer})
                 self.assertEqual(found, [])
                 self.assertNotIn("GET " + COMMENTS_12, calls)
+        api, _ = client({ACTIVITY_12: FakeAnswer([untimed])})
+        self.assertIsNone(github.claimed_by_a_claim(api, "12", "2026-09-19T00:00:00Z", "2026-09-20T00:05:00Z"))
+        no_time = [later[0], {"event": "labeled", "label": {"name": "claimed"}}]
+        found, calls = self.ended([release_comment("2026-09-18T00:00:00Z")], events=no_time,
+                                  extra={ACTIVITY_12: FakeAnswer([made("claude/12", "2026-09-21T01:00:00Z")])})
+        self.assertEqual(found, [])
+        self.assertNotIn("GET " + ACTIVITY_12, calls)
 
     def test_claimed_that_came_through_the_close_is_the_ended_claims(self):
         """The first review's stuck case still frees: b put claimed on

@@ -991,6 +991,17 @@ def activity_reads(calls, kind):
     return found
 
 
+def push_reads(calls, model):
+    """The reads of the push that set each claim's head a run made
+    (activity_reads, no kind named), by branch, for the branches that
+    stood when the run began, as model has them. A read of a branch that
+    did not stand then has no head to date: it is the freeing's read of
+    the newest entry of a reopened issue's gone claim branch
+    (github.claimed_by_a_claim; F22's third review), which dates no claim
+    and owes no line."""
+    return {branch: reads for branch, reads in activity_reads(calls, None).items() if branch in model.refs}
+
+
 class PushReading(NamedTuple):
     """What a run's reads of when GitHub received the push that set one
     claim's head say, by the spec's words: the minute the run dates the
@@ -1034,7 +1045,7 @@ def push_readings(calls, model, started_by=""):
     read alone, and the committer date stood in wherever it dated no
     push."""
     found = {}
-    for branch, reads in activity_reads(calls, None).items():
+    for branch, reads in push_reads(calls, model).items():
         head = model.refs.get(branch)
         pushed = read_dates(reads[-1], branch, head, model.now)
         if pushed is not None and (branch != started_by or oracle.own_push_dates(pushed, model.now)):
@@ -1219,7 +1230,7 @@ def pushes_read_again(calls, model):
     after the pause, since GitHub still asks for no call where the client
     gave up on a longer wait or with the run's waits spent."""
     problems = []
-    for branch, reads in activity_reads(calls, None).items():
+    for branch, reads in push_reads(calls, model).items():
         owed = 2 if may_tell_more(reads[0], branch, model.refs.get(branch), model.now) else 1
         if len(reads) != owed:
             problems.append(Violation("G2", f"the run read the push of {branch}'s head {len(reads)} times, "

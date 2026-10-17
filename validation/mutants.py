@@ -1219,6 +1219,17 @@ def ready_pull_request_unread(snapshot, number, names):
     return ORIGINAL_FREEING(dataclasses.replace(board.as_snapshot(snapshot), pulls=[]), number, names)
 
 
+def entry_since_the_close_alone(api, key, closed, claimed_at):
+    """claimed_by_a_claim reading any entry of the claim branch at or after
+    the close as the claim's, whenever the label went on, so a person's
+    undo after a claim made since has ended reads as that claim's."""
+    entry = github.newest_entry(api, claims.branch_of(key))
+    if entry is None:
+        return None
+    at = github.entry_time(entry) if entry else ""
+    return bool(at) and claims.parse_time(at) >= claims.parse_time(closed)
+
+
 def todo_put_on_last(api, snap, number):
     """github.free_reopened taking the labels off before it puts todo on, so
     a run that fails after claimed came off leaves an issue no section of
@@ -1817,10 +1828,15 @@ MUTANTS = {
         "G8", "the label claimed put on after a reopened issue's last close is a person undoing a release an "
               "earlier claim's release left before it, so the freeing leaves claimed on (F22's second review)"),
     "a claim made since the close read as an undo": Mutant(
-        github, "claim_made_since", lambda api, key, closed: False,
+        github, "claimed_by_a_claim", lambda api, key, closed, claimed_at: False,
         "G8", "the label claimed a claim made since a reopened issue's last close put on is that claim's, so once "
               "its branch is deleted with no release the freeing takes it off with the claim's other labels (F22's "
               "third review)"),
+    "an undo after an ended claim read as the claim's": Mutant(
+        github, "claimed_by_a_claim", entry_since_the_close_alone,
+        "G8", "the label claimed a person puts back after a claim made since a reopened issue's last close has "
+              "ended, later than its branch's delete, is a person's undo, so the freeing leaves claimed on (the "
+              "review of F22's third review)"),
     "the releases due read before the freeing": Mutant(
         github, "coordinate", releases_read_before_the_freeing,
         "G3", "a claim whose in-review a freeing takes off is released in the same run where its branch has gone a "
@@ -1858,6 +1874,11 @@ LATER_CLAIM = UNDOABLE + (Verb("claim", "b", (1,)), Verb("label-on", "b", (1, "c
                           Verb("label-on", "b", (1, "worker:b")), Verb("label-off", "b", (1, "todo")),
                           Verb("open-draft", "b", (1,)), Verb("mark-ready", "b", (100,)),
                           Verb("label-on", "b", (1, "in-review")))
+# That claim ended with its branch deleted and #1 freed, so the owner may
+# still undo a's release an hour later by putting claimed back, later than
+# the branch's delete (the review of F22's third review).
+ENDED_LATER_CLAIM = LATER_CLAIM + (Verb("delete-claim-branch", M.OWNER, (1,)),
+                                   Verb("board", verbs.BOARD, (cycle.SCHEDULE, "")))
 
 # Cheapest first, since a mutant is judged by the first search that
 # catches it. The traces met F4, dealing from differing looks, on the
@@ -1983,14 +2004,17 @@ SEARCHES = (
     # merge it, keeping its branch or not, and close and reopen #1, so each
     # rule of the freeing is searched and not only traced; and a release
     # before #1 was closed and reopened, which the owner may still undo;
-    # and a claim made after that reopen whose branch the owner deletes
-    # while #1 stays open (F22's reviews).
+    # a claim made after that reopen whose branch the owner deletes while
+    # #1 stays open; and the owner's undo once that claim has ended (F22's
+    # reviews).
     Search("a reopened issue after a release and a later claim", REOPENS, Scope(workers=("a", "b"),
            people=(M.OWNER,), waits=(25,), reopens=True), 4),
     Search("a release undone on a reopened issue", UNDOABLE, Scope(workers=("a", "b"), people=(M.OWNER,),
            waits=(25,), reopens=True), 2),
     Search("a claim since a reopen ended by deleting its branch", LATER_CLAIM, Scope(workers=("a", "b"),
            people=(M.OWNER,), waits=(25,), reopens=True, deletes=True), 2),
+    Search("an undo after a claim since a reopen ended", ENDED_LATER_CLAIM, Scope(workers=("a", "b"),
+           people=(M.OWNER,), waits=(1,), reopens=True, deletes=True), 3),
 )
 CATCHERS = LANES + SEARCHES + (PICKING, LABEL_MIXES)
 

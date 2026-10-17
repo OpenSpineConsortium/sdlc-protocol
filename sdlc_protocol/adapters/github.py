@@ -713,31 +713,42 @@ def ended_releases(api, issues, branches, kept, asked):
     was reopened that carries claimed or in-review, with no claim branch
     and a branch released/<issue>-<short sha> standing, whose events
     record a close, with no label claimed put on after it but by a claim
-    made since, and whose comments hold no release comment after it. Such a branch is no
+    made since (claimed_by_a_claim), and whose comments hold no release
+    comment after it. Such a branch is no
     release being undone, so the coordinator frees the issue wholly
     (coordinator.claim_stands; F22).
 
     The label claimed put on after the last close is a person undoing the
     release, as the release's note on the issue asks (board.released_text),
-    unless the repository's activity lists a push that made the claim
-    branch claude/<issue> at or after that close: that claim's own claimed
-    went on after the close too, and the claim has ended since, its branch
-    gone, where an undo brings no such push (claim_made_since; F22's third
-    review). Claimed that came through the close is the ended claim's
-    (F22's second review). Where GitHub refuses the activity, or keeps
-    none of the repository (a 404), the issue is left out this run. A
-    release comment after the close counts unless GitHub says its author
-    may not write (may_open, from asked, the run's answers to who may
-    write), so a refused permission read leaves the issue out this run,
-    as a refused read of the events or the comments does, rather than
-    taking a writer's release for a stranger's and the labels off on a
-    guess. One left out keeps its released branch as a release being
+    unless the newest entry the repository's activity lists for the claim
+    branch claude/<issue>, of any kind, came at or after that close and no
+    earlier than the label: a claim made since puts its own claimed on
+    after its branch's making, and the branch, gone now, was deleted or
+    pushed after that, while an undo puts claimed back with no push to the
+    branch after it, whether no claim came between or one came and ended
+    before the person put claimed back (claimed_by_a_claim; F22's third
+    review and its review). An entry in the label's own second reads as
+    the claim's. A claim the activity does not list, one GitHub no longer
+    keeps the entries of or one whose entries a rename took, reads as an
+    undo: an empty list is what the ordinary undo, with no claim between,
+    shows, so reading it as a claim's would take every such person's
+    claimed off, while reading the unlisted claim as an undo only leaves
+    claimed on, with in-review off, for a person to take off. Claimed that
+    came through the close is the ended claim's (F22's second review).
+    Where GitHub refuses the activity, keeps none of the repository (a
+    404), or writes no time for the label or the entry, the issue is left
+    out this run. A release comment after the close counts unless GitHub
+    says its author may not write (may_open, from asked, the run's answers
+    to who may write), so a refused permission read leaves the issue out
+    this run, as a refused read of the events or the comments does, rather
+    than taking a writer's release for a stranger's and the labels off on
+    a guess. One left out keeps its released branch as a release being
     undone, and the freeing takes in-review off alone, as before this was
     read, until a later run reads it.
 
     Only such an issue costs calls: every page of its events; one read of
-    the claim branch's makings in the activity where claimed went on after
-    the close; and every page of its comments where the events and the
+    the claim branch's newest entry in the activity where claimed went on
+    after the close; and every page of its comments where the events and the
     activity leave the question open, with a permission asked, once a
     run, for each author of a release comment after the close that
     GitHub's word does not vouch for. A freed issue carries neither label
@@ -753,7 +764,8 @@ def ended_releases(api, issues, branches, kept, asked):
         try:
             events = api.get_all(f"/repos/{api.repo}/issues/{key}/events")
             closed = latest_close(events)
-            if not closed or (claimed_since_close(events) and not claim_made_since(api, key, closed)):
+            if not closed or (claimed_since_close(events)
+                              and not claimed_by_a_claim(api, key, closed, last_claimed(events))):
                 continue
             comments = api.get_all(f"/repos/{api.repo}/issues/{key}/comments")
         except GitHubError:
@@ -794,27 +806,39 @@ def claimed_since_close(events):
     return last_claimed > last_close >= 0
 
 
-def claim_made_since(api, key, closed):
-    """Whether the repository's activity lists a push that made the claim
-    branch claude/<issue> at or after the time closed: the newest branch
-    creation of that name, one read. A claim made then put its own claimed
-    on after the close, which is no person's undo (ended_releases; F22's
-    third review); a creation in the close's own second reads as after it,
-    as a release in that second reads as before it, so the issue is freed.
-    None where GitHub keeps no activity of the repository (a 404), answers
-    with no list or writes a time that reads as none, which says neither,
-    so the issue is left out this run and no label comes off on a guess;
-    any other refusal raises, which leaves it out too."""
-    ref = f"refs/heads/{claims.branch_of(key)}"
-    listed = api.get(f"/repos/{api.repo}/activity", {"ref": ref, "activity_type": "branch_creation",
-                                                     "direction": "desc", "per_page": 1}, missing_ok=True)
-    if not isinstance(listed, list):
+def last_claimed(events):
+    """When the label claimed was last put on the issue, as GitHub wrote
+    the time of the latest such event, by the order GitHub lists them in;
+    "" where none is listed or its time reads as none."""
+    put_on = [e for e in events if isinstance(e, dict) and e.get("event") == "labeled"
+              and (e.get("label") or {}).get("name") == labels.CLAIMED]
+    return entry_time({"timestamp": put_on[-1].get("created_at")}) if put_on else ""
+
+
+def claimed_by_a_claim(api, key, closed, claimed_at):
+    """Whether the label claimed, last put on at claimed_at, after the
+    time closed, is a claim's own rather than a person's undo: the newest
+    entry the repository's activity lists for claude/<issue>, of any kind
+    (newest_entry: its making, a push or its delete), came at or after
+    the close and no earlier than the label, one read (ended_releases;
+    F22's third review). False where the activity lists no entry for the
+    branch, which an undo shows, an unlisted claim reading so too. None
+    where GitHub keeps no activity of the repository (a 404) or no time is
+    written for the label or the entry, which says neither, so the issue
+    is left out this run and no label comes off on a guess; any other
+    refusal raises, which leaves it out too."""
+    if not claimed_at:
         return None
-    newest = next((entry for entry in listed if made_at(entry) and entry.get("ref") == ref), None)
-    if newest is None:
+    entry = newest_entry(api, claims.branch_of(key))
+    if entry is None:
+        return None
+    if not entry:
         return False
-    made = entry_time(newest)
-    return None if not made else claims.parse_time(made) >= claims.parse_time(closed)
+    at = entry_time(entry)
+    if not at:
+        return None
+    when = claims.parse_time(at)
+    return when >= claims.parse_time(closed) and when >= claims.parse_time(claimed_at)
 
 
 def released_after(comments, closed, trusted):

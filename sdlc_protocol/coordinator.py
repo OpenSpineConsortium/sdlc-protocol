@@ -326,8 +326,9 @@ def claim_stands(snap, key):
     branch, or a branch a release left (board.Snapshot.kept_names) where
     that release may be being undone. A release whose latest comment came
     no later than the issue's last close, with the label claimed put on no
-    later than the close either, or put on by a claim whose branch a push
-    made since the close (board.Snapshot.ended_releases), belongs to a
+    later than the close either, or put on by a claim made since, no later
+    than the newest entry the activity lists for its branch since the close
+    (board.Snapshot.ended_releases), belongs to a
     claim before the close, which a person undoing a release on the open
     issue cannot mean, since an undo puts claimed back after the close with
     no claim branch made, the claimed that came through it is the ended
