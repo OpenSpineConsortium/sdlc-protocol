@@ -82,8 +82,12 @@ PREFIXES = ("", "FOO=1 ", "env ", "command ", "nice ", "time ")
 # never git's arguments, so they are taken with the command alone.
 ABBREVIATED = ("env --uns FOO ", "env --def ", "nice --adj 5 ", "timeout --sig KILL 60 ")
 # The wrapper that hides the command in a string another program runs is
-# the one the guard cannot read (G11b).
-WRAPPERS = ("{}", "bash -c '{}'", "true && {}", "( {} )", "echo $({})")
+# the one the guard cannot read (G11b). The last is the shape a session
+# writes most, a commit message by here-document, the push, then text by
+# another, whose bodies' apostrophes pair around the push as quotes bash
+# never reads, so the guard read no push in it until F25's fix.
+HERE_DOCUMENTS = "git commit -F - <<'EOF'\nDon't stop\nEOF\n{}\ncat <<'EOF'\nIt's done\nEOF"
+WRAPPERS = ("{}", "bash -c '{}'", "true && {}", "( {} )", "echo $({})", HERE_DOCUMENTS)
 UNREADABLE = "bash -c '{}'"
 # git's own options before the verb: a directory, the empty one git -C
 # takes as no change, a setting, a setting from the environment, whose

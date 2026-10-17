@@ -103,6 +103,17 @@ TRACES = {
     "a long option read only in full": "the regression traces",
     "env's abbreviated --chdir not read": "the regression traces",
     "an optional value taken from the next word": "the regression traces",
+    "a quote that never closes hiding the command": "the regression traces",
+    "no here-document's body told": "the regression traces",
+    "a here-document in a quoted substitution read as text": "the regression traces",
+    "an expanded body's substitutions cut out with it": "the regression traces",
+    "a body in a substitution ended only by its delimiter's own line": "the regression traces",
+    "an expanded body's backslash-newline kept": "the regression traces",
+    "every double parenthesis read as arithmetic": "the regression traces",
+    "a body that waits for a newline in the substitution that closed": "the regression traces",
+    "an expanded body's substitution kept with its own bodies": "the regression traces",
+    "a case pattern's parenthesis closing its substitution": "the regression traces",
+    "arithmetic's parentheses counted inside quotes": "the regression traces",
     "dealing without its taken set": "dealing at every look",
     "each leg dealt from its own look": "the regression traces",
     "given to workers needing the label todo": "the regression traces",
@@ -321,11 +332,21 @@ class TheLane(unittest.TestCase):
         of the client's waits for a rate limit, a 5xx retried as a rate
         limit, and eight from its second review, one for each rule of the
         client's waits, so the bound is widened to 150, 134 within it;
-        and F26's fix three, a long option read only in full, env's
+        F26's fix three, a long option read only in full, env's
         abbreviated --chdir not read and an optional value taken from the
-        next word, 137."""
+        next word, 137; and F25's fix seven, one for each rule of its
+        reading: a quote that never closes hiding the command, no
+        here-document's body told, a here-document in a quoted substitution
+        read as text, an expanded body's substitutions cut out with it, a
+        body in a substitution ended only by its delimiter's own line, an
+        expanded body's backslash-newline kept and every double parenthesis
+        read as arithmetic, 144; and its second review four: a body that
+        waits for a newline in the substitution that closed, an expanded
+        body's substitution kept with its own bodies, a case pattern's
+        parenthesis closing its substitution and arithmetic's parentheses
+        counted inside quotes, 148."""
         self.assertTrue(10 <= len(mutants.MUTANTS) <= 150)
-        self.assertEqual(len(mutants.MUTANTS), 137)
+        self.assertEqual(len(mutants.MUTANTS), 148)
         self.assertEqual(sorted(TRACES), sorted(mutants.MUTANTS))
 
     def test_every_mutant_names_a_rule_the_library_still_has(self):

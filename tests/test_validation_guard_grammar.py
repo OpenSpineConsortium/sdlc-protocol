@@ -29,12 +29,13 @@ class TheGrammar(unittest.TestCase):
                       "git -C . push origin main", "git --config-env user.name=HOME push origin +claude/7",
                       "git --shallow-file x push origin main", "env --uns FOO git push origin main",
                       "env --def git push origin main", "nice --adj 5 git push origin +claude/7",
-                      "timeout --sig KILL 60 git push origin HEAD:board"):
+                      "timeout --sig KILL 60 git push origin HEAD:board",
+                      "git commit -F - <<'EOF'\nDon't stop\nEOF\ngit push origin main\ncat <<'EOF'\nIt's done\nEOF"):
             with self.subTest(shape=shape):
                 self.assertIn(shape, texts)
         self.assertEqual(len(set(texts)), len(texts))
         self.assertEqual(len(g.argument_lists()), 1398, "a prefix changes what the guard reads, never git's words")
-        self.assertEqual(len(texts), 42872)
+        self.assertEqual(len(texts), 51260, "since F25's fix a sixth wrapper, the session's here-documents")
         self.assertFalse(any(c.prefix in g.ABBREVIATED and (c.wrapper != "{}" or c.argv.startswith("-"))
                              for c in g.commands()), "an abbreviated wrapper is taken with the command alone")
 
@@ -90,7 +91,7 @@ class TheGuardJudged(unittest.TestCase):
         self.assertLess(time.perf_counter() - began, BUDGET_SECONDS)
         self.assertEqual(judgement.missing, ())
         self.assertEqual(judgement.failures, {}, g.report(judgement))
-        self.assertEqual(judgement.commands, 42872)
+        self.assertEqual(judgement.commands, 51260)
         let_through = {d.why for d in judgement.classes if d.kind == "let through"}
         self.assertTrue(let_through)
         self.assertTrue(all("G11b" in why for why in let_through), let_through)
@@ -152,6 +153,25 @@ class TheGuardJudged(unittest.TestCase):
                 let_through[prefix] = sum(g.judge(commands=commands).failures.values())
         self.assertEqual(let_through, {"env --uns FOO ": 157, "env --def ": 0, "nice --adj 5 ": 157,
                                        "timeout --sig KILL 60 ": 157})
+
+
+    def test_the_lane_bites_on_a_guard_that_reads_a_command_whole_or_not_at_all(self):
+        """F25: read whole and strictly, with no body told, the session's
+        here-documents pair their bodies' apostrophes around the push, so
+        every forbidden push in that wrapper passes, as on the guard before
+        the fix; with the fix the wrapper is judged as the bare command."""
+        from unittest import mock
+
+        from sdlc_protocol import guard
+
+        commands = [c for c in g.commands() if c.wrapper == g.HERE_DOCUMENTS]
+        self.assertEqual(g.judge(commands=commands).failures, {})
+        bare = {(c.prefix, c.argv): g.guard_refuses(c.text) for c in g.commands() if c.wrapper == "{}"}
+        self.assertTrue(all(g.guard_refuses(c.text) == bare[c.prefix, c.argv] for c in commands[::7]))
+        strict = guard.plain_text
+        with mock.patch.object(guard, "plain_text", lambda command, lenient=False: strict(command)), \
+                mock.patch.object(guard, "here_document_bodies", lambda command: []):
+            self.assertEqual(sum(g.judge(commands=commands).failures.values()), 5670)
 
 
 if __name__ == "__main__":
