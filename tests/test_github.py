@@ -2339,6 +2339,35 @@ class Coordinate(unittest.TestCase):
             "HTTP 403: Resource not accessible by integration; claimed put back"])
         self.assertEqual(opener.sent("POST"), [{"labels": ["claimed"]}])
 
+    def test_a_404_after_a_rate_limit_is_put_back_when_a_later_label_fails(self):
+        # The try GitHub refused for a rate limit may have taken claimed
+        # off, so the 404 the client's second try gets says only that it is
+        # off now; when worker:nightly's removal then fails, both go back
+        # (F27's review). Until the review claimed was read as never on and
+        # stayed off the held claim's issue.
+        answers = release_answers()
+        answers[LABEL_CLAIMED_12] = Turns(Refusal(429, headers={"retry-after": "5"}), Refusal(404))
+        answers[LABEL_WORKER_12] = Refusal(502)
+        answers[LABELS_12] = FakeAnswer([])
+        waits = []
+        opener = InTurn(answers)
+        api = github.GitHub("t", "o/r", opener=opener, sleep=waits.append)
+        self.assertEqual(github.coordinate(api, idle_snapshot(), NOW), [
+            "#12: not released, taking the labels off failed: DELETE /repos/o/r/issues/12/labels/worker%3Anightly: "
+            "HTTP 502; claimed, worker:nightly put back"])
+        self.assertEqual(opener.sent("POST"), [{"labels": ["claimed", "worker:nightly"]}])
+        self.assertEqual(waits, [5])
+
+    def test_a_404_after_a_rate_limit_counts_as_taken_off_only_in_a_release(self):
+        # Taking a todo off again wants only the label off, which the 404
+        # says however the client got it; a release counts it as taken off.
+        todo = "DELETE /repos/o/r/issues/12/labels/todo"
+        for taken in (False, True):
+            opener = InTurn({todo: Turns(Refusal(429, headers={"retry-after": "5"}), Refusal(404))})
+            api = github.GitHub("t", "o/r", opener=opener, sleep=lambda seconds: None)
+            with self.subTest(retried_404_taken=taken):
+                self.assertIs(github.take_label_off(api, "12", "todo", retried_404_taken=taken), taken)
+
     def test_a_label_github_takes_off_with_no_answer_is_put_back(self):
         # No answer at all may come after GitHub took the label off (F27).
         answers = release_answers()

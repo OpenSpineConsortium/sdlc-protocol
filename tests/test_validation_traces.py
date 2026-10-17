@@ -202,10 +202,13 @@ BUDGET_SECONDS = 10
 # passes once a value an option may take is taken from the next word;
 # and at b's lease from its second clone by env --ch, step 5, taken once
 # env's --chdir is read only by its whole name; and F27's at its first
-# release, step 12, where GitHub takes claimed off a's issue and answers
-# 502, once a label whose removal failed is never put back, and at its
-# third, step 16, where GitHub refuses to take claimed off c's issue with
-# a 422, once such a label is put back whatever GitHub answered.
+# release, step 16, where GitHub takes claimed off a's issue and answers
+# 502, once a label whose removal failed is never put back, at its third,
+# step 20, where GitHub refuses to take claimed off c's issue with a 422,
+# once such a label is put back whatever GitHub answered, and, from its
+# review, at its fourth, step 22, where claimed's removal on d's issue is
+# refused for a rate limit having taken it off and answered 404 on the
+# client's second try, once that 404 is read as a label never on.
 UNDONE = {
     "F1": [("the comment before the labels", 5, "G3L")],
     "F2": [("a piece of work named by the number it is shown by", 4, "G7"),
@@ -284,8 +287,9 @@ UNDONE = {
     "F26": [("a long option read only in full", 1, "G11a"),
             ("an optional value taken from the next word", 4, "G11a"),
             ("env's abbreviated --chdir not read", 5, "G11a")],
-    "F27": [("a label taken off and lost stays off", 12, "G3L"),
-            ("a label refused its removal put back", 16, "G3L")],
+    "F27": [("a label taken off and lost stays off", 16, "G3L"),
+            ("a label refused its removal put back", 20, "G3L"),
+            ("a 404 after a rate limit read as never on", 22, "G3L")],
 }
 # The findings with a trace, every one settled since F23's fix: F1, F3,
 # F5, F6, F10 and F11 fixed in 0.4.1; F2, F4, F7, F8, F9, F12, F13, F14,

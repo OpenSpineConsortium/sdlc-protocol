@@ -201,6 +201,17 @@ FAULTS = {
     # taking it off, so the label is still on and the run puts back only
     # what it took off, never a label GitHub refused (F27).
     "label-delete-422": Fault("DELETE", "/issues/*/labels/*", 422, message="Validation Failed"),
+    # claimed's removal refused for a rate limit, a 429 naming no wait,
+    # though GitHub took the label off, as it would were canary C4 to find
+    # it acting on a call it refuses so; the client waits a minute and asks
+    # again, which GitHub answers 404, the label being off; then the
+    # worker's label's removal answered 500, so the release fails there. The
+    # 404 follows a try that may have taken claimed off, so the run puts it
+    # back with the worker's label, where a rule that read the 404 as a
+    # label never on left claimed off the held claim's issue (F27's
+    # review).
+    "label-delete-limited-then-404": Fault("DELETE", "/issues/*/labels/claimed", 429, applied=True,
+                                           then=Fault("DELETE", "/issues/*/labels/worker:*", 500)),
     "label-post-500": Fault("POST", "/issues/*/labels", 500),
     # A label GitHub writes and loses its answer to, as a release's todo
     # can be (F15's review).

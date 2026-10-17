@@ -1689,27 +1689,37 @@ def take_labels_off(api, key, names):
     after GitHub took it off, and putting back a label still on changes
     nothing, where leaving off one GitHub took leaves the issue as
     neither the release nor the run found it (F27, until whose fix only
-    the labels whose removal GitHub answered went back)."""
+    the labels whose removal GitHub answered went back). A 404 that
+    answers a try after a rate limit's refusal counts as a label taken
+    off, for the same reason (take_label_off; F27's review)."""
     taken_off = []
     for name in names:
         try:
-            if take_label_off(api, key, name):
+            if take_label_off(api, key, name, retried_404_taken=True):
                 taken_off.append(name)
         except GitHubError as problem:
             return taken_off + ([] if wrote_nothing(problem) else [name]), problem
     return taken_off, None
 
 
-def take_label_off(api, key, name):
+def take_label_off(api, key, name, retried_404_taken=False):
     """Take one label off a claim's issue: True when it came off, False when
     GitHub answered 404, for an issue that no longer carried it, which is
     the label being off too, so a release goes on and puts back, if a later
-    step fails, only what it took off."""
+    step fails, only what it took off. With retried_404_taken, as a
+    release takes its labels off (take_labels_off), a 404 that answers a
+    try the client made after a rate limit's refusal of an earlier one
+    counts as the label taken off: GitHub may have taken it off on the
+    refused try, so the 404 says it is off now, not that the issue never
+    carried it, and the release goes on and puts it back should a later
+    step fail, where a plain 404 left it off a held claim's issue (F27's
+    review). Taking a todo off again, or freeing a reopened issue, wants
+    only the label off, which such a 404 says either way."""
     try:
         api.delete(f"/repos/{api.repo}/issues/{key}/labels/{urllib.parse.quote(name, safe='')}")
     except GitHubError as problem:
         if problem.status == 404:
-            return False
+            return retried_404_taken and problem.after_rate_limit
         raise
     return True
 

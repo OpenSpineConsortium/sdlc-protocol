@@ -135,6 +135,7 @@ TRACES = {
     "a todo written and lost stays on": ([TODO_OFF] + HELD + [WAIT, board_with("label-post-lost")], Scope()),
     "a label taken off and lost stays off": "the regression traces",
     "a label refused its removal put back": "the regression traces",
+    "a 404 after a rate limit read as never on": "the regression traces",
     "an epic gets todo": ([TODO_OFF, Verb("label-on", M.OWNER, (1, "epic"))] + HELD + [WAIT, BOARD], Scope()),
     "a blocker gets todo": ([TODO_OFF, Verb("label-on", M.OWNER, (1, "blocker"))] + HELD + [WAIT, BOARD], Scope()),
     "a blocked task gets no todo": ([TODO_OFF, Verb("label-on", M.OWNER, (1, "blocked"))] + HELD + [WAIT, BOARD],
@@ -368,9 +369,10 @@ class TheLane(unittest.TestCase):
         0.5.1 carries several findings, F22, F23 and F26 among them, with
         F24, F25 and F27 still to come. F27's fix adds two, a label taken
         off and lost stays off and a label refused its removal put back,
-        155."""
+        155, and its review one, a 404 after a rate limit read as never on,
+        156."""
         self.assertTrue(10 <= len(mutants.MUTANTS) <= 200)
-        self.assertEqual(len(mutants.MUTANTS), 155)
+        self.assertEqual(len(mutants.MUTANTS), 156)
         self.assertEqual(sorted(TRACES), sorted(mutants.MUTANTS))
 
     def test_every_mutant_names_a_rule_the_library_still_has(self):
