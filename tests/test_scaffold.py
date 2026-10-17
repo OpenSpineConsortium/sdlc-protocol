@@ -88,10 +88,12 @@ class Spec(unittest.TestCase):
     def test_names_no_placeholder(self):
         self.assertEqual(PLACEHOLDER.findall(self.text), [])
 
-    def test_keeps_the_template_sections_and_adds_one(self):
+    def test_keeps_the_template_sections_and_adds_its_own(self):
+        # Locks, off by default, is the library's until a template release
+        # turns it on and brings the section into the template's page.
         self.assertEqual(headings(self.text), [
             "How work is claimed", "Workers", "Labels", "Pick", "Claim", "Announce", "Work in the open", "Finish",
-            "Blockers", "Release", "Overlaps", "Planning", "Policy and worlds", "Rules that hold everywhere",
+            "Blockers", "Release", "Overlaps", "Planning", "Locks", "Policy and worlds", "Rules that hold everywhere",
         ])
 
     def test_names_every_policy_field_and_world_method(self):

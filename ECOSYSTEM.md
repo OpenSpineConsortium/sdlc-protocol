@@ -38,6 +38,7 @@ flowchart LR
     m___main__["__main__"]
     m_adapters["adapters"]
     m_adapters_bare_git["adapters.bare_git"]
+    m_adapters_git_locks["adapters.git_locks"]
     m_adapters_github["adapters.github"]
     m_adapters_memory["adapters.memory"]
     m_board["board"]
@@ -47,6 +48,7 @@ flowchart LR
     m_gate["gate"]
     m_guard["guard"]
     m_labels["labels"]
+    m_locks["locks"]
     m_protocol_check["protocol_check"]
     m_team["team"]
     m_vendoring["vendoring"]
@@ -58,6 +60,10 @@ flowchart LR
   r_symphony_app(["symphony-app"])
   m___main__ --> m_cli
   m_adapters_bare_git --> m_gate
+  m_adapters_git_locks --> m_adapters_bare_git
+  m_adapters_git_locks --> m_claims
+  m_adapters_git_locks --> m_gate
+  m_adapters_git_locks --> m_locks
   m_adapters_github --> m_board
   m_adapters_github --> m_claims
   m_adapters_github --> m_coordinator
@@ -67,10 +73,12 @@ flowchart LR
   m_adapters_memory --> m_gate
   m_board --> m_claims
   m_board --> m_labels
+  m_cli --> m_adapters_git_locks
   m_cli --> m_adapters_github
   m_cli --> m_board
   m_cli --> m_claims
   m_cli --> m_guard
+  m_cli --> m_locks
   m_cli --> m_protocol_check
   m_cli --> m_team
   m_cli --> m_vendoring
@@ -97,6 +105,7 @@ What each module is, in the first sentence of its docstring:
 - `__main__`: python3 -m sdlc_protocol: the package's command line, in cli.py.
 - `adapters`: The worlds the merge gate decides over, one module each.
 - `adapters.bare_git`: The world over a bare repository: the gate's merges made with git itself.
+- `adapters.git_locks`: The lock table's git side: reading LOCKS.json from the branch `locks`, writing a new table as one commit on the tip it read, and pushing it, with the claim branch beside it when the locks are taken at the claim.
 - `adapters.github`: The protocol over GitHub's REST API, through urllib.
 - `adapters.memory`: A world held in memory, for tests and simulations of the merge gate.
 - `board`: The board: what a repository's open work looks like, as one page.
@@ -106,6 +115,7 @@ What each module is, in the first sentence of its docstring:
 - `gate`: The merge gate: the claim protocol's decisions as a policy over a world.
 - `guard`: Refuse a git push the board rules forbid, before it runs.
 - `labels`: The labels the claim protocol reads and writes.
+- `locks`: Locks on files, on parts of files and on named resources, kept in git.
 - `protocol_check`: Hold a `claude/<issue>` pull request to the claim protocol.
 - `team`: The clerk: the clerical work of the coordinator and the workers, done by code so no Claude usage goes to it.
 - `vendoring`: The record a vendored copy of this package carries, and its check.
