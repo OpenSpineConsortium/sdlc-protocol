@@ -12,9 +12,9 @@ sys.path.insert(0, str(ROOT))
 
 from sdlc_protocol import board  # noqa: E402
 from sdlc_protocol.adapters import github  # noqa: E402
-from validation import cycle, model as M  # noqa: E402
-from validation.fake_github import DELETED, LAGGING, LAGGING_BY_TWO, MOVED, MOVED_TWICE, NO_SHA, Fault, FakeGitHub, \
-    Unserved  # noqa: E402
+from validation import cycle, model as M, verbs  # noqa: E402
+from validation.fake_github import DELETED, LAGGING, LAGGING_BY_TWO, LISTED_LATE, MOVED, MOVED_TWICE, NO_SHA, Fault, \
+    FakeGitHub, Unserved  # noqa: E402
 
 
 def claimed(worker="a", number=1, text=None):
@@ -405,6 +405,78 @@ class Faults(unittest.TestCase):
             api.post(f"/repos/{M.REPO}/issues/1/comments", {"body": "kept"})
         self.assertEqual([c.body for c in model.issues[1].comments], ["kept"])
         self.assertTrue(fake.calls[-1].applied)
+
+    def test_a_fault_with_no_status_gets_no_answer_at_all(self):
+        """F23: the connection times out waiting for GitHub's answer, which
+        the adapter reads as an error with no status; applied, the write is
+        made all the same."""
+        model = M.seeded()
+        api, fake = cycle.api_for(model, (Fault("POST", "/issues/*/comments", None, applied=True,
+                                                message="timed out"),))
+        with self.assertRaises(github.GitHubError) as caught:
+            api.post(f"/repos/{M.REPO}/issues/1/comments", {"body": "kept"})
+        self.assertEqual((caught.exception.status, caught.exception.detail), (None, ""))
+        self.assertEqual(str(caught.exception), f"POST /repos/{M.REPO}/issues/1/comments: timed out")
+        self.assertEqual([c.body for c in model.issues[1].comments], ["kept"])
+        self.assertEqual((fake.calls[-1].status, fake.calls[-1].applied), (None, True))
+
+    def test_a_read_listed_late_leaves_out_what_github_wrote_and_lost_its_answer_to(self):
+        """F23: a read of an issue's comments answered before GitHub lists
+        the comment it wrote in the run and lost its answer to; the comments
+        it wrote before, and one it answered after, are listed, and the next
+        read lists them all."""
+        model = M.seeded()
+        model.add_comment(1, M.Comment("a", "NONE", model.now, "before"))
+        late = Fault("GET", "/issues/*/comments", 200, answer=LISTED_LATE)
+        api, fake = cycle.api_for(model, (Fault("POST", "/issues/*/comments", 502, applied=True, then=late),))
+        with self.assertRaises(github.GitHubError):
+            api.post(f"/repos/{M.REPO}/issues/1/comments", {"body": "lost"})
+        api.post(f"/repos/{M.REPO}/issues/1/comments", {"body": "after"})
+        listed = api.get_all(f"/repos/{M.REPO}/issues/1/comments")
+        self.assertEqual([c["body"] for c in listed], ["before", "after"])
+        self.assertEqual((fake.calls[-1].status, fake.calls[-1].fault), (200, late))
+        everything = api.get_all(f"/repos/{M.REPO}/issues/1/comments")
+        self.assertEqual([c["body"] for c in everything], ["before", "lost", "after"])
+
+    def test_a_rate_limit_s_refusal_of_a_comment_github_wrote_is_one_try(self):
+        """F23's review: comment-limited-late refuses the release comment for
+        a secondary rate limit having written it, as GitHub would were
+        canary C4 to find it acting on a call it refuses so, and asks a wait
+        longer than a run waits, so the client makes one try and the
+        comment is written once; the library reads the refusal as one that
+        may have written, the read after it lists none of it, and the next
+        read lists it."""
+        model = M.seeded()
+        api, fake = cycle.api_for(model, (verbs.FAULTS["comment-limited-late"],))
+        with self.assertRaises(github.GitHubError) as caught:
+            api.post(f"/repos/{M.REPO}/issues/1/comments", {"body": "limited"})
+        refused = caught.exception
+        self.assertTrue(github.rate_limited(refused.status, refused.headers, refused.detail))
+        self.assertFalse(github.wrote_nothing(refused))
+        self.assertEqual([(c.status, c.applied, c.waited) for c in fake.calls], [(403, True, None)])
+        self.assertEqual(api.waited, [])
+        self.assertEqual(api.get_all(f"/repos/{M.REPO}/issues/1/comments"), [])
+        self.assertEqual([c["body"] for c in api.get_all(f"/repos/{M.REPO}/issues/1/comments")], ["limited"])
+
+    def test_a_422_after_a_rate_limit_s_refusal_of_a_comment_github_wrote_comes_after_it(self):
+        """F23's second review: comment-limited-then-422 refuses the release
+        comment for a secondary rate limit having written it and asks a
+        minute's wait, which the client makes, and refuses its second try
+        with a 422, writing nothing more; the client raises the 422, marked
+        as coming after a rate limit's refusal, so the library reads it as
+        one that may have written; the read after it lists none of the
+        comment, the next read lists it once."""
+        model = M.seeded()
+        api, fake = cycle.api_for(model, (verbs.FAULTS["comment-limited-then-422"],))
+        with self.assertRaises(github.GitHubError) as caught:
+            api.post(f"/repos/{M.REPO}/issues/1/comments", {"body": "limited"})
+        refused = caught.exception
+        self.assertEqual((refused.status, refused.after_rate_limit), (422, True))
+        self.assertFalse(github.wrote_nothing(refused))
+        self.assertEqual([(c.status, c.applied, c.waited) for c in fake.calls], [(403, True, None), (422, False, 60)])
+        self.assertEqual(api.waited, [60])
+        self.assertEqual(api.get_all(f"/repos/{M.REPO}/issues/1/comments"), [])
+        self.assertEqual([c["body"] for c in api.get_all(f"/repos/{M.REPO}/issues/1/comments")], ["limited"])
 
     def test_a_change_to_an_issue_s_body_is_unserved_not_a_fake_s_error(self):
         api, _ = cycle.api_for(M.seeded())

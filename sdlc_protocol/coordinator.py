@@ -19,13 +19,22 @@ blocker, so it is listed again (labels_put_on); then it posts one comment
 on it, whose first line is claims.RELEASE_MARKER, saying why, whose the
 claim was, what its branch holds and what its plan was, so the next worker
 can carry the work on or start over, and the board renames the branch in
-the same run. The board counts a release only once both are done, and a
-run that fails between them puts back the labels it took off and takes off
+the same run. The board counts a release only once both are done. A run
+that fails at the labels puts back the labels it took off and takes off
 the todo it put on, so the issue is as it was and the next run starts the
-release over, unless it cannot read the issue's comments to tell whether
-GitHub wrote the comment after all, when it leaves the labels as the
-release left them for the next run to settle (adapters/github.py,
-unsettled; F20).
+release over. A run whose comment fails reads the issue's comments: a
+release comment there makes the release whole; where they list none after
+GitHub refused the comment, a 4xx other than a rate limit's on a try that
+followed none refused for a rate limit, which it answers in place of
+writing anything, the run puts the labels back as at the labels; and where
+it cannot read them, whatever GitHub answered (F20), or they list none
+after any other answer, a rate limit's refusal, on the last try or on one
+the run made the comment again after, a server error or no answer among
+them, none of which says GitHub wrote nothing,
+and a read may list a comment GitHub wrote only later (F23), it cannot
+tell whether a release comment stands, its own, an earlier run's or one
+someone else wrote, so it leaves the labels as the release left them for
+the next run to settle (adapters/github.py, release_one).
 
 Before it releases, the coordinator frees each issue that was closed and
 opened again while its labels still speak of a claim that ended with the
@@ -242,10 +251,10 @@ def after_labels(snapshot, key, taken_off, put_on=()):
     """The snapshot as GitHub knows it once a release has taken taken_off
     off the issue with this key and put put_on on it, in both places the
     board reads them, with no new release comment known: after_release's
-    labels, all of an unsettled release (adapters.github.unsettled), whose
-    comment the run cannot tell stands, and what a run freeing a reopened
-    issue changed (adapters.github.free_reopened), where the issue may
-    have no claim branch and so no place among the claims' issues. The
+    labels, all of an unsettled release (adapters.github.labels_left),
+    whose comment the run cannot tell stands, and what a run freeing a
+    reopened issue changed (adapters.github.free_reopened), where the issue
+    may have no claim branch and so no place among the claims' issues. The
     release comment the snapshot held stays, so a head a release already
     kept, whose latest release comment counts whenever it came
     (board.release_counts), is released by it once the labels are off. A

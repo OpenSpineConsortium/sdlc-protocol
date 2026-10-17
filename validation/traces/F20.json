@@ -1,7 +1,7 @@
 {
   "finding": "F20",
   "title": "a release whose comment GitHub refused, and whose read of the issue's comments after it GitHub refused too, puts the labels back beside a comment that may stand, which holds the claim for good",
-  "status": "fixed after 0.4.1: a run that cannot read the issue's comments to tell whether its release comment stands leaves the labels as the release left them and counts no release of its own, and the next run settles it as it settles any claim whose labels are off, while on a head a release already kept the earlier release frees the claim in that run (github.release_one, github.unsettled; DESIGN.md, 13)",
+  "status": "fixed after 0.4.1: a run that cannot read the issue's comments to tell whether a release comment stands, whatever GitHub answered its own with, leaves the labels as the release left them and counts no release of its own, and the next run settles it as it settles any claim whose labels are off, while on a head a release already kept the earlier release frees the claim in that run (github.release_one, github.unsettled; DESIGN.md, 13)",
   "breaks": ["G3L", "G15"],
   "world": "memory",
   "issues": {"1": ["todo"], "2": ["todo"]},
@@ -42,6 +42,17 @@
     {"verb": "board",
      "expect": {"labels": {"1": ["todo"]}, "comments": {"1": {"claim-released": 1, "released": 1}}, "refs": {"claude/1": false},
                 "queue": [1, 2]},
-     "note": "the next run has nothing to settle: claude/1 is gone and the release stands, with no word of its own"}
+     "note": "the next run has nothing to settle: claude/1 is gone and the release stands, with no word of its own"},
+    {"verb": "claim", "actor": "b", "args": [2], "expect": {"holders": {"2": "b"}},
+     "note": "b claims #2 again, from the Queue"},
+    {"verb": "announce", "actor": "b", "args": [2]},
+    {"at": 77, "verb": "board", "faults": ["comment-422-then-unread"],
+     "expect": {"labels": {"2": ["todo"]}, "comments": {"2": {"claim-released": 1, "released": 1}}, "refs": {"claude/2": true},
+                "claims": {"claude/2": "b"}, "queue": [1]},
+     "note": "b's new claim has had no commit for 25 hours: GitHub refuses the release comment with a 422, having written nothing, and then the read of the issue's comments after it, so the run cannot read whether a release comment that someone else wrote, or that GitHub wrote for an earlier run and lists only later, stands; it leaves the labels as the release left them and counts no release, as after a server error (F23's review). F20's mutant, a refused read taken for one that lists none, puts the labels back here, where since F23's fix it does what the library does after the server errors at steps 8 and 10"},
+    {"verb": "board",
+     "expect": {"labels": {"2": ["todo"]}, "comments": {"2": {"claim-released": 2, "released": 2}}, "refs": {"claude/2": false},
+                "released": {"2": 2}, "claims": {}, "queue": [1, 2]},
+     "note": "the next run finds no release comment on #2 newer than b's claim and releases it again, its labels already off counting as taken off, then renames the branch"}
   ]
 }

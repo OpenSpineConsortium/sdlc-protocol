@@ -67,7 +67,7 @@ from typing import NamedTuple
 from sdlc_protocol import guard
 
 from . import cycle, model as M, oracle
-from .fake_github import DELETED, LAGGING, LAGGING_BY_TWO, MOVED, MOVED_TWICE, Fault
+from .fake_github import DELETED, LAGGING, LAGGING_BY_TWO, LISTED_LATE, MOVED, MOVED_TWICE, Fault
 from .model import CLAIM_PREFIX, HOUR, MAIN, OWNER, RELEASED_PREFIX, Comment, PullRequest, claim_text
 
 CLOCK, BOARD = "clock", "board"
@@ -121,20 +121,73 @@ FAULTS = {
     "comment-500-then-unread": Fault("POST", "/issues/*/comments", 500,
                                      then=Fault("GET", "/issues/*/comments", 500)),
     "comment-rate-limited": Fault("POST", "/issues/*/comments", 403, message=SECONDARY, retry_after="60"),
+    # A release comment GitHub refuses with a 4xx other than a rate
+    # limit's, which it answers in place of writing anything, so the run
+    # puts the labels back (SPEC["refused"]), where after a 500 it cannot
+    # tell whether GitHub wrote the comment and leaves them off (F23).
+    "comment-422": Fault("POST", "/issues/*/comments", 422, message="Validation Failed"),
+    # The same refusal with the read of the issue's comments after it
+    # refused too: GitHub wrote no comment of this run's, but the run
+    # cannot read whether one an earlier run's post or someone else wrote
+    # stands, so it leaves the labels as the release left them
+    # (SPEC["unread"]). F23's review: since F23's fix the only fault
+    # under which F20's mutant, a refused read taken for one that lists
+    # none, puts back labels the library leaves off.
+    "comment-422-then-unread": Fault("POST", "/issues/*/comments", 422, message="Validation Failed",
+                                     then=Fault("GET", "/issues/*/comments", 500)),
+    # A release comment GitHub writes and loses its answer to, with a 502
+    # or with no answer at all, and lists only after the read of the
+    # issue's comments that follows, which lists none of it, so the run
+    # cannot tell whether the comment stands (SPEC["listed late"]; F23).
+    "comment-late": Fault("POST", "/issues/*/comments", 502, applied=True,
+                          then=Fault("GET", "/issues/*/comments", 200, answer=LISTED_LATE)),
+    "comment-unanswered-late": Fault("POST", "/issues/*/comments", None, applied=True, message="timed out",
+                                     then=Fault("GET", "/issues/*/comments", 200, answer=LISTED_LATE)),
     # A comment's post refused for a secondary rate limit on every try the
     # client makes, the first and one after each of the waits it makes
     # where GitHub names none, a minute and then two
     # (adapters.github.rate_wait), which spend the three minutes a client
-    # waits in all: the comment is refused for the run, as comment-500's
-    # is, so a release whose comment it is puts its labels back and is
-    # owed again (F11).
+    # waits in all: the comment is refused for the run, and a release
+    # whose comment it is, whose read of the issue's comments after it
+    # lists none, leaves its labels as the release left them for the next
+    # run to settle, since GitHub's documentation never says it refuses a
+    # rate limit's call before acting on it (F11, SPEC["listed late"]; F23's
+    # review, until which the labels went back as after a 422).
     "comment-limited-for-the-run": Fault("POST", "/issues/*/comments", 403, times=3, message=SECONDARY),
     # The same, and the read of the issue's comments after it refused for a
     # rate limit too, which the client, its three minutes spent, does not
-    # wait out: the run cannot tell whether its comment stands and leaves
-    # the release for the next run to settle, as under F20's two.
+    # wait out: the run cannot tell whether a release comment stands and
+    # leaves the release for the next run to settle, as under F20's two.
     "comment-limited-then-unread": Fault("POST", "/issues/*/comments", 403, times=3, message=SECONDARY,
                                          then=Fault("GET", "/issues/*/comments", 403, message=SECONDARY)),
+    # A release comment GitHub writes though it refuses it for a secondary
+    # rate limit, as it would were canary C4 to find it acting on a call it
+    # refuses so, and lists only after the read of the issue's comments
+    # that follows, which lists none of it; its retry-after of 150 seconds
+    # is longer than a run waits, so the client makes one try and writes
+    # nothing twice. The run cannot tell whether the comment stands and
+    # leaves the labels as the release left them (SPEC["listed late"]),
+    # where a rule that took the refusal for one that wrote nothing put
+    # them back beside the comment (F23's review).
+    "comment-limited-late": Fault("POST", "/issues/*/comments", 403, message=SECONDARY, retry_after="150",
+                                  applied=True, then=Fault("GET", "/issues/*/comments", 200, answer=LISTED_LATE)),
+    # A release comment GitHub writes though it refuses it for a secondary
+    # rate limit, asking a wait of a minute, which the client makes and
+    # then makes the post again, and GitHub refuses that second try with a
+    # 422, writing nothing more, and lists the comment only after the read
+    # of the issue's comments that follows. The client raises the 422
+    # alone, so a rule that read the call by its last try put the labels
+    # back beside the comment the first try wrote; the run leaves them as
+    # the release left them (SPEC["listed late"]; F23's second review).
+    # Unlike comment-limited-late's, its refusal is one the client makes
+    # again, after a try GitHub acted on, as canary C4 would find were
+    # GitHub to act on a call it refuses so; the second try writes
+    # nothing, so nothing is written twice (invariants.written_once).
+    "comment-limited-then-422": Fault("POST", "/issues/*/comments", 403, message=SECONDARY, retry_after="60",
+                                      applied=True,
+                                      then=Fault("POST", "/issues/*/comments", 422, message="Validation Failed",
+                                                 then=Fault("GET", "/issues/*/comments", 200,
+                                                            answer=LISTED_LATE))),
     "label-delete-500": Fault("DELETE", "/issues/*/labels/*", 500),
     "label-post-500": Fault("POST", "/issues/*/labels", 500),
     # A label GitHub writes and loses its answer to, as a release's todo

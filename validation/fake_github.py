@@ -23,9 +23,10 @@ fake was not:
 Fault makes chosen calls fail: an HTTP status, GitHub's message and, for a
 rate limit, a retry-after header, or the token's hour spent and ending a
 given number of seconds on by the client's clock, which the fake keeps as
-the model's minute (FakeGitHub.clock). A fault of a rate limit's, a 429 or
-a 403 that says so, answers one try of the call, which the library's
-client makes again after the wait GitHub asks for
+the model's minute (FakeGitHub.clock), or no answer at all, as a
+connection that times out waiting for GitHub's (F23). A fault of a rate
+limit's, a 429 or a 403 that says so, answers one try of the call, which
+the library's client makes again after the wait GitHub asks for
 (adapters.github.rate_wait), so a fault refuses a call for the run only
 with times enough for every try. The client's sleep is the fake's
 (FakeGitHub.sleep), which takes no time and keeps each wait the client
@@ -35,9 +36,17 @@ each wait to the one GitHub asked for (invariants.answered,
 waits_as_asked), while a call the library makes again of its own, a read
 of a push after head_since's pause, stands for itself. With applied, the
 write is made and its answer lost, as a 502 after GitHub wrote the
-comment; with answer, a read of the activity is answered with a list
-other than the model's, one that lags a push or lists one the run did not
-see (F8).
+comment, or a rate limit's refusal after GitHub acted on the call
+(comment-limited-late, F23's review, and comment-limited-then-422, its
+second); with answer, a read of the activity
+is answered with a list other than the model's, one that lags a push or
+lists one the run did not see (F8), and a read of an issue's comments with
+the list before the comments GitHub wrote in the run and lost its answer
+to, as a read GitHub answers before it lists them (F23). That GitHub may
+answer a write with a server error or with no answer at all after making
+it, and list what it wrote only after a later read, is assumed, an
+inference from how GitHub may answer that no canary reads (F20's second
+review, F23).
 
 What the fake assumes of GitHub, each settled by the documentation or by a
 canary check (DESIGN.md, 3.2 and 11) unless said: the issues list holds
@@ -81,8 +90,14 @@ now records (DESIGN.md section 11, What C6 records of the activity); a
 call GitHub refuses for a rate limit is one it did not act on, so such a
 fault's refusal writes nothing, assumed, which the client's making a
 write again rests on, and which C4 would settle and is not run (DESIGN.md,
-3.2 and 11); and a 403 that names a wait in retry-after is a rate limit's
-refusal whatever its words, assumed as the library assumes it
+3.2 and 11), save comment-limited-late's, which writes the release comment
+it refuses and asks a wait longer than a run waits, so the client tries it
+once, and comment-limited-then-422's, which writes the release comment on
+the first try it refuses and nothing on the second, which it refuses with
+a 422, so nothing is written twice, while the labels a release puts back
+are held to resting on no such assumption (F23's review and its second);
+and a 403 that names a wait in retry-after is a
+rate limit's refusal whatever its words, assumed as the library assumes it
 (adapters.github.rate_limited), since GitHub's documentation names
 retry-after for a secondary limit's refusal and never says that no other
 refusal sends it (DESIGN.md, 3.2).
@@ -116,13 +131,19 @@ class Unserved(Exception):
 class Fault(NamedTuple):
     """Make the next times calls whose "METHOD path" (the path after
     /repos/OWNER/NAME, unquoted) matches "METHOD path", a glob in which *
-    stands for any run of characters, fail with status. applied makes the
-    write and loses its answer. query, pairs of a parameter and its value,
-    narrows the calls to those whose query carries each, a value of None
-    to those whose query lacks the parameter, so one read of the activity
-    is told from another (F8). answer, for a read of the activity, has the
-    call answered with status, 200, and a list the model's own answer is
-    changed into, in place of a refusal (FakeGitHub.activity): LAGGING, the
+    stands for any run of characters, fail with status, or, with status
+    None, get no answer at all, as a connection that times out waiting for
+    GitHub's, which the adapter reads as an error with no status (F23).
+    applied makes the write and loses its answer. query, pairs of a
+    parameter and its value, narrows the calls to those whose query
+    carries each, a value of None to those whose query lacks the
+    parameter, so one read of the activity is told from another (F8).
+    answer, for a read of an issue's comments, has the call answered with
+    status, 200, and the comments without those GitHub wrote in the run
+    and lost its answer to, LISTED_LATE, as a read GitHub answers before it
+    lists them (FakeGitHub.issue_route; F23); and, for a read of the
+    activity, with a list the model's own answer is changed into, in
+    place of a refusal (FakeGitHub.activity): LAGGING, the
     activity as it stood before each branch's last push, as a read GitHub
     answers before it lists that push, the push before it newest (F8's
     second review); LAGGING_BY_TWO, as it stood before the last two, as an
@@ -154,7 +175,7 @@ class Fault(NamedTuple):
 
     method: str
     path: str
-    status: int = 500
+    status: int | None = 500
     times: int = 1
     message: str = "injected"
     retry_after: str | None = None
@@ -187,6 +208,10 @@ LAGGING, LAGGING_BY_TWO, MOVED, MOVED_TWICE, DELETED = "lagging", "lagging by tw
 PUSHED_SINCE = (MOVED, MOVED_TWICE, DELETED)
 # The sha GitHub's activity names as the head before the push that made a branch.
 NO_SHA = "0" * 40
+# How a fault answers a read of an issue's comments in place of the model
+# (Fault.answer): without the comments GitHub wrote in the run and lost its
+# answer to, as a read GitHub answers before it lists them (F23).
+LISTED_LATE = "listed late"
 
 
 class Call(NamedTuple):
@@ -197,7 +222,8 @@ class Call(NamedTuple):
     path: str
     query: tuple
     body: object
-    status: int
+    # None where the call had no answer at all (Fault.status).
+    status: int | None
     applied: bool
     # Whether a Fault made the answer, as against a refusal the model gives.
     injected: bool = False
@@ -274,6 +300,10 @@ class FakeGitHub:
         # MOVED_TWICE) each branch's activity met in the run, by the ref
         # its read named (moved_since).
         self.moved = {}
+        # What GitHub would have answered each write it made in the run and
+        # lost its answer to, so a read answered before it lists them
+        # leaves them out (LISTED_LATE).
+        self.lost = []
 
     # --- the client's sleep and clock ---------------------------------------
 
@@ -332,6 +362,7 @@ class FakeGitHub:
         self.record(Call(method, path, asked, body, fault.status if fault else 200, method != "GET",
                          fault is not None, fault, found if path == "/activity" else None))
         if fault is not None:
+            self.lost.append(found)
             raise self.fault_answer(request.full_url, fault)
         return Answer(found, headers)
 
@@ -357,6 +388,12 @@ class FakeGitHub:
         return fault if fault is not None and fault.matches(f"{method} {path}", query) else None
 
     def fault_answer(self, url, fault):
+        """What the opener raises for a fault: GitHub's refusal, with the
+        headers of a rate limit the fault names, or, for a fault with no
+        status, the timeout of a connection that waited for an answer that
+        never came, as http.client raises it."""
+        if fault.status is None:
+            return TimeoutError(fault.message)
         headers = {"retry-after": fault.retry_after} if fault.retry_after else {}
         if fault.reset_after is not None:
             reset = int(self.clock()) + fault.reset_after
@@ -367,13 +404,14 @@ class FakeGitHub:
 
     def answer(self, method, s, query, body, url, as_fault=""):
         """The body and the headers GitHub would answer, or Refused; as_fault
-        is how a fault changes a read of the activity (Fault.answer), the
-        one read whose answer a fault changes."""
+        is how a fault changes a read of the activity or of an issue's
+        comments (Fault.answer), the two reads whose answer a fault
+        changes."""
         route = (method, s[0] if s else "")
         if route == ("GET", "issues") and len(s) == 1:
             return self.page(self.open_issue_list(), query, url)
         if s[:1] == ["issues"] and len(s) >= 2:
-            return self.issue_route(method, s, query, body, url)
+            return self.issue_route(method, s, query, body, url, as_fault)
         if s[:1] == ["pulls"]:
             return self.pull_route(method, s, query, url)
         if route == ("GET", "branches") and len(s) == 1:
@@ -423,7 +461,10 @@ class FakeGitHub:
         found += [self.pull_as_issue(p) for p in self.model.pulls.values() if p.state == "open"]
         return sorted(found, key=lambda item: -item["number"])
 
-    def issue_route(self, method, s, query, body, url):
+    def issue_route(self, method, s, query, body, url, as_fault=""):
+        """An issue's own routes: the issue, its comments and its labels;
+        with as_fault LISTED_LATE a read of its comments leaves out those
+        GitHub wrote in the run and lost its answer to (F23)."""
         number = int(s[1]) if s[1].isdigit() and s[1].isascii() else None
         target = self.model.target(number) if number is not None else None
         if target is None:
@@ -434,7 +475,10 @@ class FakeGitHub:
             raise Unserved(f"{method} /{'/'.join(s)}")
         if s[2] == "comments" and len(s) == 3:
             if method == "GET":
-                return self.page([self.comment_json(number, i, c) for i, c in enumerate(target.comments)], query, url)
+                listed = [self.comment_json(number, i, c) for i, c in enumerate(target.comments)]
+                if as_fault == LISTED_LATE:
+                    listed = [c for c in listed if c not in self.lost]
+                return self.page(listed, query, url)
             if method == "POST":
                 self.model.add_comment(number, Comment(BOT, "NONE", self.model.now, body["body"]))
                 at = len(self.model.comments_on(number)) - 1
