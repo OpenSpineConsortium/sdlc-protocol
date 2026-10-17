@@ -186,6 +186,18 @@ SPEC = {
                     "a draft the word its branch has, is not held for being behind under the repository's rules, so "
                     "it hears nothing however far the default branch has moved; one GitHub calls dirty, in conflict "
                     "with the default branch, hears it.",
+    "reopened": "so the coordinator, in the board's run (Release), frees an open issue GitHub says was reopened that "
+                "carries claimed or in-review, unless an open pull request marked ready from its claim branch "
+                "finishes it.",
+    "reopened free": "Where neither `claude/<issue>` nor a branch `released/<issue>-<short sha>` stands, it puts todo "
+                     "on as a release does, then takes off every worker's label, in-review and, last, claimed",
+    "reopened stands": "where one stands, it takes in-review off alone",
+    "ended release": "A released branch stands here only where the issue's latest release comment that counts came "
+                     "after the issue was last closed, as the issue's events date that close, or where its events "
+                     "list the label claimed put on after that close later than any entry the repository's "
+                     "activity lists for `claude/<issue>` at or after it",
+    "read again": "It reads the issue again first and frees none that is closed by then",
+    "same run": "which is released once its branch has gone a day without a commit, in the same run where it has",
 }
 
 CLAIM_PREFIX = "claude/"
@@ -597,6 +609,78 @@ def labels_put_on(model, number):
     return () if names & {TODO, EPIC, BLOCKER} else (TODO,)
 
 
+# --- reopened issues (F22) --------------------------------------------------
+
+def branch_stands(model, number):
+    """SPEC["reopened free"]: `claude/<issue>` or a branch
+    `released/<issue>-<short sha>` stands, the second only where the
+    issue's latest release comment that counts came after its last close,
+    or the label claimed went on after it later than the newest entry the
+    activity lists for `claude/<issue>` since then (SPEC["ended release"]),
+    or the issue was never
+    closed, whose events record no close."""
+    if branch_of(number) in model.refs:
+        return True
+    if not any(ref.startswith(f"{RELEASED_PREFIX}{number}-") for ref in model.refs):
+        return False
+    issue, latest = model.issues.get(number), latest_release(model, number)
+    return (issue is None or issue.closed_at is None or (latest is not None and latest > issue.closed_at)
+            or (claimed_since_close(model, issue) and not claimed_by_a_claim(model, issue)))
+
+
+def claimed_since_close(model, issue):
+    """SPEC["ended release"]: the label claimed went on the issue after
+    its last close, by the order of the model's label history, which
+    the close marks (Issue.closed_after), so a close and a label in the
+    same minute read in the order they came."""
+    return any(e.issue == issue.number and e.added and e.label == CLAIMED
+               for e in model.label_events[issue.closed_after:])
+
+
+def claimed_by_a_claim(model, issue):
+    """SPEC["ended release"]: the newest entry the repository's activity
+    lists for `claude/<issue>`, which once the branch is deleted is its
+    delete (RepoModel.deleted, listed where the model keeps the branch's
+    making, RepoModel.gone_made), came at or after the issue's last close
+    and no earlier than the label claimed last went on, so that label is
+    a claim's and no undo. A branch the activity lists nothing of reads as
+    an undo; a minute of the close's or of the label's own reads as after
+    it, as the library's second does."""
+    ref = branch_of(issue.number)
+    put_on = [e.at for e in model.label_events if e.issue == issue.number and e.added and e.label == CLAIMED]
+    if ref in model.refs or ref not in model.gone_made or not put_on:
+        return False
+    newest = model.deleted[ref][0]
+    return newest >= issue.closed_at and newest >= put_on[-1]
+
+
+def freeing(model, number):
+    """What the coordinator does to an issue in a run (SPEC["reopened"],
+    SPEC["reopened free"], SPEC["reopened stands"]), as the labels it puts
+    on and the labels it takes off, in the spec's order: nothing for an
+    issue that is not open, that GitHub does not say was reopened, that
+    carries neither claimed nor in-review, or whose claim's own pull
+    request is marked ready (own_pull). The issue is the model's as the
+    run starts: the run reads it again (SPEC["read again"]), and nothing
+    else acts while it runs."""
+    issue = model.issues.get(number)
+    if issue is None or issue.state != "open" or not issue.reopened or not issue.labels & {CLAIMED, IN_REVIEW}:
+        return (), ()
+    pull = own_pull(model, branch_of(number))
+    if pull is not None and not pull.draft:
+        return (), ()
+    if branch_stands(model, number):
+        return (), ((IN_REVIEW,) if IN_REVIEW in issue.labels else ())
+    put_on = () if issue.labels & {TODO, EPIC, BLOCKER} else (TODO,)
+    workers = tuple(sorted(name for name in issue.labels if is_worker_label(name)))
+    return put_on, workers + tuple(name for name in (IN_REVIEW, CLAIMED) if name in issue.labels)
+
+
+def freed_numbers(model):
+    """The issues a run frees from this state, in number order."""
+    return [number for number in sorted(model.issues) if freeing(model, number)[1]]
+
+
 # --- overlaps -----------------------------------------------------------------
 
 class Piece(NamedTuple):
@@ -857,14 +941,26 @@ def pulls_spoken_to(model):
 
 def expected_effects(before, event="schedule", ref_name="", known=AS_BUILT, unsaid=frozenset()):
     """The writes a fault-free board run owes from the state before it: the
-    releases due, in the spec's order, the overlap comments, the renames of
-    the released claims and the word on each issue, then the comments on
-    pull requests. The oracle applies its own releases to a copy to see
-    what the rest of the run reads. unsaid names the branches whose push the
+    reopened issues freed (freeing; F22), the releases due, each in the
+    spec's order, the overlap comments, the renames of the released claims
+    and the word on each issue, then the comments on pull requests. The
+    oracle applies its own freeing and releases to a copy to see what the
+    rest of the run reads. unsaid names the branches whose push the
     run could not date, for a run whose only faults were on the activity
     (overlap_effects)."""
     model = before.clone()
     effects = []
+    for number in freed_numbers(model):
+        put_on, taken_off = freeing(model, number)
+        if put_on:
+            effects.append(Effect("label-on", number, put_on))
+            model.issues[number].labels = model.issues[number].labels | set(put_on)
+        for name in taken_off:
+            effects.append(Effect("label-off", number, name))
+            model.issues[number].labels = model.issues[number].labels - {name}
+    # Which claims are due is read once the freeing is done: a claim whose
+    # in-review the run took off is released in the same run where its
+    # branch has gone a day without a commit (SPEC["same run"]).
     for number in sorted(n for n in model.issues if due(model, n)):
         put_on = labels_put_on(model, number)
         for name in labels_released(model, number):

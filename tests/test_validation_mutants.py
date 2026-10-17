@@ -100,6 +100,23 @@ TRACES = {
     "a relative -C after a move judged where it names alone": "the regression traces",
     "GIT_DIR forgotten once an absolute path names a place": "the regression traces",
     "a -C by ~ judged where it names alone": "the regression traces",
+    # F22's eleven: a reopened issue freed, or left, as its claim branch, a
+    # released branch, when its release came, when claimed went on and
+    # whether a claim was made since the close, a ready pull request and
+    # the run's order say; F22's trace, the first lane, is their catcher,
+    # and the four searches F22's reviews added, which reopen an issue,
+    # catch each of them too (ReopenSearches).
+    "a reopened issue left as it is": "the regression traces",
+    "todo put on last": "the regression traces",
+    "a ready pull request's in-review taken off": "the regression traces",
+    "a claim branch not read for a reopened issue": "the regression traces",
+    "in-review left on where a branch stands": "the regression traces",
+    "the releases due read before the freeing": "the regression traces",
+    "a released branch not read for a reopened issue": "the regression traces",
+    "a release before the last close read as an undo": "the regression traces",
+    "claimed put back after the close read as the ended claim's": "the regression traces",
+    "a claim made since the close read as an undo": "the regression traces",
+    "an undo after an ended claim read as the claim's": "the regression traces",
     "a long option read only in full": "the regression traces",
     "env's abbreviated --chdir not read": "the regression traces",
     "an optional value taken from the next word": "the regression traces",
@@ -321,11 +338,20 @@ class TheLane(unittest.TestCase):
         of the client's waits for a rate limit, a 5xx retried as a rate
         limit, and eight from its second review, one for each rule of the
         client's waits, so the bound is widened to 150, 134 within it;
-        and F26's fix three, a long option read only in full, env's
+        F26's fix three, a long option read only in full, env's
         abbreviated --chdir not read and an optional value taken from the
-        next word, 137."""
+        next word, 137; and F22's fix seven, a reopened issue left as it
+        is, todo put on last, a ready pull request's in-review taken off, a
+        claim branch and a released branch not read for a reopened issue,
+        in-review left on where a branch stands, and the releases due read
+        before the freeing, 144 within that bound, its review one, a
+        release before the issue's last close read as an undo, 145, its
+        second review one, claimed put back after the close read as the ended
+        claim's, 146, its third review one, a claim made since the close
+        read as an undo, 147, and that review's review one, an undo after an
+        ended claim read as the claim's, 148."""
         self.assertTrue(10 <= len(mutants.MUTANTS) <= 150)
-        self.assertEqual(len(mutants.MUTANTS), 137)
+        self.assertEqual(len(mutants.MUTANTS), 148)
         self.assertEqual(sorted(TRACES), sorted(mutants.MUTANTS))
 
     def test_every_mutant_names_a_rule_the_library_still_has(self):
@@ -435,12 +461,16 @@ class TheLane(unittest.TestCase):
 
     def test_the_lanes_come_first_then_the_searches_cheapest_first_then_the_two_widest_lanes(self):
         self.assertEqual([c.name for c in mutants.CATCHERS[:len(LANES)]], list(LANES))
-        self.assertEqual(mutants.SEARCHES[-5].name, "a stranger's pull request from a fork on a due claim")
-        self.assertEqual(mutants.SEARCHES[-4].name, "a stranger's pull request from a due claim's own branch")
-        self.assertEqual(mutants.SEARCHES[-3].name, "a stranger's pull request from a due claim's own branch, GitHub "
+        self.assertEqual(mutants.SEARCHES[-9].name, "a stranger's pull request from a fork on a due claim")
+        self.assertEqual(mutants.SEARCHES[-8].name, "a stranger's pull request from a due claim's own branch")
+        self.assertEqual(mutants.SEARCHES[-7].name, "a stranger's pull request from a due claim's own branch, GitHub "
                                                     "refusing to say who may write")
-        self.assertEqual(mutants.SEARCHES[-2].name, "the holder back between the halves of a run")
-        self.assertEqual(mutants.SEARCHES[-1].name, "a stranger's marker on overlapping claims")
+        self.assertEqual(mutants.SEARCHES[-6].name, "the holder back between the halves of a run")
+        self.assertEqual(mutants.SEARCHES[-5].name, "a stranger's marker on overlapping claims")
+        self.assertEqual(mutants.SEARCHES[-4].name, "a reopened issue after a release and a later claim")
+        self.assertEqual(mutants.SEARCHES[-3].name, "a release undone on a reopened issue")
+        self.assertEqual(mutants.SEARCHES[-2].name, "a claim since a reopen ended by deleting its branch")
+        self.assertEqual(mutants.SEARCHES[-1].name, "an undo after a claim since a reopen ended")
         self.assertEqual(mutants.CATCHERS[len(LANES):-2], mutants.SEARCHES)
         self.assertIs(mutants.CATCHERS[-2], mutants.PICKING)
         self.assertIs(mutants.CATCHERS[-1], mutants.LABEL_MIXES)
@@ -557,6 +587,40 @@ class TheSearchesCatchWhatTheyWereAddedFor(unittest.TestCase):
                 continue
             with self.subTest(mutant=name), mutants.switched_on(mutant):
                 self.assertIn(mutant.guarantee, {g for g, _ in mutants.violations(search)})
+
+    def test_the_searches_that_reopen_an_issue_catch_every_mutant_of_f22_s_fix(self):
+        """The lane credits F22's eleven mutants to F22's trace, so the four
+        searches F22's reviews added, the only ones with the scope's reopens
+        on, are held here to all eleven: each finds nothing on the library,
+        and together they find the violation each mutant names. The first,
+        from a release and a later claim ready for review, is the one that
+        would have found the review's first finding, a released branch an
+        earlier claim left before the close read as a release undone; the
+        second, since F22's second review from a release before a close
+        and reopen by hand, the one that finds that review's first, claimed
+        put back after the close read as the ended claim's; the third, with
+        the scope's deletes on, from a claim made after that reopen and
+        ready for review, whose branch the owner may delete with the issue
+        open, the one that finds the third review's, a claim made since the
+        close read as an undo; and the fourth, from that claim ended and #1
+        freed, the one that finds the review of the third review's, an undo
+        after an ended claim read as the claim's."""
+        searches = [s for s in mutants.SEARCHES if s.scope.reopens]
+        self.assertEqual([s.name for s in searches], ["a reopened issue after a release and a later claim",
+                                                      "a release undone on a reopened issue",
+                                                      "a claim since a reopen ended by deleting its branch",
+                                                      "an undo after a claim since a reopen ended"])
+        self.assertEqual([s.name for s in mutants.SEARCHES if s.scope.deletes],
+                         ["a claim since a reopen ended by deleting its branch",
+                          "an undo after a claim since a reopen ended"])
+        for search in searches:
+            self.assertEqual(mutants.violations(search), {}, search.name)
+        for name, mutant in mutants.MUTANTS.items():
+            if "F22" not in mutant.why:
+                continue
+            with self.subTest(mutant=name), mutants.switched_on(mutant):
+                found = {g for search in searches for g, _ in mutants.violations(search)}
+                self.assertIn(mutant.guarantee, found)
 
     def test_github_refusing_to_say_who_may_write_catches_the_two_readings_of_a_refusal(self):
         """F19's review: the spec's sentence on an answer GitHub will not

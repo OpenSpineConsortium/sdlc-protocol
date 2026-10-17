@@ -348,12 +348,13 @@ class Snapshot:
         """Whether an issue may be taken: no claim branch holds it, and it
         is labelled neither blocked nor claimed. The board shows an issue
         labelled claimed in neither its Queue nor Given to workers, branch
-        or no branch, as when an issue is reopened after its merged branch
-        was deleted, or a release is undone before its branch is renamed
-        back, so a worker reading the board never takes it, and the clerk
-        never deals it: a worker in Actions that leaves such an issue alone
-        would otherwise be dealt it again on every run, its share of the
-        queue held back behind it."""
+        or no branch, as when a release is undone before its branch is
+        renamed back, so a worker reading the board never takes it, and the
+        clerk never deals it: a worker in Actions that leaves such an issue
+        alone would otherwise be dealt it again on every run, its share of
+        the queue held back behind it. An issue reopened after its merged
+        branch was deleted is such an issue only until the coordinator's
+        next run frees it (coordinator.freeing; F22)."""
         labels = label_names(issue)
         return (issue["number"] not in self.claimed and BLOCKED_LABEL not in labels
                 and CLAIMED_LABEL not in labels)

@@ -34,7 +34,11 @@ Where the scope's forks is on, sam opens pull requests from a fork, from
 a branch named there as a claim's, which is no claim's (F17); where its
 strangers is on, sam opens them from a claim's own branch here, which are
 no claim's either, and the claim's holder may close one to open its own
-(F19).
+(F19). Where its reopens is on, the owner reopens a closed issue, which
+GitHub then says was reopened, and may merge a pull request in a
+repository that keeps its head branches (F22); where its deletes is on,
+the owner closes a claim's pull request without a merge and deletes its
+branch while the issue stays open (F22's third review).
 
 Two comments a person can write that look like the coordinator's, offered
 where the scope has more than one issue: a worker's comment that quotes
@@ -310,8 +314,11 @@ class Scope(NamedTuple):
     pushes-lagging-twice or pushes-lagging-then-500 is dated by the floor,
     the newest entry listed, since F8's fix check), whether a stranger
     opens pull requests from a fork whose branch bears a claim's name
-    (F17), and whether a stranger opens them from a claim's own branch
-    here (F19)."""
+    (F17), whether a stranger opens them from a claim's own branch
+    here (F19), whether the owner reopens closed issues and merges
+    keeping the head branch (F22), and whether the owner closes a claim's
+    pull request unmerged and deletes its branch on an open issue (F22's
+    third review)."""
 
     workers: tuple = ("a", "b")
     issues: tuple = (1,)
@@ -325,6 +332,8 @@ class Scope(NamedTuple):
     skews: tuple = ()
     forks: bool = False
     strangers: bool = False
+    reopens: bool = False
+    deletes: bool = False
 
     def files_of(self, number):
         return dict(self.files).get(number, (f"src/{number}.py",))
@@ -774,21 +783,44 @@ def mark_ready(model, number):
     return Outcome(True, "marked ready")
 
 
-def merge(model, number):
+def merge(model, number, keep_head=False):
     """The owner merges a pull request: main gets a merge commit, the issue
-    its body closes is closed, and the repository deletes the head; GitHub
-    fires the four events at once (DESIGN.md, F12)."""
+    its body closes is closed, and the repository deletes the head, unless
+    it keeps head branches (keep_head, F22); GitHub fires the four events
+    at once (DESIGN.md, F12), or three with the head kept."""
     pull = model.pulls[number]
     head, main = model.refs[pull.head], model.refs[MAIN]
     model.refs[MAIN] = model.commit((main, head), OWNER, merged_tree(model, head, main), f"Merge #{number}")
     pull.state, pull.merged_at = "merged", model.now
     apply_pull_change(model, pull)
-    closed = oracle.claim_number(pull.head)
-    if closed in model.issues:
-        model.issues[closed].state = "closed"
+    close_issue(model, oracle.claim_number(pull.head))
+    if keep_head:
+        return Outcome(True, "merged, the head kept", events=MERGED_EVENTS[:3])
     model.delete_ref(pull.head)
-    return Outcome(True, "merged", events=((cycle.PUSH, MAIN), (cycle.PULL_REQUEST, ""), (cycle.ISSUES, ""),
-                                           (cycle.DELETE, MAIN)))
+    return Outcome(True, "merged", events=MERGED_EVENTS)
+
+
+# What GitHub tells the board workflow of a merge, at once: the push to
+# main, the pull request closed, the issue its body closes closed and,
+# where the repository deletes head branches, the head deleted.
+MERGED_EVENTS = ((cycle.PUSH, MAIN), (cycle.PULL_REQUEST, ""), (cycle.ISSUES, ""), (cycle.DELETE, MAIN))
+
+
+def close_issue(model, number):
+    """Close an issue, as a merge that closes it or a person does: GitHub's
+    state_reason is then completed, no longer reopened, and its events
+    record the close at this minute."""
+    if number in model.issues:
+        issue = model.issues[number]
+        issue.state, issue.reopened, issue.closed_at = "closed", False, model.now
+        issue.closed_after = len(model.label_events)
+
+
+def reopen_issue(model, number):
+    """The owner reopens a closed issue, whose labels stay as they were:
+    GitHub then says it was reopened (F22)."""
+    model.issues[number].state, model.issues[number].reopened = "open", True
+    return Outcome(True, "issue reopened", events=((cycle.ISSUES, ""),))
 
 
 def move_main(model, path="README.md"):
@@ -806,6 +838,16 @@ def tidy(model, number):
         if ref in model.refs and model.open_pull_from(ref) is None:
             model.delete_ref(ref)
     return Outcome(True, "tidied")
+
+
+def delete_claim_branch(model, number):
+    """The owner closes the claim's open pull request without a merge and
+    deletes claude/<n> from its page, while the issue stays open: the
+    labels the claim put on stay, and no release comment is written, so
+    the claim ends with no word on the issue (F22's third review). GitHub
+    tells the workflow of the pull request closed and the branch deleted."""
+    model.delete_ref(claim_ref(number))
+    return Outcome(True, "the claim branch deleted", events=((cycle.PULL_REQUEST, ""), (cycle.DELETE, MAIN)))
 
 
 def rename_back(model, number, released_ref):
@@ -940,13 +982,19 @@ def act(model, verb, scope):
         return mark_ready(model, number)
     if name == "merge":
         return merge(model, number)
+    if name == "merge-keep":
+        return merge(model, number, keep_head=True)
     if name == "close-issue":
-        model.issues[number].state = "closed"
+        close_issue(model, number)
         return Outcome(True, "closed", events=((cycle.ISSUES, ""),))
+    if name == "reopen-issue":
+        return reopen_issue(model, number)
     if name == "tidy":
         return tidy(model, number)
     if name == "rename-back":
         return rename_back(model, number, args[1])
+    if name == "delete-claim-branch":
+        return delete_claim_branch(model, number)
     if name == "reopen":
         return reopen(model, number)
     raise ValueError(f"no verb {name}")
@@ -1007,7 +1055,7 @@ def issue_verbs(model, scope, number):
     if scope.strangers and issue.state == "open":
         found += stranger_verbs(model, number, pull)
     if OWNER in scope.people:
-        found += owner_verbs(model, number, pull)
+        found += owner_verbs(model, number, pull, scope)
         misnamed = f"{CLAIM_PREFIX}0{number}"
         if scope.careless and issue.state == "open" and misnamed not in model.refs:
             found.append(Verb("push-by-hand", OWNER, (number, misnamed)))
@@ -1084,11 +1132,13 @@ def others(scope, number):
     return tuple(n for n in scope.issues if n != number)
 
 
-def owner_verbs(model, number, pull):
+def owner_verbs(model, number, pull, scope=Scope()):
     issue, ref = model.issues[number], claim_ref(number)
     found = []
     if pull is not None and not pull.draft and model.standing(ref) != "dirty":
         found.append(Verb("merge", OWNER, (pull.number,)))
+        if scope.reopens:
+            found.append(Verb("merge-keep", OWNER, (pull.number,)))
     for label in sorted(issue.labels):
         if label == oracle.CLAIMED or oracle.is_worker_label(label):
             found.append(Verb("label-off", OWNER, (number, label)))
@@ -1103,6 +1153,11 @@ def owner_verbs(model, number, pull):
             found.append(Verb("reopen", OWNER, (closed.number,)))
     if issue.state == "open":
         found.append(Verb("close-issue", OWNER, (number,)))
-    elif ref in model.refs or released_refs(model, number):
-        found.append(Verb("tidy", OWNER, (number,)))
+        if scope.deletes and ref in model.refs:
+            found.append(Verb("delete-claim-branch", OWNER, (number,)))
+    else:
+        if ref in model.refs or released_refs(model, number):
+            found.append(Verb("tidy", OWNER, (number,)))
+        if scope.reopens:
+            found.append(Verb("reopen-issue", OWNER, (number,)))
     return found

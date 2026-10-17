@@ -100,12 +100,22 @@ class LabelEvent:
 
 @dataclass
 class Issue:
+    """One issue; reopened is GitHub's state_reason "reopened", which an
+    issue closed and opened again carries while it stays open, and
+    closed_at the minute of its latest close, which its events record, None
+    for one never closed, and closed_after how many entries the label
+    history held at that close, so the events list each label before or
+    after it (F22)."""
+
     number: int
     title: str
     state: str = "open"
     labels: frozenset = frozenset()
     comments: tuple = ()
     body: str = ""
+    reopened: bool = False
+    closed_at: int = None
+    closed_after: int = 0
 
 
 @dataclass
@@ -194,6 +204,12 @@ class RepoModel:
     # name, as (minute, the head it had), which earlier takes when a push
     # makes the branch again. Part of the key.
     deleted: dict = field(default_factory=dict)
+    # The minute the push that made each claim branch that does not stand
+    # now came, by branch name, kept with its delete (deleted): GitHub's
+    # activity still lists that making, which the coordinator reads to
+    # tell a claim made since an issue's close from a person's undo (F22's
+    # third review). Part of the key.
+    gone_made: dict = field(default_factory=dict)
     # Each worker's remote-tracking refs, as its last fetch or push left them.
     tracking: dict = field(default_factory=dict)
     # Whether GitHub's word for an open pull request that is not in conflict
@@ -337,6 +353,7 @@ class RepoModel:
         last = self.pushed.get(ref)
         if before is None and ref in self.deleted:
             at, gone = self.deleted.pop(ref)
+            self.gone_made.pop(ref, None)
             self.earlier[ref] = (at, "branch_deletion", None, gone)
         elif before is not None and last is not None and last[2] != "branch_creation":
             self.earlier[ref] = (last[0], last[2], last[1], last[3])
@@ -371,11 +388,13 @@ class RepoModel:
         on every run. A claim branch's delete is kept, with the head it
         took away, until a push makes the branch again, whose activity
         then lists the delete just before that push (deleted, earlier;
-        F8's second review)."""
+        F8's second review), and with it the minute of the push that made
+        it, which the activity still lists (gone_made; F22's third
+        review)."""
         if self.store is not None:
             self.store.delete(ref)
         self.creators.pop(ref, None)
-        self.created.pop(ref, None)
+        made = self.created.pop(ref, None)
         self.made.pop(ref, None)
         self.pushed.pop(ref, None)
         self.made_heads.pop(ref, None)
@@ -383,6 +402,8 @@ class RepoModel:
         head = self.refs.pop(ref, None)
         if ref.startswith(CLAIM_PREFIX) and head is not None:
             self.deleted[ref] = (self.now, head)
+            if made is not None:
+                self.gone_made[ref] = made
         for pull in self.pulls.values():
             if pull.head == ref and pull.state == "open" and not pull.fork:
                 pull.state = "closed"
@@ -407,6 +428,7 @@ class RepoModel:
         if old in self.earlier:
             self.earlier[new] = self.earlier.pop(old)
         self.deleted.pop(new, None)
+        self.gone_made.pop(new, None)
         for pull in self.pulls.values():
             if pull.head == old and pull.state == "open" and not pull.fork:
                 pull.state = "closed"
@@ -581,7 +603,9 @@ class RepoModel:
         return (
             self.now,
             tuple(sorted(self.refs.items())),
-            tuple(sorted((n, i.state, tuple(sorted(i.labels)), i.comments, i.body) for n, i in self.issues.items())),
+            tuple(sorted((n, i.state, tuple(sorted(i.labels)), i.comments, i.body, i.reopened, i.closed_at,
+                          i.closed_after)
+                         for n, i in self.issues.items())),
             tuple(sorted((n, p.head, p.author, p.body, p.draft, p.state, p.opened_at, p.updated_at, p.merged_at,
                           p.comments, p.fork, p.sha, p.association) for n, p in self.pulls.items())),
             self.next_pull,
@@ -594,6 +618,7 @@ class RepoModel:
             tuple(sorted(self.made_heads.items())),
             tuple(sorted(self.earlier.items())),
             tuple(sorted(self.deleted.items())),
+            tuple(sorted(self.gone_made.items())),
             tuple(sorted((w, tuple(sorted(refs.items()))) for w, refs in self.tracking.items())),
             self.board_text,
             self.opaque_pulls,
@@ -643,6 +668,7 @@ class RepoModel:
             label_events=self.label_events, creators=dict(self.creators), created=dict(self.created),
             made=dict(self.made), made_count=self.made_count, pushed=dict(self.pushed),
             made_heads=dict(self.made_heads), earlier=dict(self.earlier), deleted=dict(self.deleted),
+            gone_made=dict(self.gone_made),
             tracking={w: dict(refs) for w, refs in self.tracking.items()}, board_text=self.board_text,
             queued=self.queued, pending=self.pending, running=None, opaque_pulls=self.opaque_pulls,
             lenient_rules=self.lenient_rules, unanswered=self.unanswered, standings=self.standings,

@@ -246,6 +246,13 @@ class Refused(Exception):
         self.status = status
 
 
+def label_event_json(entry):
+    """One entry of the model's label history as GitHub's issue events
+    give it."""
+    return {"event": "labeled" if entry.added else "unlabeled", "label": {"name": entry.label},
+            "created_at": iso(entry.at)}
+
+
 class FakeGitHub:
     def __init__(self, model, faults=()):
         self.model = model
@@ -432,6 +439,8 @@ class FakeGitHub:
                 self.model.add_comment(number, Comment(BOT, "NONE", self.model.now, body["body"]))
                 at = len(self.model.comments_on(number)) - 1
                 return self.comment_json(number, at, self.model.comments_on(number)[at]), {}
+        if s[2] == "events" and len(s) == 3 and method == "GET" and number in self.model.issues:
+            return self.page(self.events_json(self.model, self.model.issues[number]), query, url)
         if s[2] == "labels" and number in self.model.issues:
             if method == "POST" and len(s) == 3:
                 for name in body["labels"]:
@@ -444,8 +453,23 @@ class FakeGitHub:
         raise Unserved(f"{method} /{'/'.join(s)}")
 
     def issue_json(self, issue):
+        """An issue as GitHub gives it, with its state_reason: reopened while
+        an issue closed and opened again stays open (F22), completed once
+        it is closed, and none for one never closed."""
+        reason = "reopened" if issue.reopened else "completed" if issue.state == "closed" else None
         return {"number": issue.number, "title": issue.title, "state": issue.state, "body": issue.body,
-                "labels": [{"name": n} for n in sorted(issue.labels)], "updated_at": iso(0)}
+                "labels": [{"name": n} for n in sorted(issue.labels)], "updated_at": iso(0), "state_reason": reason}
+
+    @staticmethod
+    def events_json(model, issue):
+        """An issue's events as GitHub lists them, oldest first: its label
+        history and its latest close among it, the events the coordinator
+        reads them for (F22's reviews)."""
+        mine = [(at, e) for at, e in enumerate(model.label_events) if e.issue == issue.number]
+        labelled = [label_event_json(e) for at, e in mine if at < issue.closed_after]
+        later = [label_event_json(e) for at, e in mine if at >= issue.closed_after]
+        closed = [] if issue.closed_at is None else [{"event": "closed", "created_at": iso(issue.closed_at)}]
+        return labelled + closed + later
 
     def pull_as_issue(self, pull):
         return {"number": pull.number, "title": pull.title, "state": "open" if pull.state == "open" else "closed",
@@ -518,7 +542,8 @@ class FakeGitHub:
 
     def activity(self, query, as_fault=""):
         """The repository's activity as far as the model records it, for
-        each branch that stands (branch_entries), newest first unless asked
+        each branch that stands (branch_entries) and each claim branch
+        deleted since it was made (gone_entries), newest first unless asked
         for the oldest first (direction asc), filtered as asked by ref
         (refs/heads/<name> or the name) and by type; a filter the model
         records nothing of, any other type, answers an empty list, as
@@ -532,6 +557,9 @@ class FakeGitHub:
         for branch in model.created:
             if not ref or branch == name:
                 entries += self.branch_entries(branch, as_fault)
+        for branch in model.gone_made:
+            if branch not in model.refs and (not ref or branch == name):
+                entries += self.gone_entries(branch)
         newest_first = query.get("direction", "desc") != "asc"
         listed = [entry for _, entry in sorted(entries, key=lambda e: e[0], reverse=newest_first)]
         return [entry for entry in listed if kind is None or entry["activity_type"] == kind]
@@ -586,6 +614,20 @@ class FakeGitHub:
             again = hashlib.sha1(f"pushed again after the run read {branch} at {model.now}".encode("ascii")).hexdigest()
             found.append(((model.now, 5), self.entry(branch, model.now, "push", again, unseen)))
         return found
+
+    def gone_entries(self, branch):
+        """A deleted claim branch's entries, each keyed by its place in the
+        order: the push that made it and the delete that took it away
+        (model.gone_made, model.deleted), as GitHub's activity lists a
+        branch that no longer stands (F22's third review). The model keeps
+        only the head the delete took away, which both name, and not who
+        made it, so the entries name nobody; no reader of the library's
+        takes either from a deleted branch's entries."""
+        model = self.model
+        at, head = model.deleted[branch]
+        made = model.gone_made[branch]
+        return [((made, 1), self.entry(branch, made, "branch_creation", head)),
+                ((at, 4), self.entry(branch, at, "branch_deletion", NO_SHA, head))]
 
     def entry(self, branch, at, kind, after, before=NO_SHA):
         return {"ref": f"refs/heads/{branch}", "timestamp": iso(at), "activity_type": kind,

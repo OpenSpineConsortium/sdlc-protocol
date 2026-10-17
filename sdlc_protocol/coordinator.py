@@ -25,8 +25,15 @@ the todo it put on, so the issue is as it was and the next run starts the
 release over, unless it cannot read the issue's comments to tell whether
 GitHub wrote the comment after all, when it leaves the labels as the
 release left them for the next run to settle (adapters/github.py,
-unsettled; F20). Like the board, this module only decides and words;
-adapters/github.py makes the calls.
+unsettled; F20).
+
+Before it releases, the coordinator frees each issue that was closed and
+opened again while its labels still speak of a claim that ended with the
+close: claimed, in-review and its worker's label would keep it out of the
+Queue and from every worker, and in-review would keep a claim branch that
+still stands from ever being released (reopened_due, freeing; F22). Like
+the board, this module only decides and words; adapters/github.py makes
+the calls.
 """
 
 import dataclasses
@@ -235,15 +242,18 @@ def after_labels(snapshot, key, taken_off, put_on=()):
     """The snapshot as GitHub knows it once a release has taken taken_off
     off the issue with this key and put put_on on it, in both places the
     board reads them, with no new release comment known: after_release's
-    labels, and all of an unsettled release (adapters.github.unsettled),
-    whose comment the run cannot tell stands. The release comment the
-    snapshot held stays, so a head a release already kept, whose latest
-    release comment counts whenever it came (board.release_counts), is
-    released by it once the labels are off. A Snapshot given is changed
-    in place, and returned."""
+    labels, all of an unsettled release (adapters.github.unsettled), whose
+    comment the run cannot tell stands, and what a run freeing a reopened
+    issue changed (adapters.github.free_reopened), where the issue may
+    have no claim branch and so no place among the claims' issues. The
+    release comment the snapshot held stays, so a head a release already
+    kept, whose latest release comment counts whenever it came
+    (board.release_counts), is released by it once the labels are off. A
+    Snapshot given is changed in place, and returned."""
     snap = board.as_snapshot(snapshot)
-    issue = snap.claim_issues[key]
-    issue.labels = relabelled(issue.labels, taken_off, put_on)
+    issue = snap.claim_issues.get(key)
+    if issue is not None:
+        issue.labels = relabelled(issue.labels, taken_off, put_on)
     for listed in snap.issues:
         if str(listed.number) == key:
             listed.labels = relabelled(listed.labels, taken_off, put_on)
@@ -255,6 +265,81 @@ def relabelled(names, taken_off, put_on):
     on: those kept, then those put on that it did not carry."""
     kept = [name for name in names if name not in taken_off]
     return kept + [name for name in put_on if name not in kept]
+
+
+# --- reopened issues --------------------------------------------------------
+
+class Freeing(NamedTuple):
+    """What the coordinator does to a reopened issue, in that order: the
+    labels it puts on, then those it takes off; and whether a branch
+    stands for the issue (claim_stands), where it takes in-review off
+    alone."""
+
+    put_on: tuple = ()
+    taken_off: tuple = ()
+    branch_stands: bool = False
+
+
+def reopened_due(snapshot):
+    """The open issues GitHub says were reopened whose labels still speak of
+    a claim that ended with the close, in number order: those freeing
+    takes a label off. The issues are the snapshot's, as the board read
+    them; the adapter reads each again before it frees it, since a merge
+    can close an issue after the board read it."""
+    snap = board.as_snapshot(snapshot)
+    return [issue.number for issue in sorted(snap.issues, key=lambda i: i.number)
+            if issue.reopened and freeing(snap, issue.number, issue.labels).taken_off]
+
+
+def freeing(snapshot, number, names):
+    """What freeing the reopened issue with this number, which carries the
+    labels names, does. An open pull request marked ready from its claim
+    branch finishes the claim, and in-review may be its own, so nothing.
+    Where a branch stands for the issue (claim_stands), in-review alone
+    comes off: a claim branch is a claim whatever the labels say, and once
+    in-review is off the release frees it when its branch has gone a day
+    without a commit, in the same run where it has (adapters.github.
+    may_be_due), while a released branch beside the label claimed is a
+    release a person is undoing, unless that release came before the
+    issue's last close and claimed came through it, or was put on by a
+    claim made since (claim_stands). Where
+    none stands and the issue carries claimed or in-review, the claim
+    ended with the close: todo goes on as
+    a release puts it on (labels_put_on), then every worker's label,
+    in-review and claimed come off, claimed last, so a run that fails
+    partway leaves the issue carrying claimed or in-review, which the next
+    run frees."""
+    snap, key = board.as_snapshot(snapshot), str(number)
+    if any(board.of_claim(p, key) and not p.draft for p in snap.pulls):
+        return Freeing()
+    if claim_stands(snap, key):
+        return Freeing(taken_off=(labels.IN_REVIEW,) if labels.IN_REVIEW in names else (), branch_stands=True)
+    if labels.CLAIMED not in names and labels.IN_REVIEW not in names:
+        return Freeing()
+    put_on = () if NEEDS_NO_TODO & set(names) else (labels.TODO,)
+    holders = tuple(name for name in names if labels.is_holder_label(name))
+    return Freeing(put_on, holders + tuple(name for name in (labels.IN_REVIEW, labels.CLAIMED) if name in names))
+
+
+def claim_stands(snap, key):
+    """Whether a branch stands for the issue with this key: its claim
+    branch, or a branch a release left (board.Snapshot.kept_names) where
+    that release may be being undone. A release whose latest comment came
+    no later than the issue's last close, with the label claimed put on no
+    later than the close either, or put on by a claim made since, no later
+    than the newest entry the activity lists for its branch since the close
+    (board.Snapshot.ended_releases), belongs to a
+    claim before the close, which a person undoing a release on the open
+    issue cannot mean, since an undo puts claimed back after the close with
+    no claim branch made, the claimed that came through it is the ended
+    claim's and a claim made since puts its own: counting its
+    branch would take in-review off alone and leave claimed and the
+    worker's label on an issue with no claim branch for good, listed in
+    no section of the board."""
+    if claims.branch_of(key) in snap.branches:
+        return True
+    kept = claims.released_branch(key, "")
+    return key not in snap.ended_releases and any(name.startswith(kept) for name in snap.kept_names)
 
 
 # --- overlaps -----------------------------------------------------------------
