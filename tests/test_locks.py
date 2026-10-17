@@ -215,5 +215,36 @@ class Dependencies(unittest.TestCase):
             locks.acquire(table, locks.plan(["m.py#f"], {"m.py": MODULE}.get, [], claim=2))
 
 
+class ReviewedEdges(unittest.TestCase):
+    """The cases an adversarial review of the first version found."""
+
+    def test_a_hash_in_a_path_keeps_the_file_whole(self):
+        self.assertEqual(locks.split_key("notes#1.md#Intro"), ("notes#1.md", "Intro"))
+        self.assertEqual(locks.split_key("notes#1.txt"), ("notes#1.txt", None))
+        self.assertTrue(locks.keys_meet("notes#1.md", "notes#1.md#Intro"))
+
+    def test_a_markdown_heading_with_a_dot_holds_nothing_by_it(self):
+        self.assertFalse(locks.keys_meet("d.md#1", "d.md#1. Setup"))
+        self.assertFalse(locks.keys_meet("d.md#v1", "d.md#v1.2"))
+        self.assertTrue(locks.keys_meet("a.py#Box", "a.py#Box.put"))
+
+    def test_headings_as_commonmark_reads_them(self):
+        text = "# C#\n\n   ## Indented\n\n````\n```\n## inside\n````\n\n## After\n"
+        names = [symbol.name for symbol in locks.markdown_symbols(text)]
+        self.assertEqual(names, ["C#", "C# > Indented", "C# > After"])
+
+    def test_markdown_lines_are_counted_as_git_counts_them(self):
+        text = "# T\n\x0c\n## A\n\n## B\nbody\n"
+        found = {symbol.name: (symbol.first, symbol.last) for symbol in locks.markdown_symbols(text)}
+        self.assertEqual(found["T > B"], (5, 6))
+
+    def test_a_change_with_no_lines_to_read_touches_the_whole_file(self):
+        self.assertEqual(locks.touched_keys("m.py", MODULE, []), ["m.py"])
+
+    def test_from_a_package_import_a_module_reads_the_module(self):
+        text = "from . import util\n\n\ndef h():\n    return util.helper()\n"
+        self.assertEqual(locks.python_reads("pkg/m.py", text, "h", ["pkg/util.py"]), ["pkg/util.py"])
+
+
 if __name__ == "__main__":
     unittest.main()

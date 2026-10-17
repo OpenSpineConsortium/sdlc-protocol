@@ -593,6 +593,21 @@ def locks_verify(args, environ):
     if mode == locks.OFF:
         print("locks are off")
         return 0
+    try:
+        problems = verify_problems(args)
+    except git_locks.LocksFailed as problem:
+        # At advise nothing fails, a clone too shallow to read included:
+        # actions/checkout's default depth must not turn a run red.
+        print(f"locks: {problem}")
+        return 1 if mode == locks.ENFORCE else 0
+    for line in problems:
+        print(f"locks: {line}")
+    if not problems:
+        print("locks: the change touches nothing it may not")
+    return 1 if problems and mode == locks.ENFORCE else 0
+
+
+def verify_problems(args):
     _, entries = git_locks.fetch_table(args.repo, args.remote)
     numbers = {entry.claim for entry in entries} - {args.claim}
     alive = git_locks.live_claims(args.repo, args.remote, numbers, args.default_branch)
@@ -607,11 +622,7 @@ def locks_verify(args, environ):
         new = set(git_locks.added(args.repo, args.base, args.head))
         problems += [f"{key} is changed but #{args.claim} holds no write lock on it"
                      for key in locks.uncovered(touched, held, args.claim) if locks.split_key(key)[0] not in new]
-    for line in problems:
-        print(f"locks: {line}")
-    if not problems:
-        print(f"locks: the change touches {len(touched)} keys, all held as it needs")
-    return 1 if problems and mode == locks.ENFORCE else 0
+    return problems
 
 
 def run_locks(argv, environ=None):

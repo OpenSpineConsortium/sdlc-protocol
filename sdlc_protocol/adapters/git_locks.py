@@ -24,12 +24,19 @@ from .bare_git import GIT_TIMEOUT_SECONDS, git_environment, git_options, last_li
 
 LOCKS_NAME = "symphony locks"
 LOCKS_EMAIL = "locks@symphony.local"
-OPTIONS = git_options(LOCKS_NAME, LOCKS_EMAIL)
+# Every path this module hands git is a file's name, never a pattern: a
+# file named a[1].py must not match a1.py.
+OPTIONS = (*git_options(LOCKS_NAME, LOCKS_EMAIL), "--literal-pathspecs")
 TRIES = 5
 
+# Where the liveness reads keep the heads they fetch, apart from the
+# clone's own remote-tracking refs, which a lease reads.
+PRIVATE = "refs/symphony-locks"
+
 # The refusals git prints for a ref that some other ref of an atomic push
-# took down with it, as against the ref that was itself refused.
-SWEPT_ALONG = ("atomic push failed", "atomic transaction failed")
+# took down with it, as against the ref that was itself refused: the
+# client's own words, and receive-pack's when the server refused another.
+SWEPT_ALONG = ("atomic push failed", "atomic push failure", "atomic transaction failed")
 
 
 class LocksFailed(Exception):
@@ -94,12 +101,15 @@ def live_claims(repo, remote, numbers, default_branch="main", ended=()):
     present = {branch: heads[branch] for branch in wanted if branch in heads}
     if not present:
         return set()
-    refspecs = [f"+refs/heads/{default_branch}:refs/remotes/{remote}/{default_branch}"]
-    refspecs += [f"+refs/heads/{branch}:refs/remotes/{remote}/{branch}" for branch in present]
+    main = f"{PRIVATE}/{remote}/{default_branch}"
+    refspecs = [f"+refs/heads/{default_branch}:{main}"]
+    refspecs += [f"+refs/heads/{branch}:{PRIVATE}/{remote}/{branch}" for branch in present]
+    # A fetch that fails leaves the ancestry below unreadable, and an
+    # unreadable head counts as live, so its result needs no reading here.
     git(repo, "fetch", "--quiet", "--no-tags", remote, *refspecs)
     live = set()
     for branch, sha in present.items():
-        landed = git(repo, "merge-base", "--is-ancestor", sha, f"refs/remotes/{remote}/{default_branch}")
+        landed = git(repo, "merge-base", "--is-ancestor", sha, main)
         if landed.returncode != 0:
             live.add(wanted[branch])
     return live
@@ -125,11 +135,11 @@ def git_input(repo, args, text):
     return done.stdout.strip()
 
 
-def push(repo, remote, refspecs):
+def push(repo, remote, refspecs, options=()):
     """Push the refspecs all or none, never forced; each destination ref
     with what git says of refusing it, such as "[rejected] (fetch
     first)", or "" where it was taken."""
-    pushed = git(repo, "push", "--atomic", "--porcelain", remote, *refspecs)
+    pushed = git(repo, "push", "--atomic", "--porcelain", *options, remote, *refspecs)
     outcome = {}
     for line in pushed.stdout.splitlines():
         parts = line.split("\t")
@@ -141,34 +151,52 @@ def push(repo, remote, refspecs):
     return outcome
 
 
-def change(repo, remote, decide, default_branch="main", claim_branch="", ended=(), tries=TRIES):
+def change(repo, remote, decide, default_branch="main", claim_branch="", ended=(), tries=TRIES, owner=None):
     """Read the table, let `decide(entries, live)` give the new entries,
     and push them as one commit on the tip read, with `claim_branch`'s
     local head pushed as that branch in the same atomic push when given.
-    A refusal of the table alone starts over from a new read; a refusal
-    of the claim branch is ClaimTaken. `decide` may raise locks.Held,
-    which is passed on with nothing pushed."""
+    The claim `owner` counts as live whatever its branch, since its
+    entries and its branch arrive together. A refusal of the table alone
+    starts over from a new read; a claim branch already on the remote is
+    ClaimTaken. `decide` may raise locks.Held, which is passed on with
+    nothing pushed."""
     for _ in range(tries):
         tip, entries = fetch_table(repo, remote)
         numbers = {entry.claim for entry in entries}
-        alive = live_claims(repo, remote, numbers, default_branch, ended)
+        alive = live_claims(repo, remote, numbers, default_branch, ended) | ({owner} if owner else set())
         after = decide(entries, lambda entry: entry.claim in alive)
         if after == entries and not claim_branch:
             return entries
-        refspecs = []
-        if after != entries or not tip:
-            sha = commit_table(repo, tip, after, locks.change_message(entries, after))
-            refspecs.append(f"{sha}:refs/heads/{locks.LOCKS_BRANCH}")
+        # The table is pushed even unchanged beside a claim, so the claim
+        # lands on the very table it was decided on.
+        sha = commit_table(repo, tip, after, locks.change_message(entries, after))
+        refspecs = [f"{sha}:refs/heads/{locks.LOCKS_BRANCH}"]
+        options = []
         if claim_branch:
+            # The claim is a new branch or nothing: a lease that expects no
+            # branch at all, so commits built on another's claim are never
+            # pushed onto it.
+            options.append(f"--force-with-lease=refs/heads/{claim_branch}:")
             refspecs.append(f"refs/heads/{claim_branch}:refs/heads/{claim_branch}")
-        outcome = push(repo, remote, refspecs)
+        outcome = push(repo, remote, refspecs, options)
         refused = {ref: why for ref, why in outcome.items() if why}
         if not refused:
             return after
-        claim_ref = f"refs/heads/{claim_branch}"
-        if claim_branch and refused.get(claim_ref) and not swept_along(refused[claim_ref]):
-            raise ClaimTaken(f"{claim_branch} was refused ({refused[claim_ref]}): another worker holds the issue")
+        if claim_branch and claim_held(repo, remote, claim_branch, refused):
+            raise ClaimTaken(f"{claim_branch} is on {remote} already: another worker holds the issue")
     raise LocksFailed(f"{locks.LOCKS_BRANCH} kept moving: {tries} tries were refused")
+
+
+def claim_held(repo, remote, claim_branch, refused):
+    """Whether the claim branch was refused because it is there already.
+    The wording alone cannot say so, since receive-pack marks every ref of
+    an atomic push refused when it refuses one, so where it is not plainly
+    the table alone the remote is asked."""
+    why = refused.get(f"refs/heads/{claim_branch}", "")
+    if not why or swept_along(why) and f"refs/heads/{locks.LOCKS_BRANCH}" in refused \
+            and not swept_along(refused[f"refs/heads/{locks.LOCKS_BRANCH}"]):
+        return False
+    return claim_branch in remote_heads(repo, remote, f"refs/heads/{claim_branch}")
 
 
 def swept_along(reason):
@@ -176,8 +204,17 @@ def swept_along(reason):
 
 
 def acquire(repo, remote, wanted, default_branch="main", claim_branch=""):
+    """Take `wanted`, all for one claim, all or none. Without the claim
+    branch in the same push the claim must be on the remote already, or
+    the next change anyone makes would count its locks as ended."""
+    owners = {entry.claim for entry in wanted}
+    if len(owners) != 1 or min(owners) < 1:
+        raise LocksFailed("locks are taken for one claim, an issue's number from 1")
+    owner = owners.pop()
+    if not claim_branch and not remote_heads(repo, remote, f"refs/heads/{claims.branch_of(owner)}"):
+        raise LocksFailed(f"{claims.branch_of(owner)} is not on {remote}: take the locks with the claim itself")
     return change(repo, remote, lambda entries, live: locks.acquire(entries, wanted, live),
-                  default_branch, claim_branch)
+                  default_branch, claim_branch, owner=owner)
 
 
 def release(repo, remote, claim, default_branch="main"):
@@ -187,6 +224,18 @@ def release(repo, remote, claim, default_branch="main"):
 
 def sweep(repo, remote, default_branch="main", ended=()):
     return change(repo, remote, lambda entries, live: locks.sweep(entries, live), default_branch, ended=ended)
+
+
+def blob_text(repo, spec):
+    """A blob's text with its line endings as git counts lines, or None
+    when it is not there: read as bytes, since text mode would turn a lone
+    carriage return into a line of its own."""
+    try:
+        done = subprocess.run(["git", *OPTIONS, "show", spec], cwd=repo, capture_output=True,
+                              timeout=GIT_TIMEOUT_SECONDS, env=git_environment(), stdin=subprocess.DEVNULL)
+    except (subprocess.TimeoutExpired, FileNotFoundError) as problem:
+        raise LocksFailed(f"git show failed: {problem}")
+    return done.stdout.decode("utf-8", errors="replace") if done.returncode == 0 else None
 
 
 def fork_point(repo, base, head):
@@ -211,8 +260,7 @@ def touched(repo, base, head):
     names = git(repo, "diff", "--no-renames", "--name-only", "-z", fork, head)
     keys = set()
     for path in filter(None, names.stdout.split("\0")):
-        shown = git(repo, "show", f"{fork}:{path}")
-        base_text = shown.stdout if shown.returncode == 0 else None
+        base_text = blob_text(repo, f"{fork}:{path}")
         if git(repo, "cat-file", "-e", f"{head}:{path}").returncode != 0:
             base_text = None  # gone: the whole file
         diff = git(repo, "diff", "--no-renames", "--no-ext-diff", "-U0", fork, head, "--", path).stdout

@@ -50,13 +50,16 @@ ENFORCE = "enforce"
 SWITCH_ENV = "SYMPHONY_LOCKS"
 SWITCH_FILE = ".github/symphony-locks"
 
-# The separators by which one symbol holds another: Class.method in
-# Python, "Heading > Sub" in Markdown.
-NESTING = (".", " > ")
+# The kinds of file this module reads symbols of, and the separator by
+# which one symbol holds another in each: Class.method in Python,
+# "Heading > Sub" in Markdown, where a heading may itself hold a dot.
+PYTHON = (".py",)
+MARKDOWN = (".md", ".markdown")
+SUFFIXES = PYTHON + MARKDOWN
 
 SCHEME = re.compile(r"[a-z][a-z0-9-]*:[^/]")
-HEADING = re.compile(r"(#{1,6})[ \t]+(.*?)[ \t]*#*[ \t]*$")
-FENCE = re.compile(r"(`{3,}|~{3,})")
+HEADING = re.compile(r" {0,3}(#{1,6})(?:[ \t]+(.*?))?(?:[ \t]+#+)?[ \t]*$")
+FENCE = re.compile(r" {0,3}(`{3,}|~{3,})")
 
 
 class Held(Exception):
@@ -101,11 +104,15 @@ def mode_of(environ=None, switch_text=None):
 
 
 def split_key(key):
-    """A key's resource and its symbol, or None for the whole resource."""
-    resource, mark, symbol = key.partition("#")
-    if is_named_resource(resource) or not mark:
-        return resource, None
-    return resource, symbol or None
+    """A key's resource and its symbol, or None for the whole resource.
+    The symbol follows the first # that ends a name this module reads
+    symbols of, so a path that holds a # itself, notes#1.md, stays whole."""
+    if is_named_resource(key):
+        return key.partition("#")[0], None
+    for index, mark in enumerate(key):
+        if mark == "#" and key[:index].endswith(SUFFIXES):
+            return key[:index], key[index + 1:] or None
+    return key, None
 
 
 def is_named_resource(resource):
@@ -113,9 +120,11 @@ def is_named_resource(resource):
     return bool(SCHEME.match(resource))
 
 
-def holds(outer, inner):
-    """Whether symbol `outer` is `inner` or holds it."""
-    return outer == inner or any(inner.startswith(outer + mark) for mark in NESTING)
+def holds(outer, inner, resource=""):
+    """Whether symbol `outer` is `inner` or holds it, by the nesting of
+    the resource's kind of file."""
+    mark = " > " if resource.endswith(MARKDOWN) else "."
+    return outer == inner or inner.startswith(outer + mark)
 
 
 def keys_meet(first, second):
@@ -126,7 +135,7 @@ def keys_meet(first, second):
         return False
     if symbol is None or other_symbol is None:
         return True
-    return holds(symbol, other_symbol) or holds(other_symbol, symbol)
+    return holds(symbol, other_symbol, resource) or holds(other_symbol, symbol, resource)
 
 
 def covers(granted, touched):
@@ -137,7 +146,7 @@ def covers(granted, touched):
         return False
     if symbol is None:
         return True
-    return other_symbol is not None and holds(symbol, other_symbol)
+    return other_symbol is not None and holds(symbol, other_symbol, resource)
 
 
 def conflict(held, wanted):
@@ -237,9 +246,9 @@ def change_message(before, after):
 def symbols_of(path, text):
     """The named regions of a file by its kind, or None where this module
     reads no symbols, so the file is locked whole."""
-    if path.endswith(".py"):
+    if path.endswith(PYTHON):
         return python_symbols(text)
-    if path.endswith((".md", ".markdown")):
+    if path.endswith(MARKDOWN):
         return markdown_symbols(text)
     return None
 
@@ -270,16 +279,26 @@ def symbol_of(node, name):
 def markdown_symbols(text):
     """Each section, from its heading to the line before the next heading
     of the same or a higher level, named by its headings from the top as
-    "Heading > Sub"; a heading inside a fenced block is no heading."""
-    lines = text.splitlines()
+    "Heading > Sub". A heading inside a fenced block is no heading, and a
+    fence closes only on the same mark at least as long; a setext heading,
+    underlined, is read as text of the section above it. Lines are split
+    as git splits them, at LF alone, so a line's number is git's."""
+    lines = text.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
     headings = []
     fence = ""
     for number, line in enumerate(lines, 1):
-        opened = FENCE.match(line.lstrip())
-        if opened and (not fence or opened.group(1).startswith(fence)):
-            fence = "" if fence else opened.group(1)[:3]
+        marks = FENCE.match(line)
+        if marks and not fence:
+            fence = marks.group(1)
             continue
-        found = None if fence else HEADING.match(line)
+        if fence:
+            if marks and marks.group(1)[0] == fence[0] and len(marks.group(1)) >= len(fence) \
+                    and not line.strip().strip(fence[0]):
+                fence = ""
+            continue
+        found = HEADING.match(line.rstrip("\r"))
         if found and found.group(2):
             headings.append((number, len(found.group(1)), found.group(2)))
     found = []
@@ -324,8 +343,8 @@ def touched_keys(path, base_text, hunks):
     version, each (first line, count) as `git diff -U0` gives them; a
     count of 0 is an insertion after that line. A file new or gone, or
     one this module reads no symbols of, is touched whole."""
-    if base_text is None:
-        return [path]
+    if base_text is None or not hunks:
+        return [path]  # new, gone, or changed with no lines to read: binary, or its mode alone
     symbols = symbols_of(path, base_text)
     if symbols is None:
         return [path]
@@ -406,7 +425,15 @@ def imported_names(tree, path, repository_files):
         base = package
         for _ in range(max(node.level - 1, 0)):
             base = base.rpartition("/")[0]
-        module = (node.module or "").replace(".", "/")
+        if not node.module:
+            # from . import mod: each name is a module of the package,
+            # read whole where the repository holds it.
+            for alias in node.names:
+                candidate = "/".join(part for part in (base, f"{alias.name}.py") if part)
+                if candidate in repository_files:
+                    names[alias.asname or alias.name] = candidate
+            continue
+        module = node.module.replace(".", "/")
         stem = "/".join(part for part in ((base if node.level else ""), module) if part)
         for candidate in (f"{stem}.py", f"{stem}/__init__.py"):
             if candidate in repository_files:
@@ -426,7 +453,7 @@ def plan(targets, read_file, repository_files=(), claim=0, worker=""):
     reads = set()
     for key in writes:
         resource, symbol = split_key(key)
-        if symbol and symbol != TOP and resource.endswith(".py"):
+        if symbol and symbol != TOP and resource.endswith(PYTHON):
             text = read_file(resource)
             if text is not None:
                 reads.update(python_reads(resource, text, symbol, repository_files))

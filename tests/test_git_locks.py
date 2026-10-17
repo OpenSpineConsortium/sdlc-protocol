@@ -240,5 +240,66 @@ class Verifying(Remote):
         self.assertIn("refused: m.py#f (write) is held by #1 (wa, read)", err.getvalue())
 
 
+class Reviewed(Remote):
+    """The cases an adversarial review of the first version found."""
+
+    def test_a_refusal_of_the_table_by_the_server_is_retried_not_read_as_a_held_claim(self):
+        marker = Path(self.tmp.name) / "refuse-once"
+        marker.write_text("x", encoding="utf-8")
+        hook = Path(self.bare) / "hooks" / "update"
+        hook.write_text(f"#!/bin/sh\nif [ \"$1\" = refs/heads/locks ] && [ -e {marker} ]; then\n"
+                        f"  rm {marker}; echo refused once >&2; exit 1\nfi\nexit 0\n", encoding="utf-8")
+        hook.chmod(0o755)
+        self.claim(self.a, 1)
+        git_locks.acquire(self.a, "origin", [Entry("m.py#f", 1)], claim_branch="claude/1")
+        self.assertFalse(marker.exists())
+        self.assertTrue(self.remote_ref("refs/heads/claude/1"))
+        self.assertEqual(self.table(), [Entry("m.py#f", 1)])
+
+    def test_commits_built_on_another_s_claim_are_never_pushed_onto_it(self):
+        self.claim(self.a, 1)
+        git_locks.acquire(self.a, "origin", [Entry("m.py#f", 1)], claim_branch="claude/1")
+        before = self.remote_ref("refs/heads/claude/1")
+        git(self.b, "fetch", "--quiet", "origin")
+        git(self.b, "checkout", "--quiet", "-B", "claude/1", "origin/claude/1")
+        Path(self.b, "m.py").write_text(BASE.replace("return 0", "return 9"), encoding="utf-8")
+        git(self.b, "commit", "--quiet", "-am", "on top of another's claim")
+        with self.assertRaises(git_locks.ClaimTaken):
+            git_locks.acquire(self.b, "origin", [Entry("m.py#h", 1)], claim_branch="claude/1")
+        self.assertEqual(self.remote_ref("refs/heads/claude/1"), before)
+
+    def test_locks_for_a_claim_not_on_the_remote_are_refused(self):
+        with self.assertRaises(git_locks.LocksFailed):
+            git_locks.acquire(self.a, "origin", [Entry("m.py#f", 3)])
+        with self.assertRaises(git_locks.LocksFailed):
+            git_locks.acquire(self.a, "origin", [Entry("m.py#f", 0)])
+        self.assertFalse(self.remote_ref(f"refs/heads/{locks.LOCKS_BRANCH}"))
+
+    def test_a_pattern_in_a_file_name_is_read_as_the_name(self):
+        Path(self.seed, "a[1].py").write_text(BASE, encoding="utf-8")
+        Path(self.seed, "a1.py").write_text(BASE, encoding="utf-8")
+        git(self.seed, "add", ".")
+        git(self.seed, "commit", "--quiet", "-m", "two files")
+        git(self.seed, "push", "--quiet", "origin", "main")
+        git(self.a, "fetch", "--quiet", "origin")
+        git(self.a, "checkout", "--quiet", "-B", "work", "origin/main")
+        Path(self.a, "a[1].py").write_text(BASE.replace("return 0", "return 1"), encoding="utf-8")
+        Path(self.a, "a1.py").write_text(BASE.replace("x + 1", "x + 2"), encoding="utf-8")
+        git(self.a, "commit", "--quiet", "-am", "both")
+        self.assertEqual(git_locks.touched(self.a, "origin/main", "HEAD"), ["a1.py#f", "a[1].py#h"])
+
+    def test_a_mode_change_touches_the_whole_file(self):
+        git(self.a, "checkout", "--quiet", "-B", "work", "origin/main")
+        os.chmod(Path(self.a, "m.py"), 0o755)
+        git(self.a, "commit", "--quiet", "-am", "executable")
+        self.assertEqual(git_locks.touched(self.a, "origin/main", "HEAD"), ["m.py"])
+
+    def test_verify_at_advise_never_fails_on_what_it_cannot_read(self):
+        args = ["--repo", self.a, "verify", "--base", "no-such-ref", "--claim", "1"]
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.run_locks(args, environ={"SYMPHONY_LOCKS": "advise"}), 0)
+            self.assertEqual(cli.run_locks(args, environ={"SYMPHONY_LOCKS": "enforce"}), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
