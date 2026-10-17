@@ -1619,9 +1619,11 @@ def release_one(api, snap, key, now):
     (coordinator.labels_put_on), then the comment, in the protocol's
     order, and the board counts a release only once both are done. A run
     that fails at the labels, taking one off or putting todo on, puts
-    back the labels it took off and takes off the todo it put on, even
-    one whose putting on GitHub answered with an error, since GitHub may
-    have written it (put_labels_on, put_back), so the issue is as the run
+    back the labels it took off, even one whose removal GitHub answered
+    with an error other than a refusal that says it wrote nothing
+    (take_labels_off; F27), and takes off the todo it put on, even one
+    whose putting on GitHub answered with an error, since GitHub may have
+    written either (put_labels_on, put_back), so the issue is as the run
     found it and the next run starts the release over. A run whose
     comment fails reads the issue's comments, and the comment there after
     all, one GitHub wrote and lost its answer to, makes the release
@@ -1652,12 +1654,8 @@ def release_one(api, snap, key, now):
     done, in a line."""
     release = snap.releases[key]
     names, put_on = coordinator.labels_released(snap, key), coordinator.labels_put_on(snap, key)
-    taken_off = []
-    try:
-        for name in names:
-            if take_label_off(api, key, name):
-                taken_off.append(name)
-    except GitHubError as problem:
+    taken_off, problem = take_labels_off(api, key, names)
+    if problem:
         return (f"#{key}: not released, taking the labels off failed: {problem}{github_words(problem)}"
                 + put_back(api, key, taken_off))
     refused = put_labels_on(api, key, put_on, taken_off)
@@ -1680,6 +1678,26 @@ def release_one(api, snap, key, now):
         lost = f" (GitHub's answer to the comment was lost, {problem}, but the comment is there)"
     coordinator.after_release(snap, key, released_at or now.isoformat(), names, put_on)
     return f"#{key}: claim released, idle since {release.last_commit}{lost}"
+
+
+def take_labels_off(api, key, names):
+    """Take a release's labels off its issue, in order, stopping at the
+    first GitHub fails: the labels to put back should a step fail, and
+    the failure, or None. The label whose removal failed is among them
+    unless GitHub refused it in a way that says it wrote nothing
+    (wrote_nothing), since a server error or no answer at all may come
+    after GitHub took it off, and putting back a label still on changes
+    nothing, where leaving off one GitHub took leaves the issue as
+    neither the release nor the run found it (F27, until whose fix only
+    the labels whose removal GitHub answered went back)."""
+    taken_off = []
+    for name in names:
+        try:
+            if take_label_off(api, key, name):
+                taken_off.append(name)
+        except GitHubError as problem:
+            return taken_off + ([] if wrote_nothing(problem) else [name]), problem
+    return taken_off, None
 
 
 def take_label_off(api, key, name):

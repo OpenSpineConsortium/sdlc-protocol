@@ -2314,14 +2314,39 @@ class Coordinate(unittest.TestCase):
                 problem = github.GitHubError("POST /repos/o/r/issues/12/comments: failed", 403, detail, headers)
                 self.assertIs(github.wrote_nothing(problem), wrote_nothing)
 
-    def test_a_second_label_github_refuses_puts_the_first_back(self):
+    def test_a_second_label_github_fails_puts_both_back(self):
+        # A 502 may come after GitHub took the label off, so the label
+        # whose removal failed goes back beside the one taken off, and the
+        # issue is as the run found it either way (F27).
         answers = release_answers()
         answers[LABEL_WORKER_12] = Refusal(502)
         answers[LABELS_12] = FakeAnswer([])
         api, opener = client(answers)
         self.assertEqual(github.coordinate(api, idle_snapshot(), NOW), [
             "#12: not released, taking the labels off failed: DELETE /repos/o/r/issues/12/labels/worker%3Anightly: "
-            "HTTP 502; claimed put back"])
+            "HTTP 502; claimed, worker:nightly put back"])
+        self.assertEqual(opener.sent("POST"), [{"labels": ["claimed", "worker:nightly"]}])
+
+    def test_a_second_label_github_refuses_puts_the_first_back(self):
+        # A 403 that is no rate limit's says GitHub took nothing off, so
+        # only the label it took goes back.
+        answers = release_answers()
+        answers[LABEL_WORKER_12] = Refusal(403, {"message": "Resource not accessible by integration"})
+        answers[LABELS_12] = FakeAnswer([])
+        api, opener = client(answers)
+        self.assertEqual(github.coordinate(api, idle_snapshot(), NOW), [
+            "#12: not released, taking the labels off failed: DELETE /repos/o/r/issues/12/labels/worker%3Anightly: "
+            "HTTP 403: Resource not accessible by integration; claimed put back"])
+        self.assertEqual(opener.sent("POST"), [{"labels": ["claimed"]}])
+
+    def test_a_label_github_takes_off_with_no_answer_is_put_back(self):
+        # No answer at all may come after GitHub took the label off (F27).
+        answers = release_answers()
+        answers[LABEL_CLAIMED_12] = Unanswered()
+        answers[LABELS_12] = FakeAnswer([])
+        api, opener = client(answers)
+        line, = github.coordinate(api, idle_snapshot(), NOW)
+        self.assertTrue(line.endswith("; claimed put back"), line)
         self.assertEqual(opener.sent("POST"), [{"labels": ["claimed"]}])
 
     def test_a_label_already_gone_is_not_put_back(self):
@@ -2482,12 +2507,12 @@ class Coordinate(unittest.TestCase):
 
     def test_a_label_github_refuses_is_a_line_and_posts_no_comment(self):
         answers = release_answers()
-        answers[LABEL_CLAIMED_12] = Refusal(502)
+        answers[LABEL_CLAIMED_12] = Refusal(422, {"message": "Validation Failed"})
         snap = idle_snapshot()
         api, opener = client(answers)
         line, = github.coordinate(api, snap, NOW)
         self.assertEqual(line, "#12: not released, taking the labels off failed: "
-                               "DELETE /repos/o/r/issues/12/labels/claimed: HTTP 502")
+                               "DELETE /repos/o/r/issues/12/labels/claimed: HTTP 422: Validation Failed")
         self.assertEqual(opener.sent("POST"), [])
         self.assertEqual(board.released_keys(snap), set())
 
