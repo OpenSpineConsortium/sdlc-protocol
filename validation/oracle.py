@@ -194,7 +194,8 @@ SPEC = {
     "reopened stands": "where one stands, it takes in-review off alone",
     "ended release": "A released branch stands here only where the issue's latest release comment that counts came "
                      "after the issue was last closed, as the issue's events date that close, or where its events "
-                     "list the label claimed put on after that close",
+                     "list the label claimed put on after that close and the repository's activity lists no "
+                     "push that made `claude/<issue>` at or after it",
     "read again": "It reads the issue again first and frees none that is closed by then",
     "same run": "which is released once its branch has gone a day without a commit, in the same run where it has",
 }
@@ -614,15 +615,16 @@ def branch_stands(model, number):
     """SPEC["reopened free"]: `claude/<issue>` or a branch
     `released/<issue>-<short sha>` stands, the second only where the
     issue's latest release comment that counts came after its last close,
-    or the label claimed went on after it (SPEC["ended release"]), or the
-    issue was never closed, whose events record no close."""
+    or the label claimed went on after it with no push making
+    `claude/<issue>` since (SPEC["ended release"]), or the issue was never
+    closed, whose events record no close."""
     if branch_of(number) in model.refs:
         return True
     if not any(ref.startswith(f"{RELEASED_PREFIX}{number}-") for ref in model.refs):
         return False
     issue, latest = model.issues.get(number), latest_release(model, number)
     return (issue is None or issue.closed_at is None or (latest is not None and latest > issue.closed_at)
-            or claimed_since_close(model, issue))
+            or (claimed_since_close(model, issue) and not claim_made_since(model, issue)))
 
 
 def claimed_since_close(model, issue):
@@ -632,6 +634,17 @@ def claimed_since_close(model, issue):
     same minute read in the order they came."""
     return any(e.issue == issue.number and e.added and e.label == CLAIMED
                for e in model.label_events[issue.closed_after:])
+
+
+def claim_made_since(model, issue):
+    """SPEC["ended release"]: a push made `claude/<issue>` at or after the
+    issue's last close, as the repository's activity lists it: the
+    branch's making while it stands, or, once it is deleted, the making
+    the model keeps of it (RepoModel.gone_made). A minute of the close's
+    own reads as after it, as the library's second does."""
+    ref = branch_of(issue.number)
+    made = model.created.get(ref) if ref in model.refs else model.gone_made.get(ref)
+    return made is not None and made >= issue.closed_at
 
 
 def freeing(model, number):

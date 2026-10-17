@@ -712,15 +712,20 @@ def ended_releases(api, issues, branches, kept, asked):
     claim before the issue's last close left: an open issue GitHub says
     was reopened that carries claimed or in-review, with no claim branch
     and a branch released/<issue>-<short sha> standing, whose events
-    record a close, with no label claimed put on after it, and whose
-    comments hold no release comment after it. Such a branch is no
+    record a close, with no label claimed put on after it but by a claim
+    made since, and whose comments hold no release comment after it. Such a branch is no
     release being undone, so the coordinator frees the issue wholly
     (coordinator.claim_stands; F22).
 
     The label claimed put on after the last close is a person undoing the
-    release, as the release's note on the issue asks (board.released_text):
-    a claim made since would show its claim branch, and claimed that came
-    through the close is the ended claim's (F22's second review). A
+    release, as the release's note on the issue asks (board.released_text),
+    unless the repository's activity lists a push that made the claim
+    branch claude/<issue> at or after that close: that claim's own claimed
+    went on after the close too, and the claim has ended since, its branch
+    gone, where an undo brings no such push (claim_made_since; F22's third
+    review). Claimed that came through the close is the ended claim's
+    (F22's second review). Where GitHub refuses the activity, or keeps
+    none of the repository (a 404), the issue is left out this run. A
     release comment after the close counts unless GitHub says its author
     may not write (may_open, from asked, the run's answers to who may
     write), so a refused permission read leaves the issue out this run,
@@ -730,14 +735,16 @@ def ended_releases(api, issues, branches, kept, asked):
     undone, and the freeing takes in-review off alone, as before this was
     read, until a later run reads it.
 
-    Only such an issue costs calls: a page of its events, and of its
-    comments where the events leave the question open, with a permission
-    asked, once a run, for each author of a release comment after the
-    close that GitHub's word does not vouch for. A freed issue carries
-    neither label and costs nothing again; one whose release is being
-    undone costs its events in every board run until a person renames the
-    branch back, as the note says, which nothing bounds without a record
-    kept from run to run (validation/DESIGN.md, F22)."""
+    Only such an issue costs calls: every page of its events; one read of
+    the claim branch's makings in the activity where claimed went on after
+    the close; and every page of its comments where the events and the
+    activity leave the question open, with a permission asked, once a
+    run, for each author of a release comment after the close that
+    GitHub's word does not vouch for. A freed issue carries neither label
+    and costs nothing again; one whose release is being undone costs its
+    events and the activity read in every board run until a person
+    renames the branch back, as the note says, which nothing bounds
+    without a record kept from run to run (validation/DESIGN.md, F22)."""
     found = []
     for issue in issues:
         key = str(issue.get("number", ""))
@@ -746,7 +753,7 @@ def ended_releases(api, issues, branches, kept, asked):
         try:
             events = api.get_all(f"/repos/{api.repo}/issues/{key}/events")
             closed = latest_close(events)
-            if not closed or claimed_since_close(events):
+            if not closed or (claimed_since_close(events) and not claim_made_since(api, key, closed)):
                 continue
             comments = api.get_all(f"/repos/{api.repo}/issues/{key}/comments")
         except GitHubError:
@@ -785,6 +792,29 @@ def claimed_since_close(events):
         elif event.get("event") == "labeled" and (event.get("label") or {}).get("name") == labels.CLAIMED:
             last_claimed = at
     return last_claimed > last_close >= 0
+
+
+def claim_made_since(api, key, closed):
+    """Whether the repository's activity lists a push that made the claim
+    branch claude/<issue> at or after the time closed: the newest branch
+    creation of that name, one read. A claim made then put its own claimed
+    on after the close, which is no person's undo (ended_releases; F22's
+    third review); a creation in the close's own second reads as after it,
+    as a release in that second reads as before it, so the issue is freed.
+    None where GitHub keeps no activity of the repository (a 404), answers
+    with no list or writes a time that reads as none, which says neither,
+    so the issue is left out this run and no label comes off on a guess;
+    any other refusal raises, which leaves it out too."""
+    ref = f"refs/heads/{claims.branch_of(key)}"
+    listed = api.get(f"/repos/{api.repo}/activity", {"ref": ref, "activity_type": "branch_creation",
+                                                     "direction": "desc", "per_page": 1}, missing_ok=True)
+    if not isinstance(listed, list):
+        return None
+    newest = next((entry for entry in listed if made_at(entry) and entry.get("ref") == ref), None)
+    if newest is None:
+        return False
+    made = entry_time(newest)
+    return None if not made else claims.parse_time(made) >= claims.parse_time(closed)
 
 
 def released_after(comments, closed, trusted):

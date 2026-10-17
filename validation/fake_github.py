@@ -542,7 +542,8 @@ class FakeGitHub:
 
     def activity(self, query, as_fault=""):
         """The repository's activity as far as the model records it, for
-        each branch that stands (branch_entries), newest first unless asked
+        each branch that stands (branch_entries) and each claim branch
+        deleted since it was made (gone_entries), newest first unless asked
         for the oldest first (direction asc), filtered as asked by ref
         (refs/heads/<name> or the name) and by type; a filter the model
         records nothing of, any other type, answers an empty list, as
@@ -556,6 +557,9 @@ class FakeGitHub:
         for branch in model.created:
             if not ref or branch == name:
                 entries += self.branch_entries(branch, as_fault)
+        for branch in model.gone_made:
+            if branch not in model.refs and (not ref or branch == name):
+                entries += self.gone_entries(branch)
         newest_first = query.get("direction", "desc") != "asc"
         listed = [entry for _, entry in sorted(entries, key=lambda e: e[0], reverse=newest_first)]
         return [entry for entry in listed if kind is None or entry["activity_type"] == kind]
@@ -610,6 +614,20 @@ class FakeGitHub:
             again = hashlib.sha1(f"pushed again after the run read {branch} at {model.now}".encode("ascii")).hexdigest()
             found.append(((model.now, 5), self.entry(branch, model.now, "push", again, unseen)))
         return found
+
+    def gone_entries(self, branch):
+        """A deleted claim branch's entries, each keyed by its place in the
+        order: the push that made it and the delete that took it away
+        (model.gone_made, model.deleted), as GitHub's activity lists a
+        branch that no longer stands (F22's third review). The model keeps
+        only the head the delete took away, which both name, and not who
+        made it, so the entries name nobody; no reader of the library's
+        takes either from a deleted branch's entries."""
+        model = self.model
+        at, head = model.deleted[branch]
+        made = model.gone_made[branch]
+        return [((made, 1), self.entry(branch, made, "branch_creation", head)),
+                ((at, 4), self.entry(branch, at, "branch_deletion", NO_SHA, head))]
 
     def entry(self, branch, at, kind, after, before=NO_SHA):
         return {"ref": f"refs/heads/{branch}", "timestamp": iso(at), "activity_type": kind,

@@ -1816,6 +1816,11 @@ MUTANTS = {
         github, "claimed_since_close", lambda events: False,
         "G8", "the label claimed put on after a reopened issue's last close is a person undoing a release an "
               "earlier claim's release left before it, so the freeing leaves claimed on (F22's second review)"),
+    "a claim made since the close read as an undo": Mutant(
+        github, "claim_made_since", lambda api, key, closed: False,
+        "G8", "the label claimed a claim made since a reopened issue's last close put on is that claim's, so once "
+              "its branch is deleted with no release the freeing takes it off with the claim's other labels (F22's "
+              "third review)"),
     "the releases due read before the freeing": Mutant(
         github, "coordinate", releases_read_before_the_freeing,
         "G3", "a claim whose in-review a freeing takes off is released in the same run where its branch has gone a "
@@ -1845,6 +1850,14 @@ REOPENS = DUE + (Verb("board", verbs.BOARD, (cycle.SCHEDULE, "")), Verb("claim",
 # claimed back after the close (F22's second review).
 UNDOABLE = DUE + (Verb("board", verbs.BOARD, (cycle.SCHEDULE, "")), Verb("close-issue", M.OWNER, (1,)),
                   Verb("reopen-issue", M.OWNER, (1,)))
+# b's claim on #1 after that close and reopen, announced and ready for
+# review, which the owner may close unmerged and delete the branch of
+# while #1 stays open, so the claim ends with no release comment and its
+# claimed, put on after the close, is the claim's own (F22's third review).
+LATER_CLAIM = UNDOABLE + (Verb("claim", "b", (1,)), Verb("label-on", "b", (1, "claimed")),
+                          Verb("label-on", "b", (1, "worker:b")), Verb("label-off", "b", (1, "todo")),
+                          Verb("open-draft", "b", (1,)), Verb("mark-ready", "b", (100,)),
+                          Verb("label-on", "b", (1, "in-review")))
 
 # Cheapest first, since a mutant is judged by the first search that
 # catches it. The traces met F4, dealing from differing looks, on the
@@ -1969,12 +1982,15 @@ SEARCHES = (
     # a's claim released, b's claim on #1 ready for review: the owner may
     # merge it, keeping its branch or not, and close and reopen #1, so each
     # rule of the freeing is searched and not only traced; and a release
-    # before #1 was closed and reopened, which the owner may still undo
-    # (F22's reviews).
+    # before #1 was closed and reopened, which the owner may still undo;
+    # and a claim made after that reopen whose branch the owner deletes
+    # while #1 stays open (F22's reviews).
     Search("a reopened issue after a release and a later claim", REOPENS, Scope(workers=("a", "b"),
            people=(M.OWNER,), waits=(25,), reopens=True), 4),
     Search("a release undone on a reopened issue", UNDOABLE, Scope(workers=("a", "b"), people=(M.OWNER,),
            waits=(25,), reopens=True), 2),
+    Search("a claim since a reopen ended by deleting its branch", LATER_CLAIM, Scope(workers=("a", "b"),
+           people=(M.OWNER,), waits=(25,), reopens=True, deletes=True), 2),
 )
 CATCHERS = LANES + SEARCHES + (PICKING, LABEL_MIXES)
 

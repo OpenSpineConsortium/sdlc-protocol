@@ -36,7 +36,9 @@ strangers is on, sam opens them from a claim's own branch here, which are
 no claim's either, and the claim's holder may close one to open its own
 (F19). Where its reopens is on, the owner reopens a closed issue, which
 GitHub then says was reopened, and may merge a pull request in a
-repository that keeps its head branches (F22).
+repository that keeps its head branches (F22); where its deletes is on,
+the owner closes a claim's pull request without a merge and deletes its
+branch while the issue stays open (F22's third review).
 
 Two comments a person can write that look like the coordinator's, offered
 where the scope has more than one issue: a worker's comment that quotes
@@ -313,8 +315,10 @@ class Scope(NamedTuple):
     the newest entry listed, since F8's fix check), whether a stranger
     opens pull requests from a fork whose branch bears a claim's name
     (F17), whether a stranger opens them from a claim's own branch
-    here (F19), and whether the owner reopens closed issues and merges
-    keeping the head branch (F22)."""
+    here (F19), whether the owner reopens closed issues and merges
+    keeping the head branch (F22), and whether the owner closes a claim's
+    pull request unmerged and deletes its branch on an open issue (F22's
+    third review)."""
 
     workers: tuple = ("a", "b")
     issues: tuple = (1,)
@@ -329,6 +333,7 @@ class Scope(NamedTuple):
     forks: bool = False
     strangers: bool = False
     reopens: bool = False
+    deletes: bool = False
 
     def files_of(self, number):
         return dict(self.files).get(number, (f"src/{number}.py",))
@@ -835,6 +840,16 @@ def tidy(model, number):
     return Outcome(True, "tidied")
 
 
+def delete_claim_branch(model, number):
+    """The owner closes the claim's open pull request without a merge and
+    deletes claude/<n> from its page, while the issue stays open: the
+    labels the claim put on stay, and no release comment is written, so
+    the claim ends with no word on the issue (F22's third review). GitHub
+    tells the workflow of the pull request closed and the branch deleted."""
+    model.delete_ref(claim_ref(number))
+    return Outcome(True, "the claim branch deleted", events=((cycle.PULL_REQUEST, ""), (cycle.DELETE, MAIN)))
+
+
 def rename_back(model, number, released_ref):
     """A person renames the branch back by hand: a branch made and one
     deleted, as GitHub tells the workflow of a rename."""
@@ -978,6 +993,8 @@ def act(model, verb, scope):
         return tidy(model, number)
     if name == "rename-back":
         return rename_back(model, number, args[1])
+    if name == "delete-claim-branch":
+        return delete_claim_branch(model, number)
     if name == "reopen":
         return reopen(model, number)
     raise ValueError(f"no verb {name}")
@@ -1136,6 +1153,8 @@ def owner_verbs(model, number, pull, scope=Scope()):
             found.append(Verb("reopen", OWNER, (closed.number,)))
     if issue.state == "open":
         found.append(Verb("close-issue", OWNER, (number,)))
+        if scope.deletes and ref in model.refs:
+            found.append(Verb("delete-claim-branch", OWNER, (number,)))
     else:
         if ref in model.refs or released_refs(model, number):
             found.append(Verb("tidy", OWNER, (number,)))

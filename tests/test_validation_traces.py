@@ -163,10 +163,14 @@ BUDGET_SECONDS = 10
 # that takes its in-review off once the releases due are read before the
 # freeing; at its seventh, step 49, where the owner put claimed back on
 # the reopened #1 to undo the release that run made, claimed comes off
-# once the released branch is not read; and at its last, step 54, where
+# once the released branch is not read; at its eighth, step 54, where
 # the owner closed #1 and reopened it after that release and put claimed
 # back again, claimed comes off once claimed put on after the close is
-# read as the ended claim's (F22's second review). F26's at its first
+# read as the ended claim's (F22's second review); and at its last since
+# F22's third review, step 67, where b claimed #1 after it was closed and
+# reopened again and the owner closed b's ready pull request unmerged and
+# deleted claude/1, claimed and worker:b stay once a claim made since the
+# close is read as an undo. F26's at its first
 # guard step, step 1, env --uns FOO before a push to main, which passes
 # once a wrapper's long option is read only by its whole name, as do its
 # second and third, nice --adj 5 and timeout --sig KILL 60; at its fourth,
@@ -242,7 +246,8 @@ UNDONE = {
             ("a release before the last close read as an undo", 36, "G8"),
             ("the releases due read before the freeing", 47, "G3"),
             ("a released branch not read for a reopened issue", 49, "G8"),
-            ("claimed put back after the close read as the ended claim's", 54, "G8")],
+            ("claimed put back after the close read as the ended claim's", 54, "G8"),
+            ("a claim made since the close read as an undo", 67, "G8")],
     "F26": [("a long option read only in full", 1, "G11a"),
             ("an optional value taken from the next word", 4, "G11a"),
             ("env's abbreviated --chdir not read", 5, "G11a")],
