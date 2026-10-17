@@ -174,7 +174,11 @@ BUDGET_SECONDS = 10
 # patterns hold here-documents, taken once a pattern's ) closes its
 # substitution; and step 12, between the bodies of ((echo "))"); ...) and a
 # later one, taken once arithmetic's parentheses are counted inside
-# quotes. Its step 1, after a body with an apostrophe, is the
+# quotes; and, since its third review, step 13, between two double-quoted
+# substitutions that hold ${y:-)} before a here-document, taken once a
+# parameter expansion is read as text, and step 14, the same with a
+# backquoted case command, taken once a backquoted span is read as text.
+# Its step 1, after a body with an apostrophe, is the
 # finding's first shape, which both of the fix's readings read, so no one
 # mutant takes it.
 UNDONE = {
@@ -251,7 +255,9 @@ UNDONE = {
             ("a body that waits for a newline in the substitution that closed", 9, "G11a"),
             ("an expanded body's substitution kept with its own bodies", 10, "G11a"),
             ("a case pattern's parenthesis closing its substitution", 11, "G11a"),
-            ("arithmetic's parentheses counted inside quotes", 12, "G11a")],
+            ("arithmetic's parentheses counted inside quotes", 12, "G11a"),
+            ("a parameter expansion read as text", 13, "G11a"),
+            ("a backquoted span read as text", 14, "G11a")],
 }
 # The findings with a trace, every one settled since F25's fix: F1, F3,
 # F5, F6, F10 and F11 fixed in 0.4.1; F2, F4, F7, F8, F9, F12, F13, F14,

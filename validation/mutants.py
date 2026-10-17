@@ -426,6 +426,23 @@ def parentheses_counted_inside_quotes(command, open_at, memo):
     return None
 
 
+# guard.expansion_step as built, which the mutants below call for every
+# expansion but the one each reads as text.
+EXPANSION_STEP = guard.expansion_step
+
+
+def expansions_without(kind):
+    """guard.expansion_step as the scan read expansions until F25's third
+    review, with kind, "${", read as text: a ) inside ${y:-)} then closes
+    the substitution around it and the << after it is read as text inside
+    double quotes."""
+    def expansion_step(command, i, contexts, memo):
+        if command.startswith(kind, i):
+            return None
+        return EXPANSION_STEP(command, i, contexts, memo)
+    return expansion_step
+
+
 def substitutions_kept_whole(command, start, end, depth=0):
     """guard.substitutions_in as it kept an expanded body's substitutions
     until F25's second review: each whole, the bodies of its own
@@ -1462,6 +1479,16 @@ MUTANTS = {
         "G11a", "the parentheses of a (( are counted past quotes, as bash counts them, so a lease between the "
                 "here-documents of ((echo \"))\"); ...), a subshell in a subshell, and a later one, onto a claim "
                 "another worker holds, is read and refused (F25)"),
+    "a parameter expansion read as text": Mutant(
+        guard, "expansion_step", expansions_without("${"),
+        "G11a", "a parameter expansion is read whole, a ) inside ${y:-)} closing nothing, as bash reads it, so a "
+                "lease between two double-quoted substitutions that hold one before a here-document, onto a claim "
+                "another worker holds, is read and refused (F25)"),
+    "a backquoted span read as text": Mutant(
+        guard, "backquoted", lambda command, i, depth: None,
+        "G11a", "a backquoted span is read whole, a case pattern's ) inside it closing nothing, as bash reads it, "
+                "so a lease between two double-quoted substitutions that hold one before a here-document, onto a "
+                "claim another worker holds, is read and refused (F25)"),
     "dealing without its taken set": Mutant(
         team, "deal", deal_without_the_taken_set,
         "G14", "the workers of one run are dealt distinct issues"),

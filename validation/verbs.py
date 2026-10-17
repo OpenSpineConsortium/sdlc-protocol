@@ -103,7 +103,9 @@ CLONES = "/clones"
 # apostrophe in its own body, between two double-quoted substitutions
 # whose case patterns hold here-documents, and between the bodies of
 # ((echo "))"); ...), whose quoted parentheses bash does not count, and a
-# later one.
+# later one; and, since its third review, between two double-quoted
+# substitutions whose ) inside ${y:-)}, or inside a backquoted case
+# command, closes nothing, each holding a here-document.
 ELSEWHERE = {"-C": "git -C ../{clone} {push}", "cd": "cd ../{clone} && git {push}",
              "missing": "cd ../{clone}; cd ../{absent}; git {push}",
              "body": "cat > /dev/null <<'EOF'\ncd ..\nEOF\ngit {push}",
@@ -126,11 +128,16 @@ ELSEWHERE = {"-C": "git -C ../{clone} {push}", "cd": "cd ../{clone} && git {push
              "case-pattern": ('x="$(case a in a) cat <<\'EOF\'\nSay "hi\nEOF\n;; esac)"\ngit {push}\n'
                               'y="$(case a in a) cat <<\'EOF\'\nSay "bye\nEOF\n;; esac)"'),
              "quoted-arithmetic": "((echo \"))\"); cat <<'EOF'\nDon't\nEOF\n)\ngit {push}\ncat <<'EOF'\nIt's\nEOF",
+             "braced": ('x="$(echo ${{y:-)}}; cat <<\'EOF\'\nSay "hi\nEOF\n)"\ngit {push}\n'
+                        'y="$(echo ${{y:-)}}; cat <<\'EOF\'\nSay "bye\nEOF\n)"'),
+             "backquoted": ('x="$(echo `case a in a) :;; esac`; cat <<\'EOF\'\nSay "hi\nEOF\n)"\ngit {push}\n'
+                            'y="$(echo `case a in a) :;; esac`; cat <<\'EOF\'\nSay "bye\nEOF\n)"'),
              "env": "env --ch ../{clone} git {push}"}
 # The ways whose push runs in the worker's own clone (leasing_clone).
 FROM_OWN_CLONE = ("body", "expanded", "skipped", "exported", "home", "apostrophe", "unclosed", "paired",
                   "quoted-substitution", "body-substitution", "closing-line", "joined", "subshells",
-                  "closed-substitution", "nested-body", "case-pattern", "quoted-arithmetic")
+                  "closed-substitution", "nested-body", "case-pattern", "quoted-arithmetic", "braced",
+                  "backquoted")
 
 # A read of the activity with no type named: the read of the push that set
 # a claim's head (github.read_push), told from the reads of a

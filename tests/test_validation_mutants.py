@@ -114,6 +114,8 @@ TRACES = {
     "an expanded body's substitution kept with its own bodies": "the regression traces",
     "a case pattern's parenthesis closing its substitution": "the regression traces",
     "arithmetic's parentheses counted inside quotes": "the regression traces",
+    "a parameter expansion read as text": "the regression traces",
+    "a backquoted span read as text": "the regression traces",
     "dealing without its taken set": "dealing at every look",
     "each leg dealt from its own look": "the regression traces",
     "given to workers needing the label todo": "the regression traces",
@@ -344,9 +346,10 @@ class TheLane(unittest.TestCase):
         waits for a newline in the substitution that closed, an expanded
         body's substitution kept with its own bodies, a case pattern's
         parenthesis closing its substitution and arithmetic's parentheses
-        counted inside quotes, 148."""
+        counted inside quotes, 148; and its third review two: a parameter
+        expansion read as text and a backquoted span read as text, 150."""
         self.assertTrue(10 <= len(mutants.MUTANTS) <= 150)
-        self.assertEqual(len(mutants.MUTANTS), 148)
+        self.assertEqual(len(mutants.MUTANTS), 150)
         self.assertEqual(sorted(TRACES), sorted(mutants.MUTANTS))
 
     def test_every_mutant_names_a_rule_the_library_still_has(self):

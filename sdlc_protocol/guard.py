@@ -166,13 +166,21 @@ the end of the text; a <<< here-string, arithmetic, a comment and a
 quoted span open none, a (( is arithmetic only where bash reads it so,
 its parentheses counted past quotes (arithmetic_end), ((cd x); ...) being
 a subshell in a subshell, and a case pattern's ) closes no substitution
-(case_step). What the shell runs of a body it expands, its substitutions,
-is read as bash reads it, the bodies of its own here-documents cut out in
-turn (substitutions_in), down to MAX_NESTING, past which the command is
-refused unread (TOO_DEEP). The scan takes a time in proportion to the
-text, so no long command runs the hook out of time, which would pass it;
-shlex takes a time in the square of a word's length, so a command longer
-than MAX_COMMAND is refused unread (TOO_LONG).
+(case_step), nor does one inside a parameter expansion, ${y:-)}, or a
+backquoted span, which bash reads whole and whose here-documents lie
+inside it (expansion_step, backquoted). What the shell runs of a body it
+expands, its substitutions, is read as bash reads it, the bodies of its
+own here-documents cut out in turn (substitutions_in), down to
+MAX_NESTING, past which the command is refused unread (TOO_DEEP). Claude
+Code reads a hook that runs out of time as no objection and runs the
+command, so the reading is built to take a time in proportion to the
+text: the scan matches each ( once (matching_parenthesis, scan), a cd
+joins no path longer than the system takes (PATH_MAX) and a pushd stacks
+in the same time at any depth (stacked); shlex takes a time in the square
+of a word's length, so a command longer than MAX_COMMAND is refused
+unread (TOO_LONG); and a reading that still runs past READING_SECONDS,
+for a shape no test has timed, is refused unread too (TOO_SLOW), never
+passed.
 A third reading, of each line alone, was weighed
 and left out: with a quote that never closes read leniently it finds no
 push in F25's shapes that the two miss, and what it alone would read is
@@ -186,11 +194,14 @@ module reads as a quote closed early, and branch protection stands behind
 it.
 """
 
+import contextvars
 import os
 import re
 import shlex
 import subprocess
+import time
 import unicodedata
+import weakref
 from typing import NamedTuple
 
 # git push's own options, as its parse-options reads them (git 2.43's
@@ -251,6 +262,13 @@ EXPANDED = set("$`*?[")
 # where os.path.expanduser left it a directory named ~+ or ~- (F21's
 # fourth review).
 SHELL_TILDE = re.compile(r"~(?:[+-][0-9]*|[0-9]+)(?:/|$)")
+# The longest path the system takes in one call, in bytes with its NUL
+# (Linux's PATH_MAX): a longer one it refuses (ENAMETOOLONG), where the
+# shell's cd still reaches it a step at a time, so this module cannot tell
+# the directory such a path names (joined). The bound also keeps a long
+# run of cd from joining ever longer paths, a time in the square of the
+# run (F25's third review: 43,000 of "cd a;" took 16 seconds).
+PATH_MAX = 4096
 
 
 class Wrapper(NamedTuple):
@@ -369,6 +387,18 @@ TOO_DEEP = (f"a command whose here-documents nest in command substitutions more 
             "refused: the guard cannot read it to tell which of its lines run; write the text to a file "
             "first (.claude/rules/board.md)")
 
+# How long the reading of one command may take, in seconds of the
+# monotonic clock, before the hook refuses it unread: Claude Code reads a
+# hook that runs out of time as no objection and runs the command, so a
+# reading that runs long must end in a refusal, never in the hook's
+# timeout. Each part of the reading is meant to take a time in proportion
+# to the text, and a command at MAX_COMMAND reads in about a second; the
+# deadline stands behind that for a shape no test has timed (F25's third
+# review found two that took minutes).
+READING_SECONDS = 10
+TOO_SLOW = (f"a command the guard cannot read in {READING_SECONDS} seconds is refused unread: a hook that runs out "
+            "of time lets the command run; write the text to a file first (.claude/rules/board.md)")
+
 # The hook's exit codes: 0 lets the tool call run, 2 stops it and sends
 # stderr back into the session.
 PASS = 0
@@ -468,9 +498,36 @@ class TooDeep(Exception):
     the shell expands deeper than this module reads (MAX_NESTING)."""
 
 
+class TooSlow(Exception):
+    """A command whose reading ran past its deadline (READING_SECONDS)."""
+
+
+# The monotonic clock the deadline is read by, and the deadline of the
+# reading under way, None where none is (refused_push sets it).
+clock = time.monotonic
+DEADLINE = contextvars.ContextVar("deadline", default=None)
+
+
+def in_time():
+    """Raise TooSlow where the reading under way has run past its deadline;
+    called at the head of each loop of the reading (scan, parts_of,
+    placed_parts), so no shape of command holds the hook past it."""
+    deadline = DEADLINE.get()
+    if deadline is not None and clock() > deadline:
+        raise TooSlow()
+
+
 # What the scan of a command's here-documents tells levels by: double
-# quotes and a command substitution.
-LEVELS = ('"', "$(")
+# quotes, a command substitution and a parameter expansion, ${ }, inside
+# which a newline starts no body, since bash reads the expansion whole as
+# part of a word before it reads the newline after it.
+LEVELS = ('"', "$(", "${")
+# A backquoted span as bash's parse_matched_pair reads it, up to the first
+# ` that no backslash escapes, with nothing nested inside (F25's third
+# review: a case pattern's ) inside one closed the substitution around it).
+BACKQUOTED = re.compile(r"`(?:[^`\\]|\\.)*`", re.DOTALL)
+# What matching_parenthesis keeps on its stack for a ${ it stands in.
+BRACE = "{"
 # The reserved words after which a word is still a command's first, so a
 # case there is a case command.
 BEFORE_A_COMMAND = ("then", "do", "else", "elif", "if", "while", "until", "!", "{", "time")
@@ -483,11 +540,13 @@ class Context:
     ) that closes the substitution, or a case command inside one, before
     its in (case), among its patterns (in) or in a pattern's commands
     (case)), since bash reads a pattern's ) as closing no substitution
-    (F25). Its level is the innermost double quotes or substitution at or
-    around it, where a here-document's body starts at a newline, and
-    whether that stands in a substitution. A context is one object, told
-    from another by identity, so opening or closing one takes the same time
-    however deep the scan stands."""
+    (F25), or a parameter expansion (${), inside which a ( or ) is text
+    (F25's third review). Its level is the innermost double quotes,
+    substitution or parameter expansion at or around it, where a
+    here-document's body starts at a newline, and whether that stands in a
+    substitution. A context is one object, told from another by identity,
+    so opening or closing one takes the same time however deep the scan
+    stands."""
 
     __slots__ = ("kind", "outer", "level", "in_substitution")
 
@@ -518,40 +577,84 @@ def takes_here_document(contexts):
     here-document: outside quotes, and in a substitution inside double
     quotes, as in "$(cat <<'EOF' ...)", the form a session writes a commit
     message or a pull request's body in; in double quotes themselves it is
-    text."""
-    return contexts is None or contexts.kind != '"'
+    text, and so it is in a parameter expansion, ${x:-<<EOF}, which bash
+    reads whole as part of a word."""
+    return contexts is None or contexts.kind not in ('"', "${")
+
+
+def backquote_end(command, i):
+    """Where the backquoted span that opens at command[i] ends, past the `
+    that closes it (BACKQUOTED), or the end of the text where none does."""
+    match = BACKQUOTED.match(command, i)
+    return match.end() if match else len(command)
+
+
+def backquoted(command, i, depth):
+    """Where the scan goes on past the backquoted span at command[i], and
+    the bodies of the here-documents inside it, or None where command[i]
+    opens none. bash reads the span whole, to the first ` no backslash
+    escapes, so a ) or a newline inside it closes and starts nothing
+    outside (F25's third review: the ) of `case a in a) :;; esac` closed
+    the substitution around it), and then reads its text as a command of
+    its own, whose here-documents' bodies lie inside the span, as in
+    x=`cat <<EOF ... EOF`; so the text is scanned as one, a level deeper
+    (scan)."""
+    if command[i] != "`":
+        return None
+    match = BACKQUOTED.match(command, i)
+    end, inner = (match.end(), command[i + 1:match.end() - 1]) if match else (len(command), command[i + 1:])
+    found = scan(inner, depth=depth + 1)[0] if "<<" in inner else []
+    return end, [Body(body.start + i + 1, body.end + i + 1, body.runs) for body in found]
 
 
 def matching_parenthesis(command, open_at, memo):
     """Where the ) that closes the ( at command[open_at] stands, counting the
-    parentheses after it and stepping over a backslash pair and a quoted
-    span, as bash's parse_matched_pair does; None where none closes it.
-    Every ( the count meets outside quotes is matched in the same pass and
-    kept in memo, the match the count from it would find, so a text of many
-    (( that never close is read once and not once for each (F25)."""
+    parentheses after it and stepping over a backslash pair, a quoted span
+    and a backquoted one, and reading a ${ to the } that closes it, inside
+    which a ( or ) is text but for the ( of a $(, as bash's
+    parse_matched_pair does (F25's third review: the ) of ${y:-)} was
+    counted); None where none closes it. A # opens no comment here, since
+    parse_matched_pair counts the parentheses after one as it tells
+    arithmetic from a subshell: bash reads ((echo a #(, a newline and )))
+    as arithmetic. Every ( the count meets outside quotes is matched in the
+    same pass and kept in memo, the match the count from it would find, so
+    a text of many (( that never close is read once and not once for each
+    (F25)."""
     if open_at in memo:
         return memo[open_at]
-    opened, i = [open_at], open_at + 1
+    opened, i, after_dollar = [open_at], open_at + 1, False
     while i < len(command) and opened:
-        ch = command[i]
+        ch, dollar, after_dollar = command[i], after_dollar, False
+        in_braces = opened[-1] == BRACE
         if ch == "\\":
             i += 2
         elif ch in "'\"":
             i = quote_end(command, i) or len(command)
-        elif ch == "(" and i in memo:
-            if memo[i] is None:
-                break
-            i = memo[i] + 1
-        elif ch in "()":
-            if ch == "(":
-                opened.append(i)
+        elif ch == "`":
+            i = backquote_end(command, i)
+        elif ch == "{" and dollar:
+            opened.append(BRACE)
+            i += 1
+        elif ch == "}" and in_braces:
+            opened.pop()
+            i += 1
+        elif ch == "(" and (dollar or not in_braces):
+            if i in memo:
+                if memo[i] is None:
+                    break
+                i = memo[i] + 1
             else:
-                memo[opened.pop()] = i
+                opened.append(i)
+                i += 1
+        elif ch == ")" and not in_braces:
+            memo[opened.pop()] = i
             i += 1
         else:
+            after_dollar = ch == "$"
             i += 1
     for unmatched in opened:
-        memo[unmatched] = None
+        if unmatched != BRACE:
+            memo[unmatched] = None
     return memo[open_at]
 
 
@@ -625,20 +728,50 @@ class Step(NamedTuple):
     command_start: bool
 
 
+def expansion_step(command, i, contexts, memo):
+    """The step of the scan from command[i] where an expansion starts there,
+    in double quotes, a parameter expansion or neither, else None: an
+    arithmetic expansion jumped over, or a parameter expansion or a
+    substitution opened (F25's third review: a ) inside ${y:-)} closed the
+    substitution around it). The scan reads a backquoted span before any
+    step (backquoted)."""
+    end = arithmetic_end(command, i + 3, memo) if command.startswith("$((", i) else None
+    if end:
+        return Step(end, contexts, False, False)
+    if command.startswith("${", i):
+        return Step(i + 2, Context("${", contexts), False, False)
+    if command.startswith("$(", i):
+        return Step(i + 2, Context("$(", contexts), True, True)
+    return None
+
+
 def double_quoted_step(command, i, contexts, memo):
     """One step of the scan inside double quotes, from command[i]: a
-    backslash pair, the closing quote, an arithmetic expansion jumped over,
-    a substitution opened, or one character."""
+    backslash pair, the closing quote, an expansion (expansion_step), or
+    one character."""
     if command[i] == "\\":
         return Step(i + 2, contexts, False, False)
     if command[i] == '"':
         return Step(i + 1, contexts.outer, False, False)
-    end = arithmetic_end(command, i + 3, memo) if command.startswith("$((", i) else None
-    if end:
-        return Step(end, contexts, False, False)
-    if command.startswith("$(", i):
-        return Step(i + 2, Context("$(", contexts), True, True)
-    return Step(i + 1, contexts, False, False)
+    return expansion_step(command, i, contexts, memo) or Step(i + 1, contexts, False, False)
+
+
+def braced_step(command, i, contexts, memo):
+    """One step of the scan inside a parameter expansion, ${ }, from
+    command[i]: a backslash pair, a single-quoted span, which bash reads as
+    one there inside double quotes too, a double quote opened, an expansion
+    (expansion_step), the } that closes it, or one character, a ( or )
+    among them, as bash's parse_matched_pair reads it."""
+    ch = command[i]
+    if ch == "\\":
+        return Step(i + 2, contexts, False, False)
+    if ch == "'":
+        return Step(quote_end(command, i) or len(command), contexts, False, False)
+    if ch == '"':
+        return Step(i + 1, Context('"', contexts), False, False)
+    if ch == "}":
+        return Step(i + 1, contexts.outer, False, False)
+    return expansion_step(command, i, contexts, memo) or Step(i + 1, contexts, False, False)
 
 
 def is_word(command, i, word):
@@ -685,9 +818,10 @@ def unquoted_step(command, i, contexts, word_start, command_start, memo):
     """One step of the scan outside double quotes, at the top or inside a
     substitution, from command[i] (Step). A backslash pair, a single-quoted
     span, a comment and arithmetic, (( )) or $(( )), are jumped over, a
-    comment to its newline; a double quote and a substitution open a
-    context, a parenthesis inside a substitution one the ) after it closes,
-    and a case inside one is read as bash reads it (case_step)."""
+    comment to its newline; a double quote, a parameter expansion and a
+    substitution open a context (expansion_step), a parenthesis inside a
+    substitution one the ) after it closes, and a case inside one is read
+    as bash reads it (case_step)."""
     ch = command[i]
     if ch == "\\":
         return Step(i + 2, contexts, False, False)
@@ -696,14 +830,14 @@ def unquoted_step(command, i, contexts, word_start, command_start, memo):
     if ch == "#" and word_start:
         end = command.find("\n", i)
         return Step(len(command) if end == -1 else end, contexts, False, command_start)
-    end = (arithmetic_end(command, i + (3 if ch == "$" else 2), memo)
-           if command.startswith("((", i) or command.startswith("$((", i) else None)
+    end = arithmetic_end(command, i + 2, memo) if command.startswith("((", i) else None
     if end:
         return Step(end, contexts, False, False)
     if ch == '"':
         return Step(i + 1, Context('"', contexts), False, False)
-    if command.startswith("$(", i):
-        return Step(i + 2, Context("$(", contexts), True, True)
+    step = expansion_step(command, i, contexts, memo)
+    if step:
+        return step
     step = case_step(command, i, contexts, word_start, command_start) if contexts is not None else None
     if step:
         return step
@@ -719,10 +853,13 @@ def unquoted_step(command, i, contexts, word_start, command_start, memo):
 
 
 def scan_step(command, i, contexts, word_start, command_start, memo):
-    """One step of the scan from command[i], inside double quotes or outside
-    them (double_quoted_step, unquoted_step)."""
+    """One step of the scan from command[i], inside double quotes, a
+    parameter expansion or neither (double_quoted_step, braced_step,
+    unquoted_step)."""
     if contexts is not None and contexts.kind == '"':
         return double_quoted_step(command, i, contexts, memo)
+    if contexts is not None and contexts.kind == "${":
+        return braced_step(command, i, contexts, memo)
     return unquoted_step(command, i, contexts, word_start, command_start, memo)
 
 
@@ -744,7 +881,7 @@ def leave(pending, before, after):
         context = context.outer
 
 
-def scan(command, i=0, contexts=None, depth=0):
+def scan(command, i=0, contexts=None, depth=0, memo=None):
     """The bodies of the here-documents the scan meets in command from i,
     standing in contexts, in order, and where it stops: past the ) that
     closes the substitution it starts in, or at the end of the text. A body
@@ -755,15 +892,23 @@ def scan(command, i=0, contexts=None, depth=0):
     operator outside quotes and in a substitution, double-quoted or not
     (takes_here_document), and none in a <<< here-string, in arithmetic, in
     a comment or in a quoted span, which the scan steps over as the shell
-    reads them (scan_step). Each step takes the same time however deep the
-    scan stands, and each ( is matched once (matching_parenthesis), so the
-    scan takes a time in proportion to the text, times the depth its bodies
-    nest at (depth, MAX_NESTING)."""
+    reads them (scan_step), and a backquoted span is read whole, its own
+    here-documents told inside it (backquoted). Each step takes the same
+    time however deep the scan stands, and each ( is matched once
+    (matching_parenthesis) through
+    memo, kept for the text across every scan of it, so the scan takes a
+    time in proportion to the text, times the depth its bodies nest at
+    (depth, MAX_NESTING). A memo kept per scan, as until F25's third
+    review, matched a ( again in the scan of each substitution of an
+    expanded body, a time in the square of the body's length. The reading
+    stops where it runs past its deadline (in_time)."""
     if depth > MAX_NESTING:
         raise TooDeep()
     closes = contexts is not None
-    bodies, pending, memo, word_start, command_start = [], {}, {}, True, True
+    bodies, pending, word_start, command_start = [], {}, True, True
+    memo = {} if memo is None else memo
     while i < len(command):
+        in_time()
         if command[i] == "\n" and level(contexts) in pending:
             found = bodies_from(command, i + 1, pending.pop(level(contexts)), depth)
             bodies += found
@@ -772,6 +917,10 @@ def scan(command, i=0, contexts=None, depth=0):
             i, document = here_operator(command, i, contexts)
             if document:
                 pending.setdefault(document.within, []).append(document)
+            word_start = command_start = False
+        elif (span := backquoted(command, i, depth)) is not None:
+            i, inner = span
+            bodies += inner
             word_start = command_start = False
         else:
             before = contexts
@@ -793,16 +942,19 @@ def substitutions_in(command, start, end, depth=0):
     is kept of it is its text with its own here-documents' bodies cut out
     in turn (cut_out), since their quotes are text as well (F25: a body in
     a substitution in a body, whose apostrophe paired with one after the
-    push). A backslash keeps the $ after it, and $(( )) is arithmetic."""
+    push). A backslash keeps the $ after it, and $(( )) is arithmetic. One
+    memo serves every scan of the text, so each ( in it is matched once
+    (scan)."""
     text, found, memo, i = command[start:end], [], {}, 0
     while i < len(text):
+        in_time()
         arithmetic = arithmetic_end(text, i + 3, memo) if text.startswith("$((", i) else None
         if text[i] == "\\":
             i += 2
         elif arithmetic:
             i = arithmetic
         elif text.startswith("$(", i):
-            bodies, close = scan(text, i + 2, Context("$("), depth + 1)
+            bodies, close = scan(text, i + 2, Context("$("), depth + 1, memo)
             found.append(cut_out(text, bodies, i, close))
             i = close
         else:
@@ -952,8 +1104,11 @@ def parts_of(text):
     lexer = shlex.shlex(text, posix=True, punctuation_chars=True)
     lexer.whitespace_split = True
     lexer.commenters = ""
+    tokens = []
     try:
-        tokens = list(lexer)
+        for token in lexer:
+            in_time()
+            tokens.append(token)
     except ValueError:
         return []
     parts, current, eat_next, held = [], [], False, ""
@@ -1142,9 +1297,10 @@ def joined(place, path, physical=False):
     character no file name can hold, which expanduser refuses with
     ValueError (F21's third review: until then such a path raised, and the
     hook with it, and an absolute path after a place this module could not
-    tell was one it could not tell either). A logical path, the one cd
-    keeps, is normalised as the shell normalises it, a .. taking back the
-    step before it; a physical one, as git -C and env -C change directory,
+    tell was one it could not tell either), and when the path it names is
+    too long for the system to take in one call (PATH_MAX). A logical
+    path, the one cd keeps, is normalised as the shell normalises it, a ..
+    taking back the step before it; a physical one, as git -C and env -C change directory,
     is left as written for the system to resolve, since there a .. after a
     symbolic link climbs from where the link leads."""
     if EXPANDED & set(path) or SHELL_TILDE.match(path):
@@ -1159,7 +1315,8 @@ def joined(place, path, physical=False):
         if place is None:
             return None
         path = os.path.join(place, path)
-    return path if physical else os.path.normpath(path)
+    path = path if physical else os.path.normpath(path)
+    return None if len(path) >= PATH_MAX or len(path.encode("utf-8", "surrogatepass")) >= PATH_MAX else path
 
 
 def names_chdir(word):
@@ -1241,10 +1398,38 @@ def push_place(argv, here):
 
 # --- where the shell runs each command ------------------------------------------
 
+class Stacked:
+    """The directory stack after a pushd: the directory it stacked (top) on
+    the stack before it (below), () being the empty stack. A stack is
+    made by stacked alone, which makes one object of every stack of the
+    same entries, so a pushd, a popd and comparing two stacks each take the
+    same time however deep the stack is; a stack kept as a tuple took a
+    time in its depth for each, and a run of pushd one in the square of its
+    length (F25's third review: 29,000 of "pushd a;" took 68 seconds)."""
+
+    __slots__ = ("top", "below", "__weakref__")
+
+    def __init__(self, top, below):
+        self.top, self.below = top, below
+
+
+# Every stack made and still held, by its top and the stack below it.
+STACKS = weakref.WeakValueDictionary()
+
+
+def stacked(below, top):
+    """The stack of top on below (Stacked), one object for each."""
+    key = (top, below)
+    found = STACKS.get(key)
+    if found is None:
+        found = STACKS[key] = Stacked(top, below)
+    return found
+
+
 class Shell(NamedTuple):
     """Where a shell stands as it runs a command: its directory and the
-    directories pushd stacked, each None where this module cannot tell;
-    whether a cd, pushd or popd ran before, made or failed, after which
+    directories pushd stacked (Stacked), each None where this module cannot
+    tell; whether a cd, pushd or popd ran before, made or failed, after which
     this module cannot tell that the shell stands where it reads it
     (after_a_move); and whether a variable set alone or exported names the
     repository (GIT_REPOSITORY_VARIABLES), which holds wherever the shell
@@ -1327,7 +1512,7 @@ def pushd(shell, operands, is_directory):
         return Shell(None, None)
     if not moves:
         return Shell(shell.directory, None)
-    stack = None if shell.stack is None else shell.stack + (shell.directory,)
+    stack = None if shell.stack is None else stacked(shell.stack, shell.directory)
     return reached(shell, joined(shell.directory, words[0]), stack, is_directory)
 
 
@@ -1340,7 +1525,7 @@ def popd(shell, operands):
         return Shell(shell.directory, None)
     if operands or not shell.stack:
         return Shell(None, None)
-    return Shell(shell.stack[-1], shell.stack[:-1])
+    return Shell(shell.stack.top, shell.stack.below)
 
 
 # The words before a command that leave it run by the shell itself, so a
@@ -1417,6 +1602,7 @@ def placed_parts(parts, here, is_directory):
     placed, shell, opened, piped = [], Shell(here), [], False
     list_start = pipe_start = shell
     for part in parts:
+        in_time()
         if isinstance(part, list):
             placed.append((part, shell))
             shell = moved_to(part, shell, is_directory)
@@ -1565,7 +1751,9 @@ def refused_push(command, here, branches_of=None, reader_of=None, is_directory=N
     so a command this module read before that fix is refused as it was; a
     command whose bodies nest deeper than MAX_NESTING, or one longer than
     MAX_COMMAND, is refused unread (TOO_DEEP, TOO_LONG), since a hook that
-    ran out of time would pass it."""
+    ran out of time would pass it, and so is one whose reading runs past
+    READING_SECONDS (TOO_SLOW). The deadline holds the reading alone: the
+    git calls that judge a push have timeouts of their own (git_line)."""
     branches_of = branches_of or branches
     reader_of = reader_of or claim_file_reader
     asked = {}
@@ -1577,10 +1765,15 @@ def refused_push(command, here, branches_of=None, reader_of=None, is_directory=N
 
     if len(command) > MAX_COMMAND:
         return TOO_LONG
+    deadline = DEADLINE.set(clock() + READING_SECONDS)
     try:
         placed = placed_commands(command, here, is_directory or os.path.isdir)
     except TooDeep:
         return TOO_DEEP
+    except TooSlow:
+        return TOO_SLOW
+    finally:
+        DEADLINE.reset(deadline)
     for argv, shell in placed:
         args = push_arguments(argv)
         if args is None:

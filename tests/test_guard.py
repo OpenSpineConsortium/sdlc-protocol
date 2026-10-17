@@ -32,6 +32,8 @@ TOO_DEEP = ("a command whose here-documents nest in command substitutions more t
             "(.claude/rules/board.md)")
 TOO_LONG = ("a command of more than 262144 characters is refused unread: the guard would take longer to read it "
             "than a hook may run; write the text to a file first (.claude/rules/board.md)")
+TOO_SLOW = ("a command the guard cannot read in 10 seconds is refused unread: a hook that runs out of time lets "
+            "the command run; write the text to a file first (.claude/rules/board.md)")
 BOARD = "a push to board is refused: only the board workflow writes that branch (.claude/rules/board.md)"
 
 
@@ -702,6 +704,58 @@ class ReadingTest(unittest.TestCase):
         self.assertEqual(body_texts(command), ["Don't\nEOF\n", "It's\nEOF"])
         self.assertEqual(self.run_guard(command), (2, MAIN))
 
+    def test_a_parameter_expansion_and_a_backquoted_span_close_no_substitution(self):
+        """bash reads ${...} and `...` whole, as parse_matched_pair does, so
+        a ) inside one closes no substitution around it; until the fix of
+        F25's third review the guard closed the substitution there, read
+        the << after it as text inside double quotes and told no body, as
+        on main before F25's fix."""
+        for inner in ("${y:-)}", "${y#)}", "${y//)/b}", "`case a in a) :;; esac`", '${y:-"}"}', "${y:-')'}",
+                      "${y:-$(echo ))}", '"`echo "a"`"', "${y:-`echo )`}"):
+            command = f'x="$(echo {inner} ; cat <<EOF\nsay "hi\nEOF\n)"\ngit push origin main # "'
+            with self.subTest(inner=inner):
+                self.assertEqual(body_texts(command), ['say "hi\nEOF\n'])
+                self.assertEqual(self.run_guard(command), (2, MAIN))
+        self.assertEqual(body_texts("echo ${x:-<<EOF}\nls"), [], "a << inside ${ } is text")
+        self.assertEqual(body_texts("cat <<EOF ${x:-\n}\nIt's\nEOF\nls"), ["It's\nEOF\n"],
+                         "a newline inside ${ } starts no body")
+        self.assertEqual(body_texts("cat <<EOF `echo\n`\nIt's\nEOF\nls"), ["It's\nEOF\n"],
+                         "nor one inside backquotes")
+        self.assertIsNone(guard.arithmetic_end("((echo ${x:-)}); x", 2))
+        self.assertIsNone(guard.arithmetic_end("((echo `echo )`); x", 2))
+        self.assertEqual(guard.arithmetic_end("(( ${x:-)} + $(echo 1) ))", 2), 25)
+        command = 'x="$(echo ${y:-)} ; cat <<EOF\nsay "hi\nEOF\n)"\ngit push origin main # "'
+        step = guard.expansion_step
+
+        def braces_as_text(command, i, *rest):
+            return None if command.startswith("${", i) else step(command, i, *rest)
+
+        with mock.patch.object(guard, "expansion_step", braces_as_text):
+            self.assertEqual(self.run_guard(command), (0, ""), "as built until the fix")
+        with mock.patch.object(guard, "backquoted", lambda command, i, depth: None):
+            self.assertEqual(self.run_guard(command.replace("${y:-)}", "`case a in a) :;; esac`")), (0, ""),
+                             "as built until the fix")
+
+    def test_a_backquoted_span_holds_its_own_here_documents(self):
+        """bash reads a backquoted span to its closing ` and then its text
+        as a command, so a here-document opened inside one has its body
+        inside it, told as any other; reading the span as text alone, as
+        the fix of F25's third review first did, told none, and the body's
+        apostrophe paired with one after the push."""
+        command = "x=`cat <<EOF\nit's\nEOF\n`\ngit push origin main # '"
+        self.assertEqual(body_texts(command), ["it's\nEOF\n"])
+        self.assertEqual(self.run_guard(command), (2, MAIN))
+        self.assertEqual(body_texts('echo "`cat <<\'X\'\nDon\'t\nX\n`" `echo`'), ["Don't\nX\n"])
+
+    def test_a_comment_in_arithmetic_counts_its_parentheses_as_bash_does(self):
+        """bash's parse_matched_pair counts the parentheses after a # as it
+        tells arithmetic from a subshell: it reads ((echo a #(, a newline
+        and ))) as arithmetic, and (( 1 #(, a newline and )) as a subshell
+        in a subshell, so the guard counts them too, where the scan, once
+        it reads a subshell, skips the comment as bash's parser does."""
+        self.assertEqual(guard.arithmetic_end("((echo a #(\n)))", 2), 15)
+        self.assertIsNone(guard.arithmetic_end("(( 1 #(\n))", 2))
+
     def test_the_reading_takes_time_in_proportion_to_the_command(self):
         """A hook that runs out of time passes the command, so no long
         command may take the reading long: until the fix of F25's second
@@ -713,11 +767,54 @@ class ReadingTest(unittest.TestCase):
                         "cat <<A\nA\necho \"" + "$((" * 16000, "cat <<A\nA\n" + "\"$( " * 16000,
                         "cat <<EOF\n" + "a\\\n" * 20000, "x=$(" + "case a in a) " * 4000,
                         "cat <<EOF\n" + "$(cat <<EOF\n" * guard.MAX_NESTING + "x'y\n" * 16000,
-                        "cat " + "<<A " * 8000 + "\n" + "A\n" * 8000, "((\"((" * 20000):
+                        "cat " + "<<A " * 8000 + "\n" + "A\n" * 8000, "((\"((" * 20000,
+                        self.at_full_size("cat <<EOF\n", "$( (( #((((\n)))\n", "EOF"),
+                        self.at_full_size("x=\"$(", "${y:-)} `)` ", ""), self.at_full_size("", "${" * 2 + "$(", "")):
             with self.subTest(command=command[:40]):
                 started = time.monotonic()
                 self.assertEqual(self.run_guard(command + push)[0], 2)
                 self.assertLess(time.monotonic() - started, 2.0)
+
+    @staticmethod
+    def at_full_size(head, unit, tail):
+        """head, as many units as fit and tail: a command as long as the
+        guard reads once the timing test adds its push line."""
+        room = guard.MAX_COMMAND - len(head) - len(tail) - len("\ngit push origin main")
+        return head + unit * (room // len(unit)) + tail
+
+    def test_a_long_run_of_moves_takes_time_in_proportion_to_it(self):
+        """cd and pushd joined ever longer paths, and pushd stacked onto
+        ever longer tuples, a time in the square of the run (F25's third
+        review: 29,000 of "pushd a;" took 68 seconds and 43,000 of "cd a;"
+        16), where a hook that runs out of time passes the command: a path
+        too long for the system is one the guard cannot tell, and a stack
+        is one object per entry."""
+        self.assertIsNone(guard.joined("/w", "a/" * 2048), "longer than the system takes")
+        self.assertIsNone(guard.joined("/w", "\u00e9" * 2047), "counted in bytes")
+        self.assertEqual(guard.joined("/w", "a/" * 2045), "/w/" + "a/" * 2044 + "a")
+        self.assertIs(guard.stacked(guard.stacked((), "/a"), "/b"), guard.stacked(guard.stacked((), "/a"), "/b"))
+        self.assertEqual(push_places("pushd /a; pushd /b; popd; git push origin main; popd; git push origin main"),
+                         ["/a", "/w/s"])
+        push = "git push origin main"
+        for unit in ("pushd a;", "cd a;", "pushd a; popd;", "pushd -n a;", "pushd a;cd ..;"):
+            command = unit * ((guard.MAX_COMMAND - len(push)) // len(unit)) + push
+            with self.subTest(unit=unit):
+                started = time.monotonic()
+                self.assertEqual(guard.refused_push(command, "/w", lambda place: ("claude/7", "main"),
+                                                    lambda place: None, lambda place: True), MAIN)
+                self.assertLess(time.monotonic() - started, 3.0)
+
+    def test_a_reading_past_its_deadline_is_refused_unread(self):
+        """Claude Code reads a hook that runs out of time as no objection,
+        so a reading that runs past READING_SECONDS refuses the command,
+        never passes it; the deadline holds only while a command is read."""
+        ticks = iter(range(0, 10 ** 6, 4))
+        with mock.patch.object(guard, "clock", lambda: next(ticks)):
+            self.assertEqual(self.run_guard("cd a; cd b; git push -u origin claude/7"), (2, TOO_SLOW))
+        self.assertIsNone(guard.DEADLINE.get())
+        with mock.patch.object(guard, "clock", lambda: 0):
+            self.assertEqual(self.run_guard("cd a; cd b; git push -u origin claude/7"), (0, ""))
+        self.assertEqual(self.run_guard("echo push"), (0, ""), "no push read past the deadline")
 
     def test_a_command_too_long_to_read_in_time_is_refused_unread(self):
         """shlex builds a word a character at a time, in a time that grows
