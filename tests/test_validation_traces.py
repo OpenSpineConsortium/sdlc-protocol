@@ -165,7 +165,16 @@ BUDGET_SECONDS = 10
 # body a line E and a backslash, then one OF, ends, taken once an
 # expanded body's backslash-newline is kept; and step 8, between the
 # here-documents of two ((cd .); ...) subshells, taken once every (( is
-# read as arithmetic. Its step 1, after a body with an apostrophe, is the
+# read as arithmetic; and, since its second review, step 9, between two
+# bodies whose substitutions close on their operators' own lines, taken
+# once such a body waits for a newline in the substitution that closed;
+# step 10, after a body whose substitution holds a body of its own with an
+# apostrophe, taken once an expanded body's substitution is kept with its
+# own bodies; step 11, between two double-quoted substitutions whose case
+# patterns hold here-documents, taken once a pattern's ) closes its
+# substitution; and step 12, between the bodies of ((echo "))"); ...) and a
+# later one, taken once arithmetic's parentheses are counted inside
+# quotes. Its step 1, after a body with an apostrophe, is the
 # finding's first shape, which both of the fix's readings read, so no one
 # mutant takes it.
 UNDONE = {
@@ -238,7 +247,11 @@ UNDONE = {
             ("an expanded body's substitutions cut out with it", 5, "G11a"),
             ("a body in a substitution ended only by its delimiter's own line", 6, "G11a"),
             ("an expanded body's backslash-newline kept", 7, "G11a"),
-            ("every double parenthesis read as arithmetic", 8, "G11a")],
+            ("every double parenthesis read as arithmetic", 8, "G11a"),
+            ("a body that waits for a newline in the substitution that closed", 9, "G11a"),
+            ("an expanded body's substitution kept with its own bodies", 10, "G11a"),
+            ("a case pattern's parenthesis closing its substitution", 11, "G11a"),
+            ("arithmetic's parentheses counted inside quotes", 12, "G11a")],
 }
 # The findings with a trace, every one settled since F25's fix: F1, F3,
 # F5, F6, F10 and F11 fixed in 0.4.1; F2, F4, F7, F8, F9, F12, F13, F14,

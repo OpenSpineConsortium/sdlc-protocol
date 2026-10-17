@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -26,6 +27,11 @@ PLUS = ("a + before a refspec forces that ref as --force does, and git lets it o
         "one forced push the protocol allows is --force-with-lease on your own claude/ branch after a rebase, with "
         "no + (.claude/rules/board.md)")
 MAIN = "a push to main is refused: the default branch takes only pull requests (.claude/rules/board.md)"
+TOO_DEEP = ("a command whose here-documents nest in command substitutions more than 16 deep is refused: the "
+            "guard cannot read it to tell which of its lines run; write the text to a file first "
+            "(.claude/rules/board.md)")
+TOO_LONG = ("a command of more than 262144 characters is refused unread: the guard would take longer to read it "
+            "than a hook may run; write the text to a file first (.claude/rules/board.md)")
 BOARD = "a push to board is refused: only the board workflow writes that branch (.claude/rules/board.md)"
 
 
@@ -608,6 +614,120 @@ class ReadingTest(unittest.TestCase):
         self.assertEqual(guard.arithmetic_end("((1))", 2), 5)
         self.assertIsNone(guard.arithmetic_end("((a) )", 2))
         self.assertIsNone(guard.arithmetic_end("((a", 2))
+
+    def test_a_body_whose_substitution_closes_on_its_line_starts_after_it(self):
+        """bash reads the body of a here-document whose substitution, or the
+        double quotes around it, closes on the operator's own line from the
+        next newline it reads outside them, with a warning; until the fix of
+        F25's second review the guard waited for a newline inside the
+        substitution, told no body, and passed the push between two such
+        bodies."""
+        for command, bodies in (("x=$(cat <<'EOF')\nDon't\nEOF\nls", ["Don't\nEOF\n"]),
+                                ("x=\"$(cat <<'EOF')\"\nDon't\nEOF\nls", ["Don't\nEOF\n"]),
+                                ("x=$(cat <<'EOF'; echo a)\nDon't\nEOF\nls", ["Don't\nEOF\n"]),
+                                ("x=$( (cat <<'EOF') )\nDon't\nEOF\nls", ["Don't\nEOF\n"]),
+                                ("cat <<A $(cat <<B)\na\nA\nb\nB\nls", ["a\nA\n", "b\nB\n"]),
+                                ("x=\"$(cat <<'A')\nbody\nA\n\"\nls", ["body\nA\n"])):
+            with self.subTest(command=command):
+                self.assertEqual(body_texts(command), bodies)
+        for command in ("x=$(cat <<'EOF')\nDon't\nEOF\ngit push origin main\ny=$(cat <<'EOF')\nIt's\nEOF",
+                        "x=\"$(cat <<'EOF')\"\nDon't\nEOF\ngit push origin main\ny=\"$(cat <<'EOF')\"\nIt's\nEOF",
+                        "x=$(cat <<'EOF'; echo a)\nDon't\nEOF\ngit push origin main\ny=$(cat <<'EOF')\nIt's\nEOF"):
+            with self.subTest(command=command):
+                self.assertEqual(self.run_guard(command), (2, MAIN))
+                with mock.patch.object(guard, "leave", lambda pending, before, after: None):
+                    self.assertEqual(self.run_guard(command), (0, ""), "as built until the fix")
+
+    def test_a_substitution_in_an_expanded_body_loses_its_own_bodies(self):
+        """What the shell runs of a body it expands is read with the bodies
+        of its own here-documents cut out in turn, since their quotes are
+        text too; until the fix of F25's second review their apostrophes
+        were kept, and one paired with an apostrophe after the push."""
+        self.assertEqual([body.runs for body in guard.here_document_bodies(
+            "cat <<EOF\n$(cat <<'X'\nDon't\nX\n) and $(cat <<X\n$(git push origin main) it's\nX\n)\nEOF")],
+            [("$(cat <<'X'\n)", "$(cat <<X\n$(git push origin main)\n)")])
+        command = "cat <<EOF\n$(cat <<'X'\nDon't\nX\n)\nEOF\ngit push origin main\ncat <<'EOF'\nIt's\nEOF"
+        self.assertEqual(guard.readings(command)[1],
+                         "cat <<EOF ; $(cat <<'X' ; ) ; git push origin main ; cat <<'EOF' ; ")
+        self.assertEqual(self.run_guard(command), (2, MAIN))
+
+    def test_bodies_nested_deeper_than_the_guard_reads_are_refused_unread(self):
+        """Each here-document in a substitution of a body the shell expands
+        is read again inside the one around it, so the depth is bounded: a
+        command nested deeper is refused, never passed, and one at the
+        bound is read."""
+        def nested(depth):
+            return "cat <<EOF\n" + "$(cat <<EOF\n" * depth + "x\n"
+
+        guard.here_document_bodies(nested(guard.MAX_NESTING))
+        with self.assertRaises(guard.TooDeep):
+            guard.here_document_bodies(nested(guard.MAX_NESTING + 1))
+        self.assertEqual(self.run_guard(nested(guard.MAX_NESTING + 1) + "git push -u origin claude/7"),
+                         (2, TOO_DEEP))
+        self.assertEqual(self.run_guard(nested(guard.MAX_NESTING) + "git push -u origin claude/7"), (0, ""))
+        self.assertEqual(self.run_guard(nested(guard.MAX_NESTING + 1)), (0, ""), "no push, no reading")
+
+    def test_a_case_patterns_parenthesis_closes_no_substitution(self):
+        """bash reads a case command inside a substitution so that a
+        pattern's ) closes nothing; until the fix of F25's second review
+        the guard closed the substitution there, read the << after it as
+        text inside double quotes and told no body."""
+        for command, bodies in (
+                ("x=\"$(case a in a) cat <<'EOF'\nSay \"hi\nEOF\n;; esac)\"\nls", ["Say \"hi\nEOF\n"]),
+                ("x=\"$(case a in (a|b) cat <<'EOF'\nhi\nEOF\n;& c) echo;; esac)\"\nls", ["hi\nEOF\n"]),
+                ("x=\"$(case a in b) ;; a) cat <<'EOF'\nhi\nEOF\n;;& *) ;; esac)\"\nls", ["hi\nEOF\n"]),
+                ("x=\"$(case $(echo a) in \"a\") cat <<'EOF'\nhi\nEOF\nesac)\"\nls", ["hi\nEOF\n"]),
+                ("x=\"$(if true; then case a in a) cat <<'EOF'\nhi\nEOF\n;; esac; fi)\"\nls", ["hi\nEOF\n"]),
+                ("x=\"$(case a in\na) (cat <<'EOF'\nhi\nEOF\n) ;;\nesac)\"\nls", ["hi\nEOF\n"]),
+                ("x=\"$(echo case a; cat <<'EOF'\nhi\nEOF\n)\"\nls", ["hi\nEOF\n"])):
+            with self.subTest(command=command):
+                self.assertEqual(body_texts(command), bodies)
+        command = ("x=\"$(case a in a) cat <<'EOF'\nSay \"hi\nEOF\n;; esac)\"\ngit push origin main\n"
+                   "y=\"$(case a in a) cat <<'EOF'\nSay \"bye\nEOF\n;; esac)\"")
+        self.assertEqual(self.run_guard(command), (2, MAIN))
+        with mock.patch.object(guard, "case_step", lambda *step: None):
+            self.assertEqual(self.run_guard(command), (0, ""), "as built until the fix")
+
+    def test_arithmetic_counts_its_parentheses_past_quotes(self):
+        """bash counts the parentheses of (( past quotes and backslash
+        pairs, so ((echo "))"); ...) is a subshell in a subshell whose
+        bodies it reads; until the fix of F25's second review the guard
+        counted the quoted ones and read it as arithmetic."""
+        self.assertIsNone(guard.arithmetic_end("((echo \"))\"); x", 2))
+        self.assertIsNone(guard.arithmetic_end("((echo ')'); x", 2))
+        self.assertIsNone(guard.arithmetic_end("((echo \\)); x", 2))
+        self.assertEqual(guard.arithmetic_end("(( a == ')' ))", 2), 14)
+        self.assertIsNone(guard.arithmetic_end("((a \"b))", 2), "a quote that never closes closes nothing")
+        command = "((echo \"))\"); cat <<'EOF'\nDon't\nEOF\n)\ngit push origin main\ncat <<'EOF'\nIt's\nEOF"
+        self.assertEqual(body_texts(command), ["Don't\nEOF\n", "It's\nEOF"])
+        self.assertEqual(self.run_guard(command), (2, MAIN))
+
+    def test_the_reading_takes_time_in_proportion_to_the_command(self):
+        """A hook that runs out of time passes the command, so no long
+        command may take the reading long: until the fix of F25's second
+        review an unmatched (( or $(( was counted to the end of the text
+        once for each, 55 seconds for the first of these; each now takes
+        well under the bound, generous for a slow runner."""
+        push = "\ngit push origin main"
+        for command in ("cat <<A\nA\n" + "(( " * 16000, "cat <<EOF\n" + "$((" * 8000,
+                        "cat <<A\nA\necho \"" + "$((" * 16000, "cat <<A\nA\n" + "\"$( " * 16000,
+                        "cat <<EOF\n" + "a\\\n" * 20000, "x=$(" + "case a in a) " * 4000,
+                        "cat <<EOF\n" + "$(cat <<EOF\n" * guard.MAX_NESTING + "x'y\n" * 16000,
+                        "cat " + "<<A " * 8000 + "\n" + "A\n" * 8000, "((\"((" * 20000):
+            with self.subTest(command=command[:40]):
+                started = time.monotonic()
+                self.assertEqual(self.run_guard(command + push)[0], 2)
+                self.assertLess(time.monotonic() - started, 2.0)
+
+    def test_a_command_too_long_to_read_in_time_is_refused_unread(self):
+        """shlex builds a word a character at a time, in a time that grows
+        with the square of its length, so a command longer than the bound
+        is refused at once, never passed, and one at the bound is read."""
+        at_bound = "git push -u origin claude/7 " + "a" * (guard.MAX_COMMAND - 28)
+        self.assertEqual(len(at_bound), guard.MAX_COMMAND)
+        self.assertEqual(self.run_guard(at_bound), (0, ""))
+        self.assertEqual(self.run_guard(at_bound + "a"), (2, TOO_LONG))
+        self.assertEqual(self.run_guard("echo " + "a" * guard.MAX_COMMAND), (0, ""), "no push, no reading")
 
     def test_the_command_is_read_whole_and_with_its_bodies_cut_out(self):
         self.assertEqual(guard.readings("git push origin main"), ["git push origin main"])

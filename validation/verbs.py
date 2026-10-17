@@ -97,7 +97,13 @@ CLONES = "/clones"
 # substitution that a line EOF)" ends, as bash 5.2 ends one, after a body
 # that a line E and a backslash, then one OF, ends, as bash joins them, and
 # between the here-documents of two subshells in subshells written ((cd .);
-# ...), which bash reads as no arithmetic.
+# ...), which bash reads as no arithmetic; and, since F25's second review,
+# between two bodies whose substitutions close on their operators' own
+# lines, after a body whose substitution in an expanded body holds an
+# apostrophe in its own body, between two double-quoted substitutions
+# whose case patterns hold here-documents, and between the bodies of
+# ((echo "))"); ...), whose quoted parentheses bash does not count, and a
+# later one.
 ELSEWHERE = {"-C": "git -C ../{clone} {push}", "cd": "cd ../{clone} && git {push}",
              "missing": "cd ../{clone}; cd ../{absent}; git {push}",
              "body": "cat > /dev/null <<'EOF'\ncd ..\nEOF\ngit {push}",
@@ -115,10 +121,16 @@ ELSEWHERE = {"-C": "git -C ../{clone} {push}", "cd": "cd ../{clone} && git {push
              "joined": "cat <<EOF\nDon't\nE\\\nOF\ngit {push}\ncat <<'EOF'\nIt's\nEOF",
              "subshells": ("((cd .); cat <<'EOF'\nDon't\nEOF\n)\ngit {push}\n"
                            "((cd .); cat <<'EOF'\nIt's\nEOF\n)"),
+             "closed-substitution": "x=$(cat <<'EOF')\nDon't\nEOF\ngit {push}\ny=$(cat <<'EOF')\nIt's\nEOF",
+             "nested-body": "cat <<EOF\n$(cat <<'X'\nDon't\nX\n)\nEOF\ngit {push}\ncat <<'EOF'\nIt's\nEOF",
+             "case-pattern": ('x="$(case a in a) cat <<\'EOF\'\nSay "hi\nEOF\n;; esac)"\ngit {push}\n'
+                              'y="$(case a in a) cat <<\'EOF\'\nSay "bye\nEOF\n;; esac)"'),
+             "quoted-arithmetic": "((echo \"))\"); cat <<'EOF'\nDon't\nEOF\n)\ngit {push}\ncat <<'EOF'\nIt's\nEOF",
              "env": "env --ch ../{clone} git {push}"}
 # The ways whose push runs in the worker's own clone (leasing_clone).
 FROM_OWN_CLONE = ("body", "expanded", "skipped", "exported", "home", "apostrophe", "unclosed", "paired",
-                  "quoted-substitution", "body-substitution", "closing-line", "joined", "subshells")
+                  "quoted-substitution", "body-substitution", "closing-line", "joined", "subshells",
+                  "closed-substitution", "nested-body", "case-pattern", "quoted-arithmetic")
 
 # A read of the activity with no type named: the read of the push that set
 # a claim's head (github.read_push), told from the reads of a

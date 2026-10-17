@@ -110,6 +110,10 @@ TRACES = {
     "a body in a substitution ended only by its delimiter's own line": "the regression traces",
     "an expanded body's backslash-newline kept": "the regression traces",
     "every double parenthesis read as arithmetic": "the regression traces",
+    "a body that waits for a newline in the substitution that closed": "the regression traces",
+    "an expanded body's substitution kept with its own bodies": "the regression traces",
+    "a case pattern's parenthesis closing its substitution": "the regression traces",
+    "arithmetic's parentheses counted inside quotes": "the regression traces",
     "dealing without its taken set": "dealing at every look",
     "each leg dealt from its own look": "the regression traces",
     "given to workers needing the label todo": "the regression traces",
@@ -336,9 +340,13 @@ class TheLane(unittest.TestCase):
         read as text, an expanded body's substitutions cut out with it, a
         body in a substitution ended only by its delimiter's own line, an
         expanded body's backslash-newline kept and every double parenthesis
-        read as arithmetic, 144."""
+        read as arithmetic, 144; and its second review four: a body that
+        waits for a newline in the substitution that closed, an expanded
+        body's substitution kept with its own bodies, a case pattern's
+        parenthesis closing its substitution and arithmetic's parentheses
+        counted inside quotes, 148."""
         self.assertTrue(10 <= len(mutants.MUTANTS) <= 150)
-        self.assertEqual(len(mutants.MUTANTS), 144)
+        self.assertEqual(len(mutants.MUTANTS), 148)
         self.assertEqual(sorted(TRACES), sorted(mutants.MUTANTS))
 
     def test_every_mutant_names_a_rule_the_library_still_has(self):
