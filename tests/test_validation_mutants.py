@@ -100,11 +100,11 @@ TRACES = {
     "a relative -C after a move judged where it names alone": "the regression traces",
     "GIT_DIR forgotten once an absolute path names a place": "the regression traces",
     "a -C by ~ judged where it names alone": "the regression traces",
-    # F22's eight: a reopened issue freed, or left, as its claim branch, a
-    # released branch and when its release came, a ready pull request and
-    # the run's order say; F22's trace, the first lane, is their catcher,
-    # and the two searches F22's review added, which reopen an issue,
-    # catch each of them too (ReopenSearches).
+    # F22's nine: a reopened issue freed, or left, as its claim branch, a
+    # released branch, when its release came and when claimed went on, a
+    # ready pull request and the run's order say; F22's trace, the first
+    # lane, is their catcher, and the two searches F22's review added,
+    # which reopen an issue, catch each of them too (ReopenSearches).
     "a reopened issue left as it is": "the regression traces",
     "todo put on last": "the regression traces",
     "a ready pull request's in-review taken off": "the regression traces",
@@ -113,6 +113,7 @@ TRACES = {
     "the releases due read before the freeing": "the regression traces",
     "a released branch not read for a reopened issue": "the regression traces",
     "a release before the last close read as an undo": "the regression traces",
+    "claimed put back after the close read as the ended claim's": "the regression traces",
     "dealing without its taken set": "dealing at every look",
     "each leg dealt from its own look": "the regression traces",
     "given to workers needing the label todo": "the regression traces",
@@ -335,10 +336,12 @@ class TheLane(unittest.TestCase):
         ready pull request's in-review taken off, a claim branch and a
         released branch not read for a reopened issue, in-review left on
         where a branch stands, and the releases due read before the
-        freeing, 141 within that bound, and its review one, a release
-        before the issue's last close read as an undo, 142."""
+        freeing, 141 within that bound, its review one, a release
+        before the issue's last close read as an undo, 142, and its second
+        review one, claimed put back after the close read as the ended
+        claim's, 143."""
         self.assertTrue(10 <= len(mutants.MUTANTS) <= 150)
-        self.assertEqual(len(mutants.MUTANTS), 142)
+        self.assertEqual(len(mutants.MUTANTS), 143)
         self.assertEqual(sorted(TRACES), sorted(mutants.MUTANTS))
 
     def test_every_mutant_names_a_rule_the_library_still_has(self):
@@ -574,13 +577,16 @@ class TheSearchesCatchWhatTheyWereAddedFor(unittest.TestCase):
                 self.assertIn(mutant.guarantee, {g for g, _ in mutants.violations(search)})
 
     def test_the_searches_that_reopen_an_issue_catch_every_mutant_of_f22_s_fix(self):
-        """The lane credits F22's eight mutants to F22's trace, so the two
+        """The lane credits F22's nine mutants to F22's trace, so the two
         searches F22's review added, the only ones with the scope's reopens
-        on, are held here to all eight: together they find nothing on the
+        on, are held here to all nine: together they find nothing on the
         library, and the violation each mutant names. The first, from a
         release and a later claim ready for review, is the one that would
         have found the review's first finding, a released branch an
-        earlier claim left before the close read as a release undone."""
+        earlier claim left before the close read as a release undone; the
+        second, since F22's second review from a release before a close
+        and reopen by hand, the one that finds that review's first, claimed
+        put back after the close read as the ended claim's."""
         searches = [s for s in mutants.SEARCHES if s.scope.reopens]
         self.assertEqual([s.name for s in searches], ["a reopened issue after a release and a later claim",
                                                       "a release undone on a reopened issue"])

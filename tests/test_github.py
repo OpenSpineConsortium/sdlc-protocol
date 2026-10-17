@@ -2706,12 +2706,14 @@ class EndedReleases(unittest.TestCase):
               "created_at": "2026-09-11T00:00:00Z"}, {"event": "closed", "created_at": "2026-09-19T00:00:00Z"},
               {"event": "labeled", "created_at": "2026-09-30T00:00:00Z"}]
 
-    def ended(self, comments, events=None, issue=None, branches=(), kept=("released/12-aaaaaaa",)):
+    def ended(self, comments, events=None, issue=None, branches=(), kept=("released/12-aaaaaaa",), extra=None,
+              permissions=False):
         answers = {EVENTS_12: events if isinstance(events, Refusal) else FakeAnswer(self.CLOSED if events is None
                                                                                    else events),
-                   COMMENTS_12: comments if isinstance(comments, Refusal) else FakeAnswer(comments)}
+                   COMMENTS_12: comments if isinstance(comments, Refusal) else FakeAnswer(comments)} | (extra or {})
         api, opener = client(answers)
-        found = github.ended_releases(api, [issue or self.ISSUE], list(branches), list(kept), lambda login: False)
+        answer = github.permissions(api) if permissions else (lambda login: False)
+        found = github.ended_releases(api, [issue or self.ISSUE], list(branches), list(kept), answer)
         return found, asked(opener)
 
     def test_a_release_before_the_last_close_is_ended_and_one_after_it_is_not(self):
@@ -2724,6 +2726,57 @@ class EndedReleases(unittest.TestCase):
         stranger = dict(release_comment("2026-09-20T00:00:00Z"), user={"login": "sam"})
         self.assertEqual(self.ended([release_comment("2026-09-18T00:00:00Z"), stranger])[0], ["12"],
                          "a release comment by an author nobody vouches for counts for nothing")
+
+    def test_claimed_put_on_after_the_last_close_is_a_release_being_undone(self):
+        """F22's second review: a's claim released on 09-18, #12 closed by
+        hand on 09-19 with no claim between and reopened on 09-20, and a
+        person following the release's note puts claimed back on 09-21.
+        The release came before the close, but claimed came after it,
+        which no claim made since does without its claim branch, so the
+        released branch is a release being undone; the comments are not
+        read, since nothing in them could end it."""
+        undone = [{"event": "closed", "created_at": "2026-09-19T00:00:00Z"},
+                  {"event": "reopened", "created_at": "2026-09-20T00:00:00Z"},
+                  {"event": "labeled", "label": {"name": "claimed"}, "created_at": "2026-09-21T00:00:00Z"}]
+        issue = dict(self.ISSUE, labels=[{"name": "claimed"}, {"name": "todo"}])
+        self.assertEqual(self.ended([release_comment("2026-09-18T00:00:00Z")], events=undone, issue=issue),
+                         ([], ["GET " + EVENTS_12]))
+        same_second = [{"event": "closed", "created_at": "2026-09-19T00:00:00Z"},
+                       {"event": "labeled", "label": {"name": "claimed"}, "created_at": "2026-09-19T00:00:00Z"}]
+        self.assertEqual(self.ended([release_comment("2026-09-18T00:00:00Z")], events=same_second)[0], [],
+                         "a label listed after the close in the same second came after it")
+
+    def test_claimed_that_came_through_the_close_is_the_ended_claims(self):
+        """The first review's stuck case still frees: b put claimed on
+        before the close that ended b's claim, and claimed coming off and
+        going on again before it changes nothing."""
+        through = [{"event": "labeled", "label": {"name": "claimed"}, "created_at": "2026-09-17T00:00:00Z"},
+                   {"event": "unlabeled", "label": {"name": "claimed"}, "created_at": "2026-09-18T00:00:00Z"},
+                   {"event": "labeled", "label": {"name": "claimed"}, "created_at": "2026-09-18T06:00:00Z"},
+                   {"event": "closed", "created_at": "2026-09-19T00:00:00Z"},
+                   {"event": "reopened", "created_at": "2026-09-20T00:00:00Z"},
+                   {"event": "labeled", "label": {"name": "in-review"}, "created_at": "2026-09-21T00:00:00Z"}]
+        self.assertEqual(self.ended([release_comment("2026-09-18T00:00:00Z")], events=through)[0], ["12"])
+
+    def test_a_release_after_the_close_by_an_author_github_will_not_say_may_write_leaves_the_issue_out(self):
+        """F22's second review: a writer's release by hand after the close,
+        whom GitHub shows as a contributor, with the permission read
+        refused, is not taken for a stranger's, which would free the issue
+        wholly on a guess; the issue is left out this run, as for a refused
+        read. Where GitHub answers, the answer decides."""
+        by_hand = {"body": "<!-- sdlc-coordinator: claim-released -->\nReleased.", "created_at": "2026-09-20T00:00:00Z",
+                   "user": {"login": "alice"}, "author_association": "CONTRIBUTOR"}
+        permission = "/repos/o/r/collaborators/alice/permission"
+        for answer, ended in ((Refusal(502), []), (FakeAnswer({"permission": "write"}), []),
+                              (FakeAnswer({"permission": "read"}), ["12"])):
+            with self.subTest(answer=answer):
+                found, calls = self.ended([by_hand], extra={permission: answer}, permissions=True)
+                self.assertEqual(found, ended)
+                self.assertIn("GET " + permission, calls)
+        before = dict(by_hand, created_at="2026-09-18T00:00:00Z")
+        found, calls = self.ended([before], extra={permission: Refusal(502)}, permissions=True)
+        self.assertEqual(found, ["12"], "a release before the close ends with it whoever wrote it")
+        self.assertNotIn("GET " + permission, calls, "and costs no permission read")
 
     def test_where_it_cannot_tell_the_released_branch_counts_as_a_release_being_undone(self):
         self.assertEqual(self.ended([], events=[{"event": "reopened", "created_at": "2026-09-11T00:00:00Z"}])[0], [])

@@ -57,6 +57,12 @@
      "note": "the owner reopens #1 a day after a's last commit: the coordinator takes in-review off, and the claim, idle now, is released in the same run; under the mutant that reads the releases due before the freeing, it waits for the next run, G3 red here"},
     {"verb": "label-on", "actor": "owner", "args": [1, "claimed"]},
     {"verb": "board", "expect": {"labels": {"1": ["claimed", "todo"]}, "queue": []},
-     "note": "the owner put claimed back on the reopened #1 to undo the release, which came after #1 was last closed, so the released branch beside it is a release being undone, and the coordinator takes nothing off; under the mutant that reads no released branch for the issue, it frees it, taking claimed off, G8 red here"}
+     "note": "the owner put claimed back on the reopened #1 to undo the release, which came after #1 was last closed, so the released branch beside it is a release being undone, and the coordinator takes nothing off; under the mutant that reads no released branch for the issue, it frees it, taking claimed off, G8 red here"},
+    {"at": 55, "verb": "label-off", "actor": "owner", "args": [1, "claimed"]},
+    {"verb": "close-issue", "actor": "owner", "args": [1]},
+    {"at": 56, "verb": "reopen-issue", "actor": "owner", "args": [1]},
+    {"verb": "label-on", "actor": "owner", "args": [1, "claimed"]},
+    {"verb": "board", "expect": {"labels": {"1": ["claimed", "todo"]}, "queue": []},
+     "note": "the owner took claimed off again, closed #1 and reopened it with no claim between, then, following the release's note, put claimed back: the release came at hour 54, before the close at hour 55, but claimed went on after the close, which only a person undoing that release does, since a new claim would show its claim branch, so the released branch stands and the coordinator takes nothing off; until F22's second review a release before the last close counted as ended whatever came after, so claimed came off, and under the mutant that reads claimed put on after the close as the ended claim's it still does, G8 red here"}
   ]
 }

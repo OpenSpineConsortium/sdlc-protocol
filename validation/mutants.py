@@ -1780,9 +1780,13 @@ MUTANTS = {
         "G8", "a freeing puts todo on first and takes claimed off last, so a run that fails partway leaves the issue "
               "for the next run to free (F22)"),
     "a release before the last close read as an undo": Mutant(
-        github, "ended_releases", lambda api, issues, branches, kept, trusted: [],
+        github, "ended_releases", lambda api, issues, branches, kept, asked: [],
         "G8", "a released branch an earlier claim's release left before the issue's last close undoes nothing, so "
               "a reopened issue whose later claim ended with the close is freed wholly (F22's review)"),
+    "claimed put back after the close read as the ended claim's": Mutant(
+        github, "claimed_since_close", lambda events: False,
+        "G8", "the label claimed put on after a reopened issue's last close is a person undoing a release an "
+              "earlier claim's release left before it, so the freeing leaves claimed on (F22's second review)"),
     "the releases due read before the freeing": Mutant(
         github, "coordinate", releases_read_before_the_freeing,
         "G3", "a claim whose in-review a freeing takes off is released in the same run where its branch has gone a "
@@ -1806,10 +1810,12 @@ REOPENS = DUE + (Verb("board", verbs.BOARD, (cycle.SCHEDULE, "")), Verb("claim",
                  Verb("label-on", "b", (1, "claimed")), Verb("label-on", "b", (1, "worker:b")),
                  Verb("label-off", "b", (1, "todo")), Verb("open-draft", "b", (1,)), Verb("drop-claim-file", "b", (1,)),
                  Verb("mark-ready", "b", (100,)), Verb("label-on", "b", (1, "in-review")))
-# a's claim on #1, closed and reopened, then released once idle, so its
-# release came after the issue's last close, for the owner to undo (F22).
-UNDOABLE = (CLAIM, CLAIMED, WORKER, Verb("close-issue", M.OWNER, (1,)), Verb("reopen-issue", M.OWNER, (1,)),
-            Verb("wait", "clock", (25,)), Verb("board", verbs.BOARD, (cycle.SCHEDULE, "")))
+# a's idle claim on #1 released, then #1 closed by hand and reopened with
+# no claim between, so the release came before the issue's last close and
+# the owner, following the release's note, may still undo it by putting
+# claimed back after the close (F22's second review).
+UNDOABLE = DUE + (Verb("board", verbs.BOARD, (cycle.SCHEDULE, "")), Verb("close-issue", M.OWNER, (1,)),
+                  Verb("reopen-issue", M.OWNER, (1,)))
 
 # Cheapest first, since a mutant is judged by the first search that
 # catches it. The traces met F4, dealing from differing looks, on the
@@ -1934,7 +1940,8 @@ SEARCHES = (
     # a's claim released, b's claim on #1 ready for review: the owner may
     # merge it, keeping its branch or not, and close and reopen #1, so each
     # rule of the freeing is searched and not only traced; and a release
-    # on a reopened #1, which the owner may undo (F22's review).
+    # before #1 was closed and reopened, which the owner may still undo
+    # (F22's reviews).
     Search("a reopened issue after a release and a later claim", REOPENS, Scope(workers=("a", "b"),
            people=(M.OWNER,), waits=(25,), reopens=True), 4),
     Search("a release undone on a reopened issue", UNDOABLE, Scope(workers=("a", "b"), people=(M.OWNER,),

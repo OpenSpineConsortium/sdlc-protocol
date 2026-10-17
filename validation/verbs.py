@@ -804,6 +804,7 @@ def close_issue(model, number):
     if number in model.issues:
         issue = model.issues[number]
         issue.state, issue.reopened, issue.closed_at = "closed", False, model.now
+        issue.closed_after = len(model.label_events)
 
 
 def reopen_issue(model, number):

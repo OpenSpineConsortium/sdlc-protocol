@@ -246,6 +246,13 @@ class Refused(Exception):
         self.status = status
 
 
+def label_event_json(entry):
+    """One entry of the model's label history as GitHub's issue events
+    give it."""
+    return {"event": "labeled" if entry.added else "unlabeled", "label": {"name": entry.label},
+            "created_at": iso(entry.at)}
+
+
 class FakeGitHub:
     def __init__(self, model, faults=()):
         self.model = model
@@ -433,7 +440,7 @@ class FakeGitHub:
                 at = len(self.model.comments_on(number)) - 1
                 return self.comment_json(number, at, self.model.comments_on(number)[at]), {}
         if s[2] == "events" and len(s) == 3 and method == "GET" and number in self.model.issues:
-            return self.page(self.events_json(self.model.issues[number]), query, url)
+            return self.page(self.events_json(self.model, self.model.issues[number]), query, url)
         if s[2] == "labels" and number in self.model.issues:
             if method == "POST" and len(s) == 3:
                 for name in body["labels"]:
@@ -454,11 +461,15 @@ class FakeGitHub:
                 "labels": [{"name": n} for n in sorted(issue.labels)], "updated_at": iso(0), "state_reason": reason}
 
     @staticmethod
-    def events_json(issue):
-        """An issue's events as GitHub lists them, here its latest close
-        alone, the one event the coordinator reads them for (F22's
-        review)."""
-        return [] if issue.closed_at is None else [{"event": "closed", "created_at": iso(issue.closed_at)}]
+    def events_json(model, issue):
+        """An issue's events as GitHub lists them, oldest first: its label
+        history and its latest close among it, the events the coordinator
+        reads them for (F22's reviews)."""
+        mine = [(at, e) for at, e in enumerate(model.label_events) if e.issue == issue.number]
+        labelled = [label_event_json(e) for at, e in mine if at < issue.closed_after]
+        later = [label_event_json(e) for at, e in mine if at >= issue.closed_after]
+        closed = [] if issue.closed_at is None else [{"event": "closed", "created_at": iso(issue.closed_at)}]
+        return labelled + closed + later
 
     def pull_as_issue(self, pull):
         return {"number": pull.number, "title": pull.title, "state": "open" if pull.state == "open" else "closed",

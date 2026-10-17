@@ -707,36 +707,63 @@ def kept_names(listed):
     return [name for name in (board.branch_name(b) for b in listed) if name.startswith(claims.RELEASED_PREFIX)]
 
 
-def ended_releases(api, issues, branches, kept, trusted):
+def ended_releases(api, issues, branches, kept, asked):
     """The reopened issues, by key, whose released branches a release of a
     claim before the issue's last close left: an open issue GitHub says
     was reopened that carries claimed or in-review, with no claim branch
-    and a branch released/<issue>-<short sha> standing, whose latest
-    release comment by an author the repository trusts came no later than
-    the latest close its events record, or where none counts. Such a
-    branch is no release being undone, so the coordinator frees the issue
-    wholly (coordinator.claim_stands; F22). Only such an issue costs calls,
-    its events and its comments, and a freed one carries neither label, so
-    each is read in a run or two. One GitHub refuses either read for, or
-    whose events record no close, is left out, so its released branch
-    counts as a release being undone and the freeing takes in-review off
-    alone, as before this was read, until a later run reads it."""
+    and a branch released/<issue>-<short sha> standing, whose events
+    record a close, with no label claimed put on after it, and whose
+    comments hold no release comment after it. Such a branch is no
+    release being undone, so the coordinator frees the issue wholly
+    (coordinator.claim_stands; F22).
+
+    The label claimed put on after the last close is a person undoing the
+    release, as the release's note on the issue asks (board.released_text):
+    a claim made since would show its claim branch, and claimed that came
+    through the close is the ended claim's (F22's second review). A
+    release comment after the close counts unless GitHub says its author
+    may not write (may_open, from asked, the run's answers to who may
+    write), so a refused permission read leaves the issue out this run,
+    as a refused read of the events or the comments does, rather than
+    taking a writer's release for a stranger's and the labels off on a
+    guess. One left out keeps its released branch as a release being
+    undone, and the freeing takes in-review off alone, as before this was
+    read, until a later run reads it.
+
+    Only such an issue costs calls: a page of its events, and of its
+    comments where the events leave the question open, with a permission
+    asked, once a run, for each author of a release comment after the
+    close that GitHub's word does not vouch for. A freed issue carries
+    neither label and costs nothing again; one whose release is being
+    undone costs its events in every board run until a person renames the
+    branch back, as the note says, which nothing bounds without a record
+    kept from run to run (validation/DESIGN.md, F22)."""
     found = []
     for issue in issues:
         key = str(issue.get("number", ""))
-        names = labels.label_names(issue)
-        if (issue.get("state_reason") != board.REOPENED or not {labels.CLAIMED, labels.IN_REVIEW} & set(names)
-                or claims.branch_of(key) in branches
-                or not any(name.startswith(claims.released_branch(key, "")) for name in kept)):
+        if not reopened_with_released_branch(issue, key, branches, kept):
             continue
         try:
-            closed = latest_close(api.get_all(f"/repos/{api.repo}/issues/{key}/events"))
-            released = claims.latest_release(api.get_all(f"/repos/{api.repo}/issues/{key}/comments"), trusted)
+            events = api.get_all(f"/repos/{api.repo}/issues/{key}/events")
+            closed = latest_close(events)
+            if not closed or claimed_since_close(events):
+                continue
+            comments = api.get_all(f"/repos/{api.repo}/issues/{key}/comments")
         except GitHubError:
             continue
-        if closed and (not released or claims.parse_time(released) <= claims.parse_time(closed)):
+        if not released_after(comments, closed, may_open(asked)):
             found.append(key)
     return found
+
+
+def reopened_with_released_branch(issue, key, branches, kept):
+    """Whether an issue is one ended_releases reads: GitHub says it was
+    reopened, it carries claimed or in-review, no claim branch stands for
+    it and a branch released/<issue>-<short sha> does."""
+    names = set(labels.label_names(issue))
+    return (issue.get("state_reason") == board.REOPENED and bool({labels.CLAIMED, labels.IN_REVIEW} & names)
+            and claims.branch_of(key) not in branches
+            and any(name.startswith(claims.released_branch(key, "")) for name in kept))
 
 
 def latest_close(events):
@@ -745,6 +772,27 @@ def latest_close(events):
     times = [entry_time({"timestamp": e.get("created_at")}) for e in events
              if isinstance(e, dict) and e.get("event") == "closed"]
     return max((at for at in times if at), key=claims.parse_time, default="")
+
+
+def claimed_since_close(events):
+    """Whether the label claimed was put on after the issue's last close,
+    by the order GitHub lists its events in, oldest first, so a close and
+    a label in the same second still read in the order they came."""
+    last_close = last_claimed = -1
+    for at, event in enumerate(e for e in events if isinstance(e, dict)):
+        if event.get("event") == "closed":
+            last_close = at
+        elif event.get("event") == "labeled" and (event.get("label") or {}).get("name") == labels.CLAIMED:
+            last_claimed = at
+    return last_claimed > last_close >= 0
+
+
+def released_after(comments, closed, trusted):
+    """Whether a release comment among an issue's comments came after the
+    time closed, its author counted by trusted (claims.is_release_comment)."""
+    after = [c for c in comments if isinstance(c, dict) and (at := entry_time({"timestamp": c.get("created_at")}))
+             and claims.parse_time(at) > claims.parse_time(closed)]
+    return bool(claims.latest_release(after, trusted))
 
 
 def claim_heads(listed):
@@ -1222,7 +1270,7 @@ def collect(api, sha, default_branch, now=None, started_by=""):
     kept = kept_names(listed)
     if kept:
         found["kept_names"] = kept
-        ended = ended_releases(api, issues, branches, kept, may_write(api, asked))
+        ended = ended_releases(api, issues, branches, kept, asked)
         if ended:
             found["ended_releases"] = ended
     found["began"], refused = began_times(api, found)

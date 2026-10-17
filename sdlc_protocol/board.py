@@ -360,8 +360,9 @@ class Snapshot:
     person may put back, so the coordinator frees no reopened issue whose
     release is being undone (coordinator.claim_stands; F22), with the
     reopened issues, by key, whose released branches an earlier claim's
-    release left, its latest release comment no later than the issue's
-    last close, so they undo nothing (adapters.github.ended_releases)."""
+    release left, its latest release comment and the label claimed put on
+    no later than the issue's last close, so they undo nothing
+    (adapters.github.ended_releases)."""
 
     sha: str = ""
     default_branch: str = "main"
