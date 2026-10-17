@@ -116,6 +116,9 @@ TRACES = {
     "arithmetic's parentheses counted inside quotes": "the regression traces",
     "a parameter expansion read as text": "the regression traces",
     "a backquoted span read as text": "the regression traces",
+    "$$ read as a $ before what follows": "the regression traces",
+    "old-style arithmetic read as text": "the regression traces",
+    "a backquoted span's quotes read as the quoting around it": "the regression traces",
     "dealing without its taken set": "dealing at every look",
     "each leg dealt from its own look": "the regression traces",
     "given to workers needing the label todo": "the regression traces",
@@ -347,9 +350,14 @@ class TheLane(unittest.TestCase):
         body's substitution kept with its own bodies, a case pattern's
         parenthesis closing its substitution and arithmetic's parentheses
         counted inside quotes, 148; and its third review two: a parameter
-        expansion read as text and a backquoted span read as text, 150."""
-        self.assertTrue(10 <= len(mutants.MUTANTS) <= 150)
-        self.assertEqual(len(mutants.MUTANTS), 150)
+        expansion read as text and a backquoted span read as text, 150,
+        the bound widened to 200, since the lane grows by a few mutants
+        for each finding and 0.5.1 carries several; and its fourth review
+        three: $$ read as a $ before what follows, old-style arithmetic
+        read as text and a backquoted span's quotes read as the quoting
+        around it, 153."""
+        self.assertTrue(10 <= len(mutants.MUTANTS) <= 200)
+        self.assertEqual(len(mutants.MUTANTS), 153)
         self.assertEqual(sorted(TRACES), sorted(mutants.MUTANTS))
 
     def test_every_mutant_names_a_rule_the_library_still_has(self):

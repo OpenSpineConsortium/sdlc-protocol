@@ -32,8 +32,9 @@ TOO_DEEP = ("a command whose here-documents nest in command substitutions more t
             "(.claude/rules/board.md)")
 TOO_LONG = ("a command of more than 262144 characters is refused unread: the guard would take longer to read it "
             "than a hook may run; write the text to a file first (.claude/rules/board.md)")
-TOO_SLOW = ("a command the guard cannot read in 10 seconds is refused unread: a hook that runs out of time lets "
-            "the command run; write the text to a file first (.claude/rules/board.md)")
+TOO_SLOW = ("a command the guard cannot read and judge in 10 seconds is refused: a hook that runs out of time lets "
+            "the command run; write the text to a file first, or push in a command of its own "
+            "(.claude/rules/board.md)")
 BOARD = "a push to board is refused: only the board workflow writes that branch (.claude/rules/board.md)"
 
 
@@ -522,8 +523,9 @@ class ReadingTest(unittest.TestCase):
     def test_plain_shell_is_the_pass_it_was(self):
         """The strict pass gives what it gave before the fix, for every
         command, so the template's shim and profile read as they did; read
-        leniently, every command shlex reads whole reads the same, and every
-        other one reads too."""
+        leniently, every command shlex reads whole reads the same, but for
+        a backquoted span, which it reads as one opaque part of a word
+        (backquoted_word), and every other one reads too."""
         draw = random.Random(25)
         for _ in range(3000):
             command = "".join(draw.choice(PIECES) for _ in range(draw.randint(1, 12)))
@@ -531,6 +533,8 @@ class ReadingTest(unittest.TestCase):
                 self.assertEqual(guard.plain_shell(command), plain_shell_before_f25(command))
                 lenient = guard.plain_text(command, lenient=True)
                 lexed(lenient)
+                if guard.BACKQUOTED.search(command):
+                    continue
                 try:
                     lexed(guard.plain_shell(command))
                 except ValueError:
@@ -747,6 +751,55 @@ class ReadingTest(unittest.TestCase):
         self.assertEqual(self.run_guard(command), (2, MAIN))
         self.assertEqual(body_texts('echo "`cat <<\'X\'\nDon\'t\nX\n`" `echo`'), ["Don't\nX\n"])
 
+    def test_pid_and_old_arithmetic_are_read_as_bash_reads_them(self):
+        """$$, the shell's process id, is a parameter whole, so the { after
+        it opens nothing, and old-style arithmetic, $[ ], is read to its ],
+        a ) inside it closing nothing and a ${ inside it read as text, as
+        bash's parse_matched_pair reads them; until the fix of F25's fourth
+        review $${ opened a parameter expansion and $[ ) ] closed the
+        substitution around it, and the push after each passed."""
+        for command in ("echo $${ ; cat <<EOF\nsay 'hi\nEOF\ngit push origin main # '",
+                        "echo \"$${\" ; cat <<EOF\nsay 'hi\nEOF\ngit push origin main # '",
+                        "echo $$$${ ; cat <<EOF\nsay 'hi\nEOF\ngit push origin main # '",
+                        "echo $(($${)) ; cat <<EOF\nsay 'hi\nEOF\ngit push origin main # '",
+                        'x="$(echo $[ ) ] ; cat <<EOF\nsay "hi\nEOF\n)"\ngit push origin main # "',
+                        'x="$(echo $[ [ ) ] ] ; cat <<EOF\nsay "hi\nEOF\n)"\ngit push origin main # "',
+                        'x="$(echo $[ \']\' ) ] ; cat <<EOF\nsay "hi\nEOF\n)"\ngit push origin main # "'):
+            with self.subTest(command=command):
+                self.assertEqual(len(body_texts(command)), 1)
+                self.assertEqual(self.run_guard(command), (2, MAIN))
+        self.assertEqual(body_texts("echo $[ 1 ${x:-]} ]; cat <<EOF\nIt's\nEOF\nls"), ["It's\nEOF\n"],
+                         "bash reads no ${ inside $[ ], so its ] closes")
+        self.assertEqual(guard.arithmetic_end("(( $${ ))", 2), 9)
+        self.assertIsNone(guard.arithmetic_end("((echo $[ ) ]); x", 2))
+        step = guard.expansion_step
+        for kind, command in (("$$", "echo $${ ; cat <<EOF\nsay 'hi\nEOF\ngit push origin main # '"),
+                              ("$[", 'x="$(echo $[ ) ] ; cat <<EOF\nsay "hi\nEOF\n)"\ngit push origin main # "')):
+            def as_text(text, i, *rest, kind=kind):
+                return None if text.startswith(kind, i) else step(text, i, *rest)
+
+            with self.subTest(kind=kind), mock.patch.object(guard, "expansion_step", as_text):
+                self.assertEqual(self.run_guard(command), (0, ""), "as built until the fix")
+
+    def test_a_backquoted_span_is_read_whole_and_as_commands(self):
+        """bash reads a backquoted span whole, so a quote inside it pairs
+        with nothing outside, and runs its text: a lenient reading hands
+        shlex the span as one part of its word and reads its text after the
+        rest as the commands of a subshell, in the command, in double
+        quotes and in a body the shell expands; until the fix of F25's
+        fourth review a quote inside one paired across the push after it,
+        and a push inside one passed."""
+        for command in ('x=`echo "`; git push origin main # "', "echo `echo '`\ngit push origin main\necho '",
+                        "echo `git push origin main`", 'echo "`git push origin main`"',
+                        "cat <<EOF\nit's `git push origin main`\nEOF\necho '",
+                        "x=`cat <<EOF\nit's $(git push origin main)\nEOF\n` # '"):
+            with self.subTest(command=command):
+                self.assertEqual(self.run_guard(command), (2, MAIN))
+        self.assertEqual(guard.plain_text("git -C `pwd` push", lenient=True), "git -C '`pwd`' push ; ( pwd ) ")
+        self.assertEqual(guard.plain_text("git -C `pwd` push"), "git -C `pwd` push", "strict: as before")
+        with mock.patch.object(guard, "backquoted_span", lambda command, i: None):
+            self.assertEqual(self.run_guard('x=`echo "`; git push origin main # "'), (0, ""), "as built until the fix")
+
     def test_a_comment_in_arithmetic_counts_its_parentheses_as_bash_does(self):
         """bash's parse_matched_pair counts the parentheses after a # as it
         tells arithmetic from a subshell: it reads ((echo a #(, a newline
@@ -769,7 +822,9 @@ class ReadingTest(unittest.TestCase):
                         "cat <<EOF\n" + "$(cat <<EOF\n" * guard.MAX_NESTING + "x'y\n" * 16000,
                         "cat " + "<<A " * 8000 + "\n" + "A\n" * 8000, "((\"((" * 20000,
                         self.at_full_size("cat <<EOF\n", "$( (( #((((\n)))\n", "EOF"),
-                        self.at_full_size("x=\"$(", "${y:-)} `)` ", ""), self.at_full_size("", "${" * 2 + "$(", "")):
+                        self.at_full_size("x=\"$(", "${y:-)} `)` ", ""), self.at_full_size("", "${" * 2 + "$(", ""),
+                        "((<<X${<<'X';" * 8000, "cat <<A\nA\n" + "`" * 100000, "cat <<A\nA\n" + "$[ [" * 25000,
+                        "`x` " * 25000):
             with self.subTest(command=command[:40]):
                 started = time.monotonic()
                 self.assertEqual(self.run_guard(command + push)[0], 2)
@@ -806,12 +861,30 @@ class ReadingTest(unittest.TestCase):
 
     def test_a_reading_past_its_deadline_is_refused_unread(self):
         """Claude Code reads a hook that runs out of time as no objection,
-        so a reading that runs past READING_SECONDS refuses the command,
+        so a reading that runs past DEADLINE_SECONDS refuses the command,
         never passes it; the deadline holds only while a command is read."""
         ticks = iter(range(0, 10 ** 6, 4))
         with mock.patch.object(guard, "clock", lambda: next(ticks)):
             self.assertEqual(self.run_guard("cd a; cd b; git push -u origin claude/7"), (2, TOO_SLOW))
         self.assertIsNone(guard.DEADLINE.get())
+        ticks = iter(range(0, 10 ** 6))
+        asked = []
+
+        def branches_of(place):
+            asked.append(place)
+            return "claude/7", "main"
+
+        command = "".join(f"git -C /c/{n} push origin x;" for n in range(40)) + "git push origin main"
+        with mock.patch.object(guard, "clock", lambda: next(ticks)):
+            self.assertEqual(guard.refused_push(command, "/w", branches_of, lambda place: None, lambda place: True),
+                             TOO_SLOW, "the deadline holds the judging too, before each clone is asked")
+        self.assertLess(len(asked), 40)
+        with mock.patch.object(guard, "seconds_left", lambda: 0.5), \
+                mock.patch.object(guard.subprocess, "run", side_effect=guard.subprocess.TimeoutExpired("git", 0.5)):
+            with self.assertRaises(guard.TooSlow, msg="a git call the deadline cuts short is no answer"):
+                guard.git_line(["status"], "/w")
+        with mock.patch.object(guard.subprocess, "run", side_effect=guard.subprocess.TimeoutExpired("git", 10)):
+            self.assertIsNone(guard.git_line(["status"], "/w"), "outside a run, git's own timeout is no answer")
         with mock.patch.object(guard, "clock", lambda: 0):
             self.assertEqual(self.run_guard("cd a; cd b; git push -u origin claude/7"), (0, ""))
         self.assertEqual(self.run_guard("echo push"), (0, ""), "no push read past the deadline")

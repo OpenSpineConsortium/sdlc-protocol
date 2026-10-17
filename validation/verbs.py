@@ -105,7 +105,11 @@ CLONES = "/clones"
 # ((echo "))"); ...), whose quoted parentheses bash does not count, and a
 # later one; and, since its third review, between two double-quoted
 # substitutions whose ) inside ${y:-)}, or inside a backquoted case
-# command, closes nothing, each holding a here-document.
+# command, closes nothing, each holding a here-document; and, since its
+# fourth review, after $${, whose $$ opens no parameter expansion, before
+# a here-document whose body holds an apostrophe, between two
+# double-quoted substitutions whose ) inside $[ ) ] closes nothing, and
+# after a backquoted span whose double quote pairs with nothing outside.
 ELSEWHERE = {"-C": "git -C ../{clone} {push}", "cd": "cd ../{clone} && git {push}",
              "missing": "cd ../{clone}; cd ../{absent}; git {push}",
              "body": "cat > /dev/null <<'EOF'\ncd ..\nEOF\ngit {push}",
@@ -132,12 +136,16 @@ ELSEWHERE = {"-C": "git -C ../{clone} {push}", "cd": "cd ../{clone} && git {push
                         'y="$(echo ${{y:-)}}; cat <<\'EOF\'\nSay "bye\nEOF\n)"'),
              "backquoted": ('x="$(echo `case a in a) :;; esac`; cat <<\'EOF\'\nSay "hi\nEOF\n)"\ngit {push}\n'
                             'y="$(echo `case a in a) :;; esac`; cat <<\'EOF\'\nSay "bye\nEOF\n)"'),
+             "pid-brace": "echo $${{ ; cat <<EOF\nsay 'hi\nEOF\ngit {push}\necho '",
+             "old-arithmetic": ('x="$(echo $[ ) ] ; cat <<\'EOF\'\nSay "hi\nEOF\n)"\ngit {push}\n'
+                                'y="$(echo $[ ) ] ; cat <<\'EOF\'\nSay "bye\nEOF\n)"'),
+             "backquoted-quote": 'x=`echo "`; git {push} # "',
              "env": "env --ch ../{clone} git {push}"}
 # The ways whose push runs in the worker's own clone (leasing_clone).
 FROM_OWN_CLONE = ("body", "expanded", "skipped", "exported", "home", "apostrophe", "unclosed", "paired",
                   "quoted-substitution", "body-substitution", "closing-line", "joined", "subshells",
                   "closed-substitution", "nested-body", "case-pattern", "quoted-arithmetic", "braced",
-                  "backquoted")
+                  "backquoted", "pid-brace", "old-arithmetic", "backquoted-quote")
 
 # A read of the activity with no type named: the read of the push that set
 # a claim's head (github.read_push), told from the reads of a

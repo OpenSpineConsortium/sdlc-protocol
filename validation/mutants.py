@@ -433,9 +433,11 @@ EXPANSION_STEP = guard.expansion_step
 
 def expansions_without(kind):
     """guard.expansion_step as the scan read expansions until F25's third
-    review, with kind, "${", read as text: a ) inside ${y:-)} then closes
-    the substitution around it and the << after it is read as text inside
-    double quotes."""
+    review, with kind read as text: "${", so a ) inside ${y:-)} then
+    closes the substitution around it and the << after it is read as text
+    inside double quotes; "$[", the same with $[ ) ] (its fourth review);
+    or "$$", so $${ opens a parameter expansion bash never opens (the
+    same)."""
     def expansion_step(command, i, contexts, memo):
         if command.startswith(kind, i):
             return None
@@ -1489,6 +1491,21 @@ MUTANTS = {
         "G11a", "a backquoted span is read whole, a case pattern's ) inside it closing nothing, as bash reads it, "
                 "so a lease between two double-quoted substitutions that hold one before a here-document, onto a "
                 "claim another worker holds, is read and refused (F25)"),
+    "$$ read as a $ before what follows": Mutant(
+        guard, "expansion_step", expansions_without("$$"),
+        "G11a", "$$, the shell's process id, is read whole, so the { after it opens no parameter expansion, as "
+                "bash reads it, and a lease after echo $${ and a here-document whose body holds an apostrophe, "
+                "onto a claim another worker holds, is read and refused (F25)"),
+    "old-style arithmetic read as text": Mutant(
+        guard, "expansion_step", expansions_without("$["),
+        "G11a", "old-style arithmetic, $[ ], is read whole, a ) inside it closing nothing, as bash reads it, so a "
+                "lease between two double-quoted substitutions that hold one before a here-document, onto a claim "
+                "another worker holds, is read and refused (F25)"),
+    "a backquoted span's quotes read as the quoting around it": Mutant(
+        guard, "backquoted_span", lambda command, i: None,
+        "G11a", "a backquoted span is read as one part of a word in the lenient reading, its quotes pairing with "
+                "nothing outside it, as bash reads it, so a lease after x=`echo \"` and before a comment with a "
+                "double quote, onto a claim another worker holds, is read and refused (F25)"),
     "dealing without its taken set": Mutant(
         team, "deal", deal_without_the_taken_set,
         "G14", "the workers of one run are dealt distinct issues"),
