@@ -39,6 +39,7 @@ search met first, often a comment the run owed or made as a result.
 """
 
 import contextlib
+import copy
 import dataclasses
 import sys
 import time
@@ -940,6 +941,19 @@ def wrote_nothing_after_a_rate_limit(problem):
     return problem.status is not None and 400 <= problem.status < 500
 
 
+def wrote_nothing_by_the_last_try(problem):
+    """github.wrote_nothing reading a refusal by the call's last try alone,
+    as it did until F23's second review: a 422 on the client's second
+    try, after a rate limit's refusal of the first, is taken for a refusal
+    that wrote nothing, though GitHub may have acted on the first try and
+    list the comment only later, so the labels go back beside it
+    (comment-limited-then-422). Every other answer it reads by the
+    library's own rule, so it changes that one rule alone."""
+    alone = copy.copy(problem)
+    alone.after_rate_limit = False
+    return ORIGINAL_WROTE_NOTHING(alone)
+
+
 def release_one_counting_unsettled(api, snap, key, now):
     """github.release_one counting a release it cannot tell stands: where
     GitHub refused the comment and then the read of the issue's comments
@@ -1327,6 +1341,11 @@ MUTANTS = {
         "G3L", "a run whose release comment GitHub refused for a rate limit, which its documentation never says "
                "comes before GitHub acts on the call, and whose issue's comments then list none, leaves the labels "
                "as the release left them (F23's review)"),
+    "a refusal after a rate limit read by its last try alone": Mutant(
+        github, "wrote_nothing", wrote_nothing_by_the_last_try,
+        "G3L", "a run whose release comment GitHub refused for a rate limit and then, on the client's next try, "
+               "with a 422, and whose issue's comments then list none, leaves the labels as the release left them, "
+               "since GitHub may have acted on the first try (F23's second review)"),
     "a writer's release not vouched for": Mutant(
         github, "may_write", nobody_vouched_for,
         "G5", "anyone who may write may release, whatever author_association GitHub shows"),

@@ -132,13 +132,17 @@ class GitHubError(team.ClientError):
     status (None when there was no answer), detail GitHub's own message
     from the answer's body, "" when it gave none, and headers the
     answer's headers, None when there was no answer, for the wait a rate
-    limit asks (rate_wait)."""
+    limit asks (rate_wait); after_rate_limit says the client made the
+    call again after GitHub refused an earlier try of it for a rate limit
+    (GitHub.request), so the refusal is the last of several answers and
+    may follow a try GitHub acted on (wrote_nothing)."""
 
     def __init__(self, message, status=None, detail="", headers=None):
         super().__init__(message)
         self.status = status
         self.detail = detail
         self.headers = headers
+        self.after_rate_limit = False
 
 
 def next_link(headers):
@@ -334,7 +338,11 @@ class GitHub:
         validation harness's fake assumes until a canary check settles it
         (validation/DESIGN.md, 3.2 and section 11, C4). The labels a
         release puts back after its comment failed do not rest on it
-        (wrote_nothing)."""
+        (wrote_nothing), so the refusal raised says whether an earlier try
+        was refused for a rate limit (GitHubError.after_rate_limit), since
+        only the last try's answer is raised, and a 422 after a rate
+        limit's refusal says nothing of what that earlier try did (F23's
+        second review)."""
         tries = 0
         while True:
             try:
@@ -342,6 +350,7 @@ class GitHub:
             except GitHubError as problem:
                 wait = self.wait_before_again(problem, tries)
                 if wait is None:
+                    problem.after_rate_limit = tries > 0
                     raise
             self.waited.append(wait)
             self.sleep(wait)
@@ -1556,8 +1565,12 @@ def wrote_nothing(problem):
     acts on it, which the client's making a write again assumes
     (GitHub.request) and canary C4 would settle and is not run, so the
     labels a release puts back rest on no such assumption (F23's review;
-    validation/DESIGN.md, 3.2 and 11)."""
-    if rate_limited(problem.status, problem.headers, problem.detail):
+    validation/DESIGN.md, 3.2 and 11). Nor is any refusal of a call the
+    client made again after a rate limit's refusal of an earlier try
+    (GitHubError.after_rate_limit): the 4xx that ends the call answers its
+    last try alone, and GitHub may have acted on the try it refused for
+    the rate limit (F23's second review)."""
+    if problem.after_rate_limit or rate_limited(problem.status, problem.headers, problem.detail):
         return False
     return problem.status is not None and 400 <= problem.status < 500
 

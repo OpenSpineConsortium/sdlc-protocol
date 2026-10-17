@@ -2219,6 +2219,59 @@ class Coordinate(unittest.TestCase):
                 self.assertEqual(board.released_keys(snap), set())
                 self.assertIn("| #12 | claude/12 | nightly | #40 |", board.render(snap))
 
+    def test_a_refusal_after_a_rate_limit_and_not_listed_leaves_the_labels(self):
+        """F23's second review: the client waits out a rate limit's refusal
+        of the comment and makes it again, and GitHub refuses the second
+        try with a 4xx that is no rate limit's, a 422 or a locked issue's
+        403. That refusal answers the second try alone: GitHub may have
+        acted on the first, which canary C4 would settle and is not run, so
+        a read that lists none leaves the labels as a server error does.
+        Until the review the second try's 4xx alone was read and the labels
+        went back, beside a comment that may stand. The same refusal on a
+        first try, with no rate limit before it, still puts them back."""
+        limited = Refusal(403, {"message": "You have exceeded a secondary rate limit"}, {"retry-after": "5"})
+        locked = {"message": "Unable to create comment because issue is locked."}
+        for second, said in ((Refusal(422, {"message": "Validation Failed"}), "HTTP 422: Validation Failed"),
+                             (Refusal(403, locked), "HTTP 403: Unable to create comment because issue is locked.")):
+            with self.subTest(said=said):
+                answers = release_answers()
+                answers["POST /repos/o/r/issues/12/comments"] = Turns(limited, second)
+                answers[COMMENTS_12] = FakeAnswer([])
+                snap, waits = idle_snapshot(), []
+                opener = InTurn(answers)
+                api = github.GitHub("t", "o/r", opener=opener, sleep=waits.append)
+                self.assertEqual(github.coordinate(api, snap, NOW), [
+                    f"#12: release unsettled, the comment failed: POST /repos/o/r/issues/12/comments: {said}; its "
+                    "issue's comments list none yet, though GitHub may have written it before that failure and list "
+                    "it only later; the labels stay as the release left them"])
+                self.assertEqual([c.get_method() for c in opener.calls],
+                                 ["DELETE", "DELETE", "GET", "POST", "POST", "GET"])
+                self.assertEqual(waits, [5])
+                self.assertEqual((snap.claim_issues["12"].labels, snap.issues[0].labels), (["todo"], ["todo"]))
+                self.assertEqual(board.released_keys(snap), set())
+                answers = release_answers()
+                answers["POST /repos/o/r/issues/12/comments"] = second
+                answers[COMMENTS_12] = FakeAnswer([])
+                answers[LABELS_12] = FakeAnswer([])
+                snap = idle_snapshot()
+                api, _ = client(answers)
+                lines = github.coordinate(api, snap, NOW)
+                self.assertTrue(lines[0].startswith("#12: not released, the comment failed"), lines)
+                self.assertIn("claimed", snap.claim_issues["12"].labels)
+
+    def test_only_the_last_refusal_of_a_call_made_again_says_it_came_after_a_rate_limit(self):
+        """GitHub.request marks the refusal it raises when an earlier try of
+        the call was refused for a rate limit, and only then."""
+        limited = Refusal(429, headers={"retry-after": "5"})
+        for turns, after in ((Turns(Refusal(422)), False), (Turns(limited, Refusal(422)), True),
+                             (Turns(limited, Refusal(502)), True)):
+            with self.subTest(after=after, turns=[t.code for t in turns]):
+                api = github.GitHub("t", "o/r", opener=InTurn({"/repos/o/r/issues/7": turns}), sleep=lambda s: None)
+                with self.assertRaises(github.GitHubError) as raised:
+                    api.request("GET", api.url("/repos/o/r/issues/7"))
+                self.assertIs(raised.exception.after_rate_limit, after)
+                self.assertIs(github.wrote_nothing(raised.exception), not after and raised.exception.status == 422)
+
     def test_a_comment_answered_with_a_server_error_or_none_and_listed_is_a_whole_release(self):
         """GitHub wrote the comment and the read after the failure lists it,
         so the release is whole whatever the failure was, and the line says

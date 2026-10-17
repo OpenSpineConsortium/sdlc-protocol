@@ -1,7 +1,7 @@
 {
   "finding": "F23",
   "title": "a release comment GitHub writes and answers with a server error or with no answer at all, and lists only after the run's read of the issue's comments, stands beside the labels the run puts back, which holds the claim for good",
-  "status": "fixed after 0.5.0: a run whose release comment GitHub answered with a server error or with no answer at all, and whose read of the issue's comments after it lists none, cannot tell whether the comment stands, so it leaves the labels as the release left them and counts no release of its own, as when it cannot read them, and puts the labels back only where GitHub refused the comment with a 4xx other than a rate limit's, which says it wrote nothing; since its review a rate limit's refusal, which GitHub's documentation never says comes before it acts on the call, is read as a server error is (github.release_one, github.wrote_nothing, github.not_listed; DESIGN.md, 13)",
+  "status": "fixed after 0.5.0: a run whose release comment GitHub answered with a server error or with no answer at all, and whose read of the issue's comments after it lists none, cannot tell whether the comment stands, so it leaves the labels as the release left them and counts no release of its own, as when it cannot read them, and puts the labels back only where GitHub refused the comment with a 4xx other than a rate limit's, which says it wrote nothing; since its review a rate limit's refusal, which GitHub's documentation never says comes before it acts on the call, is read as a server error is, and since its second review so is any refusal of a call the client made again after a rate limit's refusal of an earlier try (github.release_one, github.wrote_nothing, github.not_listed; DESIGN.md, 13)",
   "breaks": ["G3L"],
   "world": "memory",
   "issues": {"1": ["todo"], "2": ["todo"], "3": ["todo"], "4": ["todo"]},
@@ -57,6 +57,16 @@
     {"verb": "board",
      "expect": {"labels": {"4": ["todo"]}, "comments": {"4": {"claim-released": 2, "released": 2}}, "refs": {"claude/4": false},
                 "released": {"4": 2}, "claims": {}, "queue": [1, 2, 3, 4]},
-     "note": "the next run reads the comment GitHub now lists, counts the release and renames the branch, beside the one d's first claim left"}
+     "note": "the next run reads the comment GitHub now lists, counts the release and renames the branch, beside the one d's first claim left"},
+    {"verb": "claim", "actor": "d", "args": [4], "expect": {"holders": {"4": "d"}}},
+    {"verb": "announce", "actor": "d", "args": [4]},
+    {"at": 78, "verb": "board", "faults": ["comment-limited-then-422"],
+     "expect": {"labels": {"4": ["todo"]}, "comments": {"4": {"claim-released": 3, "released": 2}}, "refs": {"claude/4": true},
+                "claims": {"claude/4": "d"}, "queue": [1, 2, 3]},
+     "note": "d claimed #4 a third time at 53 hours, and its claim is due: GitHub writes the release comment though it refuses it for a secondary rate limit, asking a minute's wait, which the client makes, and refuses the second try with a 422, writing nothing more, and the read after it lists none of the comment; the 422 answers the second try alone, so it does not say GitHub wrote nothing, and the run leaves the labels as the release left them and counts no release. Until F23's second review the run read the call by its last try, a 422, and put the labels back beside the comment, which held the claim for good"},
+    {"verb": "board",
+     "expect": {"labels": {"4": ["todo"]}, "comments": {"4": {"claim-released": 3, "released": 3}}, "refs": {"claude/4": false},
+                "released": {"4": 3}, "claims": {}, "queue": [1, 2, 3, 4]},
+     "note": "the next run reads the comment GitHub now lists, counts the release and renames the branch, beside the two d's earlier claims left"}
   ]
 }

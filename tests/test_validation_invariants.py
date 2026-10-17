@@ -927,10 +927,12 @@ class AReleaseThatCannotTellWhetherItsCommentStands(unittest.TestCase):
     DUE = [Verb("claim", "a", (1,)), Verb("label-on", "a", (1, "claimed")), Verb("label-on", "a", (1, "worker:a")),
            Verb("wait", "clock", (25,))]
     # Written and listed late after a 502, no answer or a rate limit's
-    # refusal the client makes no second try of, and never written after a
-    # 500 or after a rate limit's refusal on each of the client's tries.
+    # refusal the client makes no second try of, or after one it makes
+    # again and GitHub then refuses with a 422 (F23's second review), and
+    # never written after a 500 or after a rate limit's refusal on each of
+    # the client's tries.
     FAULTS = (("comment-late", 1), ("comment-unanswered-late", 1), ("comment-500", 0), ("comment-limited-late", 1),
-              ("comment-limited-for-the-run", 0))
+              ("comment-limited-then-422", 1), ("comment-limited-for-the-run", 0))
 
     def test_the_labels_stay_off_and_the_next_run_settles_it(self):
         for fault, written in self.FAULTS:
@@ -949,12 +951,16 @@ class AReleaseThatCannotTellWhetherItsCommentStands(unittest.TestCase):
         answer read as a refusal, under the fault that has none; a refusal
         read as a failure that may have written, under a 422; and, from
         the review, a rate limit's refusal read as one that wrote nothing,
-        under both rate limits, the comment written and not."""
+        under both rate limits, the comment written and not, and under a
+        422 after one; and, from its second review, a refusal after a rate
+        limit's read by its last try alone, under that 422."""
         cases = [(fault, "a late comment's labels put back") for fault, _ in self.FAULTS]
         cases += [("comment-unanswered-late", "no answer taken for a refusal"),
                   ("comment-422", "a refusal taken for a late comment"),
                   ("comment-limited-late", "a rate limit's refusal taken for one that wrote nothing"),
-                  ("comment-limited-for-the-run", "a rate limit's refusal taken for one that wrote nothing")]
+                  ("comment-limited-for-the-run", "a rate limit's refusal taken for one that wrote nothing"),
+                  ("comment-limited-then-422", "a rate limit's refusal taken for one that wrote nothing"),
+                  ("comment-limited-then-422", "a refusal after a rate limit read by its last try alone")]
         for fault, mutant in cases:
             with self.subTest(fault=fault, mutant=mutant), mutants.switched_on(mutants.MUTANTS[mutant]):
                 self.assertEqual(guarantees(violations(self.DUE + [board_with(fault), BOARD])), ["G3L"])
@@ -1011,6 +1017,14 @@ class AReleaseThatCannotTellWhetherItsCommentStands(unittest.TestCase):
         self.assertEqual(invariants.unlisted_releases([unlimited, listed]), set())
         self.assertTrue(invariants.may_have_written(limited))
         self.assertFalse(invariants.may_have_written(unlimited))
+        # F23's second review: a 422 on the client's second try, after a rate
+        # limit's refusal GitHub may have acted on, is judged with that try.
+        first = limited._replace(fault=verbs.FAULTS["comment-limited-then-422"])
+        second = post(422, False)._replace(waited=60)
+        self.assertEqual(invariants.unlisted_releases([first, second, listed_late]), {1})
+        self.assertEqual(invariants.unlisted_releases([post(422, False), second, listed]), set())
+        self.assertTrue(invariants.may_have_written(first, second))
+        self.assertFalse(invariants.may_have_written(second))
 
 
 class TheClientsWaitsForARateLimit(unittest.TestCase):
@@ -1062,6 +1076,8 @@ class TheClientsWaitsForARateLimit(unittest.TestCase):
         self.assertEqual(invariants.answered(tries), [(2, tries[2])])
         again = read._replace(waited=None)
         self.assertEqual(invariants.answered([limited, again]), [(0, limited), (1, again)], "made again of its own")
+        self.assertEqual(invariants.tried(tries), [(2, tuple(tries))])
+        self.assertEqual(invariants.tried([limited, again]), [(0, (limited,)), (1, (again,))])
 
     def test_each_wait_is_the_one_github_asked_for(self):
         """The wait owed is read from the fault, never from the library's

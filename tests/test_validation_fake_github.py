@@ -458,6 +458,26 @@ class Faults(unittest.TestCase):
         self.assertEqual(api.get_all(f"/repos/{M.REPO}/issues/1/comments"), [])
         self.assertEqual([c["body"] for c in api.get_all(f"/repos/{M.REPO}/issues/1/comments")], ["limited"])
 
+    def test_a_422_after_a_rate_limit_s_refusal_of_a_comment_github_wrote_comes_after_it(self):
+        """F23's second review: comment-limited-then-422 refuses the release
+        comment for a secondary rate limit having written it and asks a
+        minute's wait, which the client makes, and refuses its second try
+        with a 422, writing nothing more; the client raises the 422, marked
+        as coming after a rate limit's refusal, so the library reads it as
+        one that may have written; the read after it lists none of the
+        comment, the next read lists it once."""
+        model = M.seeded()
+        api, fake = cycle.api_for(model, (verbs.FAULTS["comment-limited-then-422"],))
+        with self.assertRaises(github.GitHubError) as caught:
+            api.post(f"/repos/{M.REPO}/issues/1/comments", {"body": "limited"})
+        refused = caught.exception
+        self.assertEqual((refused.status, refused.after_rate_limit), (422, True))
+        self.assertFalse(github.wrote_nothing(refused))
+        self.assertEqual([(c.status, c.applied, c.waited) for c in fake.calls], [(403, True, None), (422, False, 60)])
+        self.assertEqual(api.waited, [60])
+        self.assertEqual(api.get_all(f"/repos/{M.REPO}/issues/1/comments"), [])
+        self.assertEqual([c["body"] for c in api.get_all(f"/repos/{M.REPO}/issues/1/comments")], ["limited"])
+
     def test_a_change_to_an_issue_s_body_is_unserved_not_a_fake_s_error(self):
         api, _ = cycle.api_for(M.seeded())
         with self.assertRaises(Unserved):

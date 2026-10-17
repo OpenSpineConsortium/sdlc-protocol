@@ -164,6 +164,23 @@ FAULTS = {
     # them back beside the comment (F23's review).
     "comment-limited-late": Fault("POST", "/issues/*/comments", 403, message=SECONDARY, retry_after="150",
                                   applied=True, then=Fault("GET", "/issues/*/comments", 200, answer=LISTED_LATE)),
+    # A release comment GitHub writes though it refuses it for a secondary
+    # rate limit, asking a wait of a minute, which the client makes and
+    # then makes the post again, and GitHub refuses that second try with a
+    # 422, writing nothing more, and lists the comment only after the read
+    # of the issue's comments that follows. The client raises the 422
+    # alone, so a rule that read the call by its last try put the labels
+    # back beside the comment the first try wrote; the run leaves them as
+    # the release left them (SPEC["listed late"]; F23's second review).
+    # Unlike comment-limited-late's, its refusal is one the client makes
+    # again, after a try GitHub acted on, as canary C4 would find were
+    # GitHub to act on a call it refuses so; the second try writes
+    # nothing, so nothing is written twice (invariants.written_once).
+    "comment-limited-then-422": Fault("POST", "/issues/*/comments", 403, message=SECONDARY, retry_after="60",
+                                      applied=True,
+                                      then=Fault("POST", "/issues/*/comments", 422, message="Validation Failed",
+                                                 then=Fault("GET", "/issues/*/comments", 200,
+                                                            answer=LISTED_LATE))),
     "label-delete-500": Fault("DELETE", "/issues/*/labels/*", 500),
     "label-post-500": Fault("POST", "/issues/*/labels", 500),
     # A label GitHub writes and loses its answer to, as a release's todo

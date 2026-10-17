@@ -165,12 +165,22 @@ def answered(calls):
     wait longer than a run waits or with the run's waits spent, was taken
     for a try, and a library that read a rate limit's refusal again after
     its pause was seen only where the client had made all its tries."""
+    return [(at, tries[-1]) for at, tries in tried(calls)]
+
+
+def tried(calls):
+    """Each call the library asked its client to make, as answered reads
+    it, with every try of it in order: the client raises the last try's
+    answer alone, so a write whose last try GitHub refused with a 422 may
+    follow a try it refused for a rate limit and acted on, which the
+    harness reads from the tries (may_have_written; F23's second
+    review)."""
     found = []
     for at, call in enumerate(calls):
         if found and call.waited is not None:
-            found[-1] = (at, call)
+            found[-1] = (at, found[-1][1] + (call,))
         else:
-            found.append((at, call))
+            found.append((at, (call,)))
     return found
 
 
@@ -720,38 +730,42 @@ def unsettling_reads(calls):
 
 def unlisted_releases(calls):
     """The issues whose release comment GitHub answered with a server
-    error, with no answer at all or with a rate limit's refusal, any of
-    which may come after it wrote the comment (may_have_written), and
+    error, with no answer at all or with a rate limit's refusal, on its
+    last try or on one the client made it again after, any of which may
+    come after it wrote the comment (may_have_written), and
     whose read of the comments after it GitHub answered without a comment
     that post wrote, the comment written and listed late (LISTED_LATE) or
     never written, which the run cannot tell apart (SPEC["listed late"];
-    F23 and its review)."""
+    F23 and its reviews)."""
     return frozenset(number for number, post, _, read in release_rereads(calls)
-                     if may_have_written(post) and not failed(read) and not lists_its_comment(post, read))
+                     if may_have_written(*post) and not failed(read) and not lists_its_comment(post, read))
 
 
 def release_rereads(calls):
     """Each failed post of an issue's release comment with the first read
     of that issue's comments after it, the re-read that says whether a
-    release comment stands, as (the issue, the post, the read's place
-    among the calls, the read), each judged by its last try (answered),
-    so a release comment written on the client's second try failed
-    nothing. What is looked at is the re-read's first page, which every
+    release comment stands, as (the issue, every try of the post, the
+    read's place among the calls, the read), each failed or not by its
+    last try (tried), so a release comment written on the client's second
+    try failed nothing, while what the post may have written is read from
+    every try (may_have_written; F23's second review). What is looked at is the re-read's first page, which every
     fault on it refuses or answers (F20's comment-lost-then-unread and
     comment-500-then-unread, F23's comment-late and
     comment-unanswered-late, its review's comment-422-then-unread and
-    comment-limited-late, and comment-limited-then-unread), so a later
+    comment-limited-late, comment-limited-then-unread, and its second
+    review's comment-limited-then-422), so a later
     page, which no fault makes, is not looked at; a later read of the
     comments in the run, for an overlap's markers or a released branch's
     comment, is a read like any other, so one GitHub refuses is no reason
     for the labels to stay off (F20's review)."""
     posted = {}
-    for at, c in answered(calls):
+    for at, tries in tried(calls):
+        c = tries[-1]
         number = comments_of(c.path)
         if number is None:
             continue
         if c.method == "POST" and failed(c) and oracle.comment_kind(c.body["body"]) == "claim-released":
-            posted[number] = c
+            posted[number] = tries
         elif c.method == "GET" and number in posted:
             yield number, posted.pop(number), at, c
 
@@ -762,7 +776,7 @@ def failed(call):
     return call.status is None or call.status >= 400
 
 
-def may_have_written(post):
+def may_have_written(*tries):
     """Whether GitHub may have made a write it gave no success for: a
     server error or no answer at all may come after the write, where a
     4xx is a refusal GitHub gives in place of making it (F23), save a rate
@@ -771,16 +785,21 @@ def may_have_written(post):
     review). The rate limit is read from the fault (rate_limited), never
     from the library's rule (adapters.github.rate_limited, wrote_nothing),
     so a library that takes one for a refusal that wrote nothing is
-    seen."""
-    return post.status is None or post.status >= 500 or rate_limited(post)
+    seen. Every try of the call is judged, not the last alone, since a
+    4xx that ends a call the client made again after a rate limit's
+    refusal answers its last try only, and GitHub may have acted on the
+    try it refused for the rate limit (F23's second review,
+    comment-limited-then-422)."""
+    return any(post.status is None or post.status >= 500 or rate_limited(post) for post in tries)
 
 
-def lists_its_comment(post, read):
+def lists_its_comment(tries, read):
     """Whether an answered read of an issue's comments listed the comment
-    a failed post wrote: GitHub wrote it, and the model answered the read,
-    where a fault answering in its place (LISTED_LATE) leaves out what
-    GitHub wrote in the run and lost its answer to (F23)."""
-    return post.applied and read.fault is None
+    a failed post wrote: GitHub wrote it on one of the post's tries, and
+    the model answered the read, where a fault answering in its place
+    (LISTED_LATE) leaves out what GitHub wrote in the run and lost its
+    answer to (F23)."""
+    return any(post.applied for post in tries) and read.fault is None
 
 
 def comments_of(path):

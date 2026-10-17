@@ -37,7 +37,8 @@ waits_as_asked), while a call the library makes again of its own, a read
 of a push after head_since's pause, stands for itself. With applied, the
 write is made and its answer lost, as a 502 after GitHub wrote the
 comment, or a rate limit's refusal after GitHub acted on the call
-(comment-limited-late, F23's review); with answer, a read of the activity
+(comment-limited-late, F23's review, and comment-limited-then-422, its
+second); with answer, a read of the activity
 is answered with a list other than the model's, one that lags a push or
 lists one the run did not see (F8), and a read of an issue's comments with
 the list before the comments GitHub wrote in the run and lost its answer
@@ -91,9 +92,11 @@ fault's refusal writes nothing, assumed, which the client's making a
 write again rests on, and which C4 would settle and is not run (DESIGN.md,
 3.2 and 11), save comment-limited-late's, which writes the release comment
 it refuses and asks a wait longer than a run waits, so the client tries it
-once and the assumption still holds of every call the client makes again,
-while the labels a release puts back are held to resting on no such
-assumption (F23's review); and a 403 that names a wait in retry-after is a
+once, and comment-limited-then-422's, which writes the release comment on
+the first try it refuses and nothing on the second, which it refuses with
+a 422, so nothing is written twice, while the labels a release puts back
+are held to resting on no such assumption (F23's review and its second);
+and a 403 that names a wait in retry-after is a
 rate limit's refusal whatever its words, assumed as the library assumes it
 (adapters.github.rate_limited), since GitHub's documentation names
 retry-after for a secondary limit's refusal and never says that no other

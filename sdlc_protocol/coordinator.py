@@ -24,11 +24,13 @@ that fails at the labels puts back the labels it took off and takes off
 the todo it put on, so the issue is as it was and the next run starts the
 release over. A run whose comment fails reads the issue's comments: a
 release comment there makes the release whole; where they list none after
-GitHub refused the comment, a 4xx other than a rate limit's, which it
-answers in place of writing anything, the run puts the labels back as at
-the labels; and where it cannot read them, whatever GitHub answered (F20),
-or they list none after any other answer, a rate limit's refusal, a server
-error or no answer among them, none of which says GitHub wrote nothing,
+GitHub refused the comment, a 4xx other than a rate limit's on a try that
+followed none refused for a rate limit, which it answers in place of
+writing anything, the run puts the labels back as at the labels; and where
+it cannot read them, whatever GitHub answered (F20), or they list none
+after any other answer, a rate limit's refusal, on the last try or on one
+the run made the comment again after, a server error or no answer among
+them, none of which says GitHub wrote nothing,
 and a read may list a comment GitHub wrote only later (F23), it cannot
 tell whether a release comment stands, its own, an earlier run's or one
 someone else wrote, so it leaves the labels as the release left them for
